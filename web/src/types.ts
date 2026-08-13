@@ -1,0 +1,17 @@
+export type User = { id: string; username: string; email: string; displayName: string; role: 'user' | 'manager' | 'admin' }
+export type Version = { name: string; version: string; commit: string; buildTime: string }
+export type Runtime = { id: string; agentId: string; ownerId: string; status: string; desiredState: string; crdName: string; podName: string; nodeName: string; endpoint: string; restartCount: number; failureReason: string; updatedAt: string }
+export type Agent = { id: string; ownerId: string; name: string; description: string; runtimeType: string; runtimeProfileId?: string; workspaceId?: string; version: number; runtime?: Runtime; createdAt: string; updatedAt: string }
+export type Template = { id: string; name: string; slug: string; description: string; category: string; runtimeType: string; runtimeProfileId: string; version: number }
+export type RuntimeProfile = { id: string; name: string; description: string; cpuMillis: number; memoryMb: number; storageGb: number; gpuCount: number; idleTimeoutSeconds: number }
+export type Workspace = { id: string; name: string; type: string; sizeGb: number; repositoryUrl: string; branch: string; pvcName: string; status: string; updatedAt: string }
+export type WorkspaceSnapshot = { id: string; workspaceId: string; name: string; status: string; storageRef: string; sizeBytes: number; createdAt: string }
+export type MCPServer = { id: string; name: string; description: string; mode: 'shared' | 'dedicated' | 'sidecar'; transport: string; endpoint: string; image: string; port: number; riskLevel: string; approvalRequired: boolean; enabled: boolean }
+export type MCPBundle = { id: string; name: string; description: string; serverIds: string[]; enabled: boolean }
+export type RuntimeSession = { id: string; runtimeId: string; agentId: string; agentName: string; runtimeType: string; title: string; status: string; trace: unknown[]; createdAt: string; updatedAt: string }
+export type Workflow = { id:string; name:string; description:string; mode:string; maxDepth:number; maxAgentCalls:number; maxToolCalls:number; maxDurationSeconds:number; maxParallelAgents:number; definition:{steps:{id:string;agentId:string;dependsOn:string[]}[]}; enabled:boolean; updatedAt:string }
+export type EvaluationTestSet = { id:string; name:string; description:string; passThreshold:number; cases:{name:string;expectedRuntime?:string;requiresProfile?:boolean;requiresModel?:boolean;requiresMcp?:boolean;requiresWorkspace?:boolean;requiresRunning?:boolean;requiresSecurity?:boolean}[]; updatedAt:string }
+export type AgentEvaluation = { id:string; agentId:string; agentName:string; testSetId:string; testSetName:string; status:string; score:number; metrics:{total:number;passed:number;failed:number;threshold:number;evaluationType:string}; result:{cases:{name:string;passed:boolean;failures:string[]}[]}; createdAt:string }
+export type Notification = { id:string; type:string; title:string; message:string; resourceUrl:string; readAt?:string; createdAt:string }
+export type PersonalSecret = { id: string; name: string; kind: string; keyVersion: number; lastUsedAt?: string; createdAt: string }
+export type APIKey = { id: string; name: string; prefix: string; scopes: string[]; expiresAt?: string; lastUsedAt?: string; createdAt: string }

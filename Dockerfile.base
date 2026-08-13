@@ -1,0 +1,31 @@
+# syntax=docker/dockerfile:1.7
+# One offline runtime image contains both supported adapters. Pin these build args
+# to approved versions for reproducible enterprise releases.
+ARG HERMES_VERSION=v2026.7.1
+FROM golang:1.25-bookworm AS proxy-build
+WORKDIR /src
+COPY go.mod go.sum ./
+COPY cmd/runtime-proxy ./cmd/runtime-proxy
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/agenthub-runtime-proxy ./cmd/runtime-proxy
+
+FROM nousresearch/hermes-agent:${HERMES_VERSION}
+ARG OPENCODE_VERSION=1.18.18
+USER root
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends nodejs npm git ca-certificates curl openssh-client tini \
+ && npm install --global "opencode-ai@${OPENCODE_VERSION}" \
+ && npm cache clean --force \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /workspace /home/agent/.config/opencode /home/agent/.hermes /tmp \
+ && chown -R 10000:10000 /workspace /home/agent
+COPY deploy/runtime/entrypoint.sh /usr/local/bin/agenthub-runtime
+COPY --from=proxy-build /out/agenthub-runtime-proxy /usr/local/bin/agenthub-runtime-proxy
+RUN chmod 0755 /usr/local/bin/agenthub-runtime /usr/local/bin/agenthub-runtime-proxy
+USER 10000:10000
+WORKDIR /workspace
+ENV HOME=/home/agent \
+    HERMES_HOME=/home/agent/.hermes \
+    OPENCODE_CONFIG_DIR=/home/agent/.config/opencode \
+    AGENTHUB_RUNTIME_TYPE=opencode
+EXPOSE 4096 8642 9119
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/agenthub-runtime"]

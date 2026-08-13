@@ -1,0 +1,53 @@
+name: agenthub
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: agenthub
+      POSTGRES_PASSWORD: agenthub-local-database-password
+      POSTGRES_DB: agenthub
+    volumes:
+      - agenthub-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U agenthub -d agenthub"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [backend]
+  agenthub:
+    image: agenthub:v0.1.0
+    build:
+      context: .
+      args:
+        VERSION: 0.1.0
+    restart: unless-stopped
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment:
+      AGENTHUB_POSTGRES_DSN: ${AGENTHUB_POSTGRES_DSN:-postgres://agenthub:agenthub-local-database-password@postgres:5432/agenthub?sslmode=disable}
+      AGENTHUB_BOOTSTRAP_ADMIN: ${AGENTHUB_BOOTSTRAP_ADMIN:?set AGENTHUB_BOOTSTRAP_ADMIN}
+      AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD: ${AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD:?set AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD}
+      AGENTHUB_ENCRYPTION_KEY: ${AGENTHUB_ENCRYPTION_KEY:?set AGENTHUB_ENCRYPTION_KEY}
+    ports:
+      - "8080:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    networks: [frontend, backend]
+  agenthub-operator:
+    image: agenthub:v0.1.0
+    profiles: [kubernetes]
+    entrypoint: [/app/agenthub-operator]
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+networks:
+  frontend: {}
+  backend:
+    internal: true
+volumes:
+  agenthub-postgres:

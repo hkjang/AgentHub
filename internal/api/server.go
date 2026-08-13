@@ -1,0 +1,138 @@
+package api
+
+import (
+	"context"
+	"io/fs"
+	"log/slog"
+	"net/http"
+	"path"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/hkjang/AgentHub/internal/buildinfo"
+	"github.com/hkjang/AgentHub/internal/cryptox"
+	appLog "github.com/hkjang/AgentHub/internal/logging"
+	"github.com/hkjang/AgentHub/internal/runtime"
+	"github.com/hkjang/AgentHub/internal/store"
+)
+
+const (
+	sessionCookie = "agenthub_session"
+	csrfCookie    = "agenthub_csrf"
+	oidcCookie    = "agenthub_oidc"
+)
+
+type Server struct {
+	store   *store.Store
+	cipher  *cryptox.Cipher
+	logger  *slog.Logger
+	logs    *appLog.Ring
+	spawner runtime.Spawner
+	version buildinfo.Info
+	static  fs.FS
+
+	sessionSettingsMu    sync.RWMutex
+	sessionSettings      sessionGatewaySettings
+	sessionSettingsUntil time.Time
+}
+
+func New(db *store.Store, cipher *cryptox.Cipher, logger *slog.Logger, logs *appLog.Ring, spawner runtime.Spawner, static fs.FS) *Server {
+	return &Server{store: db, cipher: cipher, logger: logger, logs: logs, spawner: spawner, version: buildinfo.Current(), static: static}
+}
+
+func (s *Server) Handler() http.Handler {
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer, s.accessLog, s.runtimeHostGateway, s.securityHeaders)
+	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
+	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if err := s.store.Ping(r.Context()); err != nil {
+			writeError(w, 503, "database_unavailable", "PostgreSQL 연결을 확인해 주세요.")
+			return
+		}
+		writeJSON(w, 200, map[string]string{"status": "ready"})
+	})
+	r.Get("/api/openapi.json", s.openAPI)
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Get("/version", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, s.version) })
+		r.Get("/auth/methods", s.authMethods)
+		r.Post("/auth/login", s.login)
+		r.Get("/auth/oidc/start", s.oidcStart)
+		r.Get("/auth/oidc/callback", s.oidcCallback)
+		r.Group(func(r chi.Router) {
+			r.Use(s.authentication)
+			r.Get("/me", s.me)
+			r.Group(func(r chi.Router) {
+				r.Use(s.apiKeyAuthorization, s.csrfProtection)
+				r.Post("/auth/logout", s.logout)
+				s.userRoutes(r)
+			})
+		})
+	})
+	r.Post("/mcp", s.mcp)
+	r.NotFound(s.spa)
+	return r
+}
+
+func (s *Server) cachedSessionGatewaySettings(ctx context.Context) sessionGatewaySettings {
+	s.sessionSettingsMu.RLock()
+	if time.Now().Before(s.sessionSettingsUntil) {
+		value := s.sessionSettings
+		s.sessionSettingsMu.RUnlock()
+		return value
+	}
+	s.sessionSettingsMu.RUnlock()
+
+	value := sessionGatewaySettings{Scheme: "https", SessionHours: 8}
+	_ = s.store.Setting(ctx, "sessionGateway", &value)
+	s.sessionSettingsMu.Lock()
+	s.sessionSettings, s.sessionSettingsUntil = value, time.Now().Add(5*time.Second)
+	s.sessionSettingsMu.Unlock()
+	return value
+}
+
+func (s *Server) invalidateSessionGatewaySettings() {
+	s.sessionSettingsMu.Lock()
+	s.sessionSettingsUntil = time.Time{}
+	s.sessionSettingsMu.Unlock()
+}
+
+func (s *Server) securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "same-origin")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) accessLog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		wrapper := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		next.ServeHTTP(wrapper, r)
+		s.logger.Info("http request", "method", r.Method, "path", r.URL.Path, "status", wrapper.Status(), "bytes", wrapper.BytesWritten(), "duration_ms", time.Since(start).Milliseconds(), "request_id", middleware.GetReqID(r.Context()))
+	})
+}
+
+func (s *Server) spa(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.NotFound(w, r)
+		return
+	}
+	requested := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
+	if requested == "." || requested == "" {
+		requested = "index.html"
+	}
+	if info, err := fs.Stat(s.static, requested); err == nil && !info.IsDir() {
+		http.ServeFileFS(w, r, s.static, requested)
+		return
+	}
+	r.URL.Path = "/"
+	http.ServeFileFS(w, r, s.static, "index.html")
+}

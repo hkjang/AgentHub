@@ -1,0 +1,15 @@
+.idea/
+.vscode/
+.DS_Store
+.env
+.env.*
+!.env.example
+bin/
+coverage/
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo
+web/vite.config.js
+web/vite.config.d.ts
+*.log
+*.tar.gz

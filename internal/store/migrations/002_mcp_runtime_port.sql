@@ -1,0 +1,1 @@
+ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS port integer NOT NULL DEFAULT 8000 CHECK (port > 0 AND port < 65536);

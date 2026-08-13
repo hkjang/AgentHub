@@ -1,0 +1,11 @@
+.git
+.github
+.env*
+!.env.example
+bin
+release
+coverage
+web/node_modules
+web/dist
+*.log
+*.tar.gz

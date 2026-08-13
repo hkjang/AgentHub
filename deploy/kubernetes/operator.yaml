@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agenthub-operator
+  namespace: agent-platform-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: agenthub-operator}
+  template:
+    metadata:
+      labels: {app: agenthub-operator}
+    spec:
+      serviceAccountName: agenthub-operator
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: operator
+          image: agenthub:v0.1.0
+          imagePullPolicy: IfNotPresent
+          command: [/app/agenthub-operator]
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}

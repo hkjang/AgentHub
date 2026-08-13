@@ -1,0 +1,30 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: go test ./cmd/... ./internal/...
+      - run: npm ci && npm run lint && npm run build
+        working-directory: web
+      - run: kubectl kustomize deploy/kubernetes >/dev/null
+      - run: docker compose config --quiet
+        env:
+          AGENTHUB_BOOTSTRAP_ADMIN: ci-admin
+          AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD: ci-password-at-least-12
+          AGENTHUB_ENCRYPTION_KEY: MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=

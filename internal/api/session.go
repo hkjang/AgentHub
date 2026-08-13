@@ -1,0 +1,293 @@
+package api
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+
+	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
+	"github.com/hkjang/AgentHub/internal/store"
+)
+
+const runtimeAccessCookie = "agenthub_runtime_access"
+
+type sessionGatewaySettings struct {
+	Enabled      bool   `json:"enabled"`
+	Scheme       string `json:"scheme"`
+	BaseDomain   string `json:"baseDomain"`
+	SessionHours int    `json:"sessionHours"`
+}
+
+type runtimeAccess struct {
+	RuntimeID   string    `json:"runtimeId"`
+	UserID      string    `json:"userId"`
+	Endpoint    string    `json:"endpoint"`
+	Token       string    `json:"token"`
+	RuntimeType string    `json:"runtimeType"`
+	ExpiresAt   time.Time `json:"expiresAt"`
+}
+
+// runtimeSession is the authenticated API data-plane boundary. Native browser
+// UIs use runtimeHostGateway because OpenCode addresses assets and APIs from
+// the origin root rather than from a configurable subpath.
+func (s *Server) runtimeSession(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	runtimeID := chi.URLParam(r, "id")
+	connection, err := s.runtimeConnection(r, runtimeID, user.ID, user.Role == "admin")
+	if err != nil {
+		writeRuntimeConnectionError(w, err)
+		return
+	}
+	prefix := "/api/v1/runtimes/" + runtimeID + "/session"
+	proxiedPath := "/" + strings.TrimPrefix(chi.URLParam(r, "*"), "/")
+	s.serveRuntimeProxy(w, r, runtimeID, user.ID, connection, proxiedPath, prefix)
+}
+
+func (s *Server) launchRuntime(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	runtimeID := chi.URLParam(r, "id")
+	instance, err := s.store.RuntimeByID(r.Context(), runtimeID, user.ID, user.Role == "admin")
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	status := strings.ToLower(instance.Status)
+	if instance.DesiredState != "running" || (status != "running" && status != "ready") {
+		writeError(w, http.StatusConflict, "runtime_not_ready", "Runtime이 Ready 상태일 때 브라우저 세션을 열 수 있습니다.")
+		return
+	}
+	settings := s.cachedSessionGatewaySettings(r.Context())
+	hostname, port, err := splitHostPort(settings.BaseDomain)
+	if !settings.Enabled || err != nil {
+		writeError(w, http.StatusServiceUnavailable, "session_gateway_unavailable", "관리자가 Runtime Session Gateway 도메인을 먼저 설정해야 합니다.")
+		return
+	}
+	ticket, expires, err := s.store.CreateRuntimeLaunchTicket(r.Context(), runtimeID, instance.OwnerID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	host := runtimeID + "." + hostname
+	if port != "" {
+		host = net.JoinHostPort(host, port)
+	}
+	launch := url.URL{Scheme: settings.Scheme, Host: host, Path: "/", RawQuery: url.Values{"ticket": []string{ticket}}.Encode()}
+	s.store.TouchRuntime(r.Context(), runtimeID)
+	s.store.Audit(r.Context(), &user, "runtime.launch", "runtime", runtimeID, "success", clientIP(r), nil)
+	writeJSON(w, http.StatusCreated, map[string]any{"url": launch.String(), "expiresAt": expires})
+}
+
+func (s *Server) runtimeHostGateway(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		settings := s.cachedSessionGatewaySettings(r.Context())
+		runtimeID, ok := runtimeIDFromHost(r.Host, settings)
+		if !ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if ticket := r.URL.Query().Get("ticket"); ticket != "" {
+			ticketRuntimeID, userID, err := s.store.ConsumeRuntimeLaunchTicket(r.Context(), ticket)
+			if err != nil || ticketRuntimeID != runtimeID {
+				runtimeUnauthorized(w, "Launch ticket이 만료되었거나 이미 사용되었습니다.")
+				return
+			}
+			connection, err := s.runtimeConnection(r, runtimeID, userID, false)
+			if err != nil {
+				writeRuntimeConnectionError(w, err)
+				return
+			}
+			hours := settings.SessionHours
+			if hours < 1 || hours > 24 {
+				hours = 8
+			}
+			access := runtimeAccess{RuntimeID: runtimeID, UserID: userID, Endpoint: connection.Endpoint, Token: connection.Token, RuntimeType: connection.RuntimeType, ExpiresAt: time.Now().UTC().Add(time.Duration(hours) * time.Hour)}
+			raw, _ := json.Marshal(access)
+			encrypted, err := s.cipher.Encrypt(raw, "runtime-host-session")
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "runtime_session_failed", "Runtime 세션을 만들지 못했습니다.")
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: runtimeAccessCookie, Value: encrypted, Path: "/", HttpOnly: true, Secure: settings.Scheme == "https", SameSite: http.SameSiteStrictMode, Expires: access.ExpiresAt, MaxAge: int(time.Until(access.ExpiresAt).Seconds())})
+			query := r.URL.Query()
+			query.Del("ticket")
+			destination := r.URL.Path
+			if encoded := query.Encode(); encoded != "" {
+				destination += "?" + encoded
+			}
+			http.Redirect(w, r, destination, http.StatusSeeOther)
+			return
+		}
+
+		cookie, err := r.Cookie(runtimeAccessCookie)
+		if err != nil {
+			runtimeUnauthorized(w, "AgentHub에서 Runtime을 다시 열어 주세요.")
+			return
+		}
+		plain, err := s.cipher.Decrypt(cookie.Value, "runtime-host-session")
+		var access runtimeAccess
+		if err != nil || json.Unmarshal(plain, &access) != nil || access.RuntimeID != runtimeID || access.ExpiresAt.Before(time.Now()) {
+			runtimeUnauthorized(w, "Runtime 세션이 만료되었습니다. AgentHub에서 다시 열어 주세요.")
+			return
+		}
+		connection := appRuntime.Connection{Endpoint: access.Endpoint, Token: access.Token, RuntimeType: access.RuntimeType}
+		if shouldTouchRuntime(r.URL.Path) {
+			s.store.TouchRuntime(r.Context(), runtimeID)
+		}
+		s.serveRuntimeProxy(w, r, runtimeID, access.UserID, connection, r.URL.Path, "")
+	})
+}
+
+func (s *Server) runtimeConnection(r *http.Request, runtimeID, userID string, admin bool) (appRuntime.Connection, error) {
+	instance, err := s.store.RuntimeByID(r.Context(), runtimeID, userID, admin)
+	if err != nil {
+		return appRuntime.Connection{}, err
+	}
+	agent, err := s.store.AgentByID(r.Context(), instance.AgentID, userID, admin)
+	if err != nil {
+		return appRuntime.Connection{}, err
+	}
+	return s.spawner.Connection(r.Context(), appRuntime.Spec{Runtime: instance, Agent: agent})
+}
+
+func (s *Server) serveRuntimeProxy(w http.ResponseWriter, r *http.Request, runtimeID, userID string, connection appRuntime.Connection, proxiedPath, prefix string) {
+	target, err := url.Parse(connection.Endpoint)
+	if err != nil || target.Scheme != "http" || target.Host == "" {
+		writeError(w, http.StatusBadGateway, "runtime_endpoint_invalid", "Runtime endpoint가 유효하지 않습니다.")
+		return
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	originalDirector := proxy.Director
+	proxy.Director = func(request *http.Request) {
+		originalDirector(request)
+		request.URL.Path = proxiedPath
+		request.URL.RawPath = ""
+		request.Host = target.Host
+		request.Header.Del("Authorization")
+		request.Header.Del("Cookie")
+		if prefix != "" {
+			request.Header.Set("X-Forwarded-Prefix", prefix)
+		}
+		request.Header.Set("X-AgentHub-User", userID)
+		username := "opencode"
+		if connection.RuntimeType == "hermes" {
+			username = "agenthub"
+		}
+		if connection.RuntimeType == "opencode" || connection.RuntimeType == "hermes" {
+			credential := base64.StdEncoding.EncodeToString([]byte(username + ":" + connection.Token))
+			request.Header.Set("Authorization", "Basic "+credential)
+		} else {
+			request.Header.Set("Authorization", "Bearer "+connection.Token)
+		}
+	}
+	proxy.ModifyResponse = func(response *http.Response) error {
+		response.Header.Del("Set-Cookie")
+		response.Header.Set("X-AgentHub-Runtime-ID", runtimeID)
+		response.Header.Set("X-Content-Type-Options", "nosniff")
+		response.Header.Set("Referrer-Policy", "same-origin")
+		response.Header.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		if prefix != "" {
+			if location := response.Header.Get("Location"); strings.HasPrefix(location, "/") {
+				response.Header.Set("Location", prefix+location)
+			}
+		}
+		return nil
+	}
+	proxy.ErrorHandler = func(writer http.ResponseWriter, request *http.Request, proxyErr error) {
+		s.logger.Warn("runtime session proxy failed", "runtime", runtimeID, "error", proxyErr)
+		writeError(writer, http.StatusBadGateway, "runtime_proxy_failed", "Runtime에 연결하지 못했습니다.")
+	}
+	proxy.ServeHTTP(w, r)
+}
+
+func writeRuntimeConnectionError(w http.ResponseWriter, err error) {
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "runtime_not_found", "Runtime을 찾을 수 없습니다.")
+		return
+	}
+	writeError(w, http.StatusServiceUnavailable, "runtime_unavailable", err.Error())
+}
+
+func runtimeUnauthorized(w http.ResponseWriter, message string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
+	w.WriteHeader(http.StatusUnauthorized)
+	_, _ = fmt.Fprintf(w, `<!doctype html><meta charset="utf-8"><title>AgentHub Runtime</title><style>body{font-family:system-ui;background:#0f172a;color:#e2e8f0;display:grid;place-items:center;min-height:100vh;margin:0}main{max-width:34rem;padding:2rem;border:1px solid #334155;border-radius:1rem;background:#111827}a{color:#a78bfa}</style><main><h1>Runtime 세션을 열 수 없습니다</h1><p>%s</p><p>이 창을 닫고 AgentHub Portal에서 다시 시도하세요.</p></main>`, message)
+}
+
+func runtimeIDFromHost(requestHost string, settings sessionGatewaySettings) (string, bool) {
+	if !settings.Enabled {
+		return "", false
+	}
+	base, _, err := splitHostPort(settings.BaseDomain)
+	if err != nil {
+		return "", false
+	}
+	host, _, err := splitHostPort(requestHost)
+	if err != nil {
+		return "", false
+	}
+	suffix := "." + strings.ToLower(base)
+	host = strings.ToLower(host)
+	if !strings.HasSuffix(host, suffix) {
+		return "", false
+	}
+	runtimeID := strings.TrimSuffix(host, suffix)
+	if runtimeID == "" || strings.Contains(runtimeID, ".") {
+		return "", false
+	}
+	return runtimeID, true
+}
+
+func splitHostPort(value string) (hostname, port string, err error) {
+	value = strings.TrimSpace(strings.TrimSuffix(value, "."))
+	if value == "" || strings.ContainsAny(value, "/?#@") {
+		return "", "", errors.New("invalid host")
+	}
+	if strings.Contains(value, ":") {
+		hostname, port, err = net.SplitHostPort(value)
+		if err != nil {
+			return "", "", err
+		}
+		if n, parseErr := strconv.Atoi(port); parseErr != nil || n < 1 || n > 65535 {
+			return "", "", errors.New("invalid port")
+		}
+	} else {
+		hostname = value
+	}
+	hostname = strings.ToLower(strings.TrimSuffix(hostname, "."))
+	if hostname == "" || strings.Contains(hostname, "..") {
+		return "", "", errors.New("invalid hostname")
+	}
+	for _, label := range strings.Split(hostname, ".") {
+		if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return "", "", errors.New("invalid hostname")
+		}
+		for _, char := range label {
+			if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' {
+				return "", "", errors.New("invalid hostname")
+			}
+		}
+	}
+	return hostname, port, nil
+}
+
+func shouldTouchRuntime(path string) bool {
+	for _, prefix := range []string{"/assets/", "/favicon", "/apple-touch", "/site.webmanifest", "/social-share", "/oc-theme-preload"} {
+		if strings.HasPrefix(path, prefix) {
+			return false
+		}
+	}
+	return true
+}
