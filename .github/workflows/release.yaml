@@ -8,7 +8,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Resolve version
         id: version
         shell: bash
@@ -18,7 +18,7 @@ jobs:
           test "${version}" = "$(tr -d '\r\n' < VERSION)"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: Build offline images
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
@@ -36,7 +36,7 @@ jobs:
           gzip -t "release/agenthub-${RELEASE_TAG}.tar.gz"
           gzip -t "release/agenthub-base-${RELEASE_TAG}.tar.gz"
           test "$(find release -maxdepth 1 -type f | wc -l)" -eq 2
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           files: |
