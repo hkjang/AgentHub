@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgentHub · Enterprise AI Agent Runtime Platform</title>
+  <meta name="description" content="AgentHub는 폐쇄망 및 엔터프라이즈 환경을 위한 JupyterHub 형태의 AI 에이전트 런타임 플랫폼입니다. 영속 워크스페이스, Kubernetes 격리 Pod, MCP Fabric, Multi-Agent 워크플로우를 완벽 지원합니다.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base: #060913;
+      --bg-surface: #0f172a;
+      --bg-card: #1e293b;
+      --bg-card-hover: #273549;
+      --border-color: #334155;
+      --border-light: rgba(255, 255, 255, 0.1);
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --primary-glow: rgba(59, 130, 246, 0.35);
+      --accent: #10b981;
+      --accent-purple: #8b5cf6;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg-base);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* Navbar */
+    .navbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(6, 9, 19, 0.85);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border-light);
+      padding: 16px 0;
+    }
+    .container {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+    .nav-inner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: #fff;
+      font-size: 1.3rem;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+    }
+    .brand-badge {
+      width: 34px;
+      height: 34px;
+      background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      font-size: 1.1rem;
+      box-shadow: 0 0 15px var(--primary-glow);
+    }
+    .nav-links {
+      display: flex;
+      gap: 28px;
+      align-items: center;
+    }
+    .nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.95rem;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+    .nav-links a:hover { color: #fff; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.2s;
+      border: none;
+    }
+    .btn-primary {
+      background: var(--primary);
+      color: #fff;
+      box-shadow: 0 4px 14px var(--primary-glow);
+    }
+    .btn-primary:hover { background: var(--primary-hover); transform: translateY(-1px); }
+    .btn-secondary {
+      background: var(--bg-card);
+      color: #fff;
+      border: 1px solid var(--border-color);
+    }
+    .btn-secondary:hover { background: var(--bg-card-hover); }
+
+    /* Hero Section */
+    .hero {
+      padding: 100px 0 60px;
+      text-align: center;
+      position: relative;
+    }
+    .hero-glow {
+      position: absolute;
+      top: 10%;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 600px;
+      height: 300px;
+      background: radial-gradient(circle, rgba(59, 130, 246, 0.15) 0%, rgba(6, 9, 19, 0) 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+    .badge-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 16px;
+      border-radius: 9999px;
+      background: rgba(59, 130, 246, 0.1);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      color: #60a5fa;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 24px;
+    }
+    .hero h1 {
+      font-size: 3.4rem;
+      font-weight: 800;
+      line-height: 1.18;
+      letter-spacing: -1.5px;
+      margin-bottom: 24px;
+      color: #ffffff;
+      position: relative;
+      z-index: 1;
+    }
+    .hero p {
+      font-size: 1.25rem;
+      color: var(--text-muted);
+      max-width: 800px;
+      margin: 0 auto 36px;
+      line-height: 1.7;
+      position: relative;
+      z-index: 1;
+    }
+    .hero-actions {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      margin-bottom: 60px;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* Core Features Grid */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 24px;
+      margin-bottom: 90px;
+    }
+    .feature-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 28px;
+      transition: all 0.25s ease;
+    }
+    .feature-card:hover {
+      border-color: var(--primary);
+      transform: translateY(-3px);
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+    }
+    .feature-icon {
+      font-size: 2rem;
+      margin-bottom: 16px;
+      display: inline-block;
+    }
+    .feature-card h3 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 10px;
+      color: #fff;
+    }
+    .feature-card p {
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* Interactive Showcase Gallery */
+    .showcase-section {
+      padding: 40px 0 100px;
+    }
+    .section-title {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+    .section-title h2 {
+      font-size: 2.3rem;
+      font-weight: 800;
+      letter-spacing: -0.8px;
+      margin-bottom: 12px;
+    }
+    .section-title p {
+      color: var(--text-muted);
+      font-size: 1.1rem;
+    }
+
+    .gallery-container {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+    }
+    .tabs-header {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border-color);
+      margin-bottom: 20px;
+    }
+    .tab-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 10px 18px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+    .tab-btn:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .tab-btn.active {
+      color: #fff;
+      background: var(--primary);
+      box-shadow: 0 2px 10px var(--primary-glow);
+    }
+    .screenshot-viewer {
+      position: relative;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: #020617;
+    }
+    .screenshot-viewer img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+    .screenshot-info {
+      margin-top: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .screenshot-info h4 {
+      font-size: 1.1rem;
+      color: #fff;
+    }
+    .screenshot-info p {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+    }
+
+    /* Sub Tabs (Thumbnails) */
+    .sub-tabs {
+      display: flex;
+      gap: 10px;
+      margin-top: 16px;
+      overflow-x: auto;
+      padding-bottom: 8px;
+    }
+    .sub-tab-btn {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+    .sub-tab-btn.active {
+      background: rgba(59, 130, 246, 0.2);
+      border-color: var(--primary);
+      color: #fff;
+    }
+
+    /* Code Snippet Box */
+    .quickstart-box {
+      background: #020617;
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 24px;
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      line-height: 1.7;
+      color: #e2e8f0;
+      position: relative;
+      margin: 40px 0;
+      overflow-x: auto;
+    }
+    .quickstart-box code { color: #38bdf8; }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--border-color);
+      padding: 60px 0 40px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navbar -->
+  <nav class="navbar">
+    <div class="container nav-inner">
+      <a href="#" class="brand">
+        <div class="brand-badge">A</div>
+        <span>AgentHub</span>
+      </a>
+      <div class="nav-links">
+        <a href="#features">핵심 아키텍처</a>
+        <a href="#showcase">UI 콘솔 둘러보기</a>
+        <a href="#quickstart">빠른 시작</a>
+        <a href="https://github.com/hkjang/AgentHub" class="btn btn-secondary" target="_blank">GitHub</a>
+        <a href="user-guide.html" class="btn btn-primary">사용자 매뉴얼</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero Section -->
+  <header class="hero">
+    <div class="hero-glow"></div>
+    <div class="container">
+      <div class="badge-pill">
+        🛡️ Offline-Ready Enterprise Agent Runtime Platform
+      </div>
+      <h1>
+        AI Agent가 일할<br>
+        <span style="background: linear-gradient(90deg, #60a5fa, #34d399); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">가장 안전하고 영속적인 공간.</span>
+      </h1>
+      <p>
+        JupyterHub처럼 각 사용자별로 독립된 OpenCode 및 Hermes 런타임 Pod를 Kubernetes에 자동 프로비저닝합니다.<br>
+        영속 워크스페이스(PVC), CSI 스냅샷, Multi-Agent 워크플로우 DAG, MCP 패브릭을 하나의 통합 통제면에서 운영하세요.
+      </p>
+      <div class="hero-actions">
+        <a href="#showcase" class="btn btn-primary">📸 화면 갤러리 둘러보기</a>
+        <a href="#quickstart" class="btn btn-secondary">⚡ 5분 빠른 시작</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Core Features -->
+  <section id="features" class="container">
+    <div class="section-title">
+      <h2>엔터프라이즈를 위한 6대 핵심 통제면</h2>
+      <p>보안 규제가 엄격한 오프라인/폐쇄망 클러스터에서도 타협 없는 AI 개발 환경을 제공합니다.</p>
+    </div>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">📦</div>
+        <h3>영속 Workspace & CSI 스냅샷</h3>
+        <p>Agent Pod가 종료되거나 재생성되어도 사용자 코드와 가상환경은 PVC에 안전하게 보존됩니다. CSI VolumeSnapshot을 통해 언제든 이전 시점으로 워크스페이스를 복구할 수 있습니다.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🤖</div>
+        <h3>OpenCode & Hermes 런타임</h3>
+        <p>사전 검증된 Agent 템플릿과 빌더를 통해 개발용 OpenCode 또는 자율 실행형 Hermes 런타임을 사용자 전용 격리 Pod로 생성합니다.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔀</div>
+        <h3>Multi-Agent Workflow DAG</h3>
+        <p>복수의 전문 에이전트 간의 순차/병렬/Supervisor 파이프라인을 설계하고, 실행 전 순환 참조(Cycle Detection) 및 최대 호출 깊이를 엄격히 검증합니다.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔌</div>
+        <h3>MCP Fabric & Streamable HTTP</h3>
+        <p>전사 MCP(Model Context Protocol) 도구 레지스트리와 번들을 관리하며, Sidecar 및 전용 StatefulSet 모드로 에이전트에 유연하게 주입합니다.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔐</div>
+        <h3>Envelope Encryption Secret Vault</h3>
+        <p>개인 Credential(Git 토큰, DB 암호)은 사용자 전용 데이터 키로 암호화되며, Agent 정의에는 원문 대신 식별 참조값만 주입되어 유출을 원천 방지합니다.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📊</div>
+        <h3>Control Center & 불변 감사 로그</h3>
+        <p>시스템 링버퍼 로그 스트림 및 모든 사용자의 CRU 행위를 감사 추적(Audit Trail)하며, Keycloak OIDC SSO 및 2인 승인 거버넌스를 지원합니다.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Interactive UI Gallery -->
+  <section id="showcase" class="showcase-section">
+    <div class="container">
+      <div class="section-title">
+        <h2>실제 AgentHub UI 콘솔 갤러리</h2>
+        <p>33개 이상의 고해상도 실제 운영 콘솔 화면을 카테고리별로 확인해보세요.</p>
+      </div>
+
+      <div class="gallery-container">
+        <!-- Main Category Tabs -->
+        <div class="tabs-header" id="categoryTabs">
+          <button class="tab-btn active" onclick="switchCategory('overview')">1. Overview & Dashboard</button>
+          <button class="tab-btn" onclick="switchCategory('agents')">2. Agents & Builder</button>
+          <button class="tab-btn" onclick="switchCategory('workspaces')">3. Workspaces & Snapshots</button>
+          <button class="tab-btn" onclick="switchCategory('workflows')">4. Workflows & MCP</button>
+          <button class="tab-btn" onclick="switchCategory('developer')">5. Developer Vault & API</button>
+          <button class="tab-btn" onclick="switchCategory('admin')">6. Administration & Control</button>
+        </div>
+
+        <!-- Sub Item Tabs -->
+        <div class="sub-tabs" id="subTabs"></div>
+
+        <!-- Viewer -->
+        <div class="screenshot-viewer" style="margin-top: 16px;">
+          <img id="viewerImage" src="screenshots/02_dashboard_overview.png" alt="AgentHub 콘솔">
+        </div>
+        <div class="screenshot-info">
+          <div>
+            <h4 id="viewerTitle">메인 운영 대시보드</h4>
+            <p id="viewerDesc">실시간 에이전트 인스턴스, 스토리지 사용량, 텔레메트리 현황을 통합 모니터링합니다.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Quickstart Section -->
+  <section id="quickstart" class="container" style="padding: 60px 0;">
+    <div class="section-title">
+      <h2>⚡ 5분 빠른 시작 (Local Development)</h2>
+      <p>단 4개의 환경변수만으로 오프라인 및 로컬 개발 환경을 즉시 기동할 수 있습니다.</p>
+    </div>
+
+    <div class="quickstart-box">
+      <pre><code># 1. 환경 설정 파일 복사 및 필수 부트스트랩 값 지정
+cp .env.example .env
+
+# 2. PostgreSQL 데이터베이스 컨테이너 기동
+docker compose up -d postgres
+
+# 3. React 웹 포털 및 Go 바이너리 빌드
+cd web && npm ci && npm run build && cd ..
+make build
+
+# 4. AgentHub 컨트롤 플레인 서버 실행
+set -a && . ./.env && set +a
+./bin/agenthub
+
+# 5. 브라우저에서 접속
+open http://localhost:8080 (admin / local-development-password)</code></pre>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="container">
+      <p style="margin-bottom: 8px;"><strong>AgentHub</strong> · Offline-Ready Enterprise Agent Runtime Platform</p>
+      <p>Licensed under Apache-2.0 · Designed for Sovereign Enterprise AI Infrastructure</p>
+    </div>
+  </footer>
+
+  <!-- Script for Interactive Gallery -->
+  <script>
+    const data = {
+      overview: [
+        { img: 'screenshots/01_login_page.png', title: '로그인 콘솔', desc: '로컬 관리자 및 Keycloak OIDC SSO를 지원하는 반응형 로그인 화면' },
+        { img: 'screenshots/02_dashboard_overview.png', title: '메인 운영 대시보드', desc: '실시간 에이전트 인스턴스, 스토리지 사용량, 텔레메트리 현황 모니터링' },
+        { img: 'screenshots/03_command_palette.png', title: '⌘ K 커맨드 팔레트', desc: '키보드로 전체 메뉴, 에이전트, 설정을 검색하고 즉시 이동' }
+      ],
+      agents: [
+        { img: 'screenshots/04_catalog_marketplace.png', title: 'Agent Catalog 마켓플레이스', desc: '검증된 Agent Template을 탐색하여 원클릭으로 인스턴스 생성' },
+        { img: 'screenshots/05_agent_builder_drawer.png', title: 'Agent Builder 생성 드로어', desc: '템플릿, 런타임 프로필, 워크스페이스, MCP 번들을 조합하여 에이전트 빌드' },
+        { img: 'screenshots/10_my_agents_created.png', title: '내 에이전트 목록', desc: '생성된 에이전트들의 런타임 상태(OpenCode, Hermes) 및 카드 뷰' },
+        { img: 'screenshots/11_agent_detail_drawer.png', title: '에이전트 상세 드로어', desc: '리소스 사양, 시스템 프롬프트, 런타임 시작/중지 및 설정 제어' },
+        { img: 'screenshots/12_runtimes_management.png', title: '런타임 라이프사이클 관리', desc: 'Kubernetes Pod 상태, CPU/Memory 점유율, 헬스체크 현황' },
+        { img: 'screenshots/13_sessions_gateway.png', title: '세션 게이트웨이', desc: '1회용 런치 티켓을 통한 OpenCode / Hermes Web UI 격리 연결' }
+      ],
+      workspaces: [
+        { img: 'screenshots/06_workspaces_list.png', title: '영속 워크스페이스 목록', desc: 'Pod가 종료되어도 유지되는 프로젝트별 독립 스토리지 관리' },
+        { img: 'screenshots/07_workspace_create_drawer.png', title: '새 워크스페이스 생성 드로어', desc: 'Git Clone 또는 빈 볼륨 초기화, 용량(GB) 지정 및 CSI PVC 생성' },
+        { img: 'screenshots/08_workspace_created_detail.png', title: '생성된 워크스페이스 상세', desc: 'CSI PVC 바인딩 및 파일 시스템 상태 확인' },
+        { img: 'screenshots/09_workspaces_snapshots.png', title: 'CSI VolumeSnapshot 관리', desc: '시점 스냅샷 생성 및 스냅샷 기반의 새 워크스페이스 복원' }
+      ],
+      workflows: [
+        { img: 'screenshots/14_workflows_builder.png', title: 'Multi-Agent Workflow 빌더', desc: '에이전트 간 순차, 병렬, Supervisor 협업 파이프라인 설계' },
+        { img: 'screenshots/15_workflow_create_drawer.png', title: '새 워크플로우 생성 드로어', desc: '단계별 의존성 및 최대 깊이/호출 횟수 가드레일 설정' },
+        { img: 'screenshots/16_workflow_created_list.png', title: '검증된 워크플로우 목록', desc: '서버 측 사이클 감지 및 정책 검증을 통과한 활성 워크플로우' },
+        { img: 'screenshots/17_mcp_catalog.png', title: 'MCP Fabric 도구 카탈로그', desc: '사내 등록된 MCP 도구들의 엔드포인트 및 스키마 탐색' },
+        { img: 'screenshots/18_mcp_bundles.png', title: 'MCP 번들 바인딩', desc: '역할별 MCP 도구들을 묶어 에이전트에 일괄 주입' },
+        { img: 'screenshots/19_evaluation_benchmarks.png', title: 'Agent 평가 및 벤치마크', desc: '정확도, 응답 속도, 가드레일 준수율 정량 분석' }
+      ],
+      developer: [
+        { img: 'screenshots/20_developer_secrets.png', title: '개인 Secret Vault 보관함', desc: '사용자별 암호화 키로 보호되는 개인 Credential 목록' },
+        { img: 'screenshots/21_developer_secret_drawer.png', title: '새 Secret 등록 드로어', desc: 'AES-256-GCM Envelope Encryption 기반 비밀값 안전 저장' },
+        { img: 'screenshots/22_developer_api_keys.png', title: 'Scoped API Key 목록', desc: '최소 권한 원칙에 따라 발급된 API 토큰 및 스코프 현황' },
+        { img: 'screenshots/23_developer_new_token_drawer.png', title: '새 API Key 발급 드로어', desc: 'api:read, mcp:read, runtime:manage 등 스코프 지정' },
+        { img: 'screenshots/24_developer_token_created.png', title: '1회성 API Key 발급 배너', desc: '안전한 복사를 위한 1회 노출 시크릿 토큰' }
+      ],
+      admin: [
+        { img: 'screenshots/25_reviews_approvals.png', title: 'Reviews & 승인 대기열', desc: '고위험 도구 호출 및 워크플로우에 대한 2인 승인 거버넌스' },
+        { img: 'screenshots/26_admin_operations_control_center.png', title: 'Control Center 운영 콘솔', desc: '실시간 링버퍼 엔진 로그 스트림 및 불변 감사 로그(Audit Trail)' },
+        { img: 'screenshots/27_admin_runtime_profiles.png', title: '관리자 Runtime Profiles', desc: 'Kubernetes Pod에 할당할 CPU, 메모리, GPU 프로필 구성' },
+        { img: 'screenshots/28_admin_runtime_images.png', title: '관리자 Runtime Images', desc: '승인된 오프라인 Base 런타임 이미지 버전 관리' },
+        { img: 'screenshots/29_admin_models.png', title: '관리자 Model Endpoints', desc: 'vLLM, Ollama, OpenAI 호환 LLM 엔드포인트 등록' },
+        { img: 'screenshots/30_admin_mcp_servers.png', title: '관리자 MCP Servers', desc: '전사 공용 MCP 서버 및 Sidecar 엔드포인트 관리' },
+        { img: 'screenshots/31_admin_users_and_teams.png', title: '사용자 및 팀 관리', desc: 'RBAC 역할(Admin, Manager, User) 및 팀 접근 권한 설정' },
+        { img: 'screenshots/32_admin_security_policies.png', title: '보안 정책 & 마스터 키', desc: 'Pod Security Standards, NetworkPolicy, 마스터 암호화 키 회전' },
+        { img: 'screenshots/33_admin_system_settings.png', title: '시스템 전역 설정', desc: 'OIDC SSO, 거버넌스 정책, 클러스터 연동 환경설정' }
+      ]
+    };
+
+    let currentCategory = 'overview';
+    let currentIndex = 0;
+
+    function switchCategory(cat) {
+      currentCategory = cat;
+      currentIndex = 0;
+
+      // Update Category Buttons
+      document.querySelectorAll('#categoryTabs .tab-btn').forEach((btn, idx) => {
+        btn.classList.toggle('active', btn.getAttribute('onclick').includes(cat));
+      });
+
+      renderSubTabs();
+      updateViewer();
+    }
+
+    function renderSubTabs() {
+      const container = document.getElementById('subTabs');
+      container.innerHTML = '';
+      const items = data[currentCategory];
+
+      items.forEach((item, idx) => {
+        const btn = document.createElement('button');
+        btn.className = `sub-tab-btn ${idx === currentIndex ? 'active' : ''}`;
+        btn.innerText = item.title;
+        btn.onclick = () => {
+          currentIndex = idx;
+          renderSubTabs();
+          updateViewer();
+        };
+        container.appendChild(btn);
+      });
+    }
+
+    function updateViewer() {
+      const item = data[currentCategory][currentIndex];
+      if (!item) return;
+
+      document.getElementById('viewerImage').src = item.img;
+      document.getElementById('viewerTitle').innerText = item.title;
+      document.getElementById('viewerDesc').innerText = item.desc;
+    }
+
+    // Initial load
+    renderSubTabs();
+    updateViewer();
+  </script>
+</body>
+</html>
