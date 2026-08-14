@@ -146,6 +146,29 @@ func (k *KubernetesSpawner) Spawn(ctx context.Context, spec Spec) error {
 	}
 	return nil
 }
+func (k *KubernetesSpawner) ensureSecret(ctx context.Context, coreClient kubernetes.Interface, namespace string, spec Spec) error {
+	existing, err := coreClient.CoreV1().Secrets(namespace).Get(ctx, spec.Runtime.CRDName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		tokenBytes := make([]byte, 32)
+		if _, randErr := rand.Read(tokenBytes); randErr != nil {
+			return randErr
+		}
+		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: spec.Runtime.CRDName, Namespace: namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "agenthub", "agenthub.io/runtime": spec.Runtime.CRDName}}, Type: corev1.SecretTypeOpaque, StringData: map[string]string{"runtime-token": base64.RawURLEncoding.EncodeToString(tokenBytes), "model-api-key": spec.ModelAPIKey}}
+		_, err = coreClient.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	if existing.Data == nil {
+		existing.Data = map[string][]byte{}
+	}
+	if spec.ModelAPIKey != "" || existing.Data["model-api-key"] == nil {
+		existing.Data["model-api-key"] = []byte(spec.ModelAPIKey)
+	}
+	_, err = coreClient.CoreV1().Secrets(namespace).Update(ctx, existing, metav1.UpdateOptions{})
+	return err
+}
 func (k *KubernetesSpawner) Start(ctx context.Context, spec Spec) error {
 	return k.setDesired(ctx, spec, "Running")
 }
@@ -153,7 +176,7 @@ func (k *KubernetesSpawner) Stop(ctx context.Context, spec Spec) error {
 	return k.setDesired(ctx, spec, "Stopped")
 }
 func (k *KubernetesSpawner) Restart(ctx context.Context, spec Spec) error {
-	client, _, settings, err := k.clients(ctx)
+	client, coreClient, settings, err := k.clients(ctx)
 	if err != nil {
 		return err
 	}
@@ -161,10 +184,15 @@ func (k *KubernetesSpawner) Restart(ctx context.Context, spec Spec) error {
 	if namespace == "" {
 		namespace = "agent-runtime-dev"
 	}
+	if coreClient != nil {
+		_ = k.ensureSecret(ctx, coreClient, namespace, spec)
+	}
 	object, err := client.Resource(runtimeGVR).Namespace(namespace).Get(ctx, spec.Runtime.CRDName, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
+	fresh := k.object(spec)
+	object.Object["spec"] = fresh.Object["spec"]
 	if object.GetAnnotations() == nil {
 		object.SetAnnotations(map[string]string{})
 	}
@@ -186,7 +214,7 @@ func (k *KubernetesSpawner) Delete(ctx context.Context, spec Spec) error {
 	return client.Resource(runtimeGVR).Namespace(namespace).Delete(ctx, spec.Runtime.CRDName, metav1.DeleteOptions{})
 }
 func (k *KubernetesSpawner) setDesired(ctx context.Context, spec Spec, state string) error {
-	client, _, settings, err := k.clients(ctx)
+	client, coreClient, settings, err := k.clients(ctx)
 	if err != nil {
 		return err
 	}
@@ -194,10 +222,15 @@ func (k *KubernetesSpawner) setDesired(ctx context.Context, spec Spec, state str
 	if namespace == "" {
 		namespace = "agent-runtime-dev"
 	}
+	if state == "Running" && coreClient != nil {
+		_ = k.ensureSecret(ctx, coreClient, namespace, spec)
+	}
 	object, err := client.Resource(runtimeGVR).Namespace(namespace).Get(ctx, spec.Runtime.CRDName, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
+	fresh := k.object(spec)
+	object.Object["spec"] = fresh.Object["spec"]
 	if err := unstructured.SetNestedField(object.Object, state, "spec", "lifecycle", "desiredState"); err != nil {
 		return err
 	}

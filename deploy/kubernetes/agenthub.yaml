@@ -31,7 +31,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: agenthub
-          image: agenthub:v0.1.7
+          image: agenthub:v0.1.9
           imagePullPolicy: IfNotPresent
           envFrom:
             - secretRef: {name: agenthub-bootstrap}
