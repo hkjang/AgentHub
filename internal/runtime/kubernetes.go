@@ -235,7 +235,7 @@ func (k *KubernetesSpawner) Logs(ctx context.Context, spec Spec, tail int64) ([]
 	if tail <= 0 {
 		tail = 200
 	}
-	request := client.CoreV1().Pods(namespace).GetLogs(spec.Runtime.PodName, &corev1.PodLogOptions{TailLines: &tail})
+	request := client.CoreV1().Pods(namespace).GetLogs(spec.Runtime.PodName, &corev1.PodLogOptions{Container: "agent", TailLines: &tail})
 	return request.DoRaw(ctx)
 }
 

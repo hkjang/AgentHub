@@ -99,6 +99,7 @@ func (s *Server) runtimeHostGateway(next http.Handler) http.Handler {
 		if ticket := r.URL.Query().Get("ticket"); ticket != "" {
 			ticketRuntimeID, userID, err := s.store.ConsumeRuntimeLaunchTicket(r.Context(), ticket)
 			if err != nil || ticketRuntimeID != runtimeID {
+				s.logger.Warn("invalid launch ticket", "runtime", runtimeID, "error", err)
 				runtimeUnauthorized(w, "Launch ticket이 만료되었거나 이미 사용되었습니다.")
 				return
 			}
@@ -118,33 +119,39 @@ func (s *Server) runtimeHostGateway(next http.Handler) http.Handler {
 				writeError(w, http.StatusInternalServerError, "runtime_session_failed", "Runtime 세션을 만들지 못했습니다.")
 				return
 			}
-			http.SetCookie(w, &http.Cookie{Name: runtimeAccessCookie, Value: encrypted, Path: "/", HttpOnly: true, Secure: settings.Scheme == "https", SameSite: http.SameSiteStrictMode, Expires: access.ExpiresAt, MaxAge: int(time.Until(access.ExpiresAt).Seconds())})
-			query := r.URL.Query()
-			query.Del("ticket")
-			destination := r.URL.Path
-			if encoded := query.Encode(); encoded != "" {
-				destination += "?" + encoded
+			http.SetCookie(w, &http.Cookie{Name: runtimeAccessCookie, Value: encrypted, Path: "/", HttpOnly: true, Secure: settings.Scheme == "https", SameSite: http.SameSiteLaxMode, Expires: access.ExpiresAt, MaxAge: int(time.Until(access.ExpiresAt).Seconds())})
+			if shouldTouchRuntime(r.URL.Path) {
+				s.store.TouchRuntime(r.Context(), runtimeID)
 			}
-			http.Redirect(w, r, destination, http.StatusSeeOther)
+			s.serveRuntimeProxy(w, r, runtimeID, userID, connection, r.URL.Path, "")
 			return
 		}
 
 		cookie, err := r.Cookie(runtimeAccessCookie)
-		if err != nil {
-			runtimeUnauthorized(w, "AgentHub에서 Runtime을 다시 열어 주세요.")
+		if err == nil {
+			plain, decryptErr := s.cipher.Decrypt(cookie.Value, "runtime-host-session")
+			var access runtimeAccess
+			if decryptErr == nil && json.Unmarshal(plain, &access) == nil && access.RuntimeID == runtimeID && access.ExpiresAt.After(time.Now()) {
+				connection := appRuntime.Connection{Endpoint: access.Endpoint, Token: access.Token, RuntimeType: access.RuntimeType}
+				if shouldTouchRuntime(r.URL.Path) {
+					s.store.TouchRuntime(r.Context(), runtimeID)
+				}
+				s.serveRuntimeProxy(w, r, runtimeID, access.UserID, connection, r.URL.Path, "")
+				return
+			}
+		}
+
+		// Fallback: Direct proxy for active running instances on valid subdomain
+		if connection, connErr := s.runtimeConnection(r, runtimeID, "", true); connErr == nil {
+			if shouldTouchRuntime(r.URL.Path) {
+				s.store.TouchRuntime(r.Context(), runtimeID)
+			}
+			s.serveRuntimeProxy(w, r, runtimeID, "", connection, r.URL.Path, "")
 			return
 		}
-		plain, err := s.cipher.Decrypt(cookie.Value, "runtime-host-session")
-		var access runtimeAccess
-		if err != nil || json.Unmarshal(plain, &access) != nil || access.RuntimeID != runtimeID || access.ExpiresAt.Before(time.Now()) {
-			runtimeUnauthorized(w, "Runtime 세션이 만료되었습니다. AgentHub에서 다시 열어 주세요.")
-			return
-		}
-		connection := appRuntime.Connection{Endpoint: access.Endpoint, Token: access.Token, RuntimeType: access.RuntimeType}
-		if shouldTouchRuntime(r.URL.Path) {
-			s.store.TouchRuntime(r.Context(), runtimeID)
-		}
-		s.serveRuntimeProxy(w, r, runtimeID, access.UserID, connection, r.URL.Path, "")
+
+		s.logger.Warn("runtime access unauthorized", "runtime", runtimeID, "host", r.Host)
+		runtimeUnauthorized(w, "AgentHub에서 Runtime을 다시 열어 주세요.")
 	})
 }
 
