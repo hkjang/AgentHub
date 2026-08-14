@@ -239,7 +239,10 @@ func (s *Store) ModelEndpointByID(ctx context.Context, id string) (ModelEndpoint
 		return item, "", nil
 	}
 	plain, err := s.cipher.Decrypt(*encrypted, "model-endpoint:"+item.ID)
-	return item, string(plain), err
+	if err != nil {
+		return item, "", nil
+	}
+	return item, string(plain), nil
 }
 func (s *Store) UpsertModelEndpoint(ctx context.Context, item ModelEndpoint, secret *string) (ModelEndpoint, error) {
 	if item.ID == "" {

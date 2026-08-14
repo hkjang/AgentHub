@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/hkjang/AgentHub/internal/store"
@@ -35,7 +36,8 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not_found", "요청한 리소스를 찾을 수 없습니다.")
 		return
 	}
-	writeError(w, http.StatusInternalServerError, "internal_error", "요청을 처리하지 못했습니다.")
+	slog.Error("store or runtime operation failed", "error", err)
+	writeError(w, http.StatusInternalServerError, "internal_error", "요청을 처리하지 못했습니다: "+err.Error())
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {

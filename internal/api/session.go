@@ -182,6 +182,11 @@ func (s *Server) serveRuntimeProxy(w http.ResponseWriter, r *http.Request, runti
 		request.Host = target.Host
 		request.Header.Del("Authorization")
 		request.Header.Del("Cookie")
+		request.Header.Del("Origin")
+		if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			request.Header.Set("Upgrade", "websocket")
+			request.Header.Set("Connection", "Upgrade")
+		}
 		if prefix != "" {
 			request.Header.Set("X-Forwarded-Prefix", prefix)
 		}
@@ -198,6 +203,9 @@ func (s *Server) serveRuntimeProxy(w http.ResponseWriter, r *http.Request, runti
 		}
 	}
 	proxy.ModifyResponse = func(response *http.Response) error {
+		if response.StatusCode == http.StatusSwitchingProtocols {
+			return nil
+		}
 		response.Header.Del("Set-Cookie")
 		response.Header.Set("X-AgentHub-Runtime-ID", runtimeID)
 		response.Header.Set("X-Content-Type-Options", "nosniff")

@@ -7,6 +7,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -26,9 +27,23 @@ func main() {
 	proxy.Director = func(request *http.Request) {
 		originalDirector(request)
 		request.Host = target.Host
+		request.Header.Set("Host", target.Host)
+		request.Header.Del("Origin")
+		request.Header.Del("X-Forwarded-For")
+		request.Header.Del("X-Forwarded-Host")
+		request.Header.Del("X-Forwarded-Proto")
+		request.Header.Del("X-Real-IP")
+		request.Header.Del("Forwarded")
 		request.Header.Del("Authorization")
+		if strings.EqualFold(request.Header.Get("Upgrade"), "websocket") {
+			request.Header.Set("Upgrade", "websocket")
+			request.Header.Set("Connection", "Upgrade")
+		}
 	}
 	proxy.ModifyResponse = func(response *http.Response) error {
+		if response.StatusCode == http.StatusSwitchingProtocols {
+			return nil
+		}
 		response.Header.Set("Cache-Control", "no-store")
 		response.Header.Set("X-Content-Type-Options", "nosniff")
 		return nil

@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama-bridge
+  namespace: agent-models
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama-bridge
+  template:
+    metadata:
+      labels:
+        app: ollama-bridge
+    spec:
+      hostNetwork: true
+      containers:
+        - name: bridge
+          image: agenthub-base:v0.1.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              python3 -c '
+              import http.server, socketserver, urllib.request, urllib.error
+              TARGET = "http://172.24.0.1:11434"
+              class H(http.server.BaseHTTPRequestHandler):
+                  def do_GET(self): self.p()
+                  def do_POST(self): self.p()
+                  def do_HEAD(self): self.p()
+                  def do_OPTIONS(self):
+                      self.send_response(200)
+                      self.send_header("Access-Control-Allow-Origin", "*")
+                      self.send_header("Access-Control-Allow-Methods", "*")
+                      self.send_header("Access-Control-Allow-Headers", "*")
+                      self.end_headers()
+                  def p(self):
+                      url = TARGET + self.path
+                      hdrs = {k: v for k, v in self.headers.items() if k.lower() not in ["host", "content-length"]}
+                      l = int(self.headers.get("Content-Length", 0))
+                      b = self.rfile.read(l) if l > 0 else None
+                      req = urllib.request.Request(url, data=b, headers=hdrs, method=self.command)
+                      try:
+                          with urllib.request.urlopen(req, timeout=180) as r:
+                              self.send_response(r.status)
+                              for k, v in r.headers.items():
+                                  if k.lower() not in ["content-length", "transfer-encoding", "connection"]:
+                                      self.send_header(k, v)
+                              self.end_headers()
+                              self.wfile.write(r.read())
+                      except urllib.error.HTTPError as e:
+                          self.send_response(e.code)
+                          self.end_headers()
+                          self.wfile.write(e.read())
+                      except Exception as e:
+                          self.send_response(502)
+                          self.end_headers()
+                          self.wfile.write(str(e).encode())
+              with socketserver.TCPServer(("0.0.0.0", 11435), H) as s:
+                  print("Bridge running on 11435")
+                  s.serve_forever()
+              '
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: agent-models
+spec:
+  selector:
+    app: ollama-bridge
+  ports:
+    - port: 11434
+      targetPort: 11435
+      name: http

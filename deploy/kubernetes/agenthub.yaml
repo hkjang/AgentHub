@@ -5,10 +5,10 @@ metadata:
   namespace: agent-platform-system
 type: Opaque
 stringData:
-  AGENTHUB_POSTGRES_DSN: postgres://agenthub:replace-me@postgres.internal:5432/agenthub
+  AGENTHUB_POSTGRES_DSN: postgres://agenthub:agenthub-local-database-password@host.minikube.internal:55434/agenthub?sslmode=disable
   AGENTHUB_BOOTSTRAP_ADMIN: admin
-  AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD: replace-with-at-least-12-characters
-  AGENTHUB_ENCRYPTION_KEY: replace-with-base64-encoded-32-byte-key
+  AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD: local-development-password
+  AGENTHUB_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -31,7 +31,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: agenthub
-          image: agenthub:v0.1.1
+          image: agenthub:v0.1.7
           imagePullPolicy: IfNotPresent
           envFrom:
             - secretRef: {name: agenthub-bootstrap}
