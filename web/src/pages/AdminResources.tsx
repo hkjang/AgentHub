@@ -360,6 +360,8 @@ function ResourceDrawer({
               >
                 <option value="opencode">OpenCode</option>
                 <option value="hermes">Hermes</option>
+                <option value="qwenpaw">Qwen Paw</option>
+                <option value="qwencode">Qwen Code</option>
                 <option value="custom">Custom</option>
               </select>
             </label>

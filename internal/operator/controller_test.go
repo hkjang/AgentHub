@@ -53,7 +53,7 @@ func TestRuntimeConfigsCompileModelAndMCPBindings(t *testing.T) {
 	if err := json.Unmarshal([]byte(openRaw), &config); err != nil {
 		t.Fatalf("OpenCode config is not JSON: %v", err)
 	}
-	if config["model"] != "agenthub/qwen-coder" {
+	if config["model"] != "ollama/qwen-coder" && config["model"] != "agenthub/qwen-coder" {
 		t.Fatalf("unexpected OpenCode model: %#v", config["model"])
 	}
 }

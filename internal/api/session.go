@@ -192,10 +192,10 @@ func (s *Server) serveRuntimeProxy(w http.ResponseWriter, r *http.Request, runti
 		}
 		request.Header.Set("X-AgentHub-User", userID)
 		username := "opencode"
-		if connection.RuntimeType == "hermes" {
+		if connection.RuntimeType == "hermes" || connection.RuntimeType == "qwenpaw" {
 			username = "agenthub"
 		}
-		if connection.RuntimeType == "opencode" || connection.RuntimeType == "hermes" {
+		if connection.RuntimeType == "opencode" || connection.RuntimeType == "qwencode" || connection.RuntimeType == "hermes" || connection.RuntimeType == "qwenpaw" {
 			credential := base64.StdEncoding.EncodeToString([]byte(username + ":" + connection.Token))
 			request.Header.Set("Authorization", "Basic "+credential)
 		} else {

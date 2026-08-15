@@ -4,6 +4,14 @@ import { api } from '../api'
 import { Drawer, Empty, ErrorBanner, Loading, PageHeader, StatusBadge } from '../components/UI'
 import type { Agent, RuntimeSession } from '../types'
 
+const getRuntimeCode = (type: string) => {
+  if (type === 'opencode') return 'OC'
+  if (type === 'qwencode') return 'QC'
+  if (type === 'qwenpaw') return 'QP'
+  if (type === 'hermes') return 'H'
+  return 'A'
+}
+
 export function Sessions() {
   const [sessions,setSessions] = useState<RuntimeSession[]>()
   const [agents,setAgents] = useState<Agent[]>([])
@@ -21,7 +29,7 @@ export function Sessions() {
   return <div className="page">
     <PageHeader eyebrow="AGENT WORKSPACE" title="Runtime Sessions" description="Agent별 작업 맥락과 실행 진입점을 분리해 관리합니다." actions={<button className="button primary" disabled={available.length===0} onClick={() => setOpen(true)}><Plus size={16}/>새 Session</button>}/>
     {error&&<ErrorBanner message={error}/>}
-    {sessions.length===0?<Empty icon={<FileCode2/>} title="Session이 없습니다" description="실행 중인 Runtime을 선택해 첫 작업 Session을 시작하세요." action={available.length?<button className="button primary" onClick={()=>setOpen(true)}>Session 시작</button>:undefined}/>:<section className="session-list">{sessions.map((item) => <article key={item.id}><div className={`runtime-logo ${item.runtimeType}`}>{item.runtimeType==='opencode'?'OC':'H'}</div><div><div><h3>{item.title}</h3><StatusBadge status={item.status}/></div><p>{item.agentName} · {item.runtimeType}</p><span>{new Date(item.updatedAt).toLocaleString('ko-KR')} · Trace {Array.isArray(item.trace)?item.trace.length:0}</span></div><div className="session-actions">{item.status==='active'&&<button className="button primary" onClick={()=>void launch(item.runtimeId)}><ExternalLink size={15}/>열기</button>}{item.status==='active'&&<button className="button ghost" onClick={()=>void close(item.id)}><Square size={14}/>종료</button>}</div></article>)}</section>}
+    {sessions.length===0?<Empty icon={<FileCode2/>} title="Session이 없습니다" description="실행 중인 Runtime을 선택해 첫 작업 Session을 시작하세요." action={available.length?<button className="button primary" onClick={()=>setOpen(true)}>Session 시작</button>:undefined}/>:<section className="session-list">{sessions.map((item) => <article key={item.id}><div className={`runtime-logo ${item.runtimeType}`}>{getRuntimeCode(item.runtimeType)}</div><div><div><h3>{item.title}</h3><StatusBadge status={item.status}/></div><p>{item.agentName} · {item.runtimeType}</p><span>{new Date(item.updatedAt).toLocaleString('ko-KR')} · Trace {Array.isArray(item.trace)?item.trace.length:0}</span></div><div className="session-actions">{item.status==='active'&&<button className="button primary" onClick={()=>void launch(item.runtimeId)}><ExternalLink size={15}/>열기</button>}{item.status==='active'&&<button className="button ghost" onClick={()=>void close(item.id)}><Square size={14}/>종료</button>}</div></article>)}</section>}
     {open&&<SessionDrawer agents={available} close={()=>setOpen(false)} done={()=>{setOpen(false);void load()}} error={setError}/>}
   </div>
 }

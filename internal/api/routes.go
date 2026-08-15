@@ -855,7 +855,7 @@ func (s *Server) saveEvaluationTestSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, test := range cases {
-		if strings.TrimSpace(test.Name) == "" || (test.ExpectedRuntime != "" && !slices.Contains([]string{"opencode", "hermes", "custom"}, test.ExpectedRuntime)) {
+		if strings.TrimSpace(test.Name) == "" || (test.ExpectedRuntime != "" && !slices.Contains([]string{"opencode", "hermes", "qwenpaw", "qwencode", "custom"}, test.ExpectedRuntime)) {
 			writeError(w, http.StatusBadRequest, "invalid_test_case", "검사 항목 이름과 Runtime 조건을 확인해 주세요.")
 			return
 		}
@@ -1147,7 +1147,7 @@ func (s *Server) saveRuntimeImage(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &item) {
 		return
 	}
-	if item.Name == "" || item.Image == "" || item.Version == "" || !slices.Contains([]string{"opencode", "hermes", "custom"}, item.RuntimeType) {
+	if item.Name == "" || item.Image == "" || item.Version == "" || !slices.Contains([]string{"opencode", "hermes", "qwenpaw", "qwencode", "custom"}, item.RuntimeType) {
 		writeError(w, 400, "invalid_image", "Runtime 유형, 이름, Image와 Version을 확인해 주세요.")
 		return
 	}
