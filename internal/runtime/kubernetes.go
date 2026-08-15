@@ -12,6 +12,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	apiresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -20,6 +21,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
+	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -81,7 +83,7 @@ func (k *KubernetesSpawner) object(spec Spec) *unstructured.Unstructured {
 	}
 	image := spec.Image
 	if image == "" {
-		image = "agenthub-base:v0.1.0"
+		image = DefaultBaseImage()
 	}
 	workspaceSize := spec.WorkspaceSizeGB
 	if workspaceSize <= 0 {
@@ -358,8 +360,8 @@ func (k *KubernetesSpawner) Connection(ctx context.Context, spec Spec) (Connecti
 	if endpoint == "" {
 		return Connection{}, errors.New("runtime endpoint is not available")
 	}
-	if spec.Agent.RuntimeType == "hermes" || spec.Agent.RuntimeType == "qwenpaw" {
-		endpoint = strings.Replace(endpoint, ":8642", ":9119", 1)
+	if runtimetype.UsesGatewayProxy(spec.Agent.RuntimeType) {
+		endpoint = strings.Replace(endpoint, fmt.Sprintf(":%d", runtimetype.Port(spec.Agent.RuntimeType)), fmt.Sprintf(":%d", runtimetype.GatewayPort), 1)
 	}
 	secret, err := coreClient.CoreV1().Secrets(namespace).Get(ctx, spec.Runtime.CRDName, metav1.GetOptions{})
 	if err != nil {
@@ -394,6 +396,19 @@ func (k *KubernetesSpawner) Snapshot(ctx context.Context, spec SnapshotSpec) err
 	if apierrors.IsAlreadyExists(err) {
 		return nil
 	}
+	return snapshotSupportError(err)
+}
+
+// snapshotSupportError distinguishes "this cluster has no CSI snapshot support"
+// from a real failure. The API server answers a request against a missing CRD
+// with a plain 404, which is otherwise indistinguishable from a missing object.
+func snapshotSupportError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if meta.IsNoMatchError(err) || apierrors.IsNotFound(err) {
+		return fmt.Errorf("%w: %v", ErrSnapshotsUnsupported, err)
+	}
 	return err
 }
 
@@ -411,7 +426,7 @@ func (k *KubernetesSpawner) SnapshotStatus(ctx context.Context, spec SnapshotSpe
 	}
 	object, err := client.Resource(volumeSnapshotGVR).Namespace(namespace).Get(ctx, spec.Name, metav1.GetOptions{})
 	if err != nil {
-		return "", 0, err
+		return "", 0, snapshotSupportError(err)
 	}
 	ready, _, _ := unstructured.NestedBool(object.Object, "status", "readyToUse")
 	if !ready {

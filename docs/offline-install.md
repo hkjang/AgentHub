@@ -8,13 +8,13 @@ On an internet-connected build host, create the release archives:
 make release-archives VERSION=0.1.0
 ```
 
-Transfer `agenthub-v0.1.0.tar.gz`, `agenthub-base-v0.1.0.tar.gz`,
+Transfer `agenthub-v0.3.1.tar.gz`, `agenthub-base-v0.3.1.tar.gz`,
 `compose.yaml`, and the Kubernetes manifests through the approved media path.
 On the offline host:
 
 ```bash
-docker load < agenthub-v0.1.0.tar.gz
-docker load < agenthub-base-v0.1.0.tar.gz
+docker load < agenthub-v0.3.1.tar.gz
+docker load < agenthub-base-v0.3.1.tar.gz
 export AGENTHUB_BOOTSTRAP_ADMIN=admin
 export AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD='a-long-unique-password'
 export AGENTHUB_ENCRYPTION_KEY="$(openssl rand -base64 32)"

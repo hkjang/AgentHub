@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/hkjang/AgentHub/internal/runtime"
+	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -387,11 +388,11 @@ func (s *Server) runtimeSpecContext(ctx context.Context, rt store.Runtime, agent
 			snapshotName = snapshot.StorageRef
 		}
 	}
-	version := strings.TrimSuffix(s.version.Version, "-dev")
-	image := "agenthub-base:v" + version
+	image := runtime.DefaultBaseImage()
 	if approved, imageErr := s.store.ApprovedRuntimeImage(ctx, agent.RuntimeType); imageErr == nil && approved.Image != "" {
 		if strings.HasPrefix(approved.Image, "registry.local/") {
-			image = "agenthub-base:v0.1.0"
+			// registry.local is the documentation placeholder, never a real mirror.
+			image = runtime.DefaultBaseImage()
 		} else {
 			image = approved.Image
 			if approved.Digest != "" {
@@ -570,6 +571,12 @@ func (s *Server) createWorkspaceSnapshot(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	err = s.spawner.Snapshot(r.Context(), runtime.SnapshotSpec{Name: item.StorageRef, PVCName: workspace.PVCName})
+	if errors.Is(err, runtime.ErrSnapshotsUnsupported) {
+		_ = s.store.UpdateWorkspaceSnapshotStatus(r.Context(), item.ID, "unsupported", 0)
+		s.logger.Warn("workspace snapshot unsupported", "workspace", workspace.ID, "error", err)
+		writeError(w, http.StatusServiceUnavailable, "snapshot_unsupported", "이 클러스터에는 CSI VolumeSnapshot이 설치되어 있지 않습니다. 관리자에게 snapshot.storage.k8s.io CRD와 Snapshot Controller 설치를 요청하세요.")
+		return
+	}
 	if err != nil && !errors.Is(err, runtime.ErrNotConfigured) {
 		_ = s.store.UpdateWorkspaceSnapshotStatus(r.Context(), item.ID, "failed", 0)
 		writeStoreError(w, err)
@@ -859,7 +866,7 @@ func (s *Server) saveEvaluationTestSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, test := range cases {
-		if strings.TrimSpace(test.Name) == "" || (test.ExpectedRuntime != "" && !slices.Contains([]string{"opencode", "hermes", "qwenpaw", "qwencode", "custom"}, test.ExpectedRuntime)) {
+		if strings.TrimSpace(test.Name) == "" || (test.ExpectedRuntime != "" && !runtimetype.IsSupported(test.ExpectedRuntime)) {
 			writeError(w, http.StatusBadRequest, "invalid_test_case", "검사 항목 이름과 Runtime 조건을 확인해 주세요.")
 			return
 		}
@@ -1151,7 +1158,7 @@ func (s *Server) saveRuntimeImage(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &item) {
 		return
 	}
-	if item.Name == "" || item.Image == "" || item.Version == "" || !slices.Contains([]string{"opencode", "hermes", "qwenpaw", "qwencode", "custom"}, item.RuntimeType) {
+	if item.Name == "" || item.Image == "" || item.Version == "" || !runtimetype.IsSupported(item.RuntimeType) {
 		writeError(w, 400, "invalid_image", "Runtime 유형, 이름, Image와 Version을 확인해 주세요.")
 		return
 	}

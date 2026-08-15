@@ -6,10 +6,13 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
+
+	"github.com/hkjang/AgentHub/internal/runtimetype"
 )
 
 func TestRuntimeConfigsCompileModelAndMCPBindings(t *testing.T) {
@@ -111,6 +114,68 @@ func TestHermesStatefulSetUsesLoopbackDashboardAndAuthenticatedProxy(t *testing.
 	}
 	if statefulSet.Spec.Template.Spec.AutomountServiceAccountToken == nil || *statefulSet.Spec.Template.Spec.AutomountServiceAccountToken {
 		t.Fatal("Runtime Pod must not receive a Kubernetes service account token")
+	}
+}
+
+func TestQwenPawStatefulSetIsFrontedByAuthenticatedProxy(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	controller := &Controller{client: client}
+	owner := &unstructured.Unstructured{}
+	owner.SetAPIVersion("agenthub.io/v1alpha1")
+	owner.SetKind("AgentRuntime")
+	owner.SetName("qwenpaw-runtime")
+	owner.SetNamespace("agent-runtime-dev")
+	owner.SetUID(types.UID("test-owner"))
+	var value spec
+	value.Owner = "user-1"
+	value.Runtime.Type = "qwenpaw"
+	value.Runtime.Image = "agenthub-base:v0.3.1"
+	value.Security.ReadOnlyRootFilesystem = true
+
+	if err := controller.ensureStatefulSet(context.Background(), "agent-runtime-dev", "qwenpaw-runtime", "qwenpaw-workspace", value, owner); err != nil {
+		t.Fatal(err)
+	}
+	statefulSet, err := client.AppsV1().StatefulSets("agent-runtime-dev").Get(context.Background(), "qwenpaw-runtime", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var agent, proxy *corev1.Container
+	for index, container := range statefulSet.Spec.Template.Spec.Containers {
+		switch container.Name {
+		case "agent":
+			agent = &statefulSet.Spec.Template.Spec.Containers[index]
+		case "qwenpaw-proxy":
+			proxy = &statefulSet.Spec.Template.Spec.Containers[index]
+		}
+	}
+	if agent == nil || !strings.Contains(strings.Join(agent.Args, " "), "qwenpaw app --host 0.0.0.0 --port 8642") {
+		t.Fatalf("QwenPaw agent container does not start the app: %#v", agent)
+	}
+	if proxy == nil || strings.Join(proxy.Command, " ") != "/usr/local/bin/agenthub-runtime-proxy" {
+		t.Fatalf("QwenPaw must be published through the authenticated proxy: %#v", proxy)
+	}
+	target := ""
+	for _, item := range proxy.Env {
+		if item.Name == "AGENTHUB_RUNTIME_PROXY_TARGET" {
+			target = item.Value
+		}
+	}
+	if target != "http://127.0.0.1:8642" {
+		t.Fatalf("proxy target = %q, want the loopback QwenPaw app", target)
+	}
+	if err := controller.ensureService(context.Background(), "agent-runtime-dev", "qwenpaw-runtime", value, owner); err != nil {
+		t.Fatal(err)
+	}
+	service, err := client.CoreV1().Services("agent-runtime-dev").Get(context.Background(), "qwenpaw-runtime", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	published := map[int32]bool{}
+	for _, port := range service.Spec.Ports {
+		published[port.Port] = true
+	}
+	if !published[runtimetype.GatewayPort] {
+		t.Fatalf("QwenPaw Service does not publish the proxy port: %#v", service.Spec.Ports)
 	}
 }
 

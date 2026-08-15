@@ -9,6 +9,7 @@ import {
   PageHeader,
   StatusBadge,
 } from "../components/UI";
+import { RUNTIME_TYPES, runtimeLabel } from "../runtime";
 
 type Kind = "profiles" | "images" | "models" | "mcp" | "bundles";
 type Item = Record<string, unknown> & {
@@ -162,7 +163,7 @@ function facts(kind: Kind, item: Item): [string, unknown][] {
     ];
   if (kind === "images")
     return [
-      ["Runtime", item.runtimeType],
+      ["Runtime", runtimeLabel(String(item.runtimeType ?? ""))],
       ["Version", item.version],
       ["Digest", item.digest || "미등록"],
     ];
@@ -358,11 +359,11 @@ function ResourceDrawer({
                 value={field("runtimeType")}
                 onChange={(e) => update("runtimeType", e.target.value)}
               >
-                <option value="opencode">OpenCode</option>
-                <option value="hermes">Hermes</option>
-                <option value="qwenpaw">Qwen Paw</option>
-                <option value="qwencode">Qwen Code</option>
-                <option value="custom">Custom</option>
+                {RUNTIME_TYPES.map((value) => (
+                  <option key={value} value={value}>
+                    {runtimeLabel(value)}
+                  </option>
+                ))}
               </select>
             </label>
             <label>

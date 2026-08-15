@@ -173,7 +173,8 @@ CREATE TABLE IF NOT EXISTS agent_templates (
   slug text NOT NULL UNIQUE,
   description text NOT NULL DEFAULT '',
   category text NOT NULL DEFAULT 'general',
-  runtime_type text NOT NULL CHECK (runtime_type IN ('opencode', 'hermes', 'qwenpaw', 'qwencode', 'custom')),
+  -- Keep in sync with internal/runtimetype.Supported and the CRD runtime enum.
+  runtime_type text NOT NULL CHECK (runtime_type IN ('opencode', 'hermes', 'qwenpaw', 'custom')),
   runtime_profile_id text REFERENCES runtime_profiles(id),
   runtime_image_id text REFERENCES runtime_images(id),
   security_profile_id text REFERENCES security_profiles(id),
@@ -220,7 +221,8 @@ CREATE TABLE IF NOT EXISTS agent_definitions (
   template_id text REFERENCES agent_templates(id) ON DELETE SET NULL,
   name text NOT NULL,
   description text NOT NULL DEFAULT '',
-  runtime_type text NOT NULL CHECK (runtime_type IN ('opencode', 'hermes', 'qwenpaw', 'qwencode', 'custom')),
+  -- Keep in sync with internal/runtimetype.Supported and the CRD runtime enum.
+  runtime_type text NOT NULL CHECK (runtime_type IN ('opencode', 'hermes', 'qwenpaw', 'custom')),
   runtime_profile_id text REFERENCES runtime_profiles(id),
   runtime_image_id text REFERENCES runtime_images(id),
   security_profile_id text REFERENCES security_profiles(id),

@@ -51,7 +51,8 @@ spec:
                   type: object
                   required: [type, image]
                   properties:
-                    type: {type: string, enum: [opencode, hermes, qwenpaw, qwencode, custom]}
+                    # Keep in sync with internal/runtimetype.Supported.
+                    type: {type: string, enum: [opencode, hermes, qwenpaw, custom]}
                     image: {type: string, minLength: 1}
                 profile:
                   type: object

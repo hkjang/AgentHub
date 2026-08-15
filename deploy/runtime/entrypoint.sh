@@ -2,10 +2,10 @@
 set -eu
 
 case "${AGENTHUB_RUNTIME_TYPE:-opencode}" in
-  opencode|qwencode)
+  opencode)
     exec opencode serve --hostname 0.0.0.0 --port 4096
     ;;
-  hermes|qwenpaw)
+  hermes)
     mkdir -p "${HERMES_HOME:-/home/agent/.hermes}"
     if [ -f "${HERMES_CONFIG:-/etc/agenthub/hermes-config.yaml}" ]; then
       cp "${HERMES_CONFIG:-/etc/agenthub/hermes-config.yaml}" "${HERMES_HOME:-/home/agent/.hermes}/config.yaml"
@@ -15,6 +15,14 @@ case "${AGENTHUB_RUNTIME_TYPE:-opencode}" in
     export API_SERVER_PORT=8642
     export API_SERVER_KEY="${API_SERVER_KEY:-${AGENTHUB_RUNTIME_TOKEN:?runtime token is required}}"
     exec /opt/hermes/.venv/bin/hermes gateway run --no-supervise
+    ;;
+  qwenpaw)
+    QWENPAW_HOME="${QWENPAW_HOME:-/home/agent/.qwenpaw}"
+    export QWENPAW_HOME
+    /usr/local/bin/agenthub-qwenpaw-configure || true
+    # Published through the agenthub-runtime-proxy sidecar, which enforces the
+    # runtime token; qwenpaw app itself has no authenticator.
+    exec /opt/qwenpaw/.venv/bin/qwenpaw app --host 0.0.0.0 --port 8642
     ;;
   custom)
     if [ -z "${AGENTHUB_CUSTOM_COMMAND:-}" ]; then

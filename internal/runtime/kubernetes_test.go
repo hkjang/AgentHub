@@ -2,8 +2,12 @@ package runtime
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/hkjang/AgentHub/internal/store"
 )
@@ -38,5 +42,19 @@ func TestLabelValue(t *testing.T) {
 	}
 	if got := labelValue(strings.Repeat("a", 100)); len(got) != 63 {
 		t.Fatalf("label length is %d, want 63", len(got))
+	}
+}
+
+func TestSnapshotSupportErrorClassifiesMissingCRD(t *testing.T) {
+	missing := apierrors.NewNotFound(schema.GroupResource{Group: "snapshot.storage.k8s.io", Resource: "volumesnapshots"}, "snap-1")
+	if !errors.Is(snapshotSupportError(missing), ErrSnapshotsUnsupported) {
+		t.Fatal("a missing VolumeSnapshot CRD must report snapshots as unsupported")
+	}
+	if snapshotSupportError(nil) != nil {
+		t.Fatal("no error must stay no error")
+	}
+	other := apierrors.NewForbidden(schema.GroupResource{Resource: "volumesnapshots"}, "snap-1", errors.New("denied"))
+	if errors.Is(snapshotSupportError(other), ErrSnapshotsUnsupported) {
+		t.Fatal("a permission failure must not be reported as unsupported")
 	}
 }

@@ -3,11 +3,35 @@ package runtime
 import (
 	"context"
 	"errors"
+	"os"
+	"strings"
 
+	"github.com/hkjang/AgentHub/internal/buildinfo"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
 var ErrNotConfigured = errors.New("Kubernetes runtime is not configured")
+
+// ErrSnapshotsUnsupported means the cluster has no CSI snapshot support: the
+// snapshot.storage.k8s.io CRDs are not installed. Workspace snapshots are an
+// optional capability, so this is reported separately from a genuine failure.
+var ErrSnapshotsUnsupported = errors.New("cluster does not provide CSI VolumeSnapshot support")
+
+// EnvDefaultBaseImage overrides the runtime base image used when an
+// administrator has not approved one in Admin ▸ Resources ▸ Images. Offline
+// sites that retag the bundled image need this escape hatch.
+const EnvDefaultBaseImage = "AGENTHUB_DEFAULT_RUNTIME_IMAGE"
+
+// DefaultBaseImage is the offline runtime image that ships alongside this
+// control plane build. `make image-base` tags it from the same VERSION file, so
+// deriving the tag here keeps a released control plane from requesting an image
+// tag that was never built.
+func DefaultBaseImage() string {
+	if override := strings.TrimSpace(os.Getenv(EnvDefaultBaseImage)); override != "" {
+		return override
+	}
+	return "agenthub-base:v" + strings.TrimSuffix(buildinfo.Version, "-dev")
+}
 
 type Spec struct {
 	Runtime                store.Runtime

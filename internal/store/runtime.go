@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/hkjang/AgentHub/internal/runtimetype"
 )
 
 type RuntimeProfile struct {
@@ -205,7 +207,6 @@ func (s *Store) SeedTemplates(ctx context.Context, adminID string) error {
 		{"OpenCode Developer", "opencode-developer", "Secure persistent coding workspace with Git and MCP tools.", "Development", "opencode", "rp-developer", "You are a careful enterprise software engineer. Inspect, test, and explain every change."},
 		{"Hermes Research", "hermes-research", "Long-running research agent with persistent memory.", "Research", "hermes", "rp-advanced", "Research the request using approved tools and cite the evidence used."},
 		{"Qwen Paw Assistant", "qwen-paw", "Autonomous agentic AI assistant powered by Qwen Paw for complex workflows and reasoning.", "Automation", "qwenpaw", "rp-basic", "You are an intelligent agentic assistant powered by Qwen Paw. Plan, orchestrate tools, and solve enterprise problems step-by-step."},
-		{"Qwen Code Engineer", "qwen-code", "High-performance coding agent specialized in full-stack architecture, refactoring, and code generation.", "Development", "qwencode", "rp-developer", "You are an expert software engineer powered by Qwen Coder. Produce production-ready, clean, secure, and tested code."},
 		{"IT Operator", "it-operator", "Policy-controlled operations assistant with approval gates.", "Operations", "hermes", "rp-basic", "Assist with IT operations. Request approval before any state-changing action."},
 	}
 	for _, item := range data {
@@ -446,7 +447,7 @@ type CreateAgentInput struct {
 }
 
 func (s *Store) CreateAgent(ctx context.Context, ownerID string, input CreateAgentInput) (Agent, error) {
-	if input.RuntimeType != "opencode" && input.RuntimeType != "hermes" && input.RuntimeType != "qwenpaw" && input.RuntimeType != "qwencode" && input.RuntimeType != "custom" {
+	if !runtimetype.IsSupported(input.RuntimeType) {
 		return Agent{}, errors.New("unsupported runtime type")
 	}
 	id := uuid.NewString()

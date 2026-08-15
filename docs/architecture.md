@@ -52,9 +52,14 @@ The Portal implements a common `Spawner` interface. Kubernetes is the default
 implementation and creates an `AgentRuntime` resource. Runtime-specific launch
 behavior lives in the offline `agenthub-base` image:
 
-- `opencode`: `opencode serve --hostname 0.0.0.0 --port 4096`
+- `opencode`: `opencode serve --hostname 0.0.0.0 --port 4096`, authenticated with `OPENCODE_SERVER_PASSWORD`
 - `hermes`: `hermes gateway run --no-supervise` with its authenticated API on 8642 and the loopback Dashboard/proxy pair on 9120/9119
+- `qwenpaw`: `qwenpaw app --host 0.0.0.0 --port 8642`; the app ships no authenticator, so it is published only through the `agenthub-runtime-proxy` sidecar on 9119
 - `custom`: an administrator-approved image and command
+
+`internal/runtimetype` is the single source of truth for this list. Changing it
+means updating the CRD enum in `deploy/kubernetes/crd.yaml` and the
+`runtime_type` CHECK constraints in the initial migration to match.
 
 The Operator compiles each selected MCP Bundle into native runtime configuration:
 
@@ -65,4 +70,6 @@ The Operator compiles each selected MCP Bundle into native runtime configuration
   NetworkPolicy owned by the same `AgentRuntime` CRD.
 
 OpenCode receives the generated configuration through `OPENCODE_CONFIG`;
-Hermes receives a generated `config.yaml` under its isolated `HERMES_HOME`.
+Hermes receives a generated `config.yaml` under its isolated `HERMES_HOME`;
+QwenPaw is initialised with `qwenpaw init --defaults` and receives the model
+binding as an `.env` file under `QWENPAW_HOME`.

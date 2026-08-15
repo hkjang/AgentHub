@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
-# One offline runtime image contains both supported adapters. Pin these build args
-# to approved versions for reproducible enterprise releases.
+# One offline runtime image carries every supported adapter (OpenCode, Hermes,
+# QwenPaw). Pin these build args to approved versions for reproducible releases.
 ARG HERMES_VERSION=v2026.7.1
 FROM golang:1.25-bookworm AS proxy-build
 WORKDIR /src
@@ -16,15 +16,19 @@ RUN apt-get update \
  && npm install --global "opencode-ai@${OPENCODE_VERSION}" \
  && npm cache clean --force \
  && rm -rf /var/lib/apt/lists/* \
- && mkdir -p /workspace /home/agent/.config/opencode /home/agent/.hermes /tmp \
- && chown -R 10000:10000 /workspace /home/agent
+ && uv venv /opt/qwenpaw/.venv \
+ && uv pip install --python /opt/qwenpaw/.venv/bin/python qwenpaw agentscope \
+ && mkdir -p /workspace /home/agent/.config/opencode /home/agent/.hermes /home/agent/.qwenpaw /tmp \
+ && chown -R 10000:10000 /workspace /home/agent /opt/qwenpaw
 COPY deploy/runtime/entrypoint.sh /usr/local/bin/agenthub-runtime
+COPY deploy/runtime/qwenpaw-configure.sh /usr/local/bin/agenthub-qwenpaw-configure
 COPY --from=proxy-build /out/agenthub-runtime-proxy /usr/local/bin/agenthub-runtime-proxy
-RUN chmod 0755 /usr/local/bin/agenthub-runtime /usr/local/bin/agenthub-runtime-proxy
+RUN chmod 0755 /usr/local/bin/agenthub-runtime /usr/local/bin/agenthub-qwenpaw-configure /usr/local/bin/agenthub-runtime-proxy
 USER 10000:10000
 WORKDIR /workspace
 ENV HOME=/home/agent \
     HERMES_HOME=/home/agent/.hermes \
+    QWENPAW_HOME=/home/agent/.qwenpaw \
     OPENCODE_CONFIG_DIR=/home/agent/.config/opencode \
     AGENTHUB_RUNTIME_TYPE=opencode
 EXPOSE 4096 8642 9119

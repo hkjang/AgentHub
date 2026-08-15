@@ -28,6 +28,8 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+
+	"github.com/hkjang/AgentHub/internal/runtimetype"
 )
 
 var runtimeGVR = schema.GroupVersionResource{Group: "agenthub.io", Version: "v1alpha1", Resource: "agentruntimes"}
@@ -189,7 +191,7 @@ func parseSpec(object *unstructured.Unstructured) (spec, error) {
 	if err := json.Unmarshal(data, &value); err != nil {
 		return spec{}, err
 	}
-	if value.Runtime.Type != "opencode" && value.Runtime.Type != "hermes" && value.Runtime.Type != "qwenpaw" && value.Runtime.Type != "qwencode" && value.Runtime.Type != "custom" {
+	if !runtimetype.IsSupported(value.Runtime.Type) {
 		return spec{}, fmt.Errorf("unsupported runtime type %q", value.Runtime.Type)
 	}
 	if value.Runtime.Image == "" {
@@ -451,17 +453,13 @@ func (c *Controller) ensurePVC(ctx context.Context, ns, name string, value spec,
 	_, err = c.client.CoreV1().PersistentVolumeClaims(ns).Create(ctx, desired, metav1.CreateOptions{})
 	return err
 }
-func runtimePort(runtimeType string) int32 {
-	if runtimeType == "hermes" || runtimeType == "qwenpaw" {
-		return 8642
-	}
-	return 4096
-}
+func runtimePort(rt string) int32 { return runtimetype.Port(rt) }
+
 func (c *Controller) ensureService(ctx context.Context, ns, name string, value spec, owner *unstructured.Unstructured) error {
 	port := runtimePort(value.Runtime.Type)
 	ports := []corev1.ServicePort{{Name: "http", Port: port, TargetPort: intstrFromInt32(port)}}
-	if value.Runtime.Type == "hermes" || value.Runtime.Type == "qwenpaw" {
-		ports = append(ports, corev1.ServicePort{Name: "dashboard", Port: 9119, TargetPort: intstrFromInt32(9119)})
+	if runtimetype.UsesGatewayProxy(value.Runtime.Type) {
+		ports = append(ports, corev1.ServicePort{Name: "dashboard", Port: runtimetype.GatewayPort, TargetPort: intstrFromInt32(runtimetype.GatewayPort)})
 	}
 	desired := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels(name, nil), OwnerReferences: ownerRef(owner)}, Spec: corev1.ServiceSpec{Selector: map[string]string{"agenthub.io/runtime": name}, Ports: ports}}
 	existing, err := c.client.CoreV1().Services(ns).Get(ctx, name, metav1.GetOptions{})
@@ -481,6 +479,29 @@ func (c *Controller) ensureService(ctx context.Context, ns, name string, value s
 	return err
 }
 func intstrFromInt32(value int32) intstr.IntOrString { return intstr.FromInt32(value) }
+
+// runtimeProxyContainer fronts a loopback-only runtime UI with the sidecar that
+// enforces Basic auth against the per-runtime token, so unauthenticated traffic
+// never reaches the agent application itself.
+func runtimeProxyContainer(containerName, runtimeName, image, target string) corev1.Container {
+	port := runtimetype.GatewayPort
+	return corev1.Container{
+		Name:            containerName,
+		Image:           image,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{"/usr/local/bin/agenthub-runtime-proxy"},
+		Ports:           []corev1.ContainerPort{{Name: "dashboard", ContainerPort: port}},
+		Env: []corev1.EnvVar{
+			{Name: "AGENTHUB_RUNTIME_PROXY_LISTEN", Value: fmt.Sprintf(":%d", port)},
+			{Name: "AGENTHUB_RUNTIME_PROXY_TARGET", Value: target},
+			{Name: "AGENTHUB_RUNTIME_PROXY_TOKEN", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: runtimeName}, Key: "runtime-token"}}},
+		},
+		Resources:       corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("10m"), corev1.ResourceMemory: apiresource.MustParse("32Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("200m"), corev1.ResourceMemory: apiresource.MustParse("256Mi")}},
+		SecurityContext: restrictedContainerSecurityContext(true),
+		ReadinessProbe:  &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/healthz", Port: intstr.FromInt32(port)}}, InitialDelaySeconds: 3, PeriodSeconds: 5, FailureThreshold: 12},
+		LivenessProbe:   &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/livez", Port: intstr.FromInt32(port)}}, InitialDelaySeconds: 15, PeriodSeconds: 15, FailureThreshold: 4},
+	}
+}
 
 func restrictedContainerSecurityContext(readOnly bool) *corev1.SecurityContext {
 	nonRoot, allowPrivilegeEscalation := true, false
@@ -530,8 +551,8 @@ func (c *Controller) ensureNetworkPolicy(ctx context.Context, ns, name string, v
 	}
 	port := intstr.FromInt32(runtimePort(value.Runtime.Type))
 	ingressPorts := []networkingv1.NetworkPolicyPort{{Protocol: ptr(corev1.ProtocolTCP), Port: &port}}
-	if value.Runtime.Type == "hermes" || value.Runtime.Type == "qwenpaw" {
-		dashboardPort := intstr.FromInt32(9119)
+	if runtimetype.UsesGatewayProxy(value.Runtime.Type) {
+		dashboardPort := intstr.FromInt32(runtimetype.GatewayPort)
 		ingressPorts = append(ingressPorts, networkingv1.NetworkPolicyPort{Protocol: ptr(corev1.ProtocolTCP), Port: &dashboardPort})
 	}
 	udp := corev1.ProtocolUDP
@@ -767,25 +788,28 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 	}
 	requests := corev1.ResourceList{corev1.ResourceCPU: *apiresource.NewMilliQuantity(reqCPU, apiresource.DecimalSI), corev1.ResourceMemory: *apiresource.NewQuantity(reqMemory*1024*1024, apiresource.BinarySI)}
 	limits := corev1.ResourceList{corev1.ResourceCPU: *apiresource.NewMilliQuantity(cpu, apiresource.DecimalSI), corev1.ResourceMemory: *apiresource.NewQuantity(memory*1024*1024, apiresource.BinarySI)}
-	env := []corev1.EnvVar{{Name: "AGENTHUB_RUNTIME_TYPE", Value: value.Runtime.Type}, {Name: "AGENTHUB_MODEL_BASE_URL", Value: value.Model.BaseURL}, {Name: "AGENTHUB_RUNTIME_CONFIG", Value: "/etc/agenthub/runtime.json"}, {Name: "OPENCODE_CONFIG", Value: "/etc/agenthub/opencode.json"}, {Name: "HERMES_CONFIG", Value: "/etc/agenthub/hermes-config.yaml"}, {Name: "AGENTHUB_RUNTIME_TOKEN", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "runtime-token"}}}}
+	env := []corev1.EnvVar{{Name: "AGENTHUB_RUNTIME_TYPE", Value: value.Runtime.Type}, {Name: "AGENTHUB_MODEL_BASE_URL", Value: value.Model.BaseURL}, {Name: "AGENTHUB_RUNTIME_CONFIG", Value: "/etc/agenthub/runtime.json"}, {Name: "OPENCODE_CONFIG", Value: "/etc/agenthub/opencode.json"}, {Name: "HERMES_CONFIG", Value: "/etc/agenthub/hermes-config.yaml"}, {Name: "HOME", Value: "/home/agent"}, {Name: "QWENPAW_HOME", Value: "/home/agent/.qwenpaw"}, {Name: "AGENTHUB_RUNTIME_TOKEN", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "runtime-token"}}}}
 	env = append(env, corev1.EnvVar{Name: "AGENTHUB_MODEL_NAME", Value: value.Model.Name}, corev1.EnvVar{Name: "OPENAI_BASE_URL", Value: value.Model.BaseURL}, corev1.EnvVar{Name: "OPENAI_API_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "model-api-key"}}})
-	if value.Runtime.Type == "opencode" || value.Runtime.Type == "qwencode" {
+	if value.Runtime.Type == "opencode" {
 		env = append(env,
 			corev1.EnvVar{Name: "OPENCODE_SERVER_PASSWORD", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "runtime-token"}}},
 			corev1.EnvVar{Name: "OLLAMA_HOST", Value: value.Model.BaseURL},
 			corev1.EnvVar{Name: "OPENCODE_CONFIG_DIR", Value: "/home/agent/.config/opencode"},
 		)
-	} else if value.Runtime.Type == "hermes" || value.Runtime.Type == "qwenpaw" {
+	} else if value.Runtime.Type == "hermes" {
 		env = append(env, corev1.EnvVar{Name: "API_SERVER_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "runtime-token"}}})
 	}
 	var agentCmd []string
 	var agentArgs []string
-	if value.Runtime.Type == "opencode" || value.Runtime.Type == "qwencode" {
+	if value.Runtime.Type == "opencode" {
 		agentCmd = []string{"opencode"}
 		agentArgs = []string{"serve", "--hostname", "0.0.0.0", "--port", "4096"}
-	} else if value.Runtime.Type == "hermes" || value.Runtime.Type == "qwenpaw" {
+	} else if value.Runtime.Type == "hermes" {
 		agentCmd = []string{"/bin/sh", "-ec"}
 		agentArgs = []string{"mkdir -p /home/agent/.hermes\nif [ -f /etc/agenthub/hermes-config.yaml ]; then cp /etc/agenthub/hermes-config.yaml /home/agent/.hermes/config.yaml; fi\nexport API_SERVER_ENABLED=true\nexport API_SERVER_HOST=0.0.0.0\nexport API_SERVER_PORT=8642\nexport API_SERVER_KEY=\"${API_SERVER_KEY:-${AGENTHUB_RUNTIME_TOKEN:-}}\"\nexec /opt/hermes/.venv/bin/hermes gateway run --no-supervise"}
+	} else if value.Runtime.Type == "qwenpaw" {
+		agentCmd = []string{"/bin/sh", "-ec"}
+		agentArgs = []string{"/usr/local/bin/agenthub-qwenpaw-configure || true\nexec /opt/qwenpaw/.venv/bin/qwenpaw app --host 0.0.0.0 --port 8642"}
 	}
 	agentContainer := corev1.Container{
 		Name:            "agent",
@@ -802,21 +826,30 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 		LivenessProbe:   &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)}}, InitialDelaySeconds: 20, PeriodSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 4},
 	}
 	containers := []corev1.Container{agentContainer}
-	if value.Runtime.Type == "hermes" || value.Runtime.Type == "qwenpaw" {
+	switch value.Runtime.Type {
+	case "hermes":
+		// The Hermes Dashboard has no authenticator, so it binds to loopback and
+		// is published only through the token-enforcing runtime proxy.
 		dashboardResources := corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("100m"), corev1.ResourceMemory: apiresource.MustParse("128Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("1000m"), corev1.ResourceMemory: apiresource.MustParse("1024Mi")}}
-		proxyResources := corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("10m"), corev1.ResourceMemory: apiresource.MustParse("32Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("200m"), corev1.ResourceMemory: apiresource.MustParse("256Mi")}}
 		containers = append(containers,
 			corev1.Container{Name: "hermes-dashboard", Image: value.Runtime.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/opt/hermes/.venv/bin/hermes"}, Args: []string{"dashboard", "--host", "127.0.0.1", "--port", "9120", "--no-open"}, Env: []corev1.EnvVar{{Name: "HERMES_HOME", Value: "/home/agent/.hermes"}, {Name: "API_SERVER_URL", Value: "http://127.0.0.1:8642"}, {Name: "API_SERVER_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "runtime-token"}}}}, Resources: dashboardResources, SecurityContext: restrictedContainerSecurityContext(value.Security.ReadOnlyRootFilesystem), VolumeMounts: []corev1.VolumeMount{{Name: "home", MountPath: "/home/agent"}, {Name: "tmp", MountPath: "/tmp"}, {Name: "config", MountPath: "/etc/agenthub", ReadOnly: true}}},
-			corev1.Container{Name: "hermes-dashboard-proxy", Image: value.Runtime.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/usr/local/bin/agenthub-runtime-proxy"}, Ports: []corev1.ContainerPort{{Name: "dashboard", ContainerPort: 9119}}, Env: []corev1.EnvVar{{Name: "AGENTHUB_RUNTIME_PROXY_LISTEN", Value: ":9119"}, {Name: "AGENTHUB_RUNTIME_PROXY_TARGET", Value: "http://127.0.0.1:9120"}, {Name: "AGENTHUB_RUNTIME_PROXY_TOKEN", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "runtime-token"}}}}, Resources: proxyResources, SecurityContext: restrictedContainerSecurityContext(true), ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/healthz", Port: intstr.FromInt32(9119)}}, InitialDelaySeconds: 3, PeriodSeconds: 5, FailureThreshold: 12}, LivenessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/livez", Port: intstr.FromInt32(9119)}}, InitialDelaySeconds: 15, PeriodSeconds: 15, FailureThreshold: 4}},
+			runtimeProxyContainer("hermes-dashboard-proxy", name, value.Runtime.Image, "http://127.0.0.1:9120"),
 		)
+	case "qwenpaw":
+		// `qwenpaw app` ships no authenticator either; the same proxy fronts it so
+		// that every browser session still has to present the runtime token.
+		containers = append(containers, runtimeProxyContainer("qwenpaw-proxy", name, value.Runtime.Image, "http://127.0.0.1:8642"))
 	}
 	containers = append(containers, sidecarContainers(value)...)
 	initContainers := []corev1.Container{}
-	if value.Runtime.Type == "opencode" || value.Runtime.Type == "qwencode" {
+	if value.Runtime.Type == "opencode" {
 		initContainers = append(initContainers, corev1.Container{Name: "opencode-config-init", Image: value.Runtime.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/sh", "-ec"}, Args: []string{"mkdir -p /home/agent/.config/opencode\ncp /etc/agenthub/opencode.json /home/agent/.config/opencode/opencode.json\ncp /etc/agenthub/opencode.json /home/agent/.config/opencode/config.json\ncp /etc/agenthub/opencode.json /home/agent/.opencode.json\nif [ -n \"$OPENAI_BASE_URL\" ]; then\n  printf 'OPENAI_BASE_URL=%s\\nOPENAI_API_KEY=%s\\nOLLAMA_HOST=%s\\nMODEL=%s\\nOPENAI_MODEL=%s\\n' \"$OPENAI_BASE_URL\" \"$OPENAI_API_KEY\" \"$OPENAI_BASE_URL\" \"$AGENTHUB_MODEL_NAME\" \"$AGENTHUB_MODEL_NAME\" > /home/agent/.config/opencode/.env\nfi"}, Env: env, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("10m"), corev1.ResourceMemory: apiresource.MustParse("32Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("200m"), corev1.ResourceMemory: apiresource.MustParse("256Mi")}}, SecurityContext: restrictedContainerSecurityContext(value.Security.ReadOnlyRootFilesystem), VolumeMounts: []corev1.VolumeMount{{Name: "home", MountPath: "/home/agent"}, {Name: "config", MountPath: "/etc/agenthub", ReadOnly: true}, {Name: "tmp", MountPath: "/tmp"}}})
 	}
-	if value.Runtime.Type == "hermes" || value.Runtime.Type == "qwenpaw" {
+	if value.Runtime.Type == "hermes" {
 		initContainers = append(initContainers, corev1.Container{Name: "hermes-config-init", Image: value.Runtime.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/sh", "-ec"}, Args: []string{"mkdir -p /home/agent/.hermes\ncp /etc/agenthub/hermes-config.yaml /home/agent/.hermes/config.yaml\nif [ -n \"$OPENAI_BASE_URL\" ] && [ -n \"$AGENTHUB_MODEL_NAME\" ]; then\n  /opt/hermes/.venv/bin/hermes config set model.default \"$AGENTHUB_MODEL_NAME\" || true\n  /opt/hermes/.venv/bin/hermes config set model.provider custom || true\n  /opt/hermes/.venv/bin/hermes config set model.base_url \"$OPENAI_BASE_URL\" || true\n  /opt/hermes/.venv/bin/hermes config set model.api_key \"$OPENAI_API_KEY\" || true\n  printf 'OPENAI_BASE_URL=%s\\nOPENAI_API_KEY=%s\\nCUSTOM_BASE_URL=%s\\nCUSTOM_API_KEY=%s\\nHERMES_MODEL=%s\\nMODEL=%s\\n' \"$OPENAI_BASE_URL\" \"$OPENAI_API_KEY\" \"$OPENAI_BASE_URL\" \"$OPENAI_API_KEY\" \"$AGENTHUB_MODEL_NAME\" \"$AGENTHUB_MODEL_NAME\" > /home/agent/.hermes/.env\nfi"}, Env: env, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("10m"), corev1.ResourceMemory: apiresource.MustParse("32Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("200m"), corev1.ResourceMemory: apiresource.MustParse("256Mi")}}, SecurityContext: restrictedContainerSecurityContext(value.Security.ReadOnlyRootFilesystem), VolumeMounts: []corev1.VolumeMount{{Name: "home", MountPath: "/home/agent"}, {Name: "config", MountPath: "/etc/agenthub", ReadOnly: true}, {Name: "tmp", MountPath: "/tmp"}}})
+	}
+	if value.Runtime.Type == "qwenpaw" {
+		initContainers = append(initContainers, corev1.Container{Name: "qwenpaw-config-init", Image: value.Runtime.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/usr/local/bin/agenthub-qwenpaw-configure"}, Env: env, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("10m"), corev1.ResourceMemory: apiresource.MustParse("32Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("500m"), corev1.ResourceMemory: apiresource.MustParse("512Mi")}}, SecurityContext: restrictedContainerSecurityContext(value.Security.ReadOnlyRootFilesystem), VolumeMounts: []corev1.VolumeMount{{Name: "home", MountPath: "/home/agent"}, {Name: "tmp", MountPath: "/tmp"}}})
 	}
 	if value.Workspace.Type == "git" && value.Workspace.RepositoryURL != "" {
 		initContainers = append(initContainers, corev1.Container{Name: "workspace-git-clone", Image: value.Runtime.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/sh", "-ec"}, Args: []string{`if [ ! -d /workspace/.git ] && [ -z "$(ls -A /workspace 2>/dev/null)" ]; then
