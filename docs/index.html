@@ -230,92 +230,172 @@
       font-size: 1.1rem;
     }
 
+    /* Custom Scrollbars */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(15, 23, 42, 0.6);
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(59, 130, 246, 0.35);
+      border-radius: 9999px;
+      transition: background 0.2s;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(59, 130, 246, 0.7);
+    }
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(59, 130, 246, 0.35) rgba(15, 23, 42, 0.6);
+    }
+
     .gallery-container {
       background: var(--bg-surface);
       border: 1px solid var(--border-color);
-      border-radius: 16px;
-      padding: 24px;
-      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+      border-radius: 18px;
+      padding: 28px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+      position: relative;
+    }
+    .tabs-wrapper {
+      position: relative;
+      margin-bottom: 20px;
     }
     .tabs-header {
       display: flex;
-      gap: 8px;
+      gap: 10px;
       overflow-x: auto;
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--border-color);
-      margin-bottom: 20px;
+      scroll-behavior: smooth;
+      padding-bottom: 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      -webkit-overflow-scrolling: touch;
     }
     .tab-btn {
-      background: transparent;
-      border: none;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
       color: var(--text-muted);
       padding: 10px 18px;
-      font-size: 0.95rem;
+      font-size: 0.92rem;
       font-weight: 600;
-      border-radius: 8px;
+      border-radius: 10px;
       cursor: pointer;
       white-space: nowrap;
-      transition: all 0.2s;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
     }
     .tab-btn:hover {
       color: #fff;
-      background: rgba(255, 255, 255, 0.05);
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.15);
+      transform: translateY(-1px);
     }
     .tab-btn.active {
       color: #fff;
-      background: var(--primary);
-      box-shadow: 0 2px 10px var(--primary-glow);
+      background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+      border-color: #60a5fa;
+      box-shadow: 0 4px 16px var(--primary-glow);
     }
     .screenshot-viewer {
       position: relative;
-      border-radius: 10px;
+      border-radius: 14px;
       overflow: hidden;
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.12);
       background: #020617;
+      box-shadow: 0 15px 30px rgba(0, 0, 0, 0.5);
+    }
+    .viewer-window-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      background: #090d1a;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .window-dots {
+      display: flex;
+      gap: 6px;
+    }
+    .window-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    .window-title {
+      font-size: 0.82rem;
+      font-family: var(--font-mono);
+      color: #64748b;
     }
     .screenshot-viewer img {
       width: 100%;
       height: auto;
       display: block;
+      transition: opacity 0.2s ease-in-out;
     }
     .screenshot-info {
-      margin-top: 16px;
+      margin-top: 18px;
       display: flex;
       justify-content: space-between;
       align-items: center;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 16px 20px;
     }
     .screenshot-info h4 {
-      font-size: 1.1rem;
+      font-size: 1.15rem;
+      font-weight: 700;
       color: #fff;
+      margin-bottom: 4px;
     }
     .screenshot-info p {
-      font-size: 0.9rem;
+      font-size: 0.92rem;
       color: var(--text-muted);
     }
 
-    /* Sub Tabs (Thumbnails) */
+    /* Sub Tabs (Thumbnails / Item Chips) */
+    .sub-tabs-wrapper {
+      position: relative;
+      margin: 18px 0;
+    }
     .sub-tabs {
       display: flex;
-      gap: 10px;
-      margin-top: 16px;
+      gap: 8px;
       overflow-x: auto;
-      padding-bottom: 8px;
+      scroll-behavior: smooth;
+      padding: 4px 2px 10px;
+      -webkit-overflow-scrolling: touch;
     }
     .sub-tab-btn {
       background: var(--bg-card);
       border: 1px solid var(--border-color);
       color: var(--text-muted);
-      padding: 6px 14px;
-      border-radius: 6px;
-      font-size: 0.85rem;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 0.86rem;
+      font-weight: 500;
       cursor: pointer;
       white-space: nowrap;
-      transition: all 0.2s;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .sub-tab-btn:hover {
+      color: #f8fafc;
+      background: var(--bg-card-hover);
+      border-color: rgba(96, 165, 250, 0.4);
     }
     .sub-tab-btn.active {
-      background: rgba(59, 130, 246, 0.2);
-      border-color: var(--primary);
-      color: #fff;
+      background: rgba(59, 130, 246, 0.22);
+      border-color: #3b82f6;
+      color: #60a5fa;
+      font-weight: 600;
+      box-shadow: 0 0 12px rgba(59, 130, 246, 0.2);
     }
 
     /* Code Snippet Box */
@@ -459,27 +539,43 @@
 
       <div class="gallery-container">
         <!-- Main Category Tabs -->
-        <div class="tabs-header" id="categoryTabs">
-          <button class="tab-btn active" onclick="switchCategory('live')">🌟 Live K8s & Ollama</button>
-          <button class="tab-btn" onclick="switchCategory('overview')">1. Overview & Dashboard</button>
-          <button class="tab-btn" onclick="switchCategory('agents')">2. Agents & Builder</button>
-          <button class="tab-btn" onclick="switchCategory('workspaces')">3. Workspaces & Snapshots</button>
-          <button class="tab-btn" onclick="switchCategory('workflows')">4. Workflows & MCP</button>
-          <button class="tab-btn" onclick="switchCategory('developer')">5. Developer Vault & API</button>
-          <button class="tab-btn" onclick="switchCategory('admin')">6. Administration & Control</button>
+        <div class="tabs-wrapper">
+          <div class="tabs-header" id="categoryTabs">
+            <button class="tab-btn active" onclick="switchCategory('live')">🌟 Live K8s & Ollama</button>
+            <button class="tab-btn" onclick="switchCategory('overview')">1. Overview & Dashboard</button>
+            <button class="tab-btn" onclick="switchCategory('agents')">2. Agents & Builder</button>
+            <button class="tab-btn" onclick="switchCategory('workspaces')">3. Workspaces & Snapshots</button>
+            <button class="tab-btn" onclick="switchCategory('workflows')">4. Workflows & MCP</button>
+            <button class="tab-btn" onclick="switchCategory('developer')">5. Developer Vault & API</button>
+            <button class="tab-btn" onclick="switchCategory('admin')">6. Administration & Control</button>
+          </div>
         </div>
 
-        <!-- Sub Item Tabs -->
-        <div class="sub-tabs" id="subTabs"></div>
+        <!-- Sub Item Tabs (Horizontal Scrollable Chips) -->
+        <div class="sub-tabs-wrapper">
+          <div class="sub-tabs" id="subTabs"></div>
+        </div>
 
-        <!-- Viewer -->
-        <div class="screenshot-viewer" style="margin-top: 16px;">
-          <img id="viewerImage" src="screenshots/07_hermes_workspace_chat.png" alt="AgentHub 콘솔">
+        <!-- Viewer with Mac-style Window Frame -->
+        <div class="screenshot-viewer">
+          <div class="viewer-window-bar">
+            <div class="window-dots">
+              <div class="window-dot" style="background: #ef4444;"></div>
+              <div class="window-dot" style="background: #f59e0b;"></div>
+              <div class="window-dot" style="background: #10b981;"></div>
+            </div>
+            <div class="window-title" id="windowTitle">AgentHub Console · Live Runtime</div>
+            <div style="font-size: 0.8rem; color: #60a5fa; font-weight: 500;">Kubernetes v1.30+</div>
+          </div>
+          <img id="viewerImage" src="screenshots/07_hermes_workspace_chat.png" alt="AgentHub 콘솔" style="opacity: 1;">
         </div>
         <div class="screenshot-info">
           <div>
             <h4 id="viewerTitle">Hermes Live Workspace & Ollama 추론</h4>
             <p id="viewerDesc">로컬 Ollama Gemma 4 모델과 실시간 스트리밍 대화 및 자율 도구 실행이 진행되는 Hermes TUI</p>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <a id="viewerDownload" href="screenshots/07_hermes_workspace_chat.png" target="_blank" class="btn btn-secondary" style="padding: 8px 14px; font-size: 0.82rem;">🔍 원본 보기</a>
           </div>
         </div>
       </div>
@@ -588,8 +684,12 @@ open http://localhost:8080 (admin / local-development-password)</code></pre>
       currentIndex = 0;
 
       // Update Category Buttons
-      document.querySelectorAll('#categoryTabs .tab-btn').forEach((btn, idx) => {
-        btn.classList.toggle('active', btn.getAttribute('onclick').includes(cat));
+      document.querySelectorAll('#categoryTabs .tab-btn').forEach((btn) => {
+        const isActive = btn.getAttribute('onclick').includes(cat);
+        btn.classList.toggle('active', isActive);
+        if (isActive) {
+          btn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+        }
       });
 
       renderSubTabs();
@@ -599,16 +699,20 @@ open http://localhost:8080 (admin / local-development-password)</code></pre>
     function renderSubTabs() {
       const container = document.getElementById('subTabs');
       container.innerHTML = '';
-      const items = data[currentCategory];
+      const items = data[currentCategory] || [];
 
       items.forEach((item, idx) => {
         const btn = document.createElement('button');
         btn.className = `sub-tab-btn ${idx === currentIndex ? 'active' : ''}`;
-        btn.innerText = item.title;
+        btn.innerHTML = `<span style="opacity: 0.6; font-size: 0.76rem;">#${idx + 1}</span> ${item.title}`;
         btn.onclick = () => {
           currentIndex = idx;
           renderSubTabs();
           updateViewer();
+          setTimeout(() => {
+            const activeBtn = container.querySelector('.sub-tab-btn.active');
+            if (activeBtn) activeBtn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+          }, 50);
         };
         container.appendChild(btn);
       });
@@ -618,14 +722,37 @@ open http://localhost:8080 (admin / local-development-password)</code></pre>
       const item = data[currentCategory][currentIndex];
       if (!item) return;
 
-      document.getElementById('viewerImage').src = item.img;
+      const img = document.getElementById('viewerImage');
+      img.style.opacity = '0.3';
+      setTimeout(() => {
+        img.src = item.img;
+        img.onload = () => { img.style.opacity = '1'; };
+      }, 100);
+
       document.getElementById('viewerTitle').innerText = item.title;
       document.getElementById('viewerDesc').innerText = item.desc;
+      document.getElementById('windowTitle').innerText = `AgentHub Console · ${item.title}`;
+      const dl = document.getElementById('viewerDownload');
+      if (dl) dl.href = item.img;
+    }
+
+    // Enable smooth mouse wheel horizontal scrolling
+    function enableHorizontalScroll(elemId) {
+      const el = document.getElementById(elemId);
+      if (!el) return;
+      el.addEventListener('wheel', (evt) => {
+        if (evt.deltaY !== 0) {
+          evt.preventDefault();
+          el.scrollLeft += evt.deltaY * 1.2;
+        }
+      }, { passive: false });
     }
 
     // Initial load
     renderSubTabs();
     updateViewer();
+    enableHorizontalScroll('categoryTabs');
+    enableHorizontalScroll('subTabs');
   </script>
 </body>
 </html>
