@@ -389,12 +389,16 @@ func (s *Server) runtimeSpecContext(ctx context.Context, rt store.Runtime, agent
 	}
 	version := strings.TrimSuffix(s.version.Version, "-dev")
 	image := "agenthub-base:v" + version
-	if approved, imageErr := s.store.ApprovedRuntimeImage(ctx, agent.RuntimeType); imageErr == nil {
-		image = approved.Image
-		if approved.Digest != "" {
-			image += "@" + approved.Digest
-		} else if approved.Version != "" && !strings.Contains(approved.Image[strings.LastIndex(approved.Image, "/")+1:], ":") {
-			image += ":" + approved.Version
+	if approved, imageErr := s.store.ApprovedRuntimeImage(ctx, agent.RuntimeType); imageErr == nil && approved.Image != "" {
+		if strings.HasPrefix(approved.Image, "registry.local/") {
+			image = "agenthub-base:v0.1.0"
+		} else {
+			image = approved.Image
+			if approved.Digest != "" {
+				image += "@" + approved.Digest
+			} else if approved.Version != "" && !strings.Contains(approved.Image[strings.LastIndex(approved.Image, "/")+1:], ":") {
+				image += ":" + approved.Version
+			}
 		}
 	}
 	modelBaseURL, modelName, modelAPIKey := "", "", ""

@@ -116,7 +116,25 @@ func labelValue(value string) string {
 	return result
 }
 
+func ensureCRDName(spec *Spec) {
+	if spec.Runtime.CRDName == "" && spec.Agent.ID != "" {
+		ownerPrefix := "owner"
+		if len(spec.Agent.OwnerID) >= 8 {
+			ownerPrefix = spec.Agent.OwnerID[:8]
+		}
+		agentPrefix := "agent"
+		if len(spec.Agent.ID) >= 8 {
+			agentPrefix = spec.Agent.ID[:8]
+		}
+		spec.Runtime.CRDName = "agent-" + strings.ToLower(strings.ReplaceAll(ownerPrefix+"-"+agentPrefix, "_", "-"))
+	}
+}
+
 func (k *KubernetesSpawner) Spawn(ctx context.Context, spec Spec) error {
+	ensureCRDName(&spec)
+	if spec.Runtime.CRDName == "" {
+		return errors.New("resource name may not be empty")
+	}
 	client, coreClient, settings, err := k.clients(ctx)
 	if err != nil {
 		return err
@@ -139,6 +157,9 @@ func (k *KubernetesSpawner) Spawn(ctx context.Context, spec Spec) error {
 		secretCreated = true
 	}
 	if _, err = client.Resource(runtimeGVR).Namespace(namespace).Create(ctx, k.object(spec), metav1.CreateOptions{}); err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			return k.setDesired(ctx, spec, "Running")
+		}
 		if secretCreated {
 			_ = coreClient.CoreV1().Secrets(namespace).Delete(ctx, spec.Runtime.CRDName, metav1.DeleteOptions{})
 		}
@@ -147,6 +168,10 @@ func (k *KubernetesSpawner) Spawn(ctx context.Context, spec Spec) error {
 	return nil
 }
 func (k *KubernetesSpawner) ensureSecret(ctx context.Context, coreClient kubernetes.Interface, namespace string, spec Spec) error {
+	ensureCRDName(&spec)
+	if spec.Runtime.CRDName == "" {
+		return nil
+	}
 	existing, err := coreClient.CoreV1().Secrets(namespace).Get(ctx, spec.Runtime.CRDName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		tokenBytes := make([]byte, 32)
@@ -176,6 +201,10 @@ func (k *KubernetesSpawner) Stop(ctx context.Context, spec Spec) error {
 	return k.setDesired(ctx, spec, "Stopped")
 }
 func (k *KubernetesSpawner) Restart(ctx context.Context, spec Spec) error {
+	ensureCRDName(&spec)
+	if spec.Runtime.CRDName == "" {
+		return errors.New("resource name may not be empty")
+	}
 	client, coreClient, settings, err := k.clients(ctx)
 	if err != nil {
 		return err
@@ -188,6 +217,9 @@ func (k *KubernetesSpawner) Restart(ctx context.Context, spec Spec) error {
 		_ = k.ensureSecret(ctx, coreClient, namespace, spec)
 	}
 	object, err := client.Resource(runtimeGVR).Namespace(namespace).Get(ctx, spec.Runtime.CRDName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return k.Spawn(ctx, spec)
+	}
 	if err != nil {
 		return err
 	}
@@ -203,6 +235,10 @@ func (k *KubernetesSpawner) Restart(ctx context.Context, spec Spec) error {
 	return err
 }
 func (k *KubernetesSpawner) Delete(ctx context.Context, spec Spec) error {
+	ensureCRDName(&spec)
+	if spec.Runtime.CRDName == "" {
+		return nil
+	}
 	client, _, settings, err := k.clients(ctx)
 	if err != nil {
 		return err
@@ -211,9 +247,17 @@ func (k *KubernetesSpawner) Delete(ctx context.Context, spec Spec) error {
 	if namespace == "" {
 		namespace = "agent-runtime-dev"
 	}
-	return client.Resource(runtimeGVR).Namespace(namespace).Delete(ctx, spec.Runtime.CRDName, metav1.DeleteOptions{})
+	err = client.Resource(runtimeGVR).Namespace(namespace).Delete(ctx, spec.Runtime.CRDName, metav1.DeleteOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	return err
 }
 func (k *KubernetesSpawner) setDesired(ctx context.Context, spec Spec, state string) error {
+	ensureCRDName(&spec)
+	if spec.Runtime.CRDName == "" {
+		return errors.New("resource name may not be empty")
+	}
 	client, coreClient, settings, err := k.clients(ctx)
 	if err != nil {
 		return err
@@ -226,6 +270,12 @@ func (k *KubernetesSpawner) setDesired(ctx context.Context, spec Spec, state str
 		_ = k.ensureSecret(ctx, coreClient, namespace, spec)
 	}
 	object, err := client.Resource(runtimeGVR).Namespace(namespace).Get(ctx, spec.Runtime.CRDName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		if state == "Running" {
+			return k.Spawn(ctx, spec)
+		}
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -238,6 +288,10 @@ func (k *KubernetesSpawner) setDesired(ctx context.Context, spec Spec, state str
 	return err
 }
 func (k *KubernetesSpawner) Status(ctx context.Context, spec Spec) (Status, error) {
+	ensureCRDName(&spec)
+	if spec.Runtime.CRDName == "" {
+		return Status{Phase: "Stopped"}, nil
+	}
 	client, _, settings, err := k.clients(ctx)
 	if err != nil {
 		return Status{}, err
@@ -247,6 +301,9 @@ func (k *KubernetesSpawner) Status(ctx context.Context, spec Spec) (Status, erro
 		namespace = "agent-runtime-dev"
 	}
 	object, err := client.Resource(runtimeGVR).Namespace(namespace).Get(ctx, spec.Runtime.CRDName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return Status{Phase: "Stopped"}, nil
+	}
 	if err != nil {
 		return Status{}, err
 	}
@@ -257,6 +314,10 @@ func (k *KubernetesSpawner) Status(ctx context.Context, spec Spec) (Status, erro
 	return status, nil
 }
 func (k *KubernetesSpawner) Logs(ctx context.Context, spec Spec, tail int64) ([]byte, error) {
+	ensureCRDName(&spec)
+	if spec.Runtime.PodName == "" {
+		return []byte("Pod가 아직 시작되지 않았거나 대기 중입니다."), nil
+	}
 	_, client, settings, err := k.clients(ctx)
 	if err != nil {
 		return nil, err
@@ -273,6 +334,10 @@ func (k *KubernetesSpawner) Logs(ctx context.Context, spec Spec, tail int64) ([]
 }
 
 func (k *KubernetesSpawner) Connection(ctx context.Context, spec Spec) (Connection, error) {
+	ensureCRDName(&spec)
+	if spec.Runtime.CRDName == "" {
+		return Connection{}, errors.New("runtime is not spawned yet")
+	}
 	dynamicClient, coreClient, settings, err := k.clients(ctx)
 	if err != nil {
 		return Connection{}, err

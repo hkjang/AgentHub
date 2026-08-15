@@ -778,7 +778,30 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 	} else if value.Runtime.Type == "hermes" || value.Runtime.Type == "qwenpaw" {
 		env = append(env, corev1.EnvVar{Name: "API_SERVER_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "runtime-token"}}})
 	}
-	containers := []corev1.Container{{Name: "agent", Image: value.Runtime.Image, ImagePullPolicy: corev1.PullIfNotPresent, Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: port}}, Env: env, Resources: corev1.ResourceRequirements{Requests: requests, Limits: limits}, SecurityContext: restrictedContainerSecurityContext(value.Security.ReadOnlyRootFilesystem), VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "home", MountPath: "/home/agent"}, {Name: "tmp", MountPath: "/tmp"}, {Name: "config", MountPath: "/etc/agenthub", ReadOnly: true}}, ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)}}, InitialDelaySeconds: 5, PeriodSeconds: 5, TimeoutSeconds: 2, FailureThreshold: 12}, LivenessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)}}, InitialDelaySeconds: 20, PeriodSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 4}}}
+	var agentCmd []string
+	var agentArgs []string
+	if value.Runtime.Type == "opencode" || value.Runtime.Type == "qwencode" {
+		agentCmd = []string{"opencode"}
+		agentArgs = []string{"serve", "--hostname", "0.0.0.0", "--port", "4096"}
+	} else if value.Runtime.Type == "hermes" || value.Runtime.Type == "qwenpaw" {
+		agentCmd = []string{"/bin/sh", "-ec"}
+		agentArgs = []string{"mkdir -p /home/agent/.hermes\nif [ -f /etc/agenthub/hermes-config.yaml ]; then cp /etc/agenthub/hermes-config.yaml /home/agent/.hermes/config.yaml; fi\nexport API_SERVER_ENABLED=true\nexport API_SERVER_HOST=0.0.0.0\nexport API_SERVER_PORT=8642\nexport API_SERVER_KEY=\"${API_SERVER_KEY:-${AGENTHUB_RUNTIME_TOKEN:-}}\"\nexec /opt/hermes/.venv/bin/hermes gateway run --no-supervise"}
+	}
+	agentContainer := corev1.Container{
+		Name:            "agent",
+		Image:           value.Runtime.Image,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         agentCmd,
+		Args:            agentArgs,
+		Ports:           []corev1.ContainerPort{{Name: "http", ContainerPort: port}},
+		Env:             env,
+		Resources:       corev1.ResourceRequirements{Requests: requests, Limits: limits},
+		SecurityContext: restrictedContainerSecurityContext(value.Security.ReadOnlyRootFilesystem),
+		VolumeMounts:    []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "home", MountPath: "/home/agent"}, {Name: "tmp", MountPath: "/tmp"}, {Name: "config", MountPath: "/etc/agenthub", ReadOnly: true}},
+		ReadinessProbe:  &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)}}, InitialDelaySeconds: 5, PeriodSeconds: 5, TimeoutSeconds: 2, FailureThreshold: 12},
+		LivenessProbe:   &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)}}, InitialDelaySeconds: 20, PeriodSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 4},
+	}
+	containers := []corev1.Container{agentContainer}
 	if value.Runtime.Type == "hermes" || value.Runtime.Type == "qwenpaw" {
 		dashboardResources := corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("100m"), corev1.ResourceMemory: apiresource.MustParse("128Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("1000m"), corev1.ResourceMemory: apiresource.MustParse("1024Mi")}}
 		proxyResources := corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("10m"), corev1.ResourceMemory: apiresource.MustParse("32Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("200m"), corev1.ResourceMemory: apiresource.MustParse("256Mi")}}

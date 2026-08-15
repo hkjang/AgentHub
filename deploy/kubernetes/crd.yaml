@@ -51,7 +51,7 @@ spec:
                   type: object
                   required: [type, image]
                   properties:
-                    type: {type: string, enum: [opencode, hermes, custom]}
+                    type: {type: string, enum: [opencode, hermes, qwenpaw, qwencode, custom]}
                     image: {type: string, minLength: 1}
                 profile:
                   type: object

@@ -2,10 +2,10 @@
 set -eu
 
 case "${AGENTHUB_RUNTIME_TYPE:-opencode}" in
-  opencode)
+  opencode|qwencode)
     exec opencode serve --hostname 0.0.0.0 --port 4096
     ;;
-  hermes)
+  hermes|qwenpaw)
     mkdir -p "${HERMES_HOME:-/home/agent/.hermes}"
     if [ -f "${HERMES_CONFIG:-/etc/agenthub/hermes-config.yaml}" ]; then
       cp "${HERMES_CONFIG:-/etc/agenthub/hermes-config.yaml}" "${HERMES_HOME:-/home/agent/.hermes}/config.yaml"
