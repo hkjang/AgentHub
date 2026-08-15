@@ -24,8 +24,9 @@
 
 - 🔒 **완전 폐쇄망 (Offline-Ready)**: 외부 인터넷 연결 없이 로컬 Docker 레지스트리와 내부 Kubernetes 클러스터 상에서 100% 결정론적으로 동작합니다.
 - 📦 **영속 Workspace & CSI 스냅샷**: Agent Pod가 종료/재생성되어도 사용자의 소스 코드와 데이터는 PVC에 보존되며, CSI VolumeSnapshot을 통해 언제든 원하는 시점으로 복원할 수 있습니다.
-- 🤖 **4대 엔터프라이즈 에이전트 런타임**: 인터랙티브 코딩 워크스페이스(**OpenCode** / **Qwen Code**) 및 자율 에이전트 어시스턴트(**Hermes** / [**Qwen Paw**](https://qwenpaw.agentscope.io/))를 사용자 전용 비루트(Non-root) Pod로 격리 기동합니다.
+- 🤖 **4대 엔터프라이즈 에이전트 런타임**: 인터랙티브 코딩 워크스페이스(**OpenCode** / [**Qwen Code**](https://qwen.ai/qwencode)) 및 자율 에이전트 어시스턴트(**Hermes** / [**Qwen Paw**](https://qwenpaw.agentscope.io/))를 사용자 전용 비루트(Non-root) Pod로 격리 기동합니다.
   - **Qwen Paw (AgentScope)**: 3계층 ReMe 메모리, 커널 샌드박스 보안 가드, 스킬/MCP 확장 및 Qwen 모델 자율 추론을 지원하는 개인 에이전트 워크스테이션
+  - **Qwen Code (Qwen 2.5 Coder)**: 대규모 코드베이스 이해, 고성능 코드 생성, 풀스택 리팩토링 및 아티팩트 생성을 지원하는 코딩 에이전트 IDE 환경
 - 🔀 **Multi-Agent Workflow DAG**: 복수 에이전트 간의 순차/병렬/Supervisor 협업 그래프를 시각화하고, 실행 전 순환 참조(Cycle) 및 깊이 제한을 자동 검증합니다.
 - 🔌 **MCP Fabric (Model Context Protocol)**: 사내 MCP 도구 레지스트리와 번들을 관리하고, Sidecar 또는 전용 StatefulSet 모드로 에이전트에 안전하게 주입합니다.
 - 🔐 **Envelope Encryption Vault**: 사용자별 개인 키(AES-256-GCM)로 Credential을 암호화하며, Agent 정의에는 원문 대신 식별 참조값만 주입됩니다.

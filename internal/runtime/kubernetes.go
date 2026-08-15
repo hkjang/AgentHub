@@ -358,7 +358,7 @@ func (k *KubernetesSpawner) Connection(ctx context.Context, spec Spec) (Connecti
 	if endpoint == "" {
 		return Connection{}, errors.New("runtime endpoint is not available")
 	}
-	if spec.Agent.RuntimeType == "hermes" {
+	if spec.Agent.RuntimeType == "hermes" || spec.Agent.RuntimeType == "qwenpaw" {
 		endpoint = strings.Replace(endpoint, ":8642", ":9119", 1)
 	}
 	secret, err := coreClient.CoreV1().Secrets(namespace).Get(ctx, spec.Runtime.CRDName, metav1.GetOptions{})

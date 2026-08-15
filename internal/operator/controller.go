@@ -452,7 +452,7 @@ func (c *Controller) ensurePVC(ctx context.Context, ns, name string, value spec,
 	return err
 }
 func runtimePort(runtimeType string) int32 {
-	if runtimeType == "hermes" {
+	if runtimeType == "hermes" || runtimeType == "qwenpaw" {
 		return 8642
 	}
 	return 4096
@@ -460,7 +460,7 @@ func runtimePort(runtimeType string) int32 {
 func (c *Controller) ensureService(ctx context.Context, ns, name string, value spec, owner *unstructured.Unstructured) error {
 	port := runtimePort(value.Runtime.Type)
 	ports := []corev1.ServicePort{{Name: "http", Port: port, TargetPort: intstrFromInt32(port)}}
-	if value.Runtime.Type == "hermes" {
+	if value.Runtime.Type == "hermes" || value.Runtime.Type == "qwenpaw" {
 		ports = append(ports, corev1.ServicePort{Name: "dashboard", Port: 9119, TargetPort: intstrFromInt32(9119)})
 	}
 	desired := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels(name, nil), OwnerReferences: ownerRef(owner)}, Spec: corev1.ServiceSpec{Selector: map[string]string{"agenthub.io/runtime": name}, Ports: ports}}
@@ -530,7 +530,7 @@ func (c *Controller) ensureNetworkPolicy(ctx context.Context, ns, name string, v
 	}
 	port := intstr.FromInt32(runtimePort(value.Runtime.Type))
 	ingressPorts := []networkingv1.NetworkPolicyPort{{Protocol: ptr(corev1.ProtocolTCP), Port: &port}}
-	if value.Runtime.Type == "hermes" {
+	if value.Runtime.Type == "hermes" || value.Runtime.Type == "qwenpaw" {
 		dashboardPort := intstr.FromInt32(9119)
 		ingressPorts = append(ingressPorts, networkingv1.NetworkPolicyPort{Protocol: ptr(corev1.ProtocolTCP), Port: &dashboardPort})
 	}
