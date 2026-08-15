@@ -257,8 +257,31 @@ func runtimeConfigs(ns, runtimeName string, value spec) (string, string, string)
 	opencode := map[string]any{"$schema": "https://opencode.ai/config.json", "autoupdate": false, "mcp": map[string]any{}}
 	hermes := map[string]any{"terminal": map[string]any{"cwd": "/workspace", "home_mode": "profile"}, "mcp_servers": map[string]any{}}
 	if value.Model.BaseURL != "" && value.Model.Name != "" {
-		opencode["model"] = "agenthub/" + value.Model.Name
-		opencode["provider"] = map[string]any{"agenthub": map[string]any{"npm": "@ai-sdk/openai-compatible", "name": "AgentHub Model Gateway", "options": map[string]any{"baseURL": value.Model.BaseURL, "apiKey": "{env:OPENAI_API_KEY}"}, "models": map[string]any{value.Model.Name: map[string]any{"name": value.Model.Name}}}}
+		opencode["model"] = "ollama/" + value.Model.Name
+		opencode["provider"] = map[string]any{
+			"ollama": map[string]any{
+				"npm":  "@ai-sdk/openai-compatible",
+				"name": "Ollama Local",
+				"options": map[string]any{
+					"baseURL": value.Model.BaseURL,
+					"apiKey":  "{env:OPENAI_API_KEY}",
+				},
+				"models": map[string]any{
+					value.Model.Name: map[string]any{"name": value.Model.Name},
+				},
+			},
+			"agenthub": map[string]any{
+				"npm":  "@ai-sdk/openai-compatible",
+				"name": "AgentHub Model Gateway",
+				"options": map[string]any{
+					"baseURL": value.Model.BaseURL,
+					"apiKey":  "{env:OPENAI_API_KEY}",
+				},
+				"models": map[string]any{
+					value.Model.Name: map[string]any{"name": value.Model.Name},
+				},
+			},
+		}
 		hermes["model"] = map[string]any{"provider": "custom", "default": value.Model.Name, "base_url": value.Model.BaseURL, "api_key": "${OPENAI_API_KEY}"}
 	}
 	openMCP := opencode["mcp"].(map[string]any)
@@ -747,7 +770,11 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 	env := []corev1.EnvVar{{Name: "AGENTHUB_RUNTIME_TYPE", Value: value.Runtime.Type}, {Name: "AGENTHUB_MODEL_BASE_URL", Value: value.Model.BaseURL}, {Name: "AGENTHUB_RUNTIME_CONFIG", Value: "/etc/agenthub/runtime.json"}, {Name: "OPENCODE_CONFIG", Value: "/etc/agenthub/opencode.json"}, {Name: "HERMES_CONFIG", Value: "/etc/agenthub/hermes-config.yaml"}, {Name: "AGENTHUB_RUNTIME_TOKEN", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "runtime-token"}}}}
 	env = append(env, corev1.EnvVar{Name: "AGENTHUB_MODEL_NAME", Value: value.Model.Name}, corev1.EnvVar{Name: "OPENAI_BASE_URL", Value: value.Model.BaseURL}, corev1.EnvVar{Name: "OPENAI_API_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "model-api-key"}}})
 	if value.Runtime.Type == "opencode" {
-		env = append(env, corev1.EnvVar{Name: "OPENCODE_SERVER_PASSWORD", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "runtime-token"}}})
+		env = append(env,
+			corev1.EnvVar{Name: "OPENCODE_SERVER_PASSWORD", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "runtime-token"}}},
+			corev1.EnvVar{Name: "OLLAMA_HOST", Value: value.Model.BaseURL},
+			corev1.EnvVar{Name: "OPENCODE_CONFIG_DIR", Value: "/home/agent/.config/opencode"},
+		)
 	} else if value.Runtime.Type == "hermes" {
 		env = append(env, corev1.EnvVar{Name: "API_SERVER_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "runtime-token"}}})
 	}
@@ -762,6 +789,9 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 	}
 	containers = append(containers, sidecarContainers(value)...)
 	initContainers := []corev1.Container{}
+	if value.Runtime.Type == "opencode" {
+		initContainers = append(initContainers, corev1.Container{Name: "opencode-config-init", Image: value.Runtime.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/sh", "-ec"}, Args: []string{"mkdir -p /home/agent/.config/opencode\ncp /etc/agenthub/opencode.json /home/agent/.config/opencode/opencode.json\ncp /etc/agenthub/opencode.json /home/agent/.config/opencode/config.json\ncp /etc/agenthub/opencode.json /home/agent/.opencode.json\nif [ -n \"$OPENAI_BASE_URL\" ]; then\n  printf 'OPENAI_BASE_URL=%s\\nOPENAI_API_KEY=%s\\nOLLAMA_HOST=%s\\n' \"$OPENAI_BASE_URL\" \"$OPENAI_API_KEY\" \"$OPENAI_BASE_URL\" > /home/agent/.config/opencode/.env\nfi"}, Env: env, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("10m"), corev1.ResourceMemory: apiresource.MustParse("32Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("200m"), corev1.ResourceMemory: apiresource.MustParse("256Mi")}}, SecurityContext: restrictedContainerSecurityContext(value.Security.ReadOnlyRootFilesystem), VolumeMounts: []corev1.VolumeMount{{Name: "home", MountPath: "/home/agent"}, {Name: "config", MountPath: "/etc/agenthub", ReadOnly: true}, {Name: "tmp", MountPath: "/tmp"}}})
+	}
 	if value.Runtime.Type == "hermes" {
 		initContainers = append(initContainers, corev1.Container{Name: "hermes-config-init", Image: value.Runtime.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/sh", "-ec"}, Args: []string{"mkdir -p /home/agent/.hermes\ncp /etc/agenthub/hermes-config.yaml /home/agent/.hermes/config.yaml\nif [ -n \"$OPENAI_BASE_URL\" ] && [ -n \"$AGENTHUB_MODEL_NAME\" ]; then\n  /opt/hermes/.venv/bin/hermes config set model.default \"$AGENTHUB_MODEL_NAME\" || true\n  /opt/hermes/.venv/bin/hermes config set model.provider custom || true\n  /opt/hermes/.venv/bin/hermes config set model.base_url \"$OPENAI_BASE_URL\" || true\n  /opt/hermes/.venv/bin/hermes config set model.api_key \"$OPENAI_API_KEY\" || true\n  printf 'OPENAI_BASE_URL=%s\\nOPENAI_API_KEY=%s\\nCUSTOM_BASE_URL=%s\\nCUSTOM_API_KEY=%s\\n' \"$OPENAI_BASE_URL\" \"$OPENAI_API_KEY\" \"$OPENAI_BASE_URL\" \"$OPENAI_API_KEY\" > /home/agent/.hermes/.env\nfi"}, Env: env, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("10m"), corev1.ResourceMemory: apiresource.MustParse("32Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("200m"), corev1.ResourceMemory: apiresource.MustParse("256Mi")}}, SecurityContext: restrictedContainerSecurityContext(value.Security.ReadOnlyRootFilesystem), VolumeMounts: []corev1.VolumeMount{{Name: "home", MountPath: "/home/agent"}, {Name: "config", MountPath: "/etc/agenthub", ReadOnly: true}, {Name: "tmp", MountPath: "/tmp"}}})
 	}

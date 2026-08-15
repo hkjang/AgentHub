@@ -406,6 +406,17 @@ func (s *Server) runtimeSpecContext(ctx context.Context, rt store.Runtime, agent
 		modelBaseURL = model.BaseURL
 		modelName = model.DefaultModel
 		modelAPIKey = key
+	} else {
+		models, _ := s.store.ModelEndpoints(ctx)
+		for _, m := range models {
+			if m.Enabled && m.BaseURL != "" && m.DefaultModel != "" {
+				_, key, _ := s.store.ModelEndpointByID(ctx, m.ID)
+				modelBaseURL = m.BaseURL
+				modelName = m.DefaultModel
+				modelAPIKey = key
+				break
+			}
+		}
 	}
 	bindings := []runtime.MCPBinding{}
 	if agent.MCPBundleID != nil {
