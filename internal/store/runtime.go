@@ -460,6 +460,13 @@ func (s *Store) CreateAgent(ctx context.Context, ownerID string, input CreateAge
 	if input.TemplateID != "" {
 		_ = s.pool.QueryRow(ctx, `SELECT COALESCE(security_profile_id,'sp-restricted'),COALESCE(network_profile_id,'np-restricted') FROM agent_templates WHERE id=$1 AND published`, input.TemplateID).Scan(&input.SecurityProfileID, &input.NetworkProfileID)
 	}
+	if strings.TrimSpace(input.ModelEndpointID) == "" {
+		var defaultModelID string
+		_ = s.pool.QueryRow(ctx, `SELECT id FROM model_endpoints WHERE enabled ORDER BY created_at ASC LIMIT 1`).Scan(&defaultModelID)
+		if defaultModelID != "" {
+			input.ModelEndpointID = defaultModelID
+		}
+	}
 	null := func(v string) any {
 		if strings.TrimSpace(v) == "" {
 			return nil

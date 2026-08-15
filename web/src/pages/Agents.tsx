@@ -48,8 +48,9 @@ export function Agents({runtimeOnly=false}:{runtimeOnly?:boolean}) {
     }
   }
   if(!agents) return <Loading/>
-  const visible = runtimeOnly ? agents.filter(a=>a.runtime) : agents
-  const selected = agents.find(a => a.id === selectedId) || null
+  const list = Array.isArray(agents) ? agents : []
+  const visible = runtimeOnly ? list.filter(a => Boolean(a?.runtime)) : list
+  const selected = list.find(a => a?.id === selectedId) || null
   return <div className="page">
     <PageHeader eyebrow={runtimeOnly?'RUNTIME CONTROL':'MY WORKSPACE'} title={runtimeOnly?'My Runtimes':'My Agents'} description={runtimeOnly?'사용자 전용 Kubernetes Runtime의 수명주기와 상태를 관리합니다.':'Agent 정의와 실행 중인 Runtime을 분리해서 안전하게 관리합니다.'} actions={<Link className="button primary" to="/catalog"><Plus size={17}/>새 Agent</Link>}/>
     {error&&<ErrorBanner message={error} onClose={()=>setError('')}/>}

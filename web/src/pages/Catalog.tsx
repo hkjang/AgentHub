@@ -31,6 +31,7 @@ export function Catalog({builder=false}:{builder?:boolean}){
 
 function CreateDrawer({template,profiles,workspaces,models,bundles,close}:{template:Template;profiles:RuntimeProfile[];workspaces:Workspace[];models:{id:string;name:string;defaultModel:string}[];bundles:{id:string;name:string;description:string}[];close:()=>void}){
   const navigate=useNavigate();const defaults=useMemo(()=>profiles.find(p=>p.id===template.runtimeProfileId)??profiles.find(p=>p.id==='rp-basic')??profiles[0],[profiles,template]);const [name,setName]=useState(template.name),[profile,setProfile]=useState(defaults?.id??''),[workspace,setWorkspace]=useState(''),[model,setModel]=useState(models[0]?.id??''),[bundle,setBundle]=useState(''),[prompt,setPrompt]=useState(''),[autoStart,setAutoStart]=useState(true),[error,setError]=useState(''),[busy,setBusy]=useState(false)
+  useEffect(()=>{if(!model && models.length > 0){setModel(models[0].id)}},[models,model])
   const submit=async(e:FormEvent)=>{
     e.preventDefault();setBusy(true);setError('')
     try{
