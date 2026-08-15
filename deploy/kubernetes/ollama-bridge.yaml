@@ -16,7 +16,7 @@ spec:
       hostNetwork: true
       containers:
         - name: bridge
-          image: agenthub-base:v0.3.1
+          image: agenthub-base:v0.4.0
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh

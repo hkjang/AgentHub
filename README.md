@@ -28,6 +28,7 @@
   - **Qwen Paw (AgentScope)**: 3계층 ReMe 메모리, 커널 샌드박스 보안 가드, 스킬/MCP 확장 및 Qwen/Ollama 모델 자율 추론을 지원하는 개인 에이전트 워크스테이션
   - **OpenCode**: 브라우저 기반 풀스택 코딩 IDE 및 실시간 파일/터미널 워크스페이스
   - **Hermes Agent**: 장기 기억(Long-term Memory) 및 도구 실행 자율 에이전트
+- 🇰🇷 **한국어 우선 관리 콘솔**: 메뉴, 상태, 안내 문구를 한국어로 제공하며 빠른 이동(⌘K)은 한글·영문 키워드를 모두 검색합니다.
 - 🔀 **Multi-Agent Workflow DAG**: 복수 에이전트 간의 순차/병렬/Supervisor 협업 그래프를 시각화하고, 실행 전 순환 참조(Cycle) 및 깊이 제한을 자동 검증합니다.
 - 🔌 **MCP Fabric (Model Context Protocol)**: 사내 MCP 도구 레지스트리와 번들을 관리하고, Sidecar 또는 전용 StatefulSet 모드로 에이전트에 안전하게 주입합니다.
 - 🔐 **Envelope Encryption Vault**: 사용자별 개인 키(AES-256-GCM)로 Credential을 암호화하며, Agent 정의에는 원문 대신 식별 참조값만 주입됩니다.
@@ -48,14 +49,14 @@ https://github.com/user-attachments/assets/agenthub_demo.mp4
 
 ## 📸 실제 UI 콘솔 및 라이브 런타임 갤러리
 
-| Hermes Live Workspace (Ollama Gemma 4 실시간 추론) | 실시간 My Agents (Kubernetes Pod / Node 즉시 할당) |
+| Hermes Live Workspace (Ollama Gemma 4 실시간 추론) | 실시간 내 에이전트 (Kubernetes Pod / Node 즉시 할당) |
 | :---: | :---: |
-| ![Hermes Live Workspace](docs/screenshots/07_hermes_workspace_chat.png) | ![실시간 My Agents](docs/screenshots/05_my_agents_live.png) |
+| ![Hermes Live Workspace](docs/screenshots/07_hermes_workspace_chat.png) | ![실시간 내 에이전트](docs/screenshots/05_my_agents_live.png) |
 | **Agent Builder 템플릿 생성 드로어** | **에이전트 상세 스펙 및 CRD 상태** |
 | ![Agent Builder 생성 드로어](docs/screenshots/04_builder_template_selected.png) | ![에이전트 상세 드로어](docs/screenshots/06_agent_detail_drawer.png) |
 | **OpenCode 영속 Workspace** | **Ollama 로컬 모델 카탈로그** |
 | ![OpenCode Workspace](docs/screenshots/08_opencode_workspace.png) | ![Ollama 모델 카탈로그](docs/screenshots/10_models_catalog.png) |
-| **MCP Fabric 도구 카탈로그 & 번들** | **Control Center 실시간 감사 로그** |
+| **MCP Fabric 도구 카탈로그 & 번들** | **운영 센터 실시간 감사 로그** |
 | ![MCP 도구 카탈로그](docs/screenshots/09_mcp_fabric.png) | ![운영 콘솔](docs/screenshots/11_admin_operations.png) |
 
 > 📌 **전체 33개 스크린샷과 상세 설명은 [사용자 가이드](docs/user-guide.md) 및 [인터랙티브 쇼케이스 페이지](docs/index.html)에서 확인하실 수 있습니다.**
@@ -121,8 +122,8 @@ kubectl apply -k deploy/kubernetes
 
 # 3. AgentHub 런타임 베이스 이미지 빌드 및 로드
 make image image-base
-minikube image load agenthub:v0.3.1
-minikube image load agenthub-base:v0.3.1
+minikube image load agenthub:v0.4.0
+minikube image load agenthub-base:v0.4.0
 
 # 4. 파드 상태 확인
 kubectl get pods -n agent-platform-system

@@ -68,8 +68,8 @@ export function Developer() {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="PERSONAL SECURITY"
-        title="Secrets & API"
+        eyebrow="개인 보안"
+        title="시크릿 · API 키"
         description="서비스 관리자 설정과 분리된 개인 Credential 및 개발자 접근 권한입니다."
         actions={
           <>
@@ -146,7 +146,7 @@ export function Developer() {
             <Empty
               icon={<EyeOff />}
               title="저장된 Secret이 없습니다"
-              description="Git, MCP, DB Credential을 암호화해 Agent에 참조로 연결하세요."
+              description="Git, MCP, DB 자격증명을 암호화해 에이전트에 참조로 연결하세요."
             />
           ) : (
             <div className="item-list">
@@ -268,7 +268,7 @@ function CredentialDrawer({
   };
   return (
     <Drawer
-      title={type === "secrets" ? "Personal Secret 추가" : "API Key 생성"}
+      title={type === "secrets" ? "개인 시크릿 추가" : "API 키 생성"}
       subtitle={
         type === "secrets"
           ? "원문은 저장 후 다시 표시되지 않습니다."
@@ -309,7 +309,7 @@ function CredentialDrawer({
               <span>종류</span>
               <select value={kind} onChange={(e) => setKind(e.target.value)}>
                 <option value="api_key">API Key</option>
-                <option value="git">Git Credential</option>
+                <option value="git">Git 자격증명</option>
                 <option value="database">Database</option>
                 <option value="mcp">MCP Credential</option>
               </select>
@@ -324,13 +324,13 @@ function CredentialDrawer({
                 rows={5}
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
-                placeholder="Credential 원문을 입력하세요."
+                placeholder="자격증명 원문을 입력하세요."
               />
             </label>
           </>
         ) : (
           <label>
-            <span>Scope</span>
+            <span>권한 범위</span>
             <select value={scope} onChange={(e) => setScope(e.target.value)}>
               <option value="api:read">api:read · REST 조회</option>
               <option value="mcp:read">mcp:read · MCP 조회</option>

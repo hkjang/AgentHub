@@ -250,3 +250,12 @@
 .resource-card{display:flex;flex-direction:column;text-align:left}
 .button.ghost.danger-text{color:#c43b52}
 .button.ghost.danger-text:hover{background:#fff5f6;border-color:#f3c3cb}
+
+/* Command palette: highlight the keyboard cursor and explain the shortcuts. */
+.command-results button.active{background:#f0edff;color:#101828}
+.command-results button.active svg:first-child{color:#6a49e8}
+.command-hint{display:flex;align-items:center;gap:5px;padding:9px 16px;border-top:1px solid #edf0f4;color:#98a2b3;font-size:11px}
+.command-hint kbd{background:#f3f5f8;border:1px solid #e4e9f0;border-radius:4px;padding:1px 5px;font-size:10px;color:#667085}
+
+/* Failed runtimes must not read like ordinary supporting text. */
+.metric-card small.alert-note{color:#c43b52;font-weight:650}

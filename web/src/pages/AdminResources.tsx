@@ -24,33 +24,33 @@ const meta: Record<
   { title: string; description: string; endpoint: string; icon: typeof Bot }
 > = {
   profiles: {
-    title: "Runtime Profiles",
+    title: "런타임 프로파일",
     description:
       "사용자가 선택할 수 있는 CPU, Memory, Storage 및 Idle 정책입니다.",
     endpoint: "runtime-profiles",
     icon: Bot,
   },
   images: {
-    title: "Runtime Images",
+    title: "런타임 이미지",
     description:
       "승인된 OpenCode, Hermes 및 Custom Runtime 이미지 카탈로그입니다.",
     endpoint: "runtime-images",
     icon: Boxes,
   },
   models: {
-    title: "Model Endpoints",
+    title: "모델 엔드포인트",
     description: "사내 vLLM, Ollama와 OpenAI-compatible 모델 연결입니다.",
     endpoint: "models",
     icon: Sparkles,
   },
   mcp: {
-    title: "MCP Servers",
+    title: "MCP 서버",
     description: "Shared, Dedicated, Sidecar MCP의 실행 및 승인 정책입니다.",
     endpoint: "mcp-servers",
     icon: Network,
   },
   bundles: {
-    title: "MCP Bundles",
+    title: "MCP 번들",
     description: "용도별 MCP 조합을 만들어 Agent 생성 단계를 간소화합니다.",
     endpoint: "mcp-bundles",
     icon: Boxes,
@@ -93,7 +93,7 @@ export function AdminResources({ kind }: { kind: Kind }) {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="ADMINISTRATION"
+        eyebrow="관리자"
         title={config.title}
         description={config.description}
         actions={

@@ -35,3 +35,22 @@ export function runtimeLogoClass(type: string, size?: 'large' | 'xlarge') {
   const palette = type in RUNTIMES ? type : 'custom'
   return `runtime-logo ${palette}${size ? ` ${size}` : ''}`
 }
+
+/**
+ * Short relative time for list rows. Absolute timestamps are hard to scan when
+ * the question is "did this just change?"; the exact value stays in a tooltip.
+ */
+export function relativeTime(value: string) {
+  const then = new Date(value).getTime()
+  if (Number.isNaN(then)) return '—'
+  const seconds = Math.round((Date.now() - then) / 1000)
+  if (seconds < 0) return '방금'
+  if (seconds < 60) return '방금'
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}분 전`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}시간 전`
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days}일 전`
+  return new Date(value).toLocaleDateString('ko-KR', {year: '2-digit', month: '2-digit', day: '2-digit'})
+}

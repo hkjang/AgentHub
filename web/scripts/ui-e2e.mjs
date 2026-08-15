@@ -13,28 +13,28 @@ const shotDir = process.env.AGENTHUB_SHOT_DIR ?? '../coverage/e2e'
 // [route, expected heading]
 const ROUTES = [
   ['/', /님, 안녕하세요/],
-  ['/catalog', /Agent Catalog/],
-  ['/agents', /My Agents/],
-  ['/agents/builder', /Agent Builder/],
-  ['/runtime', /My Runtimes/],
-  ['/sessions', /Runtime Sessions/],
-  ['/workspaces', /Workspace/],
-  ['/workspaces/snapshots', /Snapshot/],
+  ['/catalog', /에이전트 카탈로그/],
+  ['/agents', /내 에이전트/],
+  ['/agents/builder', /에이전트 빌더/],
+  ['/runtime', /내 런타임/],
+  ['/sessions', /런타임 세션/],
+  ['/workspaces', /내 작업공간/],
+  ['/workspaces/snapshots', /작업공간 스냅샷/],
   ['/mcp/catalog', /MCP/],
   ['/mcp/bundles', /MCP/],
-  ['/workflows', /Workflow/],
-  ['/evaluation', /Agent Evaluation/],
-  ['/reviews', /(승인|Review)/],
-  ['/developer', /(Developer|API)/],
-  ['/admin/settings', /(Settings|설정|Platform)/],
-  ['/admin/operations', /(Operations|Control Center)/],
-  ['/admin/runtime-profiles', /(Runtime Profile|Profile)/],
-  ['/admin/runtime-images', /(Runtime Image|Image)/],
-  ['/admin/models', /Model/],
-  ['/admin/mcp', /MCP/],
-  ['/admin/mcp-bundles', /(Bundle|MCP)/],
-  ['/admin/users', /(User|사용자)/],
-  ['/admin/security', /(Security|보안)/],
+  ['/workflows', /에이전트 워크플로/],
+  ['/evaluation', /에이전트 사전검증/],
+  ['/reviews', /(검토|승인)/],
+  ['/developer', /(시크릿|API)/],
+  ['/admin/settings', /시스템 설정/],
+  ['/admin/operations', /운영 센터/],
+  ['/admin/runtime-profiles', /런타임 프로파일/],
+  ['/admin/runtime-images', /런타임 이미지/],
+  ['/admin/models', /모델 엔드포인트/],
+  ['/admin/mcp', /MCP 서버/],
+  ['/admin/mcp-bundles', /MCP 번들/],
+  ['/admin/users', /사용자/],
+  ['/admin/security', /(보안|네트워크)/],
 ]
 
 const problems = []
@@ -97,12 +97,12 @@ try {
   route = '/catalog:drawer'
   await page.goto(baseURL + '/catalog', { waitUntil: 'networkidle' })
   await page.locator('.template-card').first().click()
-  const drawer = page.getByRole('dialog', { name: '새 Agent 만들기' })
+  const drawer = page.getByRole('dialog', { name: '새 에이전트 만들기' })
   await drawer.waitFor({ timeout: 10000 })
-  const nameInput = drawer.getByLabel(/Agent 이름/)
+  const nameInput = drawer.getByLabel(/에이전트 이름/)
   await nameInput.fill('UI Input Verification')
   if ((await nameInput.inputValue()) !== 'UI Input Verification') note(route, 'input', 'agent name not editable')
-  const autoStart = drawer.getByText('생성 후 Runtime 바로 시작')
+  const autoStart = drawer.getByText('생성 후 런타임 바로 시작')
   if ((await autoStart.count()) === 0) note(route, 'missing', 'auto-start toggle absent')
   await drawer.getByRole('button', { name: '닫기' }).click()
 
@@ -139,6 +139,17 @@ try {
   }
 
   // A delete must ask before it destroys anything.
+  route = '/agents:filter'
+  await page.goto(baseURL + '/agents', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(500)
+  const rowsBefore = await page.locator('tbody tr').count()
+  await page.getByLabel('에이전트 검색').fill('zzz-no-such-agent')
+  await page.waitForTimeout(300)
+  if ((await page.locator('tbody tr').count()) !== 0) note(route, 'search', 'search did not narrow the list')
+  await page.getByLabel('에이전트 검색').fill('')
+  await page.waitForTimeout(300)
+  if ((await page.locator('tbody tr').count()) !== rowsBefore) note(route, 'search', 'clearing search did not restore the list')
+
   route = '/agents:confirm'
   await page.goto(baseURL + '/agents', { waitUntil: 'networkidle' })
   await page.waitForTimeout(500)
@@ -151,8 +162,19 @@ try {
   route = '/palette'
   await page.keyboard.press('Escape')
   await page.keyboard.press('Control+K')
-  await page.getByRole('dialog', { name: '빠른 이동' }).waitFor({ timeout: 10000 })
-  await page.keyboard.press('Escape')
+  const palette = page.getByRole('dialog', { name: '빠른 이동' })
+  await palette.waitFor({ timeout: 10000 })
+  // English keywords must still reach the Korean menu entries.
+  await palette.getByRole('combobox').fill('agents')
+  await page.waitForTimeout(200)
+  if ((await palette.getByRole('option').count()) === 0) note(route, 'search', 'English keyword found no menu')
+  await palette.getByRole('combobox').fill('작업공간')
+  await page.waitForTimeout(200)
+  if ((await palette.getByRole('option').count()) === 0) note(route, 'search', 'Korean label found no menu')
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(500)
+  if ((await page.getByRole('dialog', { name: '빠른 이동' }).count()) !== 0) note(route, 'keyboard', 'Enter did not navigate')
 
   await writeFile(`${shotDir}/problems.json`, JSON.stringify(problems, null, 2))
 } catch (error) {
