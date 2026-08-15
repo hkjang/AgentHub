@@ -56,7 +56,7 @@ export function AppShell() {
 
   return <div className="app-frame">
     <aside className={`sidebar ${sidebar ? 'sidebar-open' : ''}`}>
-      <div className="sidebar-brand"><div className="brand-mark small">A</div><div><strong>AgentHub</strong><span>Runtime Platform</span></div><button className="icon-button mobile-only" onClick={() => setSidebar(false)} aria-label="메뉴 닫기"><X size={18}/></button></div>
+      <div className="sidebar-brand"><img src="/logo.svg" alt="AgentHub Logo" className="brand-logo-img" /><div><strong>AgentHub</strong><span>Runtime Platform</span></div><button className="icon-button mobile-only" onClick={() => setSidebar(false)} aria-label="메뉴 닫기"><X size={18}/></button></div>
       <button className="quick-button" onClick={() => setCommand(true)}><Search size={16}/><span>빠른 이동</span><kbd>⌘ K</kbd></button>
       <nav className="nav-scroll" aria-label="주 메뉴">
         {visibleGroups.map((group) => <section className="nav-group" key={group.label}>

@@ -47,7 +47,7 @@ export function App() {
   }, [refresh])
 
   const logout = async () => { await api.post('/api/v1/auth/logout'); setUser(null) }
-  if (user === undefined) return <div className="boot"><div className="brand-mark">A</div><span>AgentHub를 준비하고 있습니다</span></div>
+  if (user === undefined) return <div className="boot"><img src="/logo.svg" alt="AgentHub Logo" className="brand-logo-img large" /><span>AgentHub를 준비하고 있습니다</span></div>
   if (!user) return <Login version={version} onLogin={refresh} />
 
   return <AuthContext.Provider value={{ user, version, capabilities, refresh, logout }}>

@@ -1,6 +1,8 @@
 <div align="center">
 
-# 🤖 AgentHub
+<img src="docs/assets/logo.png" width="128" height="128" alt="AgentHub Logo" />
+
+# AgentHub
 
 ### Offline-Ready Enterprise AI Agent Runtime Platform
 
