@@ -734,7 +734,16 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 	if memory <= 0 {
 		memory = 2048
 	}
-	requests := corev1.ResourceList{corev1.ResourceCPU: *apiresource.NewMilliQuantity(cpu, apiresource.DecimalSI), corev1.ResourceMemory: *apiresource.NewQuantity(memory*1024*1024, apiresource.BinarySI)}
+	reqCPU := int64(100)
+	if cpu < reqCPU {
+		reqCPU = cpu
+	}
+	reqMemory := int64(256)
+	if memory < reqMemory {
+		reqMemory = memory
+	}
+	requests := corev1.ResourceList{corev1.ResourceCPU: *apiresource.NewMilliQuantity(reqCPU, apiresource.DecimalSI), corev1.ResourceMemory: *apiresource.NewQuantity(reqMemory*1024*1024, apiresource.BinarySI)}
+	limits := corev1.ResourceList{corev1.ResourceCPU: *apiresource.NewMilliQuantity(cpu, apiresource.DecimalSI), corev1.ResourceMemory: *apiresource.NewQuantity(memory*1024*1024, apiresource.BinarySI)}
 	env := []corev1.EnvVar{{Name: "AGENTHUB_RUNTIME_TYPE", Value: value.Runtime.Type}, {Name: "AGENTHUB_MODEL_BASE_URL", Value: value.Model.BaseURL}, {Name: "AGENTHUB_RUNTIME_CONFIG", Value: "/etc/agenthub/runtime.json"}, {Name: "OPENCODE_CONFIG", Value: "/etc/agenthub/opencode.json"}, {Name: "HERMES_CONFIG", Value: "/etc/agenthub/hermes-config.yaml"}, {Name: "AGENTHUB_RUNTIME_TOKEN", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "runtime-token"}}}}
 	env = append(env, corev1.EnvVar{Name: "AGENTHUB_MODEL_NAME", Value: value.Model.Name}, corev1.EnvVar{Name: "OPENAI_BASE_URL", Value: value.Model.BaseURL}, corev1.EnvVar{Name: "OPENAI_API_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "model-api-key"}}})
 	if value.Runtime.Type == "opencode" {
@@ -742,7 +751,7 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 	} else if value.Runtime.Type == "hermes" {
 		env = append(env, corev1.EnvVar{Name: "API_SERVER_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "runtime-token"}}})
 	}
-	containers := []corev1.Container{{Name: "agent", Image: value.Runtime.Image, ImagePullPolicy: corev1.PullIfNotPresent, Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: port}}, Env: env, Resources: corev1.ResourceRequirements{Requests: requests, Limits: requests}, SecurityContext: restrictedContainerSecurityContext(value.Security.ReadOnlyRootFilesystem), VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "home", MountPath: "/home/agent"}, {Name: "tmp", MountPath: "/tmp"}, {Name: "config", MountPath: "/etc/agenthub", ReadOnly: true}}, ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)}}, InitialDelaySeconds: 5, PeriodSeconds: 5, TimeoutSeconds: 2, FailureThreshold: 12}, LivenessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)}}, InitialDelaySeconds: 20, PeriodSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 4}}}
+	containers := []corev1.Container{{Name: "agent", Image: value.Runtime.Image, ImagePullPolicy: corev1.PullIfNotPresent, Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: port}}, Env: env, Resources: corev1.ResourceRequirements{Requests: requests, Limits: limits}, SecurityContext: restrictedContainerSecurityContext(value.Security.ReadOnlyRootFilesystem), VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "home", MountPath: "/home/agent"}, {Name: "tmp", MountPath: "/tmp"}, {Name: "config", MountPath: "/etc/agenthub", ReadOnly: true}}, ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)}}, InitialDelaySeconds: 5, PeriodSeconds: 5, TimeoutSeconds: 2, FailureThreshold: 12}, LivenessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)}}, InitialDelaySeconds: 20, PeriodSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 4}}}
 	if value.Runtime.Type == "hermes" {
 		dashboardResources := corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("100m"), corev1.ResourceMemory: apiresource.MustParse("128Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("1000m"), corev1.ResourceMemory: apiresource.MustParse("1024Mi")}}
 		proxyResources := corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("10m"), corev1.ResourceMemory: apiresource.MustParse("32Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("200m"), corev1.ResourceMemory: apiresource.MustParse("256Mi")}}

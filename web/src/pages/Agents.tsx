@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Activity, Bot, CircleStop, ExternalLink, FileText, MoreHorizontal, Play, Plus, RefreshCw } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
@@ -7,11 +7,15 @@ import type { Agent } from '../types'
 
 export function Agents({runtimeOnly=false}:{runtimeOnly?:boolean}) {
   const [agents,setAgents]=useState<Agent[]>()
-  const [selected,setSelected]=useState<Agent|null>(null)
+  const [selectedId,setSelectedId]=useState<string|null>(null)
   const [error,setError]=useState('')
   const [busy,setBusy]=useState('')
-  const load=()=>api.get<{items:Agent[]}>('/api/v1/agents').then(v=>setAgents(v.items)).catch(e=>setError(e.message))
-  useEffect(()=>{void load()},[])
+  const load=useCallback(()=>api.get<{items:Agent[]}>('/api/v1/agents').then(v=>setAgents(v.items)).catch(e=>setError(e.message)),[])
+  useEffect(()=>{
+    void load()
+    const timer = setInterval(() => { void load() }, 3000)
+    return () => clearInterval(timer)
+  },[load])
   const act=async(agent:Agent,action:'spawn'|'start'|'stop'|'restart')=>{
     setBusy(`${agent.id}:${action}`)
     setError('')
@@ -27,11 +31,12 @@ export function Agents({runtimeOnly=false}:{runtimeOnly?:boolean}) {
   }
   if(!agents) return <Loading/>
   const visible=runtimeOnly?agents.filter(a=>a.runtime):agents
+  const selected = agents.find(a => a.id === selectedId) || null
   return <div className="page">
     <PageHeader eyebrow={runtimeOnly?'RUNTIME CONTROL':'MY WORKSPACE'} title={runtimeOnly?'My Runtimes':'My Agents'} description={runtimeOnly?'사용자 전용 Kubernetes Runtime의 수명주기와 상태를 관리합니다.':'Agent 정의와 실행 중인 Runtime을 분리해서 안전하게 관리합니다.'} actions={<Link className="button primary" to="/catalog"><Plus size={17}/>새 Agent</Link>}/>
     {error&&<ErrorBanner message={error} onClose={()=>setError('')}/>}
-    {visible.length===0?<Empty icon={<Bot/>} title="아직 Agent가 없습니다" description="Catalog에서 검증된 Template을 선택해 첫 Agent를 만들어 보세요." action={<Link className="button primary" to="/catalog">Catalog 열기</Link>}/>:<section className="table-panel"><div className="table-wrap custom-scroll"><table><thead><tr><th>Agent</th><th>Runtime</th><th>Status</th><th>Pod / Node</th><th>마지막 변경</th><th aria-label="작업"/></tr></thead><tbody>{visible.map(agent=><tr key={agent.id}><td><button className="agent-cell" onClick={()=>setSelected(agent)}><div className={`runtime-logo ${agent.runtimeType}`}>{agent.runtimeType==='opencode'?'OC':'H'}</div><div><strong>{agent.name}</strong><span>Definition v{agent.version}</span></div></button></td><td><span className="runtime-name">{agent.runtimeType}</span></td><td><StatusBadge status={agent.runtime?.status??'stopped'}/></td><td><div className="mono-stack"><code>{agent.runtime?.podName||'—'}</code><small>{agent.runtime?.nodeName||'할당 전'}</small></div></td><td>{new Date(agent.updatedAt).toLocaleString('ko-KR',{dateStyle:'short',timeStyle:'short'})}</td><td><div className="row-actions">{!agent.runtime||['stopped','failed','crashed'].includes(agent.runtime.status)?<button title="시작" disabled={!!busy} onClick={()=>void act(agent,agent.runtime?'start':'spawn')}><Play size={16}/></button>:<button title="중지" disabled={!!busy} onClick={()=>void act(agent,'stop')}><CircleStop size={16}/></button>}<button title="상세" onClick={()=>setSelected(agent)}><MoreHorizontal size={18}/></button></div></td></tr>)}</tbody></table></div></section>}
-    {selected&&<AgentDrawer agent={selected} close={()=>setSelected(null)} action={act} busy={!!busy}/>}
+    {visible.length===0?<Empty icon={<Bot/>} title="아직 Agent가 없습니다" description="Catalog에서 검증된 Template을 선택해 첫 Agent를 만들어 보세요." action={<Link className="button primary" to="/catalog">Catalog 열기</Link>}/>:<section className="table-panel"><div className="table-wrap custom-scroll"><table><thead><tr><th>Agent</th><th>Runtime</th><th>Status</th><th>Pod / Node</th><th>마지막 변경</th><th aria-label="작업"/></tr></thead><tbody>{visible.map(agent=><tr key={agent.id}><td><button className="agent-cell" onClick={()=>setSelectedId(agent.id)}><div className={`runtime-logo ${agent.runtimeType}`}>{agent.runtimeType==='opencode'?'OC':'H'}</div><div><strong>{agent.name}</strong><span>Definition v{agent.version}</span></div></button></td><td><span className="runtime-name">{agent.runtimeType}</span></td><td><StatusBadge status={agent.runtime?.status??'stopped'}/></td><td><div className="mono-stack"><code>{agent.runtime?.podName||'—'}</code><small>{agent.runtime?.nodeName||'할당 전'}</small></div></td><td>{new Date(agent.updatedAt).toLocaleString('ko-KR',{dateStyle:'short',timeStyle:'short'})}</td><td><div className="row-actions">{!agent.runtime||['stopped','failed','crashed'].includes(agent.runtime.status)?<button title="시작" disabled={!!busy} onClick={()=>void act(agent,agent.runtime?'start':'spawn')}><Play size={16}/></button>:<button title="중지" disabled={!!busy} onClick={()=>void act(agent,'stop')}><CircleStop size={16}/></button>}<button title="상세" onClick={()=>setSelectedId(agent.id)}><MoreHorizontal size={18}/></button></div></td></tr>)}</tbody></table></div></section>}
+    {selected&&<AgentDrawer agent={selected} close={()=>setSelectedId(null)} action={act} busy={!!busy}/>}
   </div>
 }
 
