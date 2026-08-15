@@ -65,15 +65,11 @@ try {
       if (/Runtime 세션을 열 수 없습니다|Runtime에 연결하지 못했습니다/.test(text)) {
         problems.push(`${agent.name}: gateway error page — ${text.slice(0, 120)}`)
       }
-      const branded = await tab.locator('.agenthub-runtime-topbar').count()
-      if (agent.runtimeType === 'qwenpaw' && branded === 0) {
-        problems.push(`${agent.name}: qwenpaw branding bar missing`)
-      }
-      if (agent.runtimeType !== 'qwenpaw' && branded > 0) {
-        problems.push(`${agent.name}: branding bar leaked into ${agent.runtimeType}`)
-      }
+      // The gateway proxies runtime UIs verbatim; nothing may be injected into them.
+      const injected = await tab.locator('.agenthub-runtime-topbar').count()
+      if (injected > 0) problems.push(`${agent.name}: AgentHub markup was injected into the runtime UI`)
       console.log(
-        `  ${agent.runtimeType.padEnd(9)} ${agent.name.padEnd(22)} title="${title}" body=${text.length}b branding=${branded} pageerrors=${errors.length}`,
+        `  ${agent.runtimeType.padEnd(9)} ${agent.name.padEnd(22)} title="${title}" body=${text.length}b injected=${injected} pageerrors=${errors.length}`,
       )
       await tab.screenshot({ path: `${shotDir}/${agent.runtimeType}_${agent.name.replace(/\W+/g, '_')}.png`, fullPage: false })
     } catch (e) {

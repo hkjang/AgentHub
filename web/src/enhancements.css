@@ -228,3 +228,25 @@
 .notification-menu > button { display: grid; grid-template-columns: 7px 1fr; gap: 9px; width: 100%; padding: 11px 9px; border: 0; border-bottom: 1px solid #f0f2f5; background: transparent; color: #344054; text-align: left; }
 .notification-menu > button:hover { background: #f8f7ff; }.notification-menu > button.read { opacity: .65; }.notification-menu > button > i { width: 7px; height: 7px; margin-top: 4px; border-radius: 50%; background: #7456ea; }.notification-menu > button.read > i { background: #cbd2dc; }
 .notification-menu > button > span { display: flex; min-width: 0; flex-direction: column; }.notification-menu > button strong { font-size: 10px; }.notification-menu > button small { overflow: hidden; margin-top: 4px; color: #7d8999; font-size: 8px; line-height: 1.4; text-overflow: ellipsis; }.notification-menu time { margin-top: 5px; color: #a2acba; font-size: 7px; }
+
+/* Destructive-action confirmation, shared by every delete affordance. */
+.confirm-dialog{position:relative;z-index:1;margin:auto;width:min(420px,calc(100vw - 32px));background:#fff;border-radius:14px;padding:24px;box-shadow:0 24px 60px rgba(16,24,40,.28);display:flex;flex-direction:column;gap:12px;text-align:center;align-items:center}
+.confirm-dialog .confirm-icon{width:44px;height:44px;display:grid;place-items:center;border-radius:50%;background:#ffe2e7;color:#c43b52}
+.confirm-dialog h3{margin:0;font-size:16px;color:#101828}
+.confirm-dialog .confirm-body{font-size:12px;color:#667085;line-height:1.6}
+.confirm-dialog .confirm-body code{font-size:11px;background:#f3f5f8;padding:1px 5px;border-radius:4px;color:#344054}
+.confirm-dialog .confirm-actions{display:flex;gap:8px;width:100%;margin-top:4px}
+.confirm-dialog .confirm-actions .button{flex:1;justify-content:center}
+.confirm-dialog .alert{width:100%;text-align:left}
+.drawer-layer:has(.confirm-dialog){display:flex;align-items:center;justify-content:center}
+.row-actions button.danger:hover{color:#c43b52;border-color:#f3c3cb;background:#fff5f6}
+
+/* Row of secondary actions inside resource / workspace / workflow cards. */
+.card-actions{display:flex;align-items:center;gap:6px;margin-top:auto;padding-top:10px}
+.card-actions .button{margin:0}
+.card-actions>button:not(.button){display:inline-flex;align-items:center;gap:5px;padding:6px 9px;border:1px solid #e1e6ed;background:#fff;border-radius:7px;color:#475467;font-size:11px;cursor:pointer}
+.card-actions>button:not(.button):hover{background:#f7f9fc;color:#101828}
+.card-actions>button.danger:hover{color:#c43b52;border-color:#f3c3cb;background:#fff5f6}
+.resource-card{display:flex;flex-direction:column;text-align:left}
+.button.ghost.danger-text{color:#c43b52}
+.button.ghost.danger-text:hover{background:#fff5f6;border-color:#f3c3cb}

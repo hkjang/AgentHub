@@ -8,3 +8,24 @@ export function Loading() { return <div className="loading-grid"><span/><span/><
 export function ErrorBanner({message,onClose}:{message:string;onClose?:()=>void}) { return <div className="alert error"><AlertCircle size={18}/><span>{message}</span>{onClose&&<button onClick={onClose} aria-label="닫기"><X size={16}/></button>}</div> }
 export function SuccessBanner({message}:{message:string}) { return <div className="alert success"><CheckCircle2 size={18}/><span>{message}</span></div> }
 export function Drawer({title,subtitle,close,children,footer}:{title:string;subtitle?:string;close:()=>void;children:ReactNode;footer?:ReactNode}) { return <div className="drawer-layer"><button className="drawer-scrim" onClick={close} aria-label="닫기"/><aside className="drawer" role="dialog" aria-modal="true" aria-label={title}><header><div><h2>{title}</h2>{subtitle&&<p>{subtitle}</p>}</div><button className="icon-button" onClick={close} aria-label="닫기"><X size={20}/></button></header><div className="drawer-body custom-scroll">{children}</div>{footer&&<footer>{footer}</footer>}</aside></div> }
+
+/**
+ * Blocking confirmation for destructive actions. Deletes here remove Kubernetes
+ * resources and platform records, so every call site routes through this rather
+ * than firing on a single click.
+ */
+export function ConfirmDialog({title,message,confirmLabel='삭제',busy=false,error,onConfirm,onCancel}:{title:string;message:ReactNode;confirmLabel?:string;busy?:boolean;error?:string;onConfirm:()=>void;onCancel:()=>void}) {
+  return <div className="drawer-layer">
+    <button className="drawer-scrim" onClick={onCancel} aria-label="취소"/>
+    <div className="confirm-dialog" role="alertdialog" aria-modal="true" aria-label={title}>
+      <div className="confirm-icon"><AlertCircle size={22}/></div>
+      <h3>{title}</h3>
+      <div className="confirm-body">{message}</div>
+      {error&&<ErrorBanner message={error}/>}
+      <div className="confirm-actions">
+        <button className="button ghost" onClick={onCancel} disabled={busy}>취소</button>
+        <button className="button danger" onClick={onConfirm} disabled={busy} autoFocus>{busy?'처리 중…':confirmLabel}</button>
+      </div>
+    </div>
+  </div>
+}

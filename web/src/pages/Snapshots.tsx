@@ -1,8 +1,8 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
-import { Camera, DatabaseBackup, History, Plus, RefreshCw, RotateCcw } from 'lucide-react'
+import { Camera, DatabaseBackup, History, Plus, RefreshCw, RotateCcw, Trash2 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api'
-import { Drawer, Empty, ErrorBanner, Loading, PageHeader, StatusBadge, SuccessBanner } from '../components/UI'
+import { ConfirmDialog, Drawer, Empty, ErrorBanner, Loading, PageHeader, StatusBadge, SuccessBanner } from '../components/UI'
 import type { Workspace, WorkspaceSnapshot } from '../types'
 
 export function Snapshots() {
@@ -13,18 +13,30 @@ export function Snapshots() {
   const [restore, setRestore] = useState<WorkspaceSnapshot | null>(null)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [removing, setRemoving] = useState<WorkspaceSnapshot | null>(null)
+  const [removeBusy, setRemoveBusy] = useState(false)
+  const [removeError, setRemoveError] = useState('')
   const workspaceMap = useMemo(() => new Map(workspaces.map((item) => [item.id, item])), [workspaces])
 
   const load = useCallback(async () => {
     const [snapshotResult, workspaceResult] = await Promise.all([
-      api.get<{items: WorkspaceSnapshot[]}>('/api/v1/workspace-snapshots'),
-      api.get<{items: Workspace[]}>('/api/v1/workspaces')
+      api.get<{items?: WorkspaceSnapshot[]}>('/api/v1/workspace-snapshots'),
+      api.get<{items?: Workspace[]}>('/api/v1/workspaces')
     ])
-    setSnapshots(snapshotResult.items)
-    setWorkspaces(workspaceResult.items)
+    setSnapshots(snapshotResult.items ?? [])
+    setWorkspaces(workspaceResult.items ?? [])
   }, [])
 
-  useEffect(() => { void load().catch((e) => setError(e.message)) }, [load])
+
+
+  useEffect(() => { void load().catch((e) => { setSnapshots([]); setError(e instanceof Error ? e.message : 'Snapshot 목록을 불러오지 못했습니다.') }) }, [load])
+  const remove = async () => {
+    if (!removing) return
+    setRemoveBusy(true); setRemoveError('')
+    try { await api.delete(`/api/v1/workspace-snapshots/${removing.id}`); setRemoving(null); setSuccess('Snapshot 기록을 삭제했습니다.'); await load() }
+    catch (e) { setRemoveError(e instanceof Error ? e.message : 'Snapshot을 삭제하지 못했습니다.') }
+    finally { setRemoveBusy(false) }
+  }
   useEffect(() => {
     if (!snapshots?.some((item) => ['pending', 'provisioning'].includes(item.status))) return
     const timer = window.setInterval(() => void load().catch(() => undefined), 5000)
@@ -42,10 +54,11 @@ export function Snapshots() {
           <div className="snapshot-icon"><History/></div>
           <div className="snapshot-main"><div><h3>{item.name}</h3><StatusBadge status={item.status}/></div><p>{workspaceMap.get(item.workspaceId)?.name ?? item.workspaceId}</p><code>{item.storageRef}</code></div>
           <dl><div><dt>생성 시각</dt><dd>{new Date(item.createdAt).toLocaleString('ko-KR')}</dd></div><div><dt>크기</dt><dd>{formatBytes(item.sizeBytes)}</dd></div></dl>
-          <button className="button ghost" disabled={item.status !== 'ready'} onClick={() => setRestore(item)}><RotateCcw size={15}/>새 Workspace로 복원</button>
+          <div className="card-actions"><button className="button ghost" disabled={item.status !== 'ready'} onClick={() => setRestore(item)}><RotateCcw size={15}/>새 Workspace로 복원</button><button className="danger" title="삭제" onClick={() => { setRemoveError(''); setRemoving(item) }}><Trash2 size={15}/></button></div>
         </article>)}
       </section>}
     {createFor && <SnapshotDrawer workspaces={workspaces} initial={createFor} close={() => setCreateFor(null)} done={() => { setCreateFor(null); setSuccess('Snapshot 생성 요청을 접수했습니다.'); void load() }} error={setError}/>}
+    {removing && <ConfirmDialog title="Snapshot을 삭제할까요?" message={<><strong>{removing.name}</strong> 복원 지점 기록이 삭제됩니다. 이미 복원해 만든 Workspace는 그대로 유지됩니다.</>} busy={removeBusy} error={removeError} onConfirm={() => void remove()} onCancel={() => setRemoving(null)}/>}
     {restore && <RestoreDrawer snapshot={restore} close={() => setRestore(null)} done={() => { setRestore(null); setSuccess('Snapshot을 새 Workspace로 복원했습니다.'); void load() }} error={setError}/>}
   </div>
 }

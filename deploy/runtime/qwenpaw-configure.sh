@@ -36,12 +36,17 @@ if ! grep -q "\"$AGENTHUB_MODEL_NAME\"" "$PROVIDER_FILE" 2>/dev/null; then
     --model-id "$AGENTHUB_MODEL_NAME" --model-name "$AGENTHUB_MODEL_NAME" >/dev/null 2>&1 || true
 fi
 
-# `qwenpaw models config-key` is interactive only, so the key is written to the
-# same provider file the CLI maintains.
+# `qwenpaw models config-key` and `models set-llm` are both interactive-only, so
+# the key is written to the provider file the CLI maintains and the active model
+# slot is selected through the same ProviderManager API the CLI drives. Without
+# the slot the console starts on "Select model" and the agent cannot answer.
 OPENAI_BASE_URL="$OPENAI_BASE_URL" \
 OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
+AGENTHUB_MODEL_NAME="$AGENTHUB_MODEL_NAME" \
+PROVIDER_ID="$PROVIDER_ID" \
 PROVIDER_FILE="$PROVIDER_FILE" \
-"$QWENPAW_PYTHON" - <<'PY' || echo "qwenpaw: could not persist model credentials" >&2
+"$QWENPAW_PYTHON" - <<'PY' || { echo "qwenpaw: could not bind the model" >&2; exit 0; }
+import asyncio
 import json
 import os
 import pathlib
@@ -53,6 +58,14 @@ provider = json.loads(path.read_text())
 provider["base_url"] = os.environ["OPENAI_BASE_URL"]
 provider["api_key"] = os.environ.get("OPENAI_API_KEY", "")
 path.write_text(json.dumps(provider, indent=2))
+
+from qwenpaw.providers.provider_manager import ProviderManager
+
+manager = ProviderManager.get_instance()
+asyncio.run(manager.activate_model(os.environ["PROVIDER_ID"], os.environ["AGENTHUB_MODEL_NAME"]))
+active = manager.get_active_model()
+if not active or not active.model:
+    raise SystemExit("active model slot was not persisted")
 PY
 
 echo "qwenpaw: bound ${AGENTHUB_MODEL_NAME} at ${OPENAI_BASE_URL}" >&2

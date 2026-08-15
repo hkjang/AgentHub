@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, GitBranch, Plus, ShieldCheck, Workflow as WorkflowIcon, X } from 'lucide-react'
+import { CheckCircle2, GitBranch, Pencil, Plus, ShieldCheck, Trash2, Workflow as WorkflowIcon, X } from 'lucide-react'
 import { api } from '../api'
-import { Drawer, Empty, ErrorBanner, Loading, PageHeader, StatusBadge, SuccessBanner } from '../components/UI'
+import { ConfirmDialog, Drawer, Empty, ErrorBanner, Loading, PageHeader, StatusBadge, SuccessBanner } from '../components/UI'
 import type { Agent, Workflow } from '../types'
 
 export function Workflows() {
@@ -10,12 +10,23 @@ export function Workflows() {
   const [selected,setSelected] = useState<Workflow|null|undefined>()
   const [error,setError] = useState('')
   const [success,setSuccess] = useState('')
+  const [removing,setRemoving] = useState<Workflow|null>(null)
+  const [removeBusy,setRemoveBusy] = useState(false)
+  const [removeError,setRemoveError] = useState('')
   const names = useMemo(() => new Map(agents.map((item) => [item.id,item.name])),[agents])
-  const load = () => Promise.all([api.get<{items:Workflow[]}>('/api/v1/workflows').then((v)=>setItems(v.items)),api.get<{items:Agent[]}>('/api/v1/agents').then((v)=>setAgents(v.items))]).catch((e)=>setError(e.message))
+  const load = () => Promise.all([api.get<{items?:Workflow[]}>('/api/v1/workflows').then((v)=>setItems(v.items??[])),api.get<{items?:Agent[]}>('/api/v1/agents').then((v)=>setAgents(v.items??[]))]).catch((e)=>{setItems([]);setError(e instanceof Error?e.message:'Workflow 목록을 불러오지 못했습니다.')})
   useEffect(()=>{void load()},[])
+  const remove = async () => {
+    if(!removing) return
+    setRemoveBusy(true); setRemoveError('')
+    try { await api.delete(`/api/v1/workflows/${removing.id}`); setRemoving(null); await load() }
+    catch(e){ setRemoveError(e instanceof Error?e.message:'Workflow를 삭제하지 못했습니다.') }
+    finally { setRemoveBusy(false) }
+  }
   if(!items)return <Loading/>
   const validate = async (id:string) => { try { const result=await api.post<{levels:string[][]}>(`/api/v1/workflows/${id}/validate`);setSuccess(`정책·소유권·순환 검사 통과 · 실행 Level ${result.levels.length}`) } catch(e) { setError(e instanceof Error?e.message:'검증하지 못했습니다.') } }
-  return <div className="page"><PageHeader eyebrow="MULTI-AGENT" title="Agent Workflows" description="Agent 간 의존관계를 정의하고 실행 전에 깊이·호출량·순환·병렬 한도를 검증합니다." actions={<button className="button primary" disabled={agents.length===0} onClick={()=>setSelected(null)}><Plus size={16}/>Workflow 만들기</button>}/>{error&&<ErrorBanner message={error} onClose={()=>setError('')}/>} {success&&<SuccessBanner message={success}/>} {items.length===0?<Empty icon={<WorkflowIcon/>} title="Workflow가 없습니다" description="Agent를 먼저 만든 뒤 순차 또는 병렬 실행 그래프를 구성하세요."/>:<section className="workflow-grid">{items.map((item)=><article key={item.id} onClick={()=>setSelected(item)}><header><div className="list-icon"><GitBranch/></div><StatusBadge status={item.enabled?'active':'disabled'}/></header><h3>{item.name}</h3><p>{item.description||'Multi-Agent 실행 정의'}</p><div className="workflow-chain">{item.definition.steps.map((step,index)=><span key={step.id}>{index>0&&<i>→</i>}<b>{names.get(step.agentId)??'Unknown Agent'}</b></span>)}</div><footer><span>{item.mode} · Depth {item.maxDepth} · Calls {item.maxAgentCalls}</span><button className="button ghost" onClick={(event)=>{event.stopPropagation();void validate(item.id)}}><ShieldCheck size={14}/>검증</button></footer></article>)}</section>}{selected!==undefined&&<WorkflowDrawer item={selected} agents={agents} close={()=>setSelected(undefined)} done={()=>{setSelected(undefined);void load()}} error={setError}/>}</div>
+  return <div className="page"><PageHeader eyebrow="MULTI-AGENT" title="Agent Workflows" description="Agent 간 의존관계를 정의하고 실행 전에 깊이·호출량·순환·병렬 한도를 검증합니다." actions={<button className="button primary" disabled={agents.length===0} onClick={()=>setSelected(null)}><Plus size={16}/>Workflow 만들기</button>}/>{error&&<ErrorBanner message={error} onClose={()=>setError('')}/>} {success&&<SuccessBanner message={success}/>} {items.length===0?<Empty icon={<WorkflowIcon/>} title="Workflow가 없습니다" description="Agent를 먼저 만든 뒤 순차 또는 병렬 실행 그래프를 구성하세요."/>:<section className="workflow-grid">{items.map((item)=><article key={item.id} onClick={()=>setSelected(item)}><header><div className="list-icon"><GitBranch/></div><StatusBadge status={item.enabled?'active':'disabled'}/></header><h3>{item.name}</h3><p>{item.description||'Multi-Agent 실행 정의'}</p><div className="workflow-chain">{item.definition.steps.map((step,index)=><span key={step.id}>{index>0&&<i>→</i>}<b>{names.get(step.agentId)??'Unknown Agent'}</b></span>)}</div><footer><span>{item.mode} · Depth {item.maxDepth} · Calls {item.maxAgentCalls}</span><div className="card-actions"><button className="button ghost" onClick={(event)=>{event.stopPropagation();void validate(item.id)}}><ShieldCheck size={14}/>검증</button><button title="수정" onClick={(event)=>{event.stopPropagation();setSelected(item)}}><Pencil size={15}/></button><button className="danger" title="삭제" onClick={(event)=>{event.stopPropagation();setRemoveError('');setRemoving(item)}}><Trash2 size={15}/></button></div></footer></article>)}</section>}{selected!==undefined&&<WorkflowDrawer item={selected} agents={agents} close={()=>setSelected(undefined)} done={()=>{setSelected(undefined);void load()}} error={setError}/>}
+    {removing&&<ConfirmDialog title="Workflow를 삭제할까요?" message={<><strong>{removing.name}</strong> 실행 그래프 정의가 삭제됩니다. 연결된 Agent는 그대로 유지됩니다.</>} busy={removeBusy} error={removeError} onConfirm={()=>void remove()} onCancel={()=>setRemoving(null)}/>}</div>
 }
 
 function WorkflowDrawer({item,agents,close,done,error}:{item:Workflow|null;agents:Agent[];close:()=>void;done:()=>void;error:(value:string)=>void}) {

@@ -3,7 +3,9 @@ package operator
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -252,6 +254,11 @@ func effectiveMCP(ns, runtimeName string, value spec) []map[string]any {
 	return result
 }
 
+// openCodeProvider is the provider key the generated OpenCode config declares
+// and the model reference points at. They must stay identical or OpenCode
+// cannot resolve the bound model.
+const openCodeProvider = "agenthub"
+
 func runtimeConfigs(ns, runtimeName string, value spec) (string, string, string) {
 	bindings := effectiveMCP(ns, runtimeName, value)
 	runtimeValue := map[string]any{"owner": value.Owner, "runtime": value.Runtime, "profile": value.Profile, "workspace": value.Workspace, "model": value.Model, "mcp": bindings, "lifecycle": value.Lifecycle}
@@ -259,20 +266,12 @@ func runtimeConfigs(ns, runtimeName string, value spec) (string, string, string)
 	opencode := map[string]any{"$schema": "https://opencode.ai/config.json", "autoupdate": false, "mcp": map[string]any{}}
 	hermes := map[string]any{"terminal": map[string]any{"cwd": "/workspace", "home_mode": "profile"}, "mcp_servers": map[string]any{}}
 	if value.Model.BaseURL != "" && value.Model.Name != "" {
-		opencode["model"] = "ollama/" + value.Model.Name
+		// One provider entry named after the platform, not after whichever backend
+		// happens to serve it: the same binding fronts Ollama, vLLM or any other
+		// OpenAI-compatible gateway an administrator registers.
+		opencode["model"] = openCodeProvider + "/" + value.Model.Name
 		opencode["provider"] = map[string]any{
-			"ollama": map[string]any{
-				"npm":  "@ai-sdk/openai-compatible",
-				"name": "Ollama Local",
-				"options": map[string]any{
-					"baseURL": value.Model.BaseURL,
-					"apiKey":  "{env:OPENAI_API_KEY}",
-				},
-				"models": map[string]any{
-					value.Model.Name: map[string]any{"name": value.Model.Name},
-				},
-			},
-			"agenthub": map[string]any{
+			openCodeProvider: map[string]any{
 				"npm":  "@ai-sdk/openai-compatible",
 				"name": "AgentHub Model Gateway",
 				"options": map[string]any{
@@ -856,7 +855,15 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
   if [ -n "$BRANCH" ]; then git clone --depth 1 --branch "$BRANCH" "$REPOSITORY_URL" /workspace; else git clone --depth 1 "$REPOSITORY_URL" /workspace; fi
 fi`}, Env: []corev1.EnvVar{{Name: "REPOSITORY_URL", Value: value.Workspace.RepositoryURL}, {Name: "BRANCH", Value: value.Workspace.Branch}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("100m"), corev1.ResourceMemory: apiresource.MustParse("128Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("500m"), corev1.ResourceMemory: apiresource.MustParse("512Mi")}}, SecurityContext: restrictedContainerSecurityContext(value.Security.ReadOnlyRootFilesystem), VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "tmp", MountPath: "/tmp"}}})
 	}
-	desired := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels(name, nil), OwnerReferences: ownerRef(owner)}, Spec: appsv1.StatefulSetSpec{ServiceName: name, Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"agenthub.io/runtime": name}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels(name, map[string]string{"agenthub.io/owner": safeLabel(value.Owner)})}, Spec: corev1.PodSpec{
+	// The generated configuration is delivered through a ConfigMap and copied into
+	// the agent's home directory by an init container, so a config-only change is
+	// invisible to a running Pod. Stamping its hash (and the explicit restart
+	// marker) into the Pod template makes the StatefulSet roll the Pod instead.
+	podAnnotations := map[string]string{"agenthub.io/config-hash": configHash(ns, name, value)}
+	if restartedAt := owner.GetAnnotations()["agenthub.io/restarted-at"]; restartedAt != "" {
+		podAnnotations["agenthub.io/restarted-at"] = restartedAt
+	}
+	desired := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels(name, nil), OwnerReferences: ownerRef(owner)}, Spec: appsv1.StatefulSetSpec{ServiceName: name, Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"agenthub.io/runtime": name}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels(name, map[string]string{"agenthub.io/owner": safeLabel(value.Owner)}), Annotations: podAnnotations}, Spec: corev1.PodSpec{
 		ServiceAccountName: name, AutomountServiceAccountToken: ptr(false), EnableServiceLinks: ptr(false), SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonRoot, RunAsUser: &runAs, RunAsGroup: &runAs, FSGroup: &runAs, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
 		InitContainers: initContainers, Containers: containers,
 		Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName}}}, {Name: "home", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}, {Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}, {Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}}}}},
@@ -874,6 +881,15 @@ fi`}, Env: []corev1.EnvVar{{Name: "REPOSITORY_URL", Value: value.Workspace.Repos
 	_, err = c.client.AppsV1().StatefulSets(ns).Update(ctx, desired, metav1.UpdateOptions{})
 	return err
 }
+
+// configHash fingerprints everything the ConfigMap carries so that any change to
+// the model binding, MCP bundle or system prompt produces a new Pod template.
+func configHash(ns, name string, value spec) string {
+	runtimeRaw, openRaw, hermesRaw := runtimeConfigs(ns, name, value)
+	sum := sha256.Sum256([]byte(runtimeRaw + "\x00" + openRaw + "\x00" + hermesRaw))
+	return hex.EncodeToString(sum[:])
+}
+
 func safeLabel(value string) string {
 	value = strings.ToLower(value)
 	var b strings.Builder

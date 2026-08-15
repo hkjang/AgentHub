@@ -114,6 +114,40 @@ try {
   if (!/^(OC|H|QP|A)$/.test(logoText.trim())) note(route, 'runtime-badge', `unexpected badge ${logoText}`)
   await page.screenshot({ path: `${shotDir}/_agent_drawer.png`, fullPage: true })
 
+  // Every resource surface must offer edit/delete, not just create.
+  const CRUD_SURFACES = [
+    ['/agents', '.row-actions button[title="수정"]', '.row-actions button[title="삭제"]'],
+    ['/workspaces', '.card-actions button[title="이름 수정"]', '.card-actions button[title="삭제"]'],
+    ['/workspaces/snapshots', null, '.card-actions button[title="삭제"]'],
+    ['/workflows', '.card-actions button[title="수정"]', '.card-actions button[title="삭제"]'],
+    ['/evaluation', '.card-actions button[title="수정"]', '.card-actions button[title="삭제"]'],
+    ['/admin/runtime-profiles', '.card-actions button[title="수정"]', '.card-actions button[title="삭제"]'],
+    ['/admin/runtime-images', '.card-actions button[title="수정"]', '.card-actions button[title="삭제"]'],
+    ['/admin/models', '.card-actions button[title="수정"]', '.card-actions button[title="삭제"]'],
+    ['/admin/mcp', '.card-actions button[title="수정"]', '.card-actions button[title="삭제"]'],
+    ['/admin/mcp-bundles', '.card-actions button[title="수정"]', '.card-actions button[title="삭제"]'],
+  ]
+  for (const [path, editSelector, deleteSelector] of CRUD_SURFACES) {
+    route = `${path}:crud`
+    await page.goto(baseURL + path, { waitUntil: 'networkidle' })
+    await page.waitForTimeout(500)
+    // Pages with no rows legitimately show an empty state instead.
+    const rows = await page.locator('.row-actions, .card-actions').count()
+    if (rows === 0) continue
+    if (editSelector && (await page.locator(editSelector).count()) === 0) note(route, 'crud', 'no edit affordance')
+    if (deleteSelector && (await page.locator(deleteSelector).count()) === 0) note(route, 'crud', 'no delete affordance')
+  }
+
+  // A delete must ask before it destroys anything.
+  route = '/agents:confirm'
+  await page.goto(baseURL + '/agents', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(500)
+  await page.locator('.row-actions button[title="삭제"]').first().click()
+  const confirm = page.getByRole('alertdialog')
+  await confirm.waitFor({ timeout: 10000 })
+  await confirm.getByRole('button', { name: '취소' }).click()
+  if ((await page.getByRole('alertdialog').count()) !== 0) note(route, 'confirm', 'cancel did not dismiss the dialog')
+
   route = '/palette'
   await page.keyboard.press('Escape')
   await page.keyboard.press('Control+K')

@@ -56,8 +56,73 @@ func TestRuntimeConfigsCompileModelAndMCPBindings(t *testing.T) {
 	if err := json.Unmarshal([]byte(openRaw), &config); err != nil {
 		t.Fatalf("OpenCode config is not JSON: %v", err)
 	}
-	if config["model"] != "ollama/qwen-coder" && config["model"] != "agenthub/qwen-coder" {
+	if config["model"] != "agenthub/qwen-coder" {
 		t.Fatalf("unexpected OpenCode model: %#v", config["model"])
+	}
+	// The model reference is useless if it names a provider the config never declares.
+	providers, ok := config["provider"].(map[string]any)
+	if !ok || providers["agenthub"] == nil {
+		t.Fatalf("OpenCode config does not declare the referenced provider: %#v", config["provider"])
+	}
+}
+
+func TestStatefulSetRollsPodWhenCompiledConfigChanges(t *testing.T) {
+	newOwner := func() *unstructured.Unstructured {
+		owner := &unstructured.Unstructured{}
+		owner.SetAPIVersion("agenthub.io/v1alpha1")
+		owner.SetKind("AgentRuntime")
+		owner.SetName("cfg-runtime")
+		owner.SetNamespace("agent-runtime-dev")
+		owner.SetUID(types.UID("test-owner"))
+		return owner
+	}
+	build := func(mutate func(*spec), annotations map[string]string) map[string]string {
+		client := fake.NewSimpleClientset()
+		controller := &Controller{client: client}
+		owner := newOwner()
+		if annotations != nil {
+			owner.SetAnnotations(annotations)
+		}
+		var value spec
+		value.Owner = "user-1"
+		value.Runtime.Type = "opencode"
+		value.Runtime.Image = "agenthub-base:v0.3.1"
+		value.Model.BaseURL = "http://gateway.svc:8000/v1"
+		value.Model.Name = "qwen"
+		mutate(&value)
+		if err := controller.ensureStatefulSet(context.Background(), "agent-runtime-dev", "cfg-runtime", "cfg-workspace", value, owner); err != nil {
+			t.Fatal(err)
+		}
+		statefulSet, err := client.AppsV1().StatefulSets("agent-runtime-dev").Get(context.Background(), "cfg-runtime", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return statefulSet.Spec.Template.ObjectMeta.Annotations
+	}
+
+	base := build(func(*spec) {}, nil)
+	if base["agenthub.io/config-hash"] == "" {
+		t.Fatal("Pod template must carry the compiled-config hash")
+	}
+	same := build(func(*spec) {}, nil)
+	if same["agenthub.io/config-hash"] != base["agenthub.io/config-hash"] {
+		t.Fatal("an unchanged configuration must not roll the Pod")
+	}
+	changed := build(func(value *spec) {
+		value.MCP = append(value.MCP, struct {
+			Name     string `json:"name"`
+			Mode     string `json:"mode"`
+			Endpoint string `json:"endpoint"`
+			Image    string `json:"image"`
+			Port     int32  `json:"port"`
+		}{Name: "context7", Mode: "shared", Endpoint: "https://mcp.context7.com/mcp"})
+	}, nil)
+	if changed["agenthub.io/config-hash"] == base["agenthub.io/config-hash"] {
+		t.Fatal("binding an MCP server must roll the Pod so the runtime picks it up")
+	}
+	restarted := build(func(*spec) {}, map[string]string{"agenthub.io/restarted-at": "2026-08-15T00:00:00Z"})
+	if restarted["agenthub.io/restarted-at"] != "2026-08-15T00:00:00Z" {
+		t.Fatal("an explicit restart must reach the Pod template")
 	}
 }
 

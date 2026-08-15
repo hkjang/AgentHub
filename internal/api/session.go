@@ -1,17 +1,14 @@
 package api
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -199,11 +196,6 @@ func (s *Server) serveRuntimeProxy(w http.ResponseWriter, r *http.Request, runti
 		default:
 			request.Header.Set("Authorization", "Bearer "+connection.Token)
 		}
-		// Branding is injected into the HTML document, which is only possible on an
-		// uncompressed body. Assets keep negotiating compression normally.
-		if brandedRuntime(connection.RuntimeType) && strings.Contains(request.Header.Get("Accept"), "text/html") {
-			request.Header.Set("Accept-Encoding", "identity")
-		}
 	}
 	proxy.ModifyResponse = func(response *http.Response) error {
 		if response.StatusCode == http.StatusSwitchingProtocols {
@@ -220,7 +212,7 @@ func (s *Server) serveRuntimeProxy(w http.ResponseWriter, r *http.Request, runti
 			}
 		}
 
-		return s.brandRuntimeResponse(response, connection.RuntimeType)
+		return nil
 	}
 	proxy.ErrorHandler = func(writer http.ResponseWriter, request *http.Request, proxyErr error) {
 		s.logger.Warn("runtime session proxy failed", "runtime", runtimeID, "error", proxyErr)
@@ -231,76 +223,6 @@ func (s *Server) serveRuntimeProxy(w http.ResponseWriter, r *http.Request, runti
 
 func basicCredential(username, token string) string {
 	return base64.StdEncoding.EncodeToString([]byte(username + ":" + token))
-}
-
-// brandedRuntime reports whether the runtime's own UI is wrapped in an AgentHub
-// identity bar. Runtimes that already carry their own product chrome are left
-// untouched.
-func brandedRuntime(runtimeType string) bool { return runtimeType == runtimetype.QwenPaw }
-
-var bodyTagPattern = regexp.MustCompile(`(?i)<body[^>]*>`)
-
-const qwenPawBrandingStyle = `<style id="agenthub-runtime-branding">
-.agenthub-runtime-topbar{position:fixed;top:0;left:0;right:0;height:38px;box-sizing:border-box;background:linear-gradient(90deg,#1e293b,#0f172a);border-bottom:1px solid rgba(234,88,12,.47);display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 16px;z-index:2147483000;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:12px;color:#e2e8f0;box-shadow:0 2px 10px rgba(0,0,0,.5)}
-.agenthub-runtime-topbar .brand{display:flex;align-items:center;gap:8px;min-width:0;font-weight:700;color:#ffedd5;letter-spacing:.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.agenthub-runtime-topbar .badge{flex:none;background:linear-gradient(135deg,#ea580c,#c2410c);color:#fff;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:800}
-.agenthub-runtime-topbar .meta{display:flex;align-items:center;gap:12px;flex:none}
-.agenthub-runtime-topbar .chip{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:4px;background:rgba(234,88,12,.18);border:1px solid rgba(234,88,12,.35);color:#fdba74;font-size:11px}
-.agenthub-runtime-topbar a{color:#fdba74;text-decoration:none;font-weight:600}
-body{padding-top:38px}
-@media (max-width:720px){.agenthub-runtime-topbar .meta{display:none}}
-</style>`
-
-const qwenPawBrandingBar = `<div class="agenthub-runtime-topbar" role="banner"><span class="brand"><span class="badge">QP</span>Qwen Paw Workstation</span><span class="meta"><span class="chip">ReMe 3-Tier Memory</span><span class="chip">Kernel Sandbox</span><a href="https://qwenpaw.agentscope.io/" target="_blank" rel="noopener noreferrer">Docs</a></span></div>`
-
-// brandRuntimeResponse stamps the AgentHub identity bar onto the runtime's HTML
-// document. It rewrites only uncompressed HTML documents that have not already
-// been branded, so assets, JSON and websocket upgrades pass through untouched.
-func (s *Server) brandRuntimeResponse(response *http.Response, runtimeType string) error {
-	if !brandedRuntime(runtimeType) || !strings.Contains(response.Header.Get("Content-Type"), "text/html") {
-		return nil
-	}
-	if encoding := response.Header.Get("Content-Encoding"); encoding != "" && !strings.EqualFold(encoding, "identity") {
-		// The upstream ignored our identity request; rewriting would corrupt it.
-		return nil
-	}
-	body, err := io.ReadAll(response.Body)
-	_ = response.Body.Close()
-	if err != nil {
-		s.logger.Warn("runtime branding skipped", "runtime", runtimeType, "error", err)
-		response.Body = io.NopCloser(bytes.NewReader(body))
-		return nil
-	}
-	branded := injectRuntimeBranding(string(body))
-	response.Body = io.NopCloser(strings.NewReader(branded))
-	response.ContentLength = int64(len(branded))
-	response.Header.Set("Content-Length", strconv.Itoa(len(branded)))
-	// The bar is inline markup, so an upstream CSP without 'unsafe-inline' would
-	// blank it out. Only dropped on documents we actually rewrote.
-	response.Header.Del("Content-Security-Policy")
-	return nil
-}
-
-// injectRuntimeBranding adds the identity bar as static markup. Earlier versions
-// re-applied it from a 300ms timer, which fought the runtime's own renderer and
-// burned CPU for the whole session.
-func injectRuntimeBranding(html string) string {
-	if strings.Contains(html, "agenthub-runtime-topbar") {
-		return html
-	}
-	if match := bodyTagPattern.FindStringIndex(html); match != nil {
-		head := html[:match[1]]
-		if index := strings.Index(head, "</head>"); index >= 0 {
-			head = head[:index] + qwenPawBrandingStyle + head[index:]
-		} else {
-			head = qwenPawBrandingStyle + head
-		}
-		return head + qwenPawBrandingBar + html[match[1]:]
-	}
-	if index := strings.Index(html, "</head>"); index >= 0 {
-		return html[:index] + qwenPawBrandingStyle + html[index:] + qwenPawBrandingBar
-	}
-	return qwenPawBrandingStyle + qwenPawBrandingBar + html
 }
 
 func writeRuntimeConnectionError(w http.ResponseWriter, err error) {

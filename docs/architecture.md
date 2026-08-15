@@ -57,6 +57,9 @@ behavior lives in the offline `agenthub-base` image:
 - `qwenpaw`: `qwenpaw app --host 0.0.0.0 --port 8642`; the app ships no authenticator, so it is published only through the `agenthub-runtime-proxy` sidecar on 9119
 - `custom`: an administrator-approved image and command
 
+Runtime UIs are proxied verbatim: the session gateway authenticates, rewrites
+redirects and strips cookies, but never rewrites the response body.
+
 `internal/runtimetype` is the single source of truth for this list. Changing it
 means updating the CRD enum in `deploy/kubernetes/crd.yaml` and the
 `runtime_type` CHECK constraints in the initial migration to match.

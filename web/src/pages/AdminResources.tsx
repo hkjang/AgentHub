@@ -1,7 +1,8 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { Boxes, Bot, Network, Plus, Sparkles } from "lucide-react";
+import { Boxes, Bot, Network, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
 import { api } from "../api";
 import {
+  ConfirmDialog,
   Drawer,
   Empty,
   ErrorBanner,
@@ -61,15 +62,32 @@ export function AdminResources({ kind }: { kind: Kind }) {
     [items, setItems] = useState<Item[]>(),
     [selected, setSelected] = useState<Item | null>(),
     [error, setError] = useState("");
+  const [removing, setRemoving] = useState<Item | null>(null);
+  const [removeBusy, setRemoveBusy] = useState(false);
+  const [removeError, setRemoveError] = useState("");
   const load = useCallback(() =>
     api
-      .get<{ items: Item[] }>(`/api/v1/admin/${config.endpoint}`)
-      .then((v) => setItems(v.items))
-      .catch((e) => setError(e.message)), [config.endpoint]);
+      .get<{ items?: Item[] }>(`/api/v1/admin/${config.endpoint}`)
+      .then((v) => setItems(v.items ?? []))
+      .catch((e) => { setItems([]); setError(e instanceof Error ? e.message : "목록을 불러오지 못했습니다."); }), [config.endpoint]);
   useEffect(() => {
     setItems(undefined);
     void load();
   }, [load]);
+  const remove = async () => {
+    if (!removing) return;
+    setRemoveBusy(true);
+    setRemoveError("");
+    try {
+      await api.delete(`/api/v1/admin/${config.endpoint}/${removing.id}`);
+      setRemoving(null);
+      await load();
+    } catch (e) {
+      setRemoveError(e instanceof Error ? e.message : "삭제하지 못했습니다.");
+    } finally {
+      setRemoveBusy(false);
+    }
+  };
   if (!items) return <Loading />;
   const Icon = config.icon;
   return (
@@ -84,7 +102,7 @@ export function AdminResources({ kind }: { kind: Kind }) {
           </button>
         }
       />
-      {error && <ErrorBanner message={error} />}{" "}
+      {error && <ErrorBanner message={error} onClose={() => setError("")} />}{" "}
       {items.length === 0 ? (
         <Empty
           icon={<Icon />}
@@ -102,11 +120,7 @@ export function AdminResources({ kind }: { kind: Kind }) {
       ) : (
         <section className="resource-grid">
           {items.map((item) => (
-            <button
-              className="resource-card"
-              key={item.id}
-              onClick={() => setSelected(item)}
-            >
+            <article className="resource-card" key={item.id}>
               <div>
                 <div className="list-icon">
                   <Icon />
@@ -127,10 +141,40 @@ export function AdminResources({ kind }: { kind: Kind }) {
                   </div>
                 ))}
               </dl>
-            </button>
+              <div className="card-actions">
+                <button title="수정" onClick={() => setSelected(item)}>
+                  <Pencil size={15} />수정
+                </button>
+                <button
+                  className="danger"
+                  title="삭제"
+                  onClick={() => {
+                    setRemoveError("");
+                    setRemoving(item);
+                  }}
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            </article>
           ))}
         </section>
       )}{" "}
+      {removing && (
+        <ConfirmDialog
+          title={`${config.title} 항목을 삭제할까요?`}
+          message={
+            <>
+              <strong>{removing.name}</strong> 항목이 삭제됩니다. 이 리소스를
+              사용 중인 Agent가 있으면 삭제가 거부됩니다.
+            </>
+          }
+          busy={removeBusy}
+          error={removeError}
+          onConfirm={() => void remove()}
+          onCancel={() => setRemoving(null)}
+        />
+      )}
       {selected !== undefined && (
         <ResourceDrawer
           kind={kind}

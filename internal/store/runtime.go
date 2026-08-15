@@ -446,6 +446,15 @@ type CreateAgentInput struct {
 	NetworkProfileID  string `json:"networkProfileId"`
 }
 
+// nullText maps an empty optional identifier to SQL NULL so that the foreign
+// keys on agent_definitions stay valid instead of pointing at an empty string.
+func nullText(value string) any {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return value
+}
+
 func (s *Store) CreateAgent(ctx context.Context, ownerID string, input CreateAgentInput) (Agent, error) {
 	if !runtimetype.IsSupported(input.RuntimeType) {
 		return Agent{}, errors.New("unsupported runtime type")
@@ -468,15 +477,58 @@ func (s *Store) CreateAgent(ctx context.Context, ownerID string, input CreateAge
 			input.ModelEndpointID = defaultModelID
 		}
 	}
-	null := func(v string) any {
-		if strings.TrimSpace(v) == "" {
-			return nil
-		}
-		return v
-	}
 	var item Agent
-	err := s.pool.QueryRow(ctx, `INSERT INTO agent_definitions(id,owner_id,template_id,name,description,runtime_type,runtime_profile_id,workspace_id,mcp_bundle_id,model_endpoint_id,security_profile_id,network_profile_id,system_prompt,spec) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id,owner_id,name,description,runtime_type,runtime_profile_id,runtime_image_id,security_profile_id,network_profile_id,mcp_bundle_id,model_endpoint_id,workspace_id,version,spec,created_at,updated_at`, id, ownerID, null(input.TemplateID), input.Name, input.Description, input.RuntimeType, null(input.RuntimeProfileID), null(input.WorkspaceID), null(input.MCPBundleID), null(input.ModelEndpointID), input.SecurityProfileID, input.NetworkProfileID, input.SystemPrompt, spec).Scan(&item.ID, &item.OwnerID, &item.Name, &item.Description, &item.RuntimeType, &item.RuntimeProfileID, &item.RuntimeImageID, &item.SecurityProfileID, &item.NetworkProfileID, &item.MCPBundleID, &item.ModelEndpointID, &item.WorkspaceID, &item.Version, &item.Spec, &item.CreatedAt, &item.UpdatedAt)
+	err := s.pool.QueryRow(ctx, `INSERT INTO agent_definitions(id,owner_id,template_id,name,description,runtime_type,runtime_profile_id,workspace_id,mcp_bundle_id,model_endpoint_id,security_profile_id,network_profile_id,system_prompt,spec) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id,owner_id,name,description,runtime_type,runtime_profile_id,runtime_image_id,security_profile_id,network_profile_id,mcp_bundle_id,model_endpoint_id,workspace_id,version,spec,created_at,updated_at`, id, ownerID, nullText(input.TemplateID), input.Name, input.Description, input.RuntimeType, nullText(input.RuntimeProfileID), nullText(input.WorkspaceID), nullText(input.MCPBundleID), nullText(input.ModelEndpointID), input.SecurityProfileID, input.NetworkProfileID, input.SystemPrompt, spec).Scan(&item.ID, &item.OwnerID, &item.Name, &item.Description, &item.RuntimeType, &item.RuntimeProfileID, &item.RuntimeImageID, &item.SecurityProfileID, &item.NetworkProfileID, &item.MCPBundleID, &item.ModelEndpointID, &item.WorkspaceID, &item.Version, &item.Spec, &item.CreatedAt, &item.UpdatedAt)
 	return item, err
+}
+
+// UpdateAgent rewrites an agent definition and bumps its version. The runtime
+// type is immutable: the running Pod, its Service ports and its persisted home
+// directory are all shaped by the adapter, so switching it would orphan them.
+// Callers restart the Runtime to roll the new definition out.
+func (s *Store) UpdateAgent(ctx context.Context, id, ownerID string, admin bool, input CreateAgentInput) (Agent, error) {
+	current, err := s.AgentByID(ctx, id, ownerID, admin)
+	if err != nil {
+		return Agent{}, err
+	}
+	if input.RuntimeType != "" && input.RuntimeType != current.RuntimeType {
+		return Agent{}, errors.New("runtime type cannot be changed after the agent is created")
+	}
+	if input.SecurityProfileID == "" {
+		input.SecurityProfileID = "sp-restricted"
+	}
+	if input.NetworkProfileID == "" {
+		input.NetworkProfileID = "np-restricted"
+	}
+	spec, _ := json.Marshal(map[string]any{"systemPrompt": input.SystemPrompt})
+	var item Agent
+	err = s.pool.QueryRow(ctx, `UPDATE agent_definitions SET name=$2,description=$3,runtime_profile_id=$4,workspace_id=$5,mcp_bundle_id=$6,model_endpoint_id=$7,security_profile_id=$8,network_profile_id=$9,system_prompt=$10,spec=$11,version=version+1,updated_at=now() WHERE id=$1 RETURNING id,owner_id,name,description,runtime_type,runtime_profile_id,runtime_image_id,security_profile_id,network_profile_id,mcp_bundle_id,model_endpoint_id,workspace_id,version,spec,created_at,updated_at`,
+		id, input.Name, input.Description, nullText(input.RuntimeProfileID), nullText(input.WorkspaceID), nullText(input.MCPBundleID), nullText(input.ModelEndpointID), input.SecurityProfileID, input.NetworkProfileID, input.SystemPrompt, spec).
+		Scan(&item.ID, &item.OwnerID, &item.Name, &item.Description, &item.RuntimeType, &item.RuntimeProfileID, &item.RuntimeImageID, &item.SecurityProfileID, &item.NetworkProfileID, &item.MCPBundleID, &item.ModelEndpointID, &item.WorkspaceID, &item.Version, &item.Spec, &item.CreatedAt, &item.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Agent{}, ErrNotFound
+	}
+	return item, err
+}
+
+// DeleteAgent removes the definition. agent_runtimes and runtime_sessions cascade
+// from the definition, so the caller must delete the Kubernetes resources first —
+// otherwise the CRD name is lost and the Pod is orphaned in the cluster.
+func (s *Store) DeleteAgent(ctx context.Context, id, ownerID string, admin bool) error {
+	query := `DELETE FROM agent_definitions WHERE id=$1`
+	args := []any{id}
+	if !admin {
+		query += ` AND owner_id=$2`
+		args = append(args, ownerID)
+	}
+	tag, err := s.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) AgentByID(ctx context.Context, id, ownerID string, admin bool) (Agent, error) {
