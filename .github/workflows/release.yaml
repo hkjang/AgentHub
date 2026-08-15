@@ -18,6 +18,14 @@ jobs:
           test "${version}" = "$(tr -d '\r\n' < VERSION)"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - name: Reclaim runner disk
+        shell: bash
+        run: |
+          # The runtime base image is several GB before compression, so the
+          # hosted runner's preinstalled toolchains have to go first.
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+          docker system prune -af --volumes >/dev/null 2>&1 || true
+          df -h /
       - uses: docker/setup-buildx-action@v4
       - name: Build offline images
         env:
@@ -26,20 +34,63 @@ jobs:
         run: |
           docker build --build-arg VERSION="${RELEASE_VERSION}" --build-arg COMMIT="${GITHUB_SHA}" --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -t "agenthub:${RELEASE_TAG}" .
           docker build -f Dockerfile.base -t "agenthub-base:${RELEASE_TAG}" .
-          mkdir -p release
-          docker save "agenthub:${RELEASE_TAG}" | gzip -9 > "release/agenthub-${RELEASE_TAG}.tar.gz"
-          docker save "agenthub-base:${RELEASE_TAG}" | gzip -9 > "release/agenthub-base-${RELEASE_TAG}.tar.gz"
-      - name: Verify archives
+      - name: Package archives
+        shell: bash
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
-          gzip -t "release/agenthub-${RELEASE_TAG}.tar.gz"
-          gzip -t "release/agenthub-base-${RELEASE_TAG}.tar.gz"
-          test "$(find release -maxdepth 1 -type f | wc -l)" -eq 2
+          set -euo pipefail
+          mkdir -p release
+          # A GitHub release asset may not exceed 2 GiB, and the runtime base
+          # image compresses to more than that. Stream save|gzip straight into
+          # split so the whole archive never lands on the runner's disk, then
+          # collapse the single-part case back to a plain .tar.gz.
+          package() {
+            local image="$1" archive="release/$2"
+            docker save "${image}" | gzip -9 | split -b 1900M - "${archive}.part-"
+            local parts=("${archive}".part-*)
+            if [ "${#parts[@]}" -eq 1 ]; then
+              mv "${parts[0]}" "${archive}"
+              echo "packaged ${image} -> ${archive} (single file)"
+            else
+              echo "packaged ${image} -> ${#parts[@]} parts of ${archive}"
+            fi
+            # The image is no longer needed and the runner is disk constrained.
+            docker image rm "${image}" >/dev/null 2>&1 || true
+          }
+          package "agenthub:${RELEASE_TAG}" "agenthub-${RELEASE_TAG}.tar.gz"
+          package "agenthub-base:${RELEASE_TAG}" "agenthub-base-${RELEASE_TAG}.tar.gz"
+          # Glob only the archives: including SHA256SUMS in its own listing is
+          # both meaningless and racy with the redirect.
+          ( cd release && sha256sum -- agenthub-* > SHA256SUMS )
+          ls -lh release
+          df -h /
+      - name: Verify archives
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          ( cd release && sha256sum -c SHA256SUMS )
+          # Reassemble through a pipe: this proves the parts concatenate back
+          # into a valid archive without needing room for a second copy.
+          for name in "agenthub-${RELEASE_TAG}.tar.gz" "agenthub-base-${RELEASE_TAG}.tar.gz"; do
+            if [ -f "release/${name}" ]; then
+              gzip -t "release/${name}"
+              echo "verified ${name}"
+            else
+              cat release/"${name}".part-* | gzip -t
+              echo "verified $(ls release/"${name}".part-* | wc -l) parts of ${name}"
+            fi
+          done
+          # Every asset must be under GitHub's 2 GiB per-file limit.
+          oversized="$(find release -maxdepth 1 -type f -size +2047M)"
+          if [ -n "${oversized}" ]; then
+            echo "asset exceeds the 2 GiB GitHub limit: ${oversized}" >&2
+            exit 1
+          fi
       - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
-          files: |
-            release/agenthub-${{ steps.version.outputs.tag }}.tar.gz
-            release/agenthub-base-${{ steps.version.outputs.tag }}.tar.gz
+          files: release/*
           fail_on_unmatched_files: true

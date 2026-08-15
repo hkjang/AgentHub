@@ -5,14 +5,28 @@
 On an internet-connected build host, create the release archives:
 
 ```bash
-make release-archives VERSION=0.1.0
+make release-archives VERSION=0.3.1
 ```
 
-Transfer `agenthub-v0.3.1.tar.gz`, `agenthub-base-v0.3.1.tar.gz`,
-`compose.yaml`, and the Kubernetes manifests through the approved media path.
-On the offline host:
+This produces `release/` containing the image archives and a `SHA256SUMS`
+manifest. A GitHub release asset may not exceed 2 GiB, so any archive larger
+than that is emitted as `<name>.tar.gz.part-aa`, `.part-ab`, … instead of a
+single file; smaller archives stay a plain `.tar.gz`. Set `RELEASE_CHUNK` to
+change the split size.
+
+Transfer the whole `release/` directory, `compose.yaml`, and the Kubernetes
+manifests through the approved media path. On the offline host, verify the media
+first, then reassemble any split archive before loading it:
 
 ```bash
+sha256sum -c SHA256SUMS
+
+# Only needed for archives that were split; a plain .tar.gz loads directly.
+for archive in *.tar.gz.part-aa; do
+  name="${archive%.part-aa}"
+  cat "${name}".part-* > "${name}"
+done
+
 docker load < agenthub-v0.3.1.tar.gz
 docker load < agenthub-base-v0.3.1.tar.gz
 export AGENTHUB_BOOTSTRAP_ADMIN=admin

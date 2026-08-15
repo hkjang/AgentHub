@@ -25,7 +25,21 @@ validate:
 	AGENTHUB_ENCRYPTION_KEY=01234567890123456789012345678901 \
 	docker compose config --quiet
 
+# A GitHub release asset may not exceed 2 GiB. Archives are streamed through
+# split so an oversized image lands as .part-aa/.part-ab/... ; anything that fits
+# collapses back to a plain .tar.gz. Reassemble with `cat <name>.part-* > <name>`.
+RELEASE_CHUNK ?= 1900M
+
 release-archives: image image-base
 	mkdir -p release
-	docker save agenthub:$(TAG) | gzip -9 > release/agenthub-$(TAG).tar.gz
-	docker save agenthub-base:$(TAG) | gzip -9 > release/agenthub-base-$(TAG).tar.gz
+	$(call package_image,agenthub:$(TAG),agenthub-$(TAG).tar.gz)
+	$(call package_image,agenthub-base:$(TAG),agenthub-base-$(TAG).tar.gz)
+	cd release && sha256sum -- agenthub-* > SHA256SUMS
+	ls -lh release
+
+define package_image
+	docker save $(1) | gzip -9 | split -b $(RELEASE_CHUNK) - release/$(2).part-
+	@parts=$$(ls release/$(2).part-* | wc -l); \
+	if [ "$$parts" -eq 1 ]; then mv release/$(2).part-aa release/$(2); echo "packaged $(1) -> release/$(2)"; \
+	else echo "packaged $(1) -> $$parts parts of release/$(2)"; fi
+endef
