@@ -30,21 +30,30 @@
 
 ---
 
-## 📸 실제 UI 콘솔 화면 갤러리
+---
 
-| 메인 운영 대시보드 | ⌘ K 커맨드 팔레트 |
+## 🎬 3분 실전 워크플로우 데모 영상
+
+https://github.com/user-attachments/assets/agenthub_demo.mp4
+
+> 💡 **[3분 데모 비디오 파일 직접 다운로드 / 보기](docs/media/agenthub_demo.mp4)**  
+> 로그인 → Agent Builder 템플릿 생성 → Kubernetes Pod/Node 즉시 스케줄링 → Hermes TUI 및 Ollama Gemma 4 모델 실시간 추론 대화까지 전 과정을 3분(180초) Full HD 영상으로 확인하실 수 있습니다.
+
+---
+
+## 📸 실제 UI 콘솔 및 라이브 런타임 갤러리
+
+| Hermes Live Workspace (Ollama Gemma 4 실시간 추론) | 실시간 My Agents (Kubernetes Pod / Node 즉시 할당) |
 | :---: | :---: |
-| ![대시보드](docs/screenshots/02_dashboard_overview.png) | ![커맨드 팔레트](docs/screenshots/03_command_palette.png) |
-| **Agent Catalog 마켓플레이스** | **Agent Builder 생성 드로어** |
-| ![카탈로그](docs/screenshots/04_catalog_marketplace.png) | ![빌더](docs/screenshots/05_agent_builder_drawer.png) |
-| **영속 Workspace 관리 (PVC)** | **CSI VolumeSnapshot 관리** |
-| ![워크스페이스](docs/screenshots/08_workspace_created_detail.png) | ![스냅샷](docs/screenshots/09_workspaces_snapshots.png) |
-| **Multi-Agent Workflow DAG 빌더** | **MCP Fabric 도구 카탈로그** |
-| ![워크플로우](docs/screenshots/14_workflows_builder.png) | ![MCP 카탈로그](docs/screenshots/17_mcp_catalog.png) |
-| **개인 Secret Vault (Envelope Encryption)** | **Control Center 실시간 감사 로그** |
-| ![시크릿 보관함](docs/screenshots/20_developer_secrets.png) | ![운영 콘솔](docs/screenshots/26_admin_operations_control_center.png) |
+| ![Hermes Live Workspace](docs/screenshots/07_hermes_workspace_chat.png) | ![실시간 My Agents](docs/screenshots/05_my_agents_live.png) |
+| **Agent Builder 템플릿 생성 드로어** | **에이전트 상세 스펙 및 CRD 상태** |
+| ![Agent Builder 생성 드로어](docs/screenshots/04_builder_template_selected.png) | ![에이전트 상세 드로어](docs/screenshots/06_agent_detail_drawer.png) |
+| **OpenCode 영속 Workspace** | **Ollama 로컬 모델 카탈로그** |
+| ![OpenCode Workspace](docs/screenshots/08_opencode_workspace.png) | ![Ollama 모델 카탈로그](docs/screenshots/10_models_catalog.png) |
+| **MCP Fabric 도구 카탈로그 & 번들** | **Control Center 실시간 감사 로그** |
+| ![MCP 도구 카탈로그](docs/screenshots/09_mcp_fabric.png) | ![운영 콘솔](docs/screenshots/11_admin_operations.png) |
 
-> 📌 **전체 33개 스크린샷과 상세 설명은 [사용자 가이드](docs/user-guide.md) 및 [쇼케이스 페이지](docs/index.html)에서 확인하실 수 있습니다.**
+> 📌 **전체 33개 스크린샷과 상세 설명은 [사용자 가이드](docs/user-guide.md) 및 [인터랙티브 쇼케이스 페이지](docs/index.html)에서 확인하실 수 있습니다.**
 
 ---
 

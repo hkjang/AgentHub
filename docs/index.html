@@ -379,11 +379,35 @@
         영속 워크스페이스(PVC), CSI 스냅샷, Multi-Agent 워크플로우 DAG, MCP 패브릭을 하나의 통합 통제면에서 운영하세요.
       </p>
       <div class="hero-actions">
-        <a href="#showcase" class="btn btn-primary">📸 화면 갤러리 둘러보기</a>
-        <a href="#quickstart" class="btn btn-secondary">⚡ 5분 빠른 시작</a>
+        <a href="#video-demo" class="btn btn-primary">🎬 3분 실전 데모 영상 보기</a>
+        <a href="#showcase" class="btn btn-secondary">📸 전체 콘솔 갤러리</a>
       </div>
     </div>
   </header>
+
+  <!-- 3-Minute Demo Video Section -->
+  <section id="video-demo" class="container" style="margin-bottom: 80px;">
+    <div class="section-title">
+      <h2>🎬 3분 실전 워크플로우 데모</h2>
+      <p>로그인부터 템플릿 선택, K8s Pod 스케줄링, Ollama Gemma 4 실시간 모델 추론 대화까지 전 과정을 3분 안에 확인하세요.</p>
+    </div>
+    <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 16px; padding: 20px; box-shadow: 0 20px 50px rgba(0,0,0,0.5);">
+      <div style="position: relative; border-radius: 12px; overflow: hidden; background: #000; border: 1px solid rgba(255,255,255,0.1);">
+        <video controls poster="screenshots/07_hermes_workspace_chat.png" style="width: 100%; max-height: 640px; display: block; object-fit: contain;">
+          <source src="media/agenthub_demo.mp4" type="video/mp4">
+          브라우저가 HTML5 비디오 태그를 지원하지 않습니다.
+        </video>
+      </div>
+      <div style="margin-top: 18px; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; font-size: 0.88rem; color: var(--text-muted);">
+        <div style="background: var(--bg-card); padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border-color);"><strong style="color: #60a5fa;">00:00 ~ 00:28</strong><p>플랫폼 개요 & 엔터프라이즈 보안 로그인</p></div>
+        <div style="background: var(--bg-card); padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border-color);"><strong style="color: #60a5fa;">00:28 ~ 01:00</strong><p>Agent Builder & 템플릿 생성 드로어</p></div>
+        <div style="background: var(--bg-card); padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border-color);"><strong style="color: #60a5fa;">01:00 ~ 01:40</strong><p>Kubernetes Pod/Node 즉시 스케줄링</p></div>
+        <div style="background: var(--bg-card); padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border-color);"><strong style="color: #60a5fa;">01:40 ~ 02:10</strong><p>Hermes Live Workspace & Ollama Gemma 4 추론</p></div>
+        <div style="background: var(--bg-card); padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border-color);"><strong style="color: #60a5fa;">02:10 ~ 02:30</strong><p>OpenCode 자동화 환경 & 모델 주입</p></div>
+        <div style="background: var(--bg-card); padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border-color);"><strong style="color: #60a5fa;">02:30 ~ 03:00</strong><p>Ollama Model 카탈로그 & Control Center</p></div>
+      </div>
+    </div>
+  </section>
 
   <!-- Core Features -->
   <section id="features" class="container">
@@ -436,7 +460,8 @@
       <div class="gallery-container">
         <!-- Main Category Tabs -->
         <div class="tabs-header" id="categoryTabs">
-          <button class="tab-btn active" onclick="switchCategory('overview')">1. Overview & Dashboard</button>
+          <button class="tab-btn active" onclick="switchCategory('live')">🌟 Live K8s & Ollama</button>
+          <button class="tab-btn" onclick="switchCategory('overview')">1. Overview & Dashboard</button>
           <button class="tab-btn" onclick="switchCategory('agents')">2. Agents & Builder</button>
           <button class="tab-btn" onclick="switchCategory('workspaces')">3. Workspaces & Snapshots</button>
           <button class="tab-btn" onclick="switchCategory('workflows')">4. Workflows & MCP</button>
@@ -449,12 +474,12 @@
 
         <!-- Viewer -->
         <div class="screenshot-viewer" style="margin-top: 16px;">
-          <img id="viewerImage" src="screenshots/02_dashboard_overview.png" alt="AgentHub 콘솔">
+          <img id="viewerImage" src="screenshots/07_hermes_workspace_chat.png" alt="AgentHub 콘솔">
         </div>
         <div class="screenshot-info">
           <div>
-            <h4 id="viewerTitle">메인 운영 대시보드</h4>
-            <p id="viewerDesc">실시간 에이전트 인스턴스, 스토리지 사용량, 텔레메트리 현황을 통합 모니터링합니다.</p>
+            <h4 id="viewerTitle">Hermes Live Workspace & Ollama 추론</h4>
+            <p id="viewerDesc">로컬 Ollama Gemma 4 모델과 실시간 스트리밍 대화 및 자율 도구 실행이 진행되는 Hermes TUI</p>
           </div>
         </div>
       </div>
@@ -499,6 +524,15 @@ open http://localhost:8080 (admin / local-development-password)</code></pre>
   <!-- Script for Interactive Gallery -->
   <script>
     const data = {
+      live: [
+        { img: 'screenshots/07_hermes_workspace_chat.png', title: 'Hermes Live Workspace (Ollama 추론)', desc: '로컬 Ollama Gemma 4 모델과 실시간 스트리밍 대화 및 자율 도구 실행이 진행되는 Hermes TUI 화면' },
+        { img: 'screenshots/05_my_agents_live.png', title: '실시간 My Agents (Pod/Node 할당)', desc: '생성 즉시 Kubernetes Node 및 Pod(agent-xxx-0)가 자동 할당되어 3/3 Running되는 현황' },
+        { img: 'screenshots/04_builder_template_selected.png', title: 'Agent Builder 생성 드로어', desc: 'Hermes / OpenCode 템플릿에 Ollama 모델 및 런타임 프로필을 연결하여 즉시 생성' },
+        { img: 'screenshots/06_agent_detail_drawer.png', title: '에이전트 상세 스펙 및 CRD 상태', desc: 'Kubernetes CRD, Pod, Node, 헬스체크 및 Workspace 도구 연동 제어' },
+        { img: 'screenshots/08_opencode_workspace.png', title: 'OpenCode 영속 Workspace', desc: 'Ollama 모델 자동 주입 및 영속 PVC 기반의 인터랙티브 코딩 개발 환경' },
+        { img: 'screenshots/10_models_catalog.png', title: 'Ollama 로컬 모델 카탈로그', desc: 'vLLM 및 Host Ollama 엔드포인트(gemma4:latest)가 실시간 활성화된 모델 카탈로그' },
+        { img: 'screenshots/01_login_page.png', title: '엔터프라이즈 보안 로그인', desc: '로컬 관리자 및 Keycloak OIDC SSO를 지원하는 반응형 로그인 화면' }
+      ],
       overview: [
         { img: 'screenshots/01_login_page.png', title: '로그인 콘솔', desc: '로컬 관리자 및 Keycloak OIDC SSO를 지원하는 반응형 로그인 화면' },
         { img: 'screenshots/02_dashboard_overview.png', title: '메인 운영 대시보드', desc: '실시간 에이전트 인스턴스, 스토리지 사용량, 텔레메트리 현황 모니터링' },
@@ -546,7 +580,7 @@ open http://localhost:8080 (admin / local-development-password)</code></pre>
       ]
     };
 
-    let currentCategory = 'overview';
+    let currentCategory = 'live';
     let currentIndex = 0;
 
     function switchCategory(cat) {
