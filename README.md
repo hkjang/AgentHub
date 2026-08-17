@@ -123,8 +123,8 @@ kubectl apply -k deploy/kubernetes
 
 # 3. AgentHub 런타임 베이스 이미지 빌드 및 로드
 make image image-base
-minikube image load agenthub:v0.5.0
-minikube image load agenthub-base:v0.5.0
+minikube image load agenthub:v0.6.0
+minikube image load agenthub-base:v0.6.0
 
 # 4. 파드 상태 확인
 kubectl get pods -n agent-platform-system
