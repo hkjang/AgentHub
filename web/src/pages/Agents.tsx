@@ -110,6 +110,15 @@ function AgentEditDrawer({agent,close,done}:{agent:Agent;close:()=>void;done:()=
     const spec=agent.spec as {systemPrompt?:string}|undefined
     return spec?.systemPrompt??''
   })
+  // A custom runtime has no adapter, so its definition carries how it starts.
+  const [command,setCommand]=useState(()=>{
+    const spec=agent.spec as {customCommand?:string[]}|undefined
+    return (spec?.customCommand??[]).join('\n')
+  })
+  const [customPort,setCustomPort]=useState(()=>{
+    const spec=agent.spec as {customPort?:number}|undefined
+    return spec?.customPort?String(spec.customPort):''
+  })
   const [profiles,setProfiles]=useState<RuntimeProfile[]>([])
   const [models,setModels]=useState<ModelEndpoint[]>([])
   const [bundles,setBundles]=useState<MCPBundle[]>([])
@@ -128,7 +137,9 @@ function AgentEditDrawer({agent,close,done}:{agent:Agent;close:()=>void;done:()=
   const submit=async(event:FormEvent)=>{
     event.preventDefault(); setBusy(true); setError(''); setNotice('')
     try {
-      const result=await api.put<{warning?:string}>(`/api/v1/agents/${agent.id}`,{name,description,runtimeProfileId:profile,modelEndpointId:model,mcpBundleId:bundle,workspaceId:workspace,systemPrompt:prompt})
+      const result=await api.put<{warning?:string}>(`/api/v1/agents/${agent.id}`,{name,description,runtimeProfileId:profile,modelEndpointId:model,mcpBundleId:bundle,workspaceId:workspace,systemPrompt:prompt,
+        customCommand:agent.runtimeType==='custom'?command.split('\n').map(part=>part.trim()).filter(Boolean):undefined,
+        customPort:agent.runtimeType==='custom'&&customPort?Number(customPort):undefined})
       if(result.warning){ setNotice(result.warning); setBusy(false); return }
       done()
     } catch(err) {
@@ -147,6 +158,12 @@ function AgentEditDrawer({agent,close,done}:{agent:Agent;close:()=>void;done:()=
       <label><span>모델</span><select value={model} onChange={e=>setModel(e.target.value)}><option value="">연결 안 함</option>{models.map(v=><option value={v.id} key={v.id}>{v.name} · {v.defaultModel}</option>)}</select></label>
       <label><span>MCP Bundle</span><select value={bundle} onChange={e=>setBundle(e.target.value)}><option value="">MCP 없음</option>{bundles.map(v=><option value={v.id} key={v.id}>{v.name}</option>)}</select></label>
       <label><span>작업공간</span><select value={workspace} onChange={e=>setWorkspace(e.target.value)}><option value="">작업공간 없음</option>{workspaces.map(v=><option value={v.id} key={v.id}>{v.name} · {v.sizeGb} GB</option>)}</select></label>
+      {agent.runtimeType==='custom'&&<>
+        <label><span>시작 명령 <b>*</b></span><textarea rows={4} value={command} onChange={e=>setCommand(e.target.value)} placeholder={'/usr/local/bin/my-agent\nserve\n--port\n9000'}/>
+          <small>한 줄에 하나씩 입력하세요. 쉘을 거치지 않으므로 따옴표나 파이프는 쓸 수 없습니다.</small></label>
+        <label><span>서비스 포트</span><input type="number" min={1} max={65535} value={customPort} onChange={e=>setCustomPort(e.target.value)} placeholder="4096"/>
+          <small>비워 두면 기본 포트를 사용합니다. 런타임이 실제로 듣는 포트와 같아야 준비 상태가 됩니다.</small></label>
+      </>}
       <label><span>추가 지시사항</span><textarea rows={5} value={prompt} onChange={e=>setPrompt(e.target.value)}/></label>
     </form>
   </Drawer>

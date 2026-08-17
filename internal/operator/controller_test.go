@@ -731,3 +731,70 @@ func TestPlatformSidecarsRunTheControlPlaneImage(t *testing.T) {
 		t.Fatalf("fallback image = %q, want the runtime image", got)
 	}
 }
+
+// A custom runtime is started by what its definition declares. Nothing else can
+// start it, so the operator must refuse the object rather than create a Pod that
+// runs its image's default entrypoint and crash-loops.
+func TestCustomRuntimeStartsFromItsDeclaredCommand(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	controller := &Controller{client: client}
+	owner := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "agenthub.io/v1alpha1", "kind": "AgentRuntime", "metadata": map[string]any{"name": "custom-runtime"}}}
+	owner.SetNamespace("agent-runtime-dev")
+	owner.SetUID(types.UID("custom-owner"))
+
+	var value spec
+	value.Owner = "user-1"
+	value.Runtime.Type = "custom"
+	value.Runtime.Image = "registry.corp/team-agent:1.4"
+	value.Runtime.Command = []string{"/usr/local/bin/team-agent", "serve", "--port", "9000"}
+	value.Runtime.Port = 9000
+
+	if err := controller.ensureStatefulSet(context.Background(), "agent-runtime-dev", "custom-runtime", "custom-workspace", value, owner); err != nil {
+		t.Fatal(err)
+	}
+	statefulSet, err := client.AppsV1().StatefulSets("agent-runtime-dev").Get(context.Background(), "custom-runtime", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := statefulSet.Spec.Template.Spec.Containers[0]
+	if strings.Join(agent.Command, " ") != "/usr/local/bin/team-agent serve --port 9000" {
+		t.Fatalf("container command = %#v, want the declared command", agent.Command)
+	}
+	// The declared port has to reach the probes and the container port, or the
+	// runtime never becomes ready however correctly it starts.
+	if agent.Ports[0].ContainerPort != 9000 {
+		t.Fatalf("container port = %d, want the declared port", agent.Ports[0].ContainerPort)
+	}
+	if got := agent.ReadinessProbe.TCPSocket.Port.IntVal; got != 9000 {
+		t.Fatalf("readiness probe port = %d, want the declared port", got)
+	}
+}
+
+func TestCustomRuntimeWithoutACommandIsRejected(t *testing.T) {
+	object := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "agenthub.io/v1alpha1", "kind": "AgentRuntime",
+		"spec": map[string]any{"owner": "user-1", "runtime": map[string]any{"type": "custom", "image": "registry.corp/team-agent:1.4"}},
+	}}
+	if _, err := parseSpec(object); err == nil {
+		t.Fatal("a custom runtime with no command must not produce a Pod spec")
+	}
+	// An adapter runtime is started by its adapter and needs no command.
+	object.Object["spec"].(map[string]any)["runtime"] = map[string]any{"type": "opencode", "image": "agenthub-base:v0.7.0"}
+	if _, err := parseSpec(object); err != nil {
+		t.Fatalf("an adapter runtime must not need a command: %v", err)
+	}
+}
+
+// A custom runtime that declares no port falls back to the shared default, and
+// an adapter runtime ignores the field entirely.
+func TestPortFallsBackToTheAdapterDefault(t *testing.T) {
+	var value spec
+	value.Runtime.Type = "custom"
+	if got := specPort(value); got != runtimetype.Port("custom") {
+		t.Fatalf("custom fallback port = %d", got)
+	}
+	value.Runtime.Type, value.Runtime.Port = "hermes", 9000
+	if got := specPort(value); got != runtimetype.Port("hermes") {
+		t.Fatalf("an adapter runtime must keep its own port, got %d", got)
+	}
+}

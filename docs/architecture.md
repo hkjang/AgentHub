@@ -166,6 +166,19 @@ waking itself forever. Publishing is best-effort throughout: the task already
 finished, and failing it because nothing could be told about it would be worse
 than a missed trigger.
 
+## Custom runtimes
+
+Three runtimes ship with adapters. A fourth type, `custom`, has none by design:
+it is how a site runs an agent AgentHub has never heard of. Its definition
+carries what the adapter would otherwise supply — the start command, one
+argument per element as in a Kubernetes container spec, and the port it serves
+on. There is no shell in between, so there is no quoting to get wrong.
+
+A custom runtime with no command is refused when the definition is saved and
+again when the operator parses the object. Both checks exist because the failure
+they prevent is silent: the container would run its image's default entrypoint
+and crash-loop with nothing in the status explaining why.
+
 ## Autonomous control
 
 Four controls sit on top of the execution plane. They exist because an agent that

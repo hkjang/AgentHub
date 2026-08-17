@@ -163,6 +163,12 @@ type spec struct {
 		// session proxy and MCP gateway from this release. Empty falls back to
 		// the runtime image, which is what pre-0.7 objects carry.
 		SidecarImage string `json:"sidecarImage"`
+		// Command and Port start a 'custom' runtime, which has no adapter of its
+		// own. Without them the container would run its image's default
+		// entrypoint, which is what used to leave every custom runtime in
+		// CrashLoopBackOff.
+		Command []string `json:"command"`
+		Port    int32    `json:"port"`
 	} `json:"runtime"`
 	Profile struct {
 		CPUMillis          int64 `json:"cpuMillis"`
@@ -223,6 +229,12 @@ func parseSpec(object *unstructured.Unstructured) (spec, error) {
 	}
 	if value.Runtime.Image == "" {
 		return spec{}, errors.New("runtime image is required")
+	}
+	// A custom runtime has no adapter to start it. Without a command the
+	// container would run its image's default entrypoint, which is what used to
+	// leave every custom runtime in CrashLoopBackOff with nothing explaining why.
+	if value.Runtime.Type == runtimetype.Custom && len(value.Runtime.Command) == 0 {
+		return spec{}, errors.New("custom runtime requires a start command")
 	}
 	for _, item := range value.MCP {
 		if item.Name == "" || (item.Mode != "shared" && item.Mode != "sidecar" && item.Mode != "dedicated") {
@@ -703,8 +715,17 @@ fi
 
 func runtimePort(rt string) int32 { return runtimetype.Port(rt) }
 
+// specPort is the port this runtime actually serves on. A custom runtime may
+// declare its own; everything else is decided by its adapter.
+func specPort(value spec) int32 {
+	if value.Runtime.Type == runtimetype.Custom && value.Runtime.Port > 0 {
+		return value.Runtime.Port
+	}
+	return runtimePort(value.Runtime.Type)
+}
+
 func (c *Controller) ensureService(ctx context.Context, ns, name string, value spec, owner *unstructured.Unstructured) error {
-	port := runtimePort(value.Runtime.Type)
+	port := specPort(value)
 	ports := []corev1.ServicePort{{Name: "http", Port: port, TargetPort: intstrFromInt32(port)}}
 	if runtimetype.UsesGatewayProxy(value.Runtime.Type) {
 		ports = append(ports, corev1.ServicePort{Name: "dashboard", Port: runtimetype.GatewayPort, TargetPort: intstrFromInt32(runtimetype.GatewayPort)})
@@ -797,7 +818,7 @@ func (c *Controller) ensureNetworkPolicy(ctx context.Context, ns, name string, v
 		}
 		return err
 	}
-	port := intstr.FromInt32(runtimePort(value.Runtime.Type))
+	port := intstr.FromInt32(specPort(value))
 	ingressPorts := []networkingv1.NetworkPolicyPort{{Protocol: ptr(corev1.ProtocolTCP), Port: &port}}
 	if runtimetype.UsesGatewayProxy(value.Runtime.Type) {
 		dashboardPort := intstr.FromInt32(runtimetype.GatewayPort)
@@ -1070,7 +1091,7 @@ func (c *Controller) scaleDedicatedMCPs(ctx context.Context, ns, runtimeName str
 }
 
 func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName string, value spec, owner *unstructured.Unstructured) error {
-	port := runtimePort(value.Runtime.Type)
+	port := specPort(value)
 	replicas := int32(1)
 	runAs := int64(10000)
 	nonRoot := true
@@ -1104,6 +1125,9 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 		env = append(env, corev1.EnvVar{Name: mcpCredentialEnv(credentialKey), ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: credentialKey, Optional: ptr(true)}}})
 	}
 	adapter := adapterFor(value.Runtime.Type)
+	if value.Runtime.Type == runtimetype.Custom {
+		adapter.Command = value.Runtime.Command
+	}
 	build := adapterBuild{Name: name, Value: value}
 	if adapter.Env != nil {
 		env = append(env, adapter.Env(build)...)

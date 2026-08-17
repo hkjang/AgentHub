@@ -69,6 +69,10 @@ type Spec struct {
 	ModelBaseURL                   string
 	ModelName                      string
 	ModelAPIKey                    string
+	// CustomCommand and CustomPort start a 'custom' runtime, which has no adapter
+	// of its own. Every other runtime ignores them.
+	CustomCommand []string
+	CustomPort    int32
 	// SidecarImage runs AgentHub's own sidecars — the session proxy and the MCP
 	// tool policy gateway. It is the control plane's image rather than the
 	// runtime's, so pinning an agent to an older runtime image cannot leave it

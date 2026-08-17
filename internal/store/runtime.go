@@ -452,6 +452,13 @@ type CreateAgentInput struct {
 	ModelEndpointID   string `json:"modelEndpointId"`
 	SecurityProfileID string `json:"securityProfileId"`
 	NetworkProfileID  string `json:"networkProfileId"`
+	// CustomCommand starts the agent process for runtime type 'custom'. Every
+	// other runtime is started by its adapter, so this is ignored for them. It is
+	// one argument per element, exactly like a Kubernetes container command, so
+	// there is no shell quoting to get wrong.
+	CustomCommand []string `json:"customCommand"`
+	// CustomPort is the port a custom runtime serves on. Zero uses the default.
+	CustomPort int `json:"customPort"`
 	// RuntimeImageID pins the catalog entry this definition runs. Left empty on
 	// create, the store pins whatever is currently approved so the definition
 	// stays reproducible even after the catalog moves on.
@@ -467,12 +474,76 @@ func nullText(value string) any {
 	return value
 }
 
+// maxCustomCommandParts bounds a custom start command. Anything longer is a
+// pasted script, which belongs in the image rather than the definition.
+const maxCustomCommandParts = 32
+
+// normaliseCustomRuntime validates and cleans what a custom runtime needs to
+// start. Rejecting it here rather than at spawn time is the difference between
+// a clear error in the console and a Pod that quietly crash-loops.
+func normaliseCustomRuntime(input *CreateAgentInput) error {
+	command := make([]string, 0, len(input.CustomCommand))
+	for _, part := range input.CustomCommand {
+		if part = strings.TrimSpace(part); part != "" {
+			command = append(command, part)
+		}
+	}
+	if input.RuntimeType != runtimetype.Custom {
+		input.CustomCommand, input.CustomPort = nil, 0
+		return nil
+	}
+	if len(command) == 0 {
+		return errors.New("custom 런타임은 시작 명령이 필요합니다")
+	}
+	if len(command) > maxCustomCommandParts {
+		return fmt.Errorf("시작 명령은 최대 %d개까지 지정할 수 있습니다", maxCustomCommandParts)
+	}
+	if input.CustomPort < 0 || input.CustomPort > 65535 {
+		return errors.New("포트는 1~65535 범위여야 합니다")
+	}
+	input.CustomCommand = command
+	return nil
+}
+
+// agentSpecJSON renders the adapter-shaped extras that live on the definition
+// rather than in a column of their own.
+func agentSpecJSON(input CreateAgentInput) []byte {
+	value := map[string]any{"systemPrompt": input.SystemPrompt}
+	if len(input.CustomCommand) > 0 {
+		value["customCommand"] = input.CustomCommand
+	}
+	if input.CustomPort > 0 {
+		value["customPort"] = input.CustomPort
+	}
+	spec, _ := json.Marshal(value)
+	return spec
+}
+
+// CustomRuntime reads back what a custom runtime needs to start. Anything that
+// is not a custom runtime is started by its adapter and reports nothing here.
+func (a Agent) CustomRuntime() ([]string, int) {
+	if a.RuntimeType != runtimetype.Custom || len(a.Spec) == 0 {
+		return nil, 0
+	}
+	var decoded struct {
+		CustomCommand []string `json:"customCommand"`
+		CustomPort    int      `json:"customPort"`
+	}
+	if err := json.Unmarshal(a.Spec, &decoded); err != nil {
+		return nil, 0
+	}
+	return decoded.CustomCommand, decoded.CustomPort
+}
+
 func (s *Store) CreateAgent(ctx context.Context, ownerID string, input CreateAgentInput) (Agent, error) {
 	if !runtimetype.IsSupported(input.RuntimeType) {
 		return Agent{}, errors.New("unsupported runtime type")
 	}
+	if err := normaliseCustomRuntime(&input); err != nil {
+		return Agent{}, err
+	}
 	id := uuid.NewString()
-	spec, _ := json.Marshal(map[string]any{"systemPrompt": input.SystemPrompt})
+	spec := agentSpecJSON(input)
 	if input.SecurityProfileID == "" {
 		input.SecurityProfileID = "sp-restricted"
 	}
@@ -517,7 +588,13 @@ func (s *Store) UpdateAgent(ctx context.Context, id, ownerID string, admin bool,
 	if input.NetworkProfileID == "" {
 		input.NetworkProfileID = "np-restricted"
 	}
-	spec, _ := json.Marshal(map[string]any{"systemPrompt": input.SystemPrompt})
+	// The runtime type is immutable, so an update that omits it still has to be
+	// validated against the type the definition already has.
+	input.RuntimeType = current.RuntimeType
+	if err := normaliseCustomRuntime(&input); err != nil {
+		return Agent{}, err
+	}
+	spec := agentSpecJSON(input)
 	var item Agent
 	// An empty RuntimeImageID keeps the current pin rather than unpinning: callers
 	// that only rename an agent must not silently move it onto a newer image.

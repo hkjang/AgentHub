@@ -59,6 +59,13 @@ spec:
                     # cannot pin the platform's code with it. Empty falls back
                     # to the runtime image.
                     sidecarImage: {type: string}
+                    # A custom runtime has no adapter, so it declares how it
+                    # starts and which port it serves on. Ignored for every
+                    # other runtime type.
+                    command:
+                      type: array
+                      items: {type: string}
+                    port: {type: integer, minimum: 1, maximum: 65535}
                 profile:
                   type: object
                   properties:
