@@ -18,11 +18,11 @@ services:
       - "55434:5432"
     networks: [backend]
   agenthub:
-    image: agenthub:v0.7.0
+    image: agenthub:v0.8.0
     build:
       context: .
       args:
-        VERSION: 0.7.0
+        VERSION: 0.8.0
         BASE_VERSION: 0.7.0
     restart: unless-stopped
     depends_on:
@@ -42,7 +42,7 @@ services:
     cap_drop: [ALL]
     networks: [frontend, backend]
   agenthub-operator:
-    image: agenthub:v0.7.0
+    image: agenthub:v0.8.0
     profiles: [kubernetes]
     entrypoint: [/app/agenthub-operator]
     read_only: true
