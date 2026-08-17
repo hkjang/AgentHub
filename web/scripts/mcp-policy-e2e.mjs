@@ -5,10 +5,11 @@
 // forbids, and it must still pass the permitted ones through to the real
 // upstream. Anything less is a policy the agent process could route around.
 import { chromium } from 'playwright-core'
+import { chromiumPath } from './browser.mjs'
 import { execFileSync } from 'node:child_process'
 
 const baseURL = process.env.AGENTHUB_TEST_URL ?? 'http://localhost:18080'
-const executablePath = process.env.CHROMIUM_PATH ?? '/snap/bin/chromium'
+const executablePath = chromiumPath()
 const username = process.env.AGENTHUB_TEST_USER ?? 'admin'
 const password = process.env.AGENTHUB_TEST_PASSWORD ?? 'local-development-password'
 const namespace = process.env.AGENTHUB_RUNTIME_NAMESPACE ?? 'agent-runtime-dev'

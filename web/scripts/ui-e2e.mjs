@@ -2,10 +2,11 @@
 // error, uncaught exception, failed request or React error boundary, and checks
 // that each page rendered its own heading rather than a blank shell.
 import { chromium } from 'playwright-core'
+import { chromiumPath } from './browser.mjs'
 import { mkdir, writeFile } from 'node:fs/promises'
 
 const baseURL = process.env.AGENTHUB_TEST_URL ?? 'http://localhost:18080'
-const executablePath = process.env.CHROMIUM_PATH ?? '/snap/bin/chromium'
+const executablePath = chromiumPath()
 const username = process.env.AGENTHUB_TEST_USER ?? 'admin'
 const password = process.env.AGENTHUB_TEST_PASSWORD ?? 'local-development-password'
 const shotDir = process.env.AGENTHUB_SHOT_DIR ?? '../coverage/e2e'

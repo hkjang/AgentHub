@@ -1,8 +1,9 @@
 import { chromium } from 'playwright-core'
+import { chromiumPath } from './browser.mjs'
 import { mkdir } from 'node:fs/promises'
 
 const baseURL = process.env.AGENTHUB_TEST_URL ?? 'http://localhost:18080'
-const executablePath = process.env.CHROMIUM_PATH ?? '/snap/bin/chromium'
+const executablePath = chromiumPath()
 const username = process.env.AGENTHUB_TEST_USER ?? process.env.AGENTHUB_TEST_ADMIN ?? 'admin'
 const password = process.env.AGENTHUB_TEST_PASSWORD ?? 'local-development-password'
 

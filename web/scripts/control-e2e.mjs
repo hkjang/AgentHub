@@ -3,9 +3,10 @@
 // depth and cycle guards. Everything runs against a live AgentHub, so a pass
 // means the worker, the store and the API all agree.
 import { chromium } from 'playwright-core'
+import { chromiumPath } from './browser.mjs'
 
 const baseURL = process.env.AGENTHUB_TEST_URL ?? 'http://localhost:18080'
-const executablePath = process.env.CHROMIUM_PATH ?? '/snap/bin/chromium'
+const executablePath = chromiumPath()
 const username = process.env.AGENTHUB_TEST_USER ?? 'admin'
 const password = process.env.AGENTHUB_TEST_PASSWORD ?? 'local-development-password'
 

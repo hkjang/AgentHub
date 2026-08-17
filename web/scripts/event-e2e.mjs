@@ -2,9 +2,10 @@
 // the dispatcher wakes a subscribed agent, the payload filter keeps unrelated
 // agents asleep, and a trigger never fires on the event its own task produced.
 import { chromium } from 'playwright-core'
+import { chromiumPath } from './browser.mjs'
 
 const baseURL = process.env.AGENTHUB_TEST_URL ?? 'http://localhost:18080'
-const executablePath = process.env.CHROMIUM_PATH ?? '/snap/bin/chromium'
+const executablePath = chromiumPath()
 const username = process.env.AGENTHUB_TEST_USER ?? 'admin'
 const password = process.env.AGENTHUB_TEST_PASSWORD ?? 'local-development-password'
 
