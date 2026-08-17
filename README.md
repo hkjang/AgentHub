@@ -28,6 +28,7 @@
   - **Qwen Paw (AgentScope)**: 3계층 ReMe 메모리, 커널 샌드박스 보안 가드, 스킬/MCP 확장 및 Qwen/Ollama 모델 자율 추론을 지원하는 개인 에이전트 워크스테이션
   - **OpenCode**: 브라우저 기반 풀스택 코딩 IDE 및 실시간 파일/터미널 워크스페이스
   - **Hermes Agent**: 장기 기억(Long-term Memory) 및 도구 실행 자율 에이전트
+- 🤖 **자율 실행 플레인**: Agent에 Goal과 Trigger를 주면 예약·Webhook·수동으로 스스로 Task를 수행하고, 완료 조건을 플랫폼이 검증한 뒤 산출물과 실행 타임라인을 남깁니다. 기존 Interactive 방식은 그대로 유지됩니다.
 - 🇰🇷 **한국어 우선 관리 콘솔**: 메뉴, 상태, 안내 문구를 한국어로 제공하며 빠른 이동(⌘K)은 한글·영문 키워드를 모두 검색합니다.
 - 🔀 **Multi-Agent Workflow DAG**: 복수 에이전트 간의 순차/병렬/Supervisor 협업 그래프를 시각화하고, 실행 전 순환 참조(Cycle) 및 깊이 제한을 자동 검증합니다.
 - 🔌 **MCP Fabric (Model Context Protocol)**: 사내 MCP 도구 레지스트리와 번들을 관리하고, Sidecar 또는 전용 StatefulSet 모드로 에이전트에 안전하게 주입합니다.

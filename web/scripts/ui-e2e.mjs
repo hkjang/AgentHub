@@ -18,6 +18,7 @@ const ROUTES = [
   ['/agents/builder', /에이전트 빌더/],
   ['/runtime', /내 런타임/],
   ['/sessions', /런타임 세션/],
+  ['/tasks', /에이전트 작업/],
   ['/workspaces', /내 작업공간/],
   ['/workspaces/snapshots', /작업공간 스냅샷/],
   ['/mcp/catalog', /MCP/],

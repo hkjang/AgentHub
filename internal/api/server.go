@@ -62,6 +62,10 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/auth/login", s.login)
 		r.Get("/auth/oidc/start", s.oidcStart)
 		r.Get("/auth/oidc/callback", s.oidcCallback)
+		// External systems fire triggers without a portal session; the handler
+		// verifies an HMAC over the raw body instead, so it sits outside the
+		// authentication group but is not otherwise open.
+		r.Post("/triggers/{id}/webhook", s.triggerWebhook)
 		r.Group(func(r chi.Router) {
 			r.Use(s.authentication)
 			r.Get("/me", s.me)

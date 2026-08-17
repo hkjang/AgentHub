@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/hkjang/AgentHub/internal/runtime"
+	"github.com/hkjang/AgentHub/internal/runtimespec"
 	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
 )
@@ -35,6 +36,22 @@ func (s *Server) userRoutes(r chi.Router) {
 	r.Put("/agents/{id}", s.updateAgent)
 	r.Delete("/agents/{id}", s.deleteAgent)
 	r.Post("/agents/{id}/spawn", s.spawnAgent)
+	// Execution plane: goals, triggers and the shortcut from an agent to a task.
+	r.Get("/agents/{id}/goal", s.agentGoal)
+	r.Put("/agents/{id}/goal", s.saveAgentGoal)
+	r.Get("/agents/{id}/triggers", s.agentTriggers)
+	r.Post("/agents/{id}/triggers", s.saveAgentTrigger)
+	r.Post("/agents/{id}/run", s.runAgent)
+	r.Delete("/triggers/{id}", s.deleteAgentTrigger)
+	r.Get("/tasks", s.tasks)
+	r.Post("/tasks", s.createTask)
+	r.Get("/tasks/{id}", s.task)
+	r.Post("/tasks/{id}/cancel", s.cancelTask)
+	r.Post("/tasks/{id}/retry", s.retryTask)
+	r.Get("/runs", s.runs)
+	r.Get("/runs/{id}", s.run)
+	r.Get("/artifacts", s.artifacts)
+	r.Get("/artifacts/{id}/content", s.artifactContent)
 	r.Get("/runtimes", s.runtimes)
 	r.Post("/runtimes/{id}/start", s.runtimeAction("running"))
 	r.Post("/runtimes/{id}/stop", s.runtimeAction("stopped"))
@@ -385,171 +402,8 @@ func (s *Server) runtimeSpec(r *http.Request, rt store.Runtime, agent store.Agen
 	return s.runtimeSpecContext(r.Context(), rt, agent)
 }
 
-// resolveRuntimeImage honours the image the agent is pinned to so a definition
-// keeps running the build it was created against; the catalog's current approved
-// image is only a fallback for agents created before pinning existed. A pinned
-// entry that has since been deprecated still wins — that is what makes rollback
-// possible — but a pin whose row was deleted falls back rather than failing the
-// spawn.
-func (s *Server) resolveRuntimeImage(ctx context.Context, agent store.Agent) string {
-	if agent.RuntimeImageID != nil && *agent.RuntimeImageID != "" {
-		if pinned, err := s.store.RuntimeImageByID(ctx, *agent.RuntimeImageID); err == nil {
-			if reference := runtimeImageReference(pinned); reference != "" {
-				return reference
-			}
-		} else if !errors.Is(err, store.ErrNotFound) {
-			s.logger.Warn("pinned runtime image lookup failed", "agent", agent.ID, "error", err)
-		}
-	}
-	if approved, err := s.store.ApprovedRuntimeImage(ctx, agent.RuntimeType); err == nil {
-		if reference := runtimeImageReference(approved); reference != "" {
-			return reference
-		}
-	}
-	return runtime.DefaultBaseImage()
-}
-
-// runtimeImageReference builds a pullable reference, preferring the digest so the
-// deployment is reproducible even if the tag is later moved.
-func runtimeImageReference(item store.RuntimeImage) string {
-	if item.Image == "" || strings.HasPrefix(item.Image, "registry.local/") {
-		// registry.local is the documentation placeholder, never a real mirror.
-		return ""
-	}
-	reference := item.Image
-	if item.Digest != "" {
-		return reference + "@" + item.Digest
-	}
-	if item.Version != "" && !strings.Contains(reference[strings.LastIndex(reference, "/")+1:], ":") {
-		reference += ":" + item.Version
-	}
-	return reference
-}
-
 func (s *Server) runtimeSpecContext(ctx context.Context, rt store.Runtime, agent store.Agent) (runtime.Spec, error) {
-	profiles, err := s.store.RuntimeProfiles(ctx)
-	if err != nil {
-		return runtime.Spec{}, err
-	}
-	profile := store.RuntimeProfile{ID: "rp-basic", Name: "Basic", CPUMillis: 2000, MemoryMB: 4096, StorageGB: 10, IdleTimeoutSeconds: 3600}
-	if agent.RuntimeProfileID != nil {
-		for _, p := range profiles {
-			if p.ID == *agent.RuntimeProfileID {
-				profile = p
-				break
-			}
-		}
-	}
-	pvc, workspaceType, repositoryURL, branch, snapshotName, workspaceSize := "", "empty", "", "", "", profile.StorageGB
-	gitCredentialKind, gitCredentialUsername, gitCredential := "", "", ""
-	if agent.WorkspaceID != nil {
-		workspace, workspaceErr := s.store.WorkspaceByID(ctx, *agent.WorkspaceID, agent.OwnerID, true)
-		if workspaceErr != nil {
-			return runtime.Spec{}, workspaceErr
-		}
-		pvc = workspace.PVCName
-		workspaceType, repositoryURL, branch, workspaceSize = workspace.Type, workspace.RepositoryURL, workspace.Branch, workspace.SizeGB
-		if workspace.GitCredentialSecretID != nil && *workspace.GitCredentialSecretID != "" {
-			// Read from the owner's keyring, not the caller's: an administrator may
-			// be starting this runtime on the owner's behalf.
-			_, value, secretErr := s.store.RevealPersonalSecret(ctx, workspace.OwnerID, *workspace.GitCredentialSecretID)
-			switch {
-			case secretErr == nil:
-				gitCredentialKind, gitCredentialUsername, gitCredential = workspace.GitCredentialKind, workspace.GitCredentialUsername, value
-			case errors.Is(secretErr, store.ErrNotFound):
-				// The secret was deleted; clone unauthenticated so the failure is a
-				// clear git error rather than a spawn that never happens.
-				s.logger.Warn("workspace git credential is missing", "workspace", workspace.ID)
-			default:
-				return runtime.Spec{}, secretErr
-			}
-		}
-		if workspace.SourceSnapshotID != nil {
-			snapshot, _, snapshotErr := s.store.WorkspaceSnapshotByID(ctx, agent.OwnerID, *workspace.SourceSnapshotID)
-			if snapshotErr != nil {
-				return runtime.Spec{}, snapshotErr
-			}
-			snapshotName = snapshot.StorageRef
-		}
-	}
-	image := s.resolveRuntimeImage(ctx, agent)
-	modelBaseURL, modelName, modelAPIKey := "", "", ""
-	if agent.ModelEndpointID != nil {
-		model, key, modelErr := s.store.ModelEndpointByID(ctx, *agent.ModelEndpointID)
-		if modelErr != nil {
-			return runtime.Spec{}, modelErr
-		}
-		modelBaseURL = model.BaseURL
-		modelName = model.DefaultModel
-		modelAPIKey = key
-	} else {
-		models, _ := s.store.ModelEndpoints(ctx)
-		for _, m := range models {
-			if m.Enabled && m.BaseURL != "" && m.DefaultModel != "" {
-				_, key, _ := s.store.ModelEndpointByID(ctx, m.ID)
-				modelBaseURL = m.BaseURL
-				modelName = m.DefaultModel
-				modelAPIKey = key
-				break
-			}
-		}
-	}
-	bindings := []runtime.MCPBinding{}
-	if agent.MCPBundleID != nil {
-		servers, bundleErr := s.store.MCPServersForBundle(ctx, *agent.MCPBundleID)
-		if bundleErr != nil {
-			return runtime.Spec{}, bundleErr
-		}
-		for _, server := range servers {
-			binding := runtime.MCPBinding{Name: server.Name, Mode: server.Mode, Endpoint: server.Endpoint, Image: server.Image, Port: server.Port, AuthType: server.AuthType, AuthHeader: server.AuthHeader}
-			if binding.AuthType != "" && binding.AuthType != "none" {
-				credential, credentialErr := s.store.MCPCredential(ctx, server, agent.OwnerID)
-				switch {
-				case credentialErr == nil:
-					binding.Credential = credential
-				case errors.Is(credentialErr, store.ErrNotFound):
-					// Bind it anyway: the runtime reports a clear 401 from the MCP
-					// server, which is easier to act on than the tool vanishing.
-					s.logger.Warn("MCP credential is not configured", "server", server.Name, "agent", agent.ID, "perUser", server.PerUserCredential)
-				default:
-					return runtime.Spec{}, credentialErr
-				}
-			}
-			bindings = append(bindings, binding)
-		}
-	}
-	security := runtime.SecurityProfile{RunAsNonRoot: true, AllowPrivilegeEscalation: false, AutomountServiceAccountToken: false, SeccompProfile: "RuntimeDefault"}
-	if agent.SecurityProfileID != nil {
-		item, profileErr := s.store.PolicyProfileByID(ctx, "security", *agent.SecurityProfileID)
-		if profileErr != nil {
-			return runtime.Spec{}, profileErr
-		}
-		security.ReadOnlyRootFilesystem, _ = item.Spec["readOnlyRootFilesystem"].(bool)
-		if seccomp, ok := item.Spec["seccompProfile"].(string); ok && seccomp != "" {
-			security.SeccompProfile = seccomp
-		}
-	}
-	network := runtime.NetworkProfile{DefaultDeny: true, AllowDNS: true}
-	if agent.NetworkProfileID != nil {
-		item, profileErr := s.store.PolicyProfileByID(ctx, "network", *agent.NetworkProfileID)
-		if profileErr != nil {
-			return runtime.Spec{}, profileErr
-		}
-		if value, ok := item.Spec["defaultDeny"].(bool); ok {
-			network.DefaultDeny = value
-		}
-		if value, ok := item.Spec["allowDNS"].(bool); ok {
-			network.AllowDNS = value
-		}
-		if values, ok := item.Spec["allowedDestinations"].([]any); ok {
-			for _, value := range values {
-				if destination, ok := value.(string); ok && destination != "" {
-					network.AllowedDestinations = append(network.AllowedDestinations, destination)
-				}
-			}
-		}
-	}
-	return runtime.Spec{Runtime: rt, Agent: agent, Profile: profile, Image: image, WorkspacePVC: pvc, WorkspaceType: workspaceType, WorkspaceRepositoryURL: repositoryURL, WorkspaceBranch: branch, WorkspaceSnapshot: snapshotName, WorkspaceSizeGB: workspaceSize, WorkspaceGitCredentialKind: gitCredentialKind, WorkspaceGitCredentialUsername: gitCredentialUsername, WorkspaceGitCredential: gitCredential, ModelBaseURL: modelBaseURL, ModelName: modelName, ModelAPIKey: modelAPIKey, MCPServers: bindings, Security: security, Network: network}, nil
+	return runtimespec.New(s.store, s.logger).Build(ctx, rt, agent)
 }
 func (s *Server) runtimeLogs(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())

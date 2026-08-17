@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   Activity, Bell, Boxes, Bot, Braces, ChevronDown, ChevronRight, CircleUserRound, Command,
   Database, FileCode2, Gauge, KeyRound, LayoutDashboard, Library, LogOut, Menu, Network,
-  Search, Settings, ShieldCheck, Sparkles, UsersRound, Workflow, X
+  ListChecks, Search, Settings, ShieldCheck, Sparkles, UsersRound, Workflow, X
 } from 'lucide-react'
 import { useAuth } from '../App'
 import { api } from '../api'
@@ -25,7 +25,8 @@ const groups: NavGroup[] = [
     { to: '/workspaces', label: '작업공간', icon: Database, keywords: 'workspace storage pvc 저장소' },
     { to: '/workspaces/snapshots', label: '스냅샷', icon: Boxes, keywords: 'snapshot backup restore 복원 백업' },
     { to: '/runtime', label: '런타임', icon: Activity, keywords: 'runtime pod 실행' },
-    { to: '/sessions', label: '세션', icon: FileCode2, keywords: 'session 작업' }
+    { to: '/sessions', label: '세션', icon: FileCode2, keywords: 'session 작업' },
+    { to: '/tasks', label: '작업 대기열', icon: ListChecks, keywords: 'task queue run 자동 실행 큐' }
   ]},
   { label: '연동', items: [
     { to: '/mcp/catalog', label: 'MCP 카탈로그', icon: Network, keywords: 'mcp catalog server 서버' },

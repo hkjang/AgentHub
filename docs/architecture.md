@@ -111,3 +111,40 @@ runtime adapters and is reached through their browser sessions. Every run is
 persisted with its per-step trace, latency and token accounting, and correlated
 to the originating request through a trace id that appears in both the response
 and the structured logs.
+
+## Agent Execution Plane
+
+Agents can be driven two ways at once. The interactive path is unchanged: create
+an agent, spawn its Runtime, open the browser session and work in it. The
+autonomous path adds a Goal and Triggers, and the platform does the rest.
+
+    Trigger → AgentTask → Worker claims → AgentRun → reasoning steps
+            → completion evaluated → artifacts stored → Runtime released
+
+`internal/execution` owns that flow. A Task is queued in PostgreSQL and claimed
+with `FOR UPDATE SKIP LOCKED` under a lease, so several `agenthub-worker`
+replicas share one queue and a worker that dies releases its task rather than
+stranding it. The API process never executes an agent: a run can take minutes,
+which does not belong in a request handler.
+
+Runtimes are acquired through the same Runtime Manager the interactive path uses,
+never a parallel implementation. A Runtime the user already had running is reused
+and never stopped by a task; only one the task started itself is released, and
+only when the agent's policy says so. That is what lets someone open the live
+Runtime while a task is working in it.
+
+Completion is decided by the platform, not claimed by the agent. `agent` trusts
+the declaration, `rule` requires every success criterion to be evidenced in the
+transcript, `judge` has a separate model call assess it, and `composite` requires
+both. A judge that cannot be reached fails the task rather than passing it. The
+verdict is stored on the run, so a completed task can be defended later.
+
+Only infrastructure failures are retried, with exponential backoff; an agent that
+did not meet its goal will not meet it by being asked again unprompted. A task
+that exhausts its retries lands in `dead_letter` for an operator instead of
+retrying forever.
+
+Cron schedules are parsed in-process rather than through a dependency, and the
+worker that advances `next_fire_at` first owns that firing, so a schedule fires
+once no matter how many workers are running. Webhook triggers verify an HMAC over
+the raw body; it is the only unauthenticated route in the API.

@@ -16,11 +16,12 @@ RUN go mod download
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X github.com/hkjang/AgentHub/internal/buildinfo.Version=${VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.Commit=${COMMIT} -X github.com/hkjang/AgentHub/internal/buildinfo.BuildTime=${BUILD_TIME}" -o /out/agenthub ./cmd/agenthub \
- && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X github.com/hkjang/AgentHub/internal/buildinfo.Version=${VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.Commit=${COMMIT} -X github.com/hkjang/AgentHub/internal/buildinfo.BuildTime=${BUILD_TIME}" -o /out/agenthub-operator ./cmd/operator
+ && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X github.com/hkjang/AgentHub/internal/buildinfo.Version=${VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.Commit=${COMMIT} -X github.com/hkjang/AgentHub/internal/buildinfo.BuildTime=${BUILD_TIME}" -o /out/agenthub-operator ./cmd/operator \
+ && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X github.com/hkjang/AgentHub/internal/buildinfo.Version=${VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.Commit=${COMMIT} -X github.com/hkjang/AgentHub/internal/buildinfo.BuildTime=${BUILD_TIME}" -o /out/agenthub-worker ./cmd/worker
 
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
-COPY --from=go-build /out/agenthub /out/agenthub-operator /app/
+COPY --from=go-build /out/agenthub /out/agenthub-operator /out/agenthub-worker /app/
 COPY --from=web-build /src/web/dist /app/web/dist
 USER 65532:65532
 EXPOSE 8080

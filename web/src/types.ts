@@ -19,3 +19,38 @@ export type WorkflowRun = { id:string; workflowId:string; status:string; input:{
 export type Notification = { id:string; type:string; title:string; message:string; resourceUrl:string; readAt?:string; createdAt:string }
 export type PersonalSecret = { id: string; name: string; kind: string; keyVersion: number; lastUsedAt?: string; createdAt: string }
 export type APIKey = { id: string; name: string; prefix: string; scopes: string[]; expiresAt?: string; lastUsedAt?: string; createdAt: string }
+
+// --- Agent Execution Plane ---
+export type ExecutionMode = 'interactive' | 'task' | 'scheduled' | 'event' | 'service' | 'hybrid'
+export type AgentGoal = {
+  agentId: string; description: string; successCriteria: string[]; failureCriteria: string[]; constraints: string
+  maxSteps: number; maxToolCalls: number; maxDurationSeconds: number; maxRetries: number
+  startOnDemand: boolean; stopAfterTask: boolean
+  completionStrategy: 'agent' | 'rule' | 'judge' | 'composite'
+  concurrencyPolicy: 'reject' | 'queue' | 'parallel' | 'replace'
+  maxConcurrentRuns: number
+}
+export type AgentTrigger = {
+  id: string; agentId: string; name: string; type: 'manual' | 'cron' | 'webhook'; enabled: boolean
+  schedule: string; timezone: string; taskTitle: string; taskInput: string; priority: string
+  lastFiredAt?: string; nextFireAt?: string; hasSecret: boolean
+}
+export type AgentTask = {
+  id: string; agentId: string; agentName?: string; title: string; input: string; priority: string
+  status: string; source: string; triggerId?: string; attempts: number; scheduledAt: string
+  currentRunId?: string; lastError: string; createdAt: string; updatedAt: string
+}
+export type AgentRun = {
+  id: string; taskId: string; agentId: string; attempt: number; status: string; agentVersion: number
+  runtimeId?: string; modelName: string; traceId: string; workerId: string
+  stepCount: number; toolCalls: number; totalTokens: number; durationMs: number
+  result: string; failureReason: string
+  completion: { strategy?: string; passed?: boolean; reason?: string; met?: string[]; unmet?: string[] }
+  startedAt: string; finishedAt?: string
+}
+export type AgentRunStep = {
+  id: string; runId: string; sequence: number; type: string; title: string; input: string; output: string
+  status: string; error: string; promptTokens: number; completionTokens: number; durationMs: number; createdAt: string
+}
+export type AgentRunEvent = { id: number; runId: string; taskId: string; type: string; message: string; details: Record<string, unknown>; occurredAt: string }
+export type AgentArtifact = { id: string; runId: string; taskId: string; agentId: string; name: string; type: string; contentType: string; sizeBytes: number; createdAt: string }

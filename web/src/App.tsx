@@ -18,6 +18,7 @@ import { Snapshots } from './pages/Snapshots'
 import { MCPFabric } from './pages/MCPFabric'
 import { AdminSecurity } from './pages/AdminSecurity'
 import { Sessions } from './pages/Sessions'
+import { Tasks } from './pages/Tasks'
 import { Workflows } from './pages/Workflows'
 import { Evaluation } from './pages/Evaluation'
 
@@ -63,6 +64,7 @@ export function App() {
         <Route path="mcp/bundles" element={<MCPFabric view="bundles" />} />
         <Route path="runtime" element={<Agents runtimeOnly />} />
         <Route path="sessions" element={<Sessions />} />
+        <Route path="tasks" element={<Tasks />} />
         <Route path="workflows" element={<Workflows />} />
         <Route path="evaluation" element={<Evaluation />} />
         <Route path="reviews" element={<Reviews />} />

@@ -6,3 +6,4 @@ resources:
   - rbac.yaml
   - operator.yaml
   - agenthub.yaml
+  - worker.yaml

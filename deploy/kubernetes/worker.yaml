@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agenthub-worker
+  namespace: agent-platform-system
+spec:
+  # Several replicas are safe: tasks are claimed with FOR UPDATE SKIP LOCKED and
+  # held on a lease, and a cron trigger only fires for whichever worker advances
+  # its schedule first.
+  replicas: 1
+  selector:
+    matchLabels: {app: agenthub-worker}
+  template:
+    metadata:
+      labels: {app: agenthub-worker}
+    spec:
+      # The worker acquires Runtimes through the same Kubernetes API the control
+      # plane uses, so it runs under the same service account.
+      serviceAccountName: agenthub
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: worker
+          image: agenthub:v0.5.0
+          imagePullPolicy: IfNotPresent
+          command: [/app/agenthub-worker]
+          envFrom:
+            - secretRef: {name: agenthub-bootstrap}
+          env:
+            - {name: AGENTHUB_WORKER_CONCURRENCY, value: "2"}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {}
