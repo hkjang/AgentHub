@@ -34,6 +34,8 @@ func (s *Server) userRoutes(r chi.Router) {
 	r.Get("/agents", s.agents)
 	r.Post("/agents", s.createAgent)
 	r.Put("/agents/{id}", s.updateAgent)
+	r.Get("/agents/{id}/export", s.exportAgent)
+	r.Post("/agents/import", s.importAgent)
 	r.Delete("/agents/{id}", s.deleteAgent)
 	r.Post("/agents/{id}/spawn", s.spawnAgent)
 	// Execution plane: goals, triggers and the shortcut from an agent to a task.

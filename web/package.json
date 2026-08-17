@@ -15,7 +15,8 @@
     "test:mcp-policy": "node scripts/mcp-policy-e2e.mjs",
     "test:custom": "node scripts/custom-runtime-e2e.mjs",
     "test:consensus": "node scripts/consensus-e2e.mjs",
-    "test:usage": "node scripts/usage-e2e.mjs"
+    "test:usage": "node scripts/usage-e2e.mjs",
+    "test:gitops": "node scripts/gitops-e2e.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",

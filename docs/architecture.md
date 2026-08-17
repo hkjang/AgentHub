@@ -291,3 +291,28 @@ tokens are counted separately and the console says they are unpriced. A report
 is scoped to the caller's own agents unless an admin asks for the whole
 platform, and the window is bounded, because a year of steps is a table scan
 nobody is waiting for.
+
+## GitOps definitions
+
+An agent definition is configuration, and configuration that exists only in a
+database cannot be reviewed, diffed or promoted from a staging cluster to a
+production one. A definition therefore exports as a YAML document and imports
+back from one.
+
+References travel as names, not identifiers. An id from one installation means
+nothing in another — the profiles, workspaces and endpoints there have their
+own — so the document names what it wants and the import resolves it locally.
+A name the target cluster does not have is reported by name and the import is
+refused, because an agent that comes up without its workspace or its model looks
+imported and is not.
+
+Re-importing the same document updates the agent rather than creating a second
+one, which is what makes a GitOps flow possible: the file is re-applied on every
+change. A renamed document creates a new agent, which is how a definition is
+promoted into a cluster that has never seen it. The runtime type stays immutable
+even when a document says otherwise, for the same reason it is immutable in the
+console: the Pod, its ports and its persisted home are all shaped by the adapter.
+
+What does not travel is anything installation-specific: owner, version,
+timestamps, and every secret. A credential is referenced by the binding that
+holds it, never exported into a file someone is about to commit.

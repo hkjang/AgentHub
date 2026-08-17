@@ -341,3 +341,5 @@
 .usage-summary strong{font-size:14px;color:#1f2a3a}
 .usage-summary .unpriced{background:#fffaf0;border-color:#f3ddb0}
 .usage-summary .unpriced strong{color:#b2720b}
+.import-agent{position:relative;overflow:hidden;cursor:pointer}
+.import-agent input{position:absolute;inset:0;opacity:0;cursor:pointer}

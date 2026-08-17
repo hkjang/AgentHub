@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
-import { Activity, Bot, CircleStop, ExternalLink, FileText, ListChecks, MoreHorizontal, Pencil, Play, Plus, RefreshCw, Search, Target, Trash2, Zap } from 'lucide-react'
+import { Activity, Bot, CircleStop, Download, ExternalLink, FileText, ListChecks, MoreHorizontal, Pencil, Play, Plus, RefreshCw, Search, Target, Trash2, Upload, Zap } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, Loading, PageHeader, StatusBadge } from '../components/UI'
@@ -18,6 +18,7 @@ export function Agents({runtimeOnly=false}:{runtimeOnly?:boolean}) {
   const [removeError,setRemoveError]=useState('')
   const [query,setQuery]=useState('')
   const [runtimeFilter,setRuntimeFilter]=useState('')
+  const [notice,setNotice]=useState('')
   const refresh=useCallback(async()=>{
     try {
       const res = await api.get<{items?:Agent[]}|Agent[]>('/api/v1/agents')
@@ -35,6 +36,33 @@ export function Agents({runtimeOnly=false}:{runtimeOnly?:boolean}) {
     document.addEventListener('visibilitychange', onVisible)
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVisible) }
   },[refresh])
+  // The definition leaves as a file so it can be reviewed in a repository and
+  // applied to another cluster; the browser download is the whole point, so the
+  // response is fetched and saved rather than navigated to.
+  const exportAgent=async(agent:Agent)=>{
+    setError(''); setNotice('')
+    try {
+      const yaml=await api.text(`/api/v1/agents/${agent.id}/export`)
+      const url=URL.createObjectURL(new Blob([yaml],{type:'application/yaml'}))
+      const link=document.createElement('a')
+      link.href=url; link.download=`${agent.name}.yaml`
+      document.body.appendChild(link); link.click(); link.remove()
+      URL.revokeObjectURL(url)
+      setNotice(`${agent.name} 정의를 YAML로 내려받았습니다.`)
+    } catch(err) {
+      setError(err instanceof Error?err.message:'정의를 내보내지 못했습니다.')
+    }
+  }
+  const importAgent=async(file:File)=>{
+    setError(''); setNotice('')
+    try {
+      const result=await api.postText<{mode?:string;agent?:Agent}>('/api/v1/agents/import',await file.text())
+      setNotice(`${result.agent?.name ?? file.name} 정의를 ${result.mode==='updated'?'갱신':'생성'}했습니다.`)
+      await refresh()
+    } catch(err) {
+      setError(err instanceof Error?err.message:'정의를 가져오지 못했습니다.')
+    }
+  }
   const act=async(agent:Agent,verb:'spawn'|'start'|'stop'|'restart')=>{
     setError('')
     setBusy(agent.id)
@@ -77,8 +105,9 @@ export function Agents({runtimeOnly=false}:{runtimeOnly?:boolean}) {
   const selected = list.find(a => a?.id === selectedId) || null
   const present = RUNTIME_TYPES.filter((type) => scoped.some((agent) => agent.runtimeType === type))
   return <div className="page">
-    <PageHeader eyebrow={runtimeOnly?'런타임 제어':'내 작업공간'} title={runtimeOnly?'내 런타임':'내 에이전트'} description={runtimeOnly?'사용자 전용 Kubernetes 런타임의 수명주기와 상태를 관리합니다.':'에이전트 정의와 실행 중인 런타임을 분리해서 안전하게 관리합니다.'} actions={<Link className="button primary" to="/catalog"><Plus size={17}/>새 에이전트</Link>}/>
+    <PageHeader eyebrow={runtimeOnly?'런타임 제어':'내 작업공간'} title={runtimeOnly?'내 런타임':'내 에이전트'} description={runtimeOnly?'사용자 전용 Kubernetes 런타임의 수명주기와 상태를 관리합니다.':'에이전트 정의와 실행 중인 런타임을 분리해서 안전하게 관리합니다.'} actions={<><label className="button ghost import-agent"><Upload size={16}/>정의 가져오기<input type="file" accept=".yaml,.yml,application/yaml,text/yaml" onChange={(e)=>{const file=e.target.files?.[0]; e.target.value=''; if(file) void importAgent(file)}}/></label><Link className="button primary" to="/catalog"><Plus size={17}/>새 에이전트</Link></>}/>
     {error&&<ErrorBanner message={error} onClose={()=>setError('')}/>}
+    {notice&&<div className="notice-banner">{notice}</div>}
     {scoped.length>0&&<div className="toolbar">
       <div className="search-box"><Search size={17}/><input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="이름, 설명, Pod 이름 검색" aria-label="에이전트 검색"/></div>
       <div className="filter-chips">
@@ -86,7 +115,7 @@ export function Agents({runtimeOnly=false}:{runtimeOnly?:boolean}) {
         {present.map((type)=><button key={type} className={runtimeFilter===type?'selected':''} onClick={()=>setRuntimeFilter(type)}>{runtimeLabel(type)} {scoped.filter((a)=>a.runtimeType===type).length}</button>)}
       </div>
     </div>}
-    {scoped.length>0&&visible.length===0?<div className="empty-compact">검색 조건에 맞는 에이전트가 없습니다.</div>:visible.length===0?<Empty icon={<Bot/>} title="아직 에이전트가 없습니다" description="카탈로그에서 검증된 템플릿을 선택해 첫 에이전트를 만들어 보세요." action={<Link className="button primary" to="/catalog">카탈로그 열기</Link>}/>:<section className="table-panel"><div className="table-wrap custom-scroll"><table><thead><tr><th>에이전트</th><th>런타임</th><th>상태</th><th>Pod / 노드</th><th>마지막 변경</th><th aria-label="작업"/></tr></thead><tbody>{visible.map(agent=><tr key={agent.id}><td><button className="agent-cell" onClick={()=>setSelectedId(agent.id)}><div className={runtimeLogoClass(agent.runtimeType)}>{runtimeCode(agent.runtimeType)}</div><div><strong>{agent.name}</strong><span>정의 v{agent.version}</span></div></button></td><td><span className="runtime-name">{runtimeLabel(agent.runtimeType)}</span></td><td><StatusBadge status={agent.runtime?.status??'stopped'}/></td><td><div className="mono-stack"><code>{agent.runtime?.podName||'—'}</code><small>{agent.runtime?.nodeName||'할당 전'}</small></div></td><td><span title={new Date(agent.updatedAt).toLocaleString('ko-KR')}>{relativeTime(agent.updatedAt)}</span></td><td><div className="row-actions">{!agent.runtime||['stopped','failed','crashed'].includes(agent.runtime.status)?<button title="시작" disabled={!!busy} onClick={()=>void act(agent,agent.runtime?'start':'spawn')}><Play size={16}/></button>:<button title="중지" disabled={!!busy} onClick={()=>void act(agent,'stop')}><CircleStop size={16}/></button>}<button title="목표 · 자동화" onClick={()=>setGoalFor(agent)}><Target size={15}/></button><button title="수정" onClick={()=>setEditing(agent)}><Pencil size={15}/></button><button className="danger" title="삭제" disabled={!!busy} onClick={()=>{setRemoveError('');setRemoving(agent)}}><Trash2 size={15}/></button><button title="상세" onClick={()=>setSelectedId(agent.id)}><MoreHorizontal size={18}/></button></div></td></tr>)}</tbody></table></div></section>}
+    {scoped.length>0&&visible.length===0?<div className="empty-compact">검색 조건에 맞는 에이전트가 없습니다.</div>:visible.length===0?<Empty icon={<Bot/>} title="아직 에이전트가 없습니다" description="카탈로그에서 검증된 템플릿을 선택해 첫 에이전트를 만들어 보세요." action={<Link className="button primary" to="/catalog">카탈로그 열기</Link>}/>:<section className="table-panel"><div className="table-wrap custom-scroll"><table><thead><tr><th>에이전트</th><th>런타임</th><th>상태</th><th>Pod / 노드</th><th>마지막 변경</th><th aria-label="작업"/></tr></thead><tbody>{visible.map(agent=><tr key={agent.id}><td><button className="agent-cell" onClick={()=>setSelectedId(agent.id)}><div className={runtimeLogoClass(agent.runtimeType)}>{runtimeCode(agent.runtimeType)}</div><div><strong>{agent.name}</strong><span>정의 v{agent.version}</span></div></button></td><td><span className="runtime-name">{runtimeLabel(agent.runtimeType)}</span></td><td><StatusBadge status={agent.runtime?.status??'stopped'}/></td><td><div className="mono-stack"><code>{agent.runtime?.podName||'—'}</code><small>{agent.runtime?.nodeName||'할당 전'}</small></div></td><td><span title={new Date(agent.updatedAt).toLocaleString('ko-KR')}>{relativeTime(agent.updatedAt)}</span></td><td><div className="row-actions">{!agent.runtime||['stopped','failed','crashed'].includes(agent.runtime.status)?<button title="시작" disabled={!!busy} onClick={()=>void act(agent,agent.runtime?'start':'spawn')}><Play size={16}/></button>:<button title="중지" disabled={!!busy} onClick={()=>void act(agent,'stop')}><CircleStop size={16}/></button>}<button title="목표 · 자동화" onClick={()=>setGoalFor(agent)}><Target size={15}/></button><button title="정의 내보내기 (YAML)" onClick={()=>void exportAgent(agent)}><Download size={15}/></button><button title="수정" onClick={()=>setEditing(agent)}><Pencil size={15}/></button><button className="danger" title="삭제" disabled={!!busy} onClick={()=>{setRemoveError('');setRemoving(agent)}}><Trash2 size={15}/></button><button title="상세" onClick={()=>setSelectedId(agent.id)}><MoreHorizontal size={18}/></button></div></td></tr>)}</tbody></table></div></section>}
     {selected&&<AgentDrawer agent={selected} close={()=>setSelectedId(null)} action={act} busy={!!busy} edit={()=>setEditing(selected)} remove={()=>{setRemoveError('');setRemoving(selected)}}/>}
     {editing&&<AgentEditDrawer agent={editing} close={()=>setEditing(null)} done={()=>{setEditing(null);void refresh()}}/>}
     {goalFor&&<GoalDrawer agent={goalFor} close={()=>setGoalFor(null)}/>}
