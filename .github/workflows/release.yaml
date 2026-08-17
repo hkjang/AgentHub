@@ -19,16 +19,23 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           version="${tag#v}"
           test "${version}" = "$(tr -d '\r\n' < VERSION)"
+          base="$(tr -d '\r\n' < BASE_VERSION)"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "baseVersion=${base}" >> "$GITHUB_OUTPUT"
+          echo "baseTag=v${base}" >> "$GITHUB_OUTPUT"
       - name: Decide whether the runtime base image must be rebuilt
         id: base
         shell: bash
+        env:
+          BASE_VERSION: ${{ steps.version.outputs.baseVersion }}
         run: |
           set -euo pipefail
-          # The base image is several GB and dominates release time, so it is only
-          # rebuilt when something it is actually built from changed. Everything
-          # listed here feeds Dockerfile.base or the binaries it copies in.
+          # The base image is several GB and dominates release time, so it is
+          # published only when BASE_VERSION says it changed. Everything listed
+          # here feeds Dockerfile.base or the binaries it copies in, so a change
+          # to one of them without a BASE_VERSION bump is a mistake: the control
+          # plane would keep pointing at a base tag that no longer matches.
           inputs=(Dockerfile.base deploy/runtime cmd/runtime-proxy go.mod go.sum)
           previous="$(git tag --list 'v*.*.*' --sort=-v:refname | grep -v "^${GITHUB_REF_NAME}$" | head -1 || true)"
           if [ -z "${previous}" ]; then
@@ -37,12 +44,23 @@ jobs:
             exit 0
           fi
           echo "comparing ${previous}..${GITHUB_REF_NAME}"
+          previous_base="$(git show "${previous}:BASE_VERSION" 2>/dev/null | tr -d '\r\n' || true)"
           if git diff --quiet "${previous}" "${GITHUB_REF_NAME}" -- "${inputs[@]}"; then
-            echo "base image inputs are unchanged since ${previous}"
+            inputs_changed=false
+          else
+            git diff --name-only "${previous}" "${GITHUB_REF_NAME}" -- "${inputs[@]}"
+            inputs_changed=true
+          fi
+          if [ "${inputs_changed}" = true ] && [ "${BASE_VERSION}" = "${previous_base}" ]; then
+            echo "::error::base image inputs changed since ${previous} but BASE_VERSION is still ${BASE_VERSION}; bump BASE_VERSION so the new image gets its own tag" >&2
+            exit 1
+          fi
+          if [ "${BASE_VERSION}" = "${previous_base}" ]; then
+            echo "base image v${BASE_VERSION} is unchanged since ${previous}"
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "previous=${previous}" >> "$GITHUB_OUTPUT"
           else
-            git diff --name-only "${previous}" "${GITHUB_REF_NAME}" -- "${inputs[@]}"
+            echo "base image moves from v${previous_base:-none} to v${BASE_VERSION}"
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -59,19 +77,22 @@ jobs:
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          BASE_VERSION: ${{ steps.version.outputs.baseVersion }}
+          BASE_TAG: ${{ steps.version.outputs.baseTag }}
           BASE_CHANGED: ${{ steps.base.outputs.changed }}
           BASE_PREVIOUS: ${{ steps.base.outputs.previous }}
         run: |
-          docker build --build-arg VERSION="${RELEASE_VERSION}" --build-arg COMMIT="${GITHUB_SHA}" --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -t "agenthub:${RELEASE_TAG}" .
+          docker build --build-arg VERSION="${RELEASE_VERSION}" --build-arg BASE_VERSION="${BASE_VERSION}" --build-arg COMMIT="${GITHUB_SHA}" --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -t "agenthub:${RELEASE_TAG}" .
           if [ "${BASE_CHANGED}" = "true" ]; then
-            docker build -f Dockerfile.base -t "agenthub-base:${RELEASE_TAG}" .
+            docker build -f Dockerfile.base -t "agenthub-base:${BASE_TAG}" .
           else
-            echo "skipping the runtime base image build; ${BASE_PREVIOUS} still applies"
+            echo "skipping the runtime base image build; ${BASE_TAG} from ${BASE_PREVIOUS} still applies"
           fi
       - name: Package archives
         shell: bash
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          BASE_TAG: ${{ steps.version.outputs.baseTag }}
           BASE_CHANGED: ${{ steps.base.outputs.changed }}
         run: |
           set -euo pipefail
@@ -95,7 +116,7 @@ jobs:
           }
           package "agenthub:${RELEASE_TAG}" "agenthub-${RELEASE_TAG}.tar.gz"
           if [ "${BASE_CHANGED}" = "true" ]; then
-            package "agenthub-base:${RELEASE_TAG}" "agenthub-base-${RELEASE_TAG}.tar.gz"
+            package "agenthub-base:${BASE_TAG}" "agenthub-base-${BASE_TAG}.tar.gz"
           fi
           # Glob only the archives: including SHA256SUMS in its own listing is
           # both meaningless and racy with the redirect.
@@ -106,12 +127,13 @@ jobs:
         shell: bash
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          BASE_TAG: ${{ steps.version.outputs.baseTag }}
         run: |
           set -euo pipefail
           ( cd release && sha256sum -c SHA256SUMS )
           # Reassemble through a pipe: this proves the parts concatenate back
           # into a valid archive without needing room for a second copy.
-          for name in "agenthub-${RELEASE_TAG}.tar.gz" "agenthub-base-${RELEASE_TAG}.tar.gz"; do
+          for name in "agenthub-${RELEASE_TAG}.tar.gz" "agenthub-base-${BASE_TAG}.tar.gz"; do
             if [ -z "$(ls -d release/"${name}"* 2>/dev/null)" ]; then
               echo "skipped ${name}"
               continue
@@ -136,16 +158,19 @@ jobs:
         env:
           BASE_CHANGED: ${{ steps.base.outputs.changed }}
           BASE_PREVIOUS: ${{ steps.base.outputs.previous }}
+          BASE_TAG: ${{ steps.version.outputs.baseTag }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
           {
             echo 'body<<RELEASE_NOTE'
+            echo "이 릴리즈가 사용하는 런타임 base 이미지: \`agenthub-base:${BASE_TAG}\`"
+            echo ""
             if [ "${BASE_CHANGED}" = "true" ]; then
-              echo "런타임 base 이미지: \`agenthub-base-${RELEASE_TAG}.tar.gz\` (이 릴리즈에 포함)"
+              echo "base 이미지가 갱신되어 \`agenthub-base-${BASE_TAG}.tar.gz\`로 함께 게시됩니다."
             else
-              echo "런타임 base 이미지: **변경 없음**. ${BASE_PREVIOUS} 릴리즈의 \`agenthub-base-${BASE_PREVIOUS}.tar.gz\`를 그대로 사용하세요."
+              echo "base 이미지는 **변경 없음**입니다. 이미 설치된 \`agenthub-base:${BASE_TAG}\`를 그대로 사용하세요. 새로 받아야 한다면 ${BASE_PREVIOUS} 이전 릴리즈의 \`agenthub-base-${BASE_TAG}.tar.gz\` 자산을 내려받으면 됩니다."
               echo ""
-              echo "base 이미지는 용량이 커서 빌드 입력(\`Dockerfile.base\`, \`deploy/runtime/\`, \`cmd/runtime-proxy/\`, \`go.mod\`, \`go.sum\`)이 바뀐 경우에만 다시 게시합니다."
+              echo "base 이미지는 용량이 커서 \`BASE_VERSION\`이 올라간 릴리즈에서만 다시 게시합니다."
             fi
             echo 'RELEASE_NOTE'
           } >> "$GITHUB_OUTPUT"

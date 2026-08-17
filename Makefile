@@ -2,6 +2,11 @@
 
 VERSION ?= $(shell cat VERSION)
 TAG := v$(VERSION)
+# The runtime base image is versioned separately: it is several GB and is only
+# rebuilt when Dockerfile.base or what it copies in changes, so most control
+# plane releases keep pointing at an older base tag.
+BASE_VERSION ?= $(shell cat BASE_VERSION)
+BASE_TAG := v$(BASE_VERSION)
 
 test:
 	go test ./cmd/... ./internal/...
@@ -13,10 +18,10 @@ build:
 	go build -o bin/agenthub-operator ./cmd/operator
 
 image:
-	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) --build-arg BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ) -t agenthub:$(TAG) .
+	docker build --build-arg VERSION=$(VERSION) --build-arg BASE_VERSION=$(BASE_VERSION) --build-arg COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) --build-arg BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ) -t agenthub:$(TAG) .
 
 image-base:
-	docker build -f Dockerfile.base -t agenthub-base:$(TAG) .
+	docker build -f Dockerfile.base -t agenthub-base:$(BASE_TAG) .
 
 validate:
 	kubectl kustomize deploy/kubernetes >/dev/null
@@ -33,7 +38,7 @@ RELEASE_CHUNK ?= 1900M
 release-archives: image image-base
 	mkdir -p release
 	$(call package_image,agenthub:$(TAG),agenthub-$(TAG).tar.gz)
-	$(call package_image,agenthub-base:$(TAG),agenthub-base-$(TAG).tar.gz)
+	$(call package_image,agenthub-base:$(BASE_TAG),agenthub-base-$(BASE_TAG).tar.gz)
 	cd release && sha256sum -- agenthub-* > SHA256SUMS
 	ls -lh release
 

@@ -5,7 +5,7 @@
 On an internet-connected build host, create the release archives:
 
 ```bash
-make release-archives VERSION=0.6.0
+make release-archives
 ```
 
 This produces `release/` containing the image archives and a `SHA256SUMS`
@@ -14,10 +14,13 @@ than that is emitted as `<name>.tar.gz.part-aa`, `.part-ab`, … instead of a
 single file; smaller archives stay a plain `.tar.gz`. Set `RELEASE_CHUNK` to
 change the split size.
 
-GitHub releases only re-publish the runtime base image when something it is
-built from changed, because it is large and slow to build. A release whose notes
-say the base image is unchanged has no `agenthub-base-*.tar.gz` asset: keep using
-the archive from the release the notes point at.
+The control plane version lives in `VERSION` and the runtime base image has its
+own `BASE_VERSION`, because the base image is large and slow to build and is
+only rebuilt when something it is built from changes. A release whose notes say
+the base image is unchanged has no `agenthub-base-*.tar.gz` asset, and its notes
+name the base tag it runs on: keep using the archive you already loaded. Both
+files are read by `make release-archives`, so pass overrides only when building
+something other than the checked-out release.
 
 Transfer the whole `release/` directory, `compose.yaml`, and the Kubernetes
 manifests through the approved media path. On the offline host, verify the media

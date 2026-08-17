@@ -22,15 +22,16 @@ var ErrSnapshotsUnsupported = errors.New("cluster does not provide CSI VolumeSna
 // sites that retag the bundled image need this escape hatch.
 const EnvDefaultBaseImage = "AGENTHUB_DEFAULT_RUNTIME_IMAGE"
 
-// DefaultBaseImage is the offline runtime image that ships alongside this
-// control plane build. `make image-base` tags it from the same VERSION file, so
-// deriving the tag here keeps a released control plane from requesting an image
-// tag that was never built.
+// DefaultBaseImage is the offline runtime image this control plane build runs
+// on. It follows BASE_VERSION rather than VERSION: the base image is only
+// rebuilt when something it is built from changes, so a control plane release
+// that derived the tag from its own version would ask for an image tag that was
+// never published.
 func DefaultBaseImage() string {
 	if override := strings.TrimSpace(os.Getenv(EnvDefaultBaseImage)); override != "" {
 		return override
 	}
-	return "agenthub-base:v" + strings.TrimSuffix(buildinfo.Version, "-dev")
+	return "agenthub-base:v" + strings.TrimSuffix(buildinfo.BaseVersion, "-dev")
 }
 
 type Spec struct {
