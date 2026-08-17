@@ -166,6 +166,27 @@ waking itself forever. Publishing is best-effort throughout: the task already
 finished, and failing it because nothing could be told about it would be worse
 than a missed trigger.
 
+## Consensus
+
+Consensus was selectable in the console long before it meant anything: the run
+followed the graph like any other chain and returned the last agent's answer.
+It now does what the label promises.
+
+Edges are ignored for this mode. An agent that has already read another's answer
+is not casting an independent vote, and workflows saved as chains before the mode
+worked still have to behave as a consensus, so every participant is asked the
+original question alone. Each is told to end with a `VOTE:` line, and the engine
+counts those lines itself rather than asking a model to summarise the room —
+the tally is then reproducible and an operator can check the arithmetic.
+
+Votes are compared after normalising case, spacing and punctuation, because two
+agents that agree rarely type it identically; a similarity score would instead
+make the verdict depend on how it was tuned. An answer with no vote is recorded
+as an abstention rather than guessed at, and a tie is reported as a tie —
+presenting the first of two equal answers as the winner would hide exactly the
+disagreement the mode exists to surface. The full tally, including every
+dissenting position, is stored on the run so the decision can be defended later.
+
 ## Custom runtimes
 
 Three runtimes ship with adapters. A fourth type, `custom`, has none by design:

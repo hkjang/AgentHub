@@ -72,6 +72,8 @@ type Result struct {
 	TraceID     string `json:"traceId"`
 	DurationMs  int64  `json:"durationMs"`
 	TotalTokens int    `json:"totalTokens"`
+	// Consensus is the vote tally, present only for consensus runs.
+	Consensus *ConsensusResult `json:"consensus,omitempty"`
 }
 
 // Completion is the single capability a step needs: send a system prompt plus a
@@ -105,6 +107,13 @@ func (e *Engine) Run(ctx context.Context, mode string, steps []Step, guard Guard
 	traceID := TraceIDFromContext(ctx)
 	if len(steps) == 0 {
 		return Result{}, ErrNoSteps
+	}
+	// Consensus asks every participant the same question independently, so the
+	// graph's edges are ignored: an agent that has already read another's answer
+	// is not casting an independent vote. Saved workflows were wired as chains
+	// before the mode meant anything, and they must still behave as a consensus.
+	if mode == "consensus" {
+		steps = independentSteps(steps)
 	}
 	levels, err := topologicalLevels(steps)
 	if err != nil {
@@ -187,9 +196,27 @@ func (e *Engine) Run(ctx context.Context, mode string, steps []Step, guard Guard
 		}
 	}
 
-	result.Output = compose(mode, steps, results, outputs)
+	if mode == "consensus" {
+		tally := tallyConsensus(steps, results, outputs)
+		result.Consensus = &tally
+		result.Output = composeConsensus(tally, steps, results)
+	} else {
+		result.Output = compose(mode, steps, results, outputs)
+	}
 	result.DurationMs = time.Since(started).Milliseconds()
 	return finish(result, results, steps, calls), nil
+}
+
+// independentSteps strips the dependencies and appends the voting instruction,
+// leaving every participant answering the original request alone.
+func independentSteps(steps []Step) []Step {
+	independent := make([]Step, 0, len(steps))
+	for _, step := range steps {
+		step.DependsOn = nil
+		step.SystemPrompt += consensusInstruction
+		independent = append(independent, step)
+	}
+	return independent
 }
 
 // runLevel executes one level, bounded by the parallelism guardrail.
@@ -285,7 +312,7 @@ func compose(mode string, steps []Step, results map[string]*StepResult, outputs 
 				return output
 			}
 		}
-	case "supervisor", "reviewer", "consensus":
+	case "supervisor", "reviewer":
 		// These modes are only meaningful as an aggregate: the reviewing or
 		// deciding step is the terminal node, and its input already carried the
 		// upstream answers, so the aggregate is what the terminal produced plus

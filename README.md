@@ -35,6 +35,7 @@
 - 🧭 **자율 제어(Planner · Approval · Memory · Delegation)**: 실행 전 계획을 수립하고, 상태 변경 작업은 사람의 승인을 받은 뒤 재개하며, 학습한 사실을 Agent 범위로 영속화하고, 권한 밖의 일은 순환·깊이 제한 아래 다른 Agent에게 위임합니다.
 - 🇰🇷 **한국어 우선 관리 콘솔**: 메뉴, 상태, 안내 문구를 한국어로 제공하며 빠른 이동(⌘K)은 한글·영문 키워드를 모두 검색합니다.
 - 🔀 **Multi-Agent Workflow DAG**: 복수 에이전트 간의 순차/병렬/Supervisor 협업 그래프를 시각화하고, 실행 전 순환 참조(Cycle) 및 깊이 제한을 자동 검증합니다.
+  - **합의(Consensus) 모드**: 같은 질문을 독립적으로 물어 표결로 결론을 냅니다. 집계는 플랫폼이 직접 계산하며 만장일치·다수결·동률을 구분하고, 소수 의견과 기권까지 기록에 남깁니다.
 - 🔌 **MCP Fabric (Model Context Protocol)**: 사내 MCP 도구 레지스트리와 번들을 관리하고, Sidecar 또는 전용 StatefulSet 모드로 에이전트에 안전하게 주입합니다.
 - 🔐 **Envelope Encryption Vault**: 사용자별 개인 키(AES-256-GCM)로 Credential을 암호화하며, Agent 정의에는 원문 대신 식별 참조값만 주입됩니다.
 - 🌐 **Session Gateway**: One-Time Launch Ticket을 발급하여 네이티브 Web UI에 대한 안전한 쿠키 격리 및 감사 추적(Audit Trail)을 보장합니다.

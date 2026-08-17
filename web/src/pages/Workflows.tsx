@@ -65,6 +65,18 @@ function RunDrawer({item,close}:{item:Workflow;close:()=>void}) {
       <div className="info-box"><WorkflowIcon size={17}/><div><strong>모델 단위 실행</strong><p>각 단계는 해당 에이전트의 시스템 프롬프트와 연결된 모델로 실행되며, 의존 단계의 결과를 입력으로 받습니다.</p></div></div>
     </form>
     {result&&<>
+      {result.consensus&&<section className="detail-section"><h4>표결 결과</h4>
+        <div className={`consensus-verdict ${result.consensus.total===0?'none':result.consensus.tie?'tie':result.consensus.unanimous?'unanimous':'majority'}`}>
+          <strong>{result.consensus.total===0?'합의 없음':result.consensus.tie?'동률':result.consensus.unanimous?'만장일치':'다수결'}</strong>
+          {result.consensus.total>0&&<><span>{result.consensus.winner}</span><small>{result.consensus.agreed}/{result.consensus.total}표</small></>}
+        </div>
+        <div className="tool-links">{result.consensus.votes.map((vote)=>
+          <div key={vote.stepId} className="trace-vote">
+            <strong>{vote.agentName||vote.stepId}</strong>
+            <span className={vote.abstained?'abstained':''}>{vote.abstained?'기권 (VOTE 없음)':vote.choice}</span>
+          </div>)}</div>
+        <small>각 에이전트는 서로의 답을 보지 않고 같은 질문에 답한 뒤 표를 던집니다. 집계는 플랫폼이 직접 계산합니다.</small>
+      </section>}
       <section className="detail-section"><h4>실행 결과</h4><pre className="runtime-log-preview custom-scroll">{result.output||'출력이 없습니다.'}</pre></section>
       <section className="detail-section"><h4>단계별 기록 · 호출 {result.agentCalls}회</h4>
         <div className="run-trace">{result.steps.map((step)=>
