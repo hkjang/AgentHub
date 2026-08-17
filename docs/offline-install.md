@@ -5,7 +5,7 @@
 On an internet-connected build host, create the release archives:
 
 ```bash
-make release-archives VERSION=0.4.0
+make release-archives VERSION=0.5.0
 ```
 
 This produces `release/` containing the image archives and a `SHA256SUMS`
@@ -32,8 +32,8 @@ for archive in *.tar.gz.part-aa; do
   cat "${name}".part-* > "${name}"
 done
 
-docker load < agenthub-v0.4.0.tar.gz
-docker load < agenthub-base-v0.4.0.tar.gz
+docker load < agenthub-v0.5.0.tar.gz
+docker load < agenthub-base-v0.5.0.tar.gz
 export AGENTHUB_BOOTSTRAP_ADMIN=admin
 export AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD='a-long-unique-password'
 export AGENTHUB_ENCRYPTION_KEY="$(openssl rand -base64 32)"
