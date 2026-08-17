@@ -6,6 +6,7 @@ import (
 	"time"
 
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
+	"github.com/hkjang/AgentHub/internal/store"
 )
 
 func (s *Server) RunBackground(ctx context.Context) {
@@ -49,5 +50,19 @@ func (s *Server) cullIdleRuntimes(ctx context.Context) {
 			continue
 		}
 		s.store.Audit(ctx, nil, "runtime.idle_cull", "runtime", item.RuntimeID, "success", "", map[string]any{"agentId": item.AgentID})
+	}
+}
+
+// releaseWarmClaim hands a runtime back from the warm pool to its user.
+//
+// The pool only ever stops runtimes it is holding, so dropping the claim is what
+// makes a person's start, restart or workspace launch authoritative over a
+// schedule's pre-warm.
+func (s *Server) releaseWarmClaim(ctx context.Context, rt store.Runtime) {
+	if rt.WarmUntil == nil {
+		return
+	}
+	if err := s.store.ReleaseWarmRuntime(ctx, rt.ID); err != nil {
+		s.logger.Warn("warm claim not released", "runtime", rt.ID, "error", err)
 	}
 }

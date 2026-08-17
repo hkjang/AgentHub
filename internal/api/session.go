@@ -84,6 +84,9 @@ func (s *Server) launchRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 	launch := url.URL{Scheme: settings.Scheme, Host: host, Path: "/", RawQuery: url.Values{"ticket": []string{ticket}}.Encode()}
 	s.store.TouchRuntime(r.Context(), runtimeID)
+	// Opening the workspace is a takeover: the warm pool must not stop a runtime
+	// somebody has just started working in.
+	s.releaseWarmClaim(r.Context(), instance)
 	s.store.Audit(r.Context(), &user, "runtime.launch", "runtime", runtimeID, "success", clientIP(r), nil)
 	writeJSON(w, http.StatusCreated, map[string]any{"url": launch.String(), "expiresAt": expires})
 }

@@ -149,6 +149,19 @@ func validateGoal(goal *store.AgentGoal) error {
 	if goal.MaxDelegationDepth < 0 || goal.MaxDelegationDepth > 5 {
 		return errors.New("위임 깊이는 0~5여야 합니다")
 	}
+	// The warm-up window is bounded because it holds a Pod for its whole length:
+	// an hour of warm-up before a daily schedule is a runtime that is never off.
+	if goal.WarmupSeconds < 0 || goal.WarmupSeconds > 1800 {
+		return errors.New("사전 예열 시간은 0~1800초여야 합니다")
+	}
+	if goal.KeepWarmSeconds < 0 || goal.KeepWarmSeconds > 3600 {
+		return errors.New("예열 유지 시간은 0~3600초여야 합니다")
+	}
+	// Keeping a runtime warm after a task only means anything if the task would
+	// otherwise have stopped it.
+	if goal.KeepWarmSeconds > 0 && !goal.StopAfterTask {
+		return errors.New("예열 유지는 '작업 후 Runtime 중지'가 켜져 있을 때만 의미가 있습니다")
+	}
 	// A strategy that checks criteria is meaningless without any.
 	if len(goal.SuccessCriteria) == 0 && (goal.CompletionStrategy == "rule" || goal.CompletionStrategy == "composite") {
 		return errors.New("rule 또는 composite 판정을 사용하려면 완료 조건을 하나 이상 정의해야 합니다")
@@ -645,4 +658,40 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, report)
+}
+
+// warmRuntimes reports what the runtime warm pool is currently holding, so the
+// pre-warming an operator configured is visible rather than inferred from Pod
+// start times.
+func (s *Server) warmRuntimes(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	owner := u.ID
+	if r.URL.Query().Get("scope") == "all" && u.Role == "admin" {
+		owner = ""
+	}
+	items, err := s.store.WarmRuntimes(r.Context(), owner)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// queue reports the task queue's depth and its breakdown by status.
+//
+// It is what tells an operator whether the execution plane is keeping up, and it
+// is the same depth the workers scale their own concurrency on, so the console
+// and the scaler cannot disagree about how backed up things are.
+func (s *Server) queue(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	owner := u.ID
+	if r.URL.Query().Get("scope") == "all" && u.Role == "admin" {
+		owner = ""
+	}
+	snapshot, err := s.store.Queue(r.Context(), owner)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, snapshot)
 }

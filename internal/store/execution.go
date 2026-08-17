@@ -51,6 +51,12 @@ type AgentGoal struct {
 	ApprovalRequired bool `json:"approvalRequired"`
 	// MaxDelegationDepth bounds agent-to-agent hand-off; 0 forbids it.
 	MaxDelegationDepth int `json:"maxDelegationDepth"`
+	// WarmupSeconds starts the Runtime this long before a scheduled trigger
+	// fires, so the task does not pay for a cold Pod. Zero disables it.
+	WarmupSeconds int `json:"warmupSeconds"`
+	// KeepWarmSeconds holds the Runtime for this long after a task ends instead
+	// of stopping it at once, so a burst pays the start cost once.
+	KeepWarmSeconds int `json:"keepWarmSeconds"`
 }
 
 // DefaultAgentGoal is what an agent without an explicit goal runs with, so a
@@ -62,6 +68,7 @@ func DefaultAgentGoal(agentID string) AgentGoal {
 		StartOnDemand: true, StopAfterTask: false,
 		CompletionStrategy: "agent", ConcurrencyPolicy: "queue", MaxConcurrentRuns: 1,
 		PlannerMode: "native", ApprovalRequired: false, MaxDelegationDepth: 0,
+		WarmupSeconds: 0, KeepWarmSeconds: 0,
 	}
 }
 
@@ -184,8 +191,8 @@ type AgentArtifact struct {
 func (s *Store) AgentGoalByID(ctx context.Context, agentID string) (AgentGoal, error) {
 	item := AgentGoal{AgentID: agentID}
 	var success, failure []byte
-	err := s.pool.QueryRow(ctx, `SELECT description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth FROM agent_goals WHERE agent_id=$1`, agentID).
-		Scan(&item.Description, &success, &failure, &item.Constraints, &item.MaxSteps, &item.MaxToolCalls, &item.MaxDurationSeconds, &item.MaxRetries, &item.StartOnDemand, &item.StopAfterTask, &item.CompletionStrategy, &item.ConcurrencyPolicy, &item.MaxConcurrentRuns, &item.PlannerMode, &item.ApprovalRequired, &item.MaxDelegationDepth)
+	err := s.pool.QueryRow(ctx, `SELECT description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds FROM agent_goals WHERE agent_id=$1`, agentID).
+		Scan(&item.Description, &success, &failure, &item.Constraints, &item.MaxSteps, &item.MaxToolCalls, &item.MaxDurationSeconds, &item.MaxRetries, &item.StartOnDemand, &item.StopAfterTask, &item.CompletionStrategy, &item.ConcurrencyPolicy, &item.MaxConcurrentRuns, &item.PlannerMode, &item.ApprovalRequired, &item.MaxDelegationDepth, &item.WarmupSeconds, &item.KeepWarmSeconds)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DefaultAgentGoal(agentID), nil
 	}
@@ -206,10 +213,10 @@ func (s *Store) AgentGoalByID(ctx context.Context, agentID string) (AgentGoal, e
 func (s *Store) PutAgentGoal(ctx context.Context, item AgentGoal) (AgentGoal, error) {
 	success, _ := json.Marshal(item.SuccessCriteria)
 	failure, _ := json.Marshal(item.FailureCriteria)
-	_, err := s.pool.Exec(ctx, `INSERT INTO agent_goals(agent_id,description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
-		ON CONFLICT(agent_id) DO UPDATE SET description=excluded.description,success_criteria=excluded.success_criteria,failure_criteria=excluded.failure_criteria,constraints=excluded.constraints,max_steps=excluded.max_steps,max_tool_calls=excluded.max_tool_calls,max_duration_seconds=excluded.max_duration_seconds,max_retries=excluded.max_retries,start_on_demand=excluded.start_on_demand,stop_after_task=excluded.stop_after_task,completion_strategy=excluded.completion_strategy,concurrency_policy=excluded.concurrency_policy,max_concurrent_runs=excluded.max_concurrent_runs,planner_mode=excluded.planner_mode,approval_required=excluded.approval_required,max_delegation_depth=excluded.max_delegation_depth,updated_at=now()`,
-		item.AgentID, item.Description, success, failure, item.Constraints, item.MaxSteps, item.MaxToolCalls, item.MaxDurationSeconds, item.MaxRetries, item.StartOnDemand, item.StopAfterTask, item.CompletionStrategy, item.ConcurrencyPolicy, item.MaxConcurrentRuns, item.PlannerMode, item.ApprovalRequired, item.MaxDelegationDepth)
+	_, err := s.pool.Exec(ctx, `INSERT INTO agent_goals(agent_id,description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+		ON CONFLICT(agent_id) DO UPDATE SET description=excluded.description,success_criteria=excluded.success_criteria,failure_criteria=excluded.failure_criteria,constraints=excluded.constraints,max_steps=excluded.max_steps,max_tool_calls=excluded.max_tool_calls,max_duration_seconds=excluded.max_duration_seconds,max_retries=excluded.max_retries,start_on_demand=excluded.start_on_demand,stop_after_task=excluded.stop_after_task,completion_strategy=excluded.completion_strategy,concurrency_policy=excluded.concurrency_policy,max_concurrent_runs=excluded.max_concurrent_runs,planner_mode=excluded.planner_mode,approval_required=excluded.approval_required,max_delegation_depth=excluded.max_delegation_depth,warmup_seconds=excluded.warmup_seconds,keep_warm_seconds=excluded.keep_warm_seconds,updated_at=now()`,
+		item.AgentID, item.Description, success, failure, item.Constraints, item.MaxSteps, item.MaxToolCalls, item.MaxDurationSeconds, item.MaxRetries, item.StartOnDemand, item.StopAfterTask, item.CompletionStrategy, item.ConcurrencyPolicy, item.MaxConcurrentRuns, item.PlannerMode, item.ApprovalRequired, item.MaxDelegationDepth, item.WarmupSeconds, item.KeepWarmSeconds)
 	if err != nil {
 		return AgentGoal{}, err
 	}
@@ -765,4 +772,59 @@ func (s *Store) ExecutionSchemaReady(ctx context.Context) (bool, error) {
 	var ready bool
 	err := s.pool.QueryRow(ctx, `SELECT to_regclass('public.agent_tasks') IS NOT NULL AND to_regclass('public.agent_triggers') IS NOT NULL`).Scan(&ready)
 	return ready, err
+}
+
+// TaskQueueDepth reports what the queue looks like right now: tasks ready to be
+// claimed, and tasks a worker is already running.
+//
+// It is the signal the workers scale on, and the one an operator reads to see
+// whether the plane is keeping up. Scheduled-for-later tasks are deliberately
+// not counted as depth: they are not waiting, they are not due.
+func (s *Store) TaskQueueDepth(ctx context.Context) (ready int, running int, err error) {
+	err = s.pool.QueryRow(ctx, `SELECT
+		count(*) FILTER (WHERE status IN ('queued','retrying') AND scheduled_at <= now() AND (claimed_until IS NULL OR claimed_until < now())),
+		count(*) FILTER (WHERE status IN ('planning','ready','running','waiting_tool'))
+		FROM agent_tasks`).Scan(&ready, &running)
+	return ready, running, err
+}
+
+// QueueSnapshot is the queue as the console shows it.
+type QueueSnapshot struct {
+	Ready   int            `json:"ready"`
+	Running int            `json:"running"`
+	Workers int            `json:"workers"`
+	Status  map[string]int `json:"status"`
+}
+
+// Queue reports the depth plus a breakdown, scoped to one owner unless the
+// caller is an admin looking at the whole plane.
+func (s *Store) Queue(ctx context.Context, ownerID string) (QueueSnapshot, error) {
+	snapshot := QueueSnapshot{Status: map[string]int{}}
+	rows, err := s.pool.Query(ctx, `SELECT status, count(*) FROM agent_tasks
+		WHERE ($1 = '' OR owner_id = $1) GROUP BY status`, ownerID)
+	if err != nil {
+		return QueueSnapshot{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			return QueueSnapshot{}, err
+		}
+		snapshot.Status[status] = count
+	}
+	if err := rows.Err(); err != nil {
+		return QueueSnapshot{}, err
+	}
+	// Depth and worker count describe the plane, not one owner's slice of it:
+	// they are what explains how fast anyone's tasks are moving.
+	if err := s.pool.QueryRow(ctx, `SELECT
+		count(*) FILTER (WHERE status IN ('queued','retrying') AND scheduled_at <= now() AND (claimed_until IS NULL OR claimed_until < now())),
+		count(*) FILTER (WHERE status IN ('planning','ready','running','waiting_tool')),
+		count(DISTINCT claimed_by) FILTER (WHERE claimed_by <> '' AND claimed_until > now())
+		FROM agent_tasks`).Scan(&snapshot.Ready, &snapshot.Running, &snapshot.Workers); err != nil {
+		return QueueSnapshot{}, err
+	}
+	return snapshot, nil
 }

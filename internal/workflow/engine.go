@@ -74,6 +74,8 @@ type Result struct {
 	TotalTokens int    `json:"totalTokens"`
 	// Consensus is the vote tally, present only for consensus runs.
 	Consensus *ConsensusResult `json:"consensus,omitempty"`
+	// Supervision is the review record, present only for supervised runs.
+	Supervision *SupervisionResult `json:"supervision,omitempty"`
 }
 
 // Completion is the single capability a step needs: send a system prompt plus a
@@ -114,6 +116,17 @@ func (e *Engine) Run(ctx context.Context, mode string, steps []Step, guard Guard
 	// before the mode meant anything, and they must still behave as a consensus.
 	if mode == "consensus" {
 		steps = independentSteps(steps)
+	}
+	// The supervising step is the graph's single terminal: everything else feeds
+	// it, which is what makes it the one with every answer in front of it.
+	supervising := supervisorStep(mode, steps)
+	if supervising != nil {
+		steps = withSupervisorInstruction(steps, supervising.ID)
+		for i := range steps {
+			if steps[i].ID == supervising.ID {
+				supervising = &steps[i]
+			}
+		}
 	}
 	levels, err := topologicalLevels(steps)
 	if err != nil {
@@ -200,11 +213,52 @@ func (e *Engine) Run(ctx context.Context, mode string, steps []Step, guard Guard
 		tally := tallyConsensus(steps, results, outputs)
 		result.Consensus = &tally
 		result.Output = composeConsensus(tally, steps, results)
+	} else if supervising != nil && results[supervising.ID] != nil && results[supervising.ID].Status == "succeeded" {
+		record := e.supervise(ctx, *supervising, steps, byID, outputs, results, input, guard, &calls)
+		result.Supervision = &record
+		result.Output = composeSupervised(record, *supervising, steps, results, outputs)
 	} else {
 		result.Output = compose(mode, steps, results, outputs)
 	}
 	result.DurationMs = time.Since(started).Milliseconds()
 	return finish(result, results, steps, calls), nil
+}
+
+// supervisorStep picks the step that reviews the others, or nil when the graph
+// has no single reviewer to give the job to.
+//
+// Supervision needs one step that everything else feeds: with two terminals
+// neither has the whole picture, and picking one of them would silently promote
+// an agent the operator never nominated.
+func supervisorStep(mode string, steps []Step) *Step {
+	if mode != "supervisor" && mode != "reviewer" {
+		return nil
+	}
+	if len(steps) < 2 {
+		return nil
+	}
+	terminals := terminalSteps(steps)
+	if len(terminals) != 1 {
+		return nil
+	}
+	for i := range steps {
+		if steps[i].ID == terminals[0] {
+			return &steps[i]
+		}
+	}
+	return nil
+}
+
+// withSupervisorInstruction tells the reviewing step how to ask for changes.
+func withSupervisorInstruction(steps []Step, supervisorID string) []Step {
+	updated := make([]Step, 0, len(steps))
+	for _, step := range steps {
+		if step.ID == supervisorID {
+			step.SystemPrompt += supervisorInstruction
+		}
+		updated = append(updated, step)
+	}
+	return updated
 }
 
 // independentSteps strips the dependencies and appends the voting instruction,

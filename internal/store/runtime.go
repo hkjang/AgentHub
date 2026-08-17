@@ -103,8 +103,12 @@ type Runtime struct {
 	LastActivityAt *time.Time `json:"lastActivityAt,omitempty"`
 	StartedAt      *time.Time `json:"startedAt,omitempty"`
 	StoppedAt      *time.Time `json:"stoppedAt,omitempty"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	UpdatedAt      time.Time  `json:"updatedAt"`
+	// WarmUntil is set while the runtime warm pool holds this runtime. A person
+	// taking the runtime over clears it, which is what keeps the pool from
+	// stopping a workspace somebody is working in.
+	WarmUntil *time.Time `json:"warmUntil,omitempty"`
+	CreatedAt time.Time  `json:"createdAt"`
+	UpdatedAt time.Time  `json:"updatedAt"`
 }
 
 type Dashboard struct {
@@ -395,7 +399,7 @@ func (s *Store) CloseRuntimeSession(ctx context.Context, ownerID, id string) err
 
 func (s *Store) Agents(ctx context.Context, ownerID string, admin bool) ([]Agent, error) {
 	query := `SELECT a.id,a.owner_id,a.name,a.description,a.runtime_type,a.runtime_profile_id,a.runtime_image_id,a.security_profile_id,a.network_profile_id,a.mcp_bundle_id,a.model_endpoint_id,a.workspace_id,a.version,a.spec,a.created_at,a.updated_at,
- r.id,r.agent_id,r.owner_id,r.status,r.desired_state,r.crd_name,r.pod_name,r.node_name,r.endpoint,r.restart_count,r.failure_reason,r.last_activity_at,r.started_at,r.stopped_at,r.created_at,r.updated_at
+ r.id,r.agent_id,r.owner_id,r.status,r.desired_state,r.crd_name,r.pod_name,r.node_name,r.endpoint,r.restart_count,r.failure_reason,r.last_activity_at,r.started_at,r.stopped_at,r.warm_until,r.created_at,r.updated_at
  FROM agent_definitions a LEFT JOIN LATERAL (SELECT * FROM agent_runtimes ar WHERE ar.agent_id=a.id ORDER BY ar.created_at DESC LIMIT 1) r ON true`
 	args := []any{}
 	if !admin {
@@ -416,7 +420,7 @@ func (s *Store) Agents(ctx context.Context, ownerID string, admin bool) ([]Agent
 		var restart *int
 		var rCreated, rUpdated *time.Time
 		if err := rows.Scan(&a.ID, &a.OwnerID, &a.Name, &a.Description, &a.RuntimeType, &a.RuntimeProfileID, &a.RuntimeImageID, &a.SecurityProfileID, &a.NetworkProfileID, &a.MCPBundleID, &a.ModelEndpointID, &a.WorkspaceID, &a.Version, &a.Spec, &a.CreatedAt, &a.UpdatedAt,
-			&runtimeID, &agentID, &rOwnerID, &status, &desired, &crd, &pod, &node, &endpoint, &restart, &failure, &r.LastActivityAt, &r.StartedAt, &r.StoppedAt, &rCreated, &rUpdated); err != nil {
+			&runtimeID, &agentID, &rOwnerID, &status, &desired, &crd, &pod, &node, &endpoint, &restart, &failure, &r.LastActivityAt, &r.StartedAt, &r.StoppedAt, &r.WarmUntil, &rCreated, &rUpdated); err != nil {
 			return nil, err
 		}
 		if runtimeID != nil {
@@ -643,14 +647,14 @@ func (s *Store) AgentByID(ctx context.Context, id, ownerID string, admin bool) (
 }
 
 func (s *Store) RuntimeByID(ctx context.Context, id, ownerID string, admin bool) (Runtime, error) {
-	query := `SELECT id,agent_id,owner_id,status,desired_state,crd_name,pod_name,node_name,endpoint,restart_count,failure_reason,last_activity_at,started_at,stopped_at,created_at,updated_at FROM agent_runtimes WHERE id=$1`
+	query := `SELECT id,agent_id,owner_id,status,desired_state,crd_name,pod_name,node_name,endpoint,restart_count,failure_reason,last_activity_at,started_at,stopped_at,warm_until,created_at,updated_at FROM agent_runtimes WHERE id=$1`
 	args := []any{id}
 	if !admin {
 		query += ` AND owner_id=$2`
 		args = append(args, ownerID)
 	}
 	var r Runtime
-	err := s.pool.QueryRow(ctx, query, args...).Scan(&r.ID, &r.AgentID, &r.OwnerID, &r.Status, &r.DesiredState, &r.CRDName, &r.PodName, &r.NodeName, &r.Endpoint, &r.RestartCount, &r.FailureReason, &r.LastActivityAt, &r.StartedAt, &r.StoppedAt, &r.CreatedAt, &r.UpdatedAt)
+	err := s.pool.QueryRow(ctx, query, args...).Scan(&r.ID, &r.AgentID, &r.OwnerID, &r.Status, &r.DesiredState, &r.CRDName, &r.PodName, &r.NodeName, &r.Endpoint, &r.RestartCount, &r.FailureReason, &r.LastActivityAt, &r.StartedAt, &r.StoppedAt, &r.WarmUntil, &r.CreatedAt, &r.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Runtime{}, ErrNotFound
 	}
@@ -659,7 +663,7 @@ func (s *Store) RuntimeByID(ctx context.Context, id, ownerID string, admin bool)
 
 func (s *Store) LatestRuntimeForAgent(ctx context.Context, agentID string) (Runtime, error) {
 	var r Runtime
-	err := s.pool.QueryRow(ctx, `SELECT id,agent_id,owner_id,status,desired_state,crd_name,pod_name,node_name,endpoint,restart_count,failure_reason,last_activity_at,started_at,stopped_at,created_at,updated_at FROM agent_runtimes WHERE agent_id=$1 AND desired_state<>'deleted' ORDER BY created_at DESC LIMIT 1`, agentID).Scan(&r.ID, &r.AgentID, &r.OwnerID, &r.Status, &r.DesiredState, &r.CRDName, &r.PodName, &r.NodeName, &r.Endpoint, &r.RestartCount, &r.FailureReason, &r.LastActivityAt, &r.StartedAt, &r.StoppedAt, &r.CreatedAt, &r.UpdatedAt)
+	err := s.pool.QueryRow(ctx, `SELECT id,agent_id,owner_id,status,desired_state,crd_name,pod_name,node_name,endpoint,restart_count,failure_reason,last_activity_at,started_at,stopped_at,warm_until,created_at,updated_at FROM agent_runtimes WHERE agent_id=$1 AND desired_state<>'deleted' ORDER BY created_at DESC LIMIT 1`, agentID).Scan(&r.ID, &r.AgentID, &r.OwnerID, &r.Status, &r.DesiredState, &r.CRDName, &r.PodName, &r.NodeName, &r.Endpoint, &r.RestartCount, &r.FailureReason, &r.LastActivityAt, &r.StartedAt, &r.StoppedAt, &r.WarmUntil, &r.CreatedAt, &r.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Runtime{}, ErrNotFound
 	}
@@ -670,7 +674,7 @@ func (s *Store) CreateRuntime(ctx context.Context, agent Agent, status string) (
 	id := uuid.NewString()
 	crd := "agent-" + strings.ToLower(strings.ReplaceAll(agent.OwnerID[:8]+"-"+agent.ID[:8], "_", "-"))
 	var r Runtime
-	err := s.pool.QueryRow(ctx, `INSERT INTO agent_runtimes(id,agent_id,owner_id,status,desired_state,crd_name) VALUES($1,$2,$3,$4,'running',$5) RETURNING id,agent_id,owner_id,status,desired_state,crd_name,pod_name,node_name,endpoint,restart_count,failure_reason,last_activity_at,started_at,stopped_at,created_at,updated_at`, id, agent.ID, agent.OwnerID, status, crd).Scan(&r.ID, &r.AgentID, &r.OwnerID, &r.Status, &r.DesiredState, &r.CRDName, &r.PodName, &r.NodeName, &r.Endpoint, &r.RestartCount, &r.FailureReason, &r.LastActivityAt, &r.StartedAt, &r.StoppedAt, &r.CreatedAt, &r.UpdatedAt)
+	err := s.pool.QueryRow(ctx, `INSERT INTO agent_runtimes(id,agent_id,owner_id,status,desired_state,crd_name) VALUES($1,$2,$3,$4,'running',$5) RETURNING id,agent_id,owner_id,status,desired_state,crd_name,pod_name,node_name,endpoint,restart_count,failure_reason,last_activity_at,started_at,stopped_at,warm_until,created_at,updated_at`, id, agent.ID, agent.OwnerID, status, crd).Scan(&r.ID, &r.AgentID, &r.OwnerID, &r.Status, &r.DesiredState, &r.CRDName, &r.PodName, &r.NodeName, &r.Endpoint, &r.RestartCount, &r.FailureReason, &r.LastActivityAt, &r.StartedAt, &r.StoppedAt, &r.WarmUntil, &r.CreatedAt, &r.UpdatedAt)
 	return r, err
 }
 
@@ -684,9 +688,9 @@ func (s *Store) UpdateRuntimeDesiredState(ctx context.Context, id, ownerID, stat
 		query += ` AND owner_id=$3`
 		args = append(args, ownerID)
 	}
-	query += ` RETURNING id,agent_id,owner_id,status,desired_state,crd_name,pod_name,node_name,endpoint,restart_count,failure_reason,last_activity_at,started_at,stopped_at,created_at,updated_at`
+	query += ` RETURNING id,agent_id,owner_id,status,desired_state,crd_name,pod_name,node_name,endpoint,restart_count,failure_reason,last_activity_at,started_at,stopped_at,warm_until,created_at,updated_at`
 	var r Runtime
-	err := s.pool.QueryRow(ctx, query, args...).Scan(&r.ID, &r.AgentID, &r.OwnerID, &r.Status, &r.DesiredState, &r.CRDName, &r.PodName, &r.NodeName, &r.Endpoint, &r.RestartCount, &r.FailureReason, &r.LastActivityAt, &r.StartedAt, &r.StoppedAt, &r.CreatedAt, &r.UpdatedAt)
+	err := s.pool.QueryRow(ctx, query, args...).Scan(&r.ID, &r.AgentID, &r.OwnerID, &r.Status, &r.DesiredState, &r.CRDName, &r.PodName, &r.NodeName, &r.Endpoint, &r.RestartCount, &r.FailureReason, &r.LastActivityAt, &r.StartedAt, &r.StoppedAt, &r.WarmUntil, &r.CreatedAt, &r.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Runtime{}, ErrNotFound
 	}

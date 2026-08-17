@@ -1,6 +1,6 @@
 export type User = { id: string; username: string; email: string; displayName: string; role: 'user' | 'manager' | 'admin' }
 export type Version = { name: string; version: string; commit: string; buildTime: string }
-export type Runtime = { id: string; agentId: string; ownerId: string; status: string; desiredState: string; crdName: string; podName: string; nodeName: string; endpoint: string; restartCount: number; failureReason: string; updatedAt: string }
+export type Runtime = { id: string; agentId: string; ownerId: string; status: string; desiredState: string; crdName: string; podName: string; nodeName: string; endpoint: string; restartCount: number; failureReason: string; warmUntil?: string; updatedAt: string }
 export type Agent = { id: string; ownerId: string; name: string; description: string; runtimeType: string; runtimeProfileId?: string; runtimeImageId?: string; securityProfileId?: string; networkProfileId?: string; mcpBundleId?: string; modelEndpointId?: string; workspaceId?: string; version: number; spec?: { systemPrompt?: string; customCommand?: string[]; customPort?: number }; runtime?: Runtime; createdAt: string; updatedAt: string }
 export type Template = { id: string; name: string; slug: string; description: string; category: string; runtimeType: string; runtimeProfileId: string; version: number }
 export type RuntimeProfile = { id: string; name: string; description: string; cpuMillis: number; memoryMb: number; storageGb: number; gpuCount: number; idleTimeoutSeconds: number }
@@ -19,7 +19,10 @@ export type AgentEvaluation = { id:string; agentId:string; agentName:string; tes
 export type WorkflowStepResult = { id:string; agentId:string; agentName:string; status:string; output:string; error?:string; skipped?:boolean; durationMs:number; level:number }
 export type ConsensusVote = { stepId:string; agentId:string; agentName:string; choice:string; normalised:string; abstained?:boolean }
 export type ConsensusResult = { winner:string; agreed:number; total:number; unanimous:boolean; tie:boolean; votes:ConsensusVote[] }
-export type WorkflowRunResult = { mode:string; status:string; output:string; steps:WorkflowStepResult[]; agentCalls:number; levels:string[][]; consensus?:ConsensusResult }
+export type RevisionRequest = { stepId:string; agent:string; request:string }
+export type SupervisionRound = { round:number; approved:boolean; revisions:RevisionRequest[]|null }
+export type SupervisionResult = { supervisor:string; approved:boolean; rounds:SupervisionRound[]; exhausted:boolean }
+export type WorkflowRunResult = { mode:string; status:string; output:string; steps:WorkflowStepResult[]; agentCalls:number; levels:string[][]; consensus?:ConsensusResult; supervision?:SupervisionResult }
 export type WorkflowRun = { id:string; workflowId:string; status:string; input:{input?:string;mode?:string}; output:WorkflowRunResult; startedAt?:string; finishedAt?:string; createdAt:string }
 export type Notification = { id:string; type:string; title:string; message:string; resourceUrl:string; readAt?:string; createdAt:string }
 export type PersonalSecret = { id: string; name: string; kind: string; keyVersion: number; lastUsedAt?: string; createdAt: string }
@@ -37,7 +40,11 @@ export type AgentGoal = {
   plannerMode: 'none' | 'native' | 'platform' | 'hybrid'
   approvalRequired: boolean
   maxDelegationDepth: number
+  warmupSeconds: number
+  keepWarmSeconds: number
 }
+export type QueueSnapshot = { ready:number; running:number; workers:number; status:Record<string,number> }
+export type WarmRuntime = { runtimeId:string; agentId:string; agentName:string; status:string; warmUntil:string }
 export type AgentMemory = { id: string; scope: string; key: string; value: string; updatedAt: string }
 export type AgentPlan = { id: string; runId: string; mode: string; goal: string; steps: unknown; createdAt: string }
 export type AgentTrigger = {

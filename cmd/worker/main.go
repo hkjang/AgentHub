@@ -20,6 +20,7 @@ import (
 	"github.com/hkjang/AgentHub/internal/cryptox"
 	"github.com/hkjang/AgentHub/internal/execution"
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
+	"github.com/hkjang/AgentHub/internal/runtimespec"
 	"github.com/hkjang/AgentHub/internal/store"
 	"github.com/hkjang/AgentHub/internal/workflow"
 )
@@ -31,6 +32,11 @@ const envConcurrency = "AGENTHUB_WORKER_CONCURRENCY"
 // cron scheduler on only some of them. Leaving it on everywhere is also safe:
 // the trigger update decides who fires.
 const envDisableScheduler = "AGENTHUB_WORKER_DISABLE_SCHEDULER"
+
+// envMaxConcurrency is the ceiling the worker may scale its own concurrency up
+// to when the queue backs up. Left unset it equals the floor, which keeps the
+// fixed behaviour a deployment may already be tuned for.
+const envMaxConcurrency = "AGENTHUB_WORKER_MAX_CONCURRENCY"
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -97,8 +103,16 @@ func run(logger *slog.Logger) error {
 			logger.Warn("ignoring invalid worker concurrency", envConcurrency, value)
 		}
 	}
+	worker.MaxConcurrency = worker.Concurrency
+	if value := os.Getenv(envMaxConcurrency); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed >= worker.Concurrency && parsed <= 32 {
+			worker.MaxConcurrency = parsed
+		} else {
+			logger.Warn("ignoring invalid worker max concurrency", envMaxConcurrency, value)
+		}
+	}
 
-	errs := make(chan error, 3)
+	errs := make(chan error, 4)
 	go func() { errs <- worker.Run(ctx) }()
 
 	if os.Getenv(envDisableScheduler) != "true" {
@@ -112,6 +126,11 @@ func run(logger *slog.Logger) error {
 	// so unlike the scheduler it is safe — and useful — to run on every worker.
 	dispatcher := execution.NewDispatcher(db, logger)
 	go func() { errs <- dispatcher.Run(ctx) }()
+
+	// The runtime warm pool claims each runtime before starting it, so several
+	// workers running it cannot start the same Pod twice.
+	pool := execution.NewPool(db, spawner, runtimespec.New(db, logger), logger)
+	go func() { errs <- pool.Run(ctx) }()
 
 	select {
 	case <-ctx.Done():

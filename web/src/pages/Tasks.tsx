@@ -3,7 +3,7 @@ import { Bot, ClipboardList, Clock3, Coins, ExternalLink, ListChecks, Play, Plus
 import { api } from '../api'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, Loading, PageHeader, StatusBadge, statusLabel } from '../components/UI'
 import { relativeTime, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
-import type { Agent, AgentArtifact, AgentPlan, AgentRun, AgentRunEvent, AgentRunStep, AgentTask, PlatformEvent, UsageReport } from '../types'
+import type { Agent, AgentArtifact, AgentPlan, AgentRun, AgentRunEvent, AgentRunStep, AgentTask, PlatformEvent, QueueSnapshot, UsageReport } from '../types'
 
 /** Statuses that are still moving, and therefore worth polling for. */
 const ACTIVE = ['queued', 'planning', 'ready', 'running', 'waiting_tool', 'waiting_approval', 'retrying']
@@ -24,6 +24,7 @@ const EVENT_LABELS: Record<string, string> = {
 export function Tasks() {
   const [tasks, setTasks] = useState<AgentTask[]>()
   const [agents, setAgents] = useState<Agent[]>([])
+  const [queue, setQueue] = useState<QueueSnapshot>()
   const [error, setError] = useState('')
   const [filter, setFilter] = useState('')
   const [creating, setCreating] = useState(false)
@@ -33,12 +34,14 @@ export function Tasks() {
 
   const load = useCallback(async () => {
     try {
-      const [taskResult, agentResult] = await Promise.all([
+      const [taskResult, agentResult, queueResult] = await Promise.all([
         api.get<{ items?: AgentTask[] }>('/api/v1/tasks'),
         api.get<{ items?: Agent[] }>('/api/v1/agents'),
+        api.get<QueueSnapshot>('/api/v1/queue'),
       ])
       setTasks(taskResult.items ?? [])
       setAgents(agentResult.items ?? [])
+      setQueue(queueResult)
     } catch (e) {
       setTasks([])
       setError(e instanceof Error ? e.message : 'Task 목록을 불러오지 못했습니다.')
@@ -101,7 +104,10 @@ export function Tasks() {
             {statusLabel(status)} {counts[status]}
           </button>)}
       </div>
-      {active > 0 && <span className="row-time"><Clock3 size={14} />진행 중 {active}건 · 5초마다 갱신</span>}
+      <span className="row-time">
+        <Clock3 size={14} />
+        {queue ? `대기 ${queue.ready} · 실행 ${queue.running} · 워커 ${queue.workers}` : `진행 중 ${active}건`} · 5초마다 갱신
+      </span>
     </div>}
 
     {tasks.length === 0

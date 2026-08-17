@@ -316,3 +316,64 @@ console: the Pod, its ports and its persisted home are all shaped by the adapter
 What does not travel is anything installation-specific: owner, version,
 timestamps, and every secret. A credential is referenced by the binding that
 holds it, never exported into a file someone is about to commit.
+
+## Runtime warm pool
+
+A scheduled task otherwise pays for a cold Pod. The image is already local, but
+the volume, the adapter's init containers and the agent's own startup still take
+most of a minute, so a trigger that fires at 08:00 does not start working at
+08:00. The pool starts the runtime inside the agent's warm-up window and holds it
+briefly after a task, so a burst pays that cost once rather than per task.
+
+The pool is per agent, not a set of interchangeable Pods. A runtime carries its
+agent's workspace, configuration and secret, all bound when the Pod is created,
+so a generic warm Pod could not become this agent's runtime without a restart —
+the very cost the pool exists to avoid. Both windows are bounded, because a
+warm-up longer than the gap between fires is a runtime that is simply never off.
+
+Ownership is explicit. The pool records a claim on the runtime row and only ever
+stops runtimes it is holding; a person starting, restarting or opening the
+workspace drops that claim, so the pool can never stop something somebody is
+working in. Claiming happens before starting, so two workers warming the same
+agent cannot start the same Pod twice, and a runtime with work still queued is
+never cooled.
+
+## Worker auto scaling
+
+A worker ran a fixed number of tasks at once, which is wrong in both directions:
+sized for the burst it holds model connections and memory all night, sized for
+the quiet hours it drains a morning backlog two tasks at a time.
+
+The limit now follows the queue between a floor and a ceiling the operator still
+sets; equal values keep the fixed behaviour a deployment may be tuned for. Going
+up is immediate, because a backlog is already costing someone time. Coming down
+waits for several consecutive quiet passes, since a queue that empties for one
+tick is usually about to refill and churning the limit churns runtimes with it.
+
+Scaling down never interrupts work. The limit is expressed as slot tokens the
+scaler holds out of circulation, so a reduction can only take tokens that are
+free and lands on the rest as tasks finish. The depth the workers scale on is the
+same one the console reports, so the two cannot disagree about how backed up the
+plane is.
+
+## Supervised workflows
+
+Supervisor mode ran the graph like any other and concatenated the terminal step's
+answer, which made the supervisor a last speaker: it could describe a problem
+with a specialist's work but had no way to have it fixed, and nothing recorded
+whether it had approved anything.
+
+The supervisor now reviews. It sees the specialists' answers and either approves
+or names the ones that need another pass, with what to change; only those
+specialists run again, each seeing the feedback aimed at it, and the supervisor
+reviews the new answers. The revised answer replaces the rejected one in the
+trace, and the review record — who supervised, what was asked, whether it was
+approved — is kept on the run.
+
+Rounds are bounded, because a supervisor and a specialist that disagree will
+disagree indefinitely and an unbounded loop spends a model budget discovering it;
+the run then ends marked unapproved rather than pretending. The loop is counted
+against the same call budget as the first pass. Approval is read only from a line
+that is the word on its own — "이대로는 APPROVE 할 수 없습니다" is a refusal — and a
+graph without one single terminal is left unsupervised rather than having a
+reviewer promoted that the operator never nominated.

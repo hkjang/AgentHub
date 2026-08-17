@@ -47,6 +47,8 @@ func (s *Server) userRoutes(r chi.Router) {
 	r.Delete("/triggers/{id}", s.deleteAgentTrigger)
 	r.Get("/events", s.events)
 	r.Get("/usage", s.usage)
+	r.Get("/runtime-pool", s.warmRuntimes)
+	r.Get("/queue", s.queue)
 	r.Get("/agents/{id}/mcp-policies", s.agentMCPPolicies)
 	r.Put("/agents/{id}/mcp-policies", s.saveAgentMCPPolicy)
 	r.Delete("/mcp-policies/{id}", s.deleteAgentMCPPolicy)
@@ -373,6 +375,9 @@ func (s *Server) runtimeAction(state string) http.HandlerFunc {
 			writeStoreError(w, err)
 			return
 		}
+		// A person acting on the runtime takes it over from the warm pool, which
+		// must not then stop a workspace somebody is working in.
+		s.releaseWarmClaim(r.Context(), rt)
 		s.store.Audit(r.Context(), &u, "runtime."+state, "runtime", rt.ID, "success", clientIP(r), nil)
 		writeJSON(w, 202, rt)
 	}
@@ -403,6 +408,7 @@ func (s *Server) restartRuntime(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
+	s.releaseWarmClaim(r.Context(), rt)
 	s.store.Audit(r.Context(), &u, "runtime.restart", "runtime", rt.ID, "success", clientIP(r), nil)
 	writeJSON(w, 202, rt)
 }

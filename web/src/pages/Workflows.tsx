@@ -77,6 +77,21 @@ function RunDrawer({item,close}:{item:Workflow;close:()=>void}) {
           </div>)}</div>
         <small>각 에이전트는 서로의 답을 보지 않고 같은 질문에 답한 뒤 표를 던집니다. 집계는 플랫폼이 직접 계산합니다.</small>
       </section>}
+      {result.supervision&&<section className="detail-section"><h4>감독 결과</h4>
+        <div className={`consensus-verdict ${result.supervision.approved?'unanimous':result.supervision.exhausted?'tie':'none'}`}>
+          <strong>{result.supervision.approved?'승인':result.supervision.exhausted?'보완 요청 남음':'승인 표시 없음'}</strong>
+          <span>{result.supervision.supervisor}</span>
+          <small>검토 {result.supervision.rounds.length}회</small>
+        </div>
+        {result.supervision.rounds.some((round)=>(round.revisions??[]).length>0)&&<div className="tool-links">
+          {result.supervision.rounds.flatMap((round)=>(round.revisions??[]).map((revision,index)=>
+            <div key={`${round.round}-${index}`} className="trace-vote">
+              <strong>{round.round}차 · {revision.agent}</strong>
+              <span>{revision.request||'보완 요청'}</span>
+            </div>))}
+        </div>}
+        <small>감독자가 보완을 요청하면 지목된 에이전트만 그 내용을 받아 다시 실행하고, 감독자가 결과를 다시 검토합니다. 검토는 최대 {2}회로 제한됩니다.</small>
+      </section>}
       <section className="detail-section"><h4>실행 결과</h4><pre className="runtime-log-preview custom-scroll">{result.output||'출력이 없습니다.'}</pre></section>
       <section className="detail-section"><h4>단계별 기록 · 호출 {result.agentCalls}회</h4>
         <div className="run-trace">{result.steps.map((step)=>

@@ -34,8 +34,17 @@ func (o *Orchestrator) acquireRuntime(ctx context.Context, run store.AgentRun, a
 	}
 
 	if err == nil && isReady(existing.Status) && existing.DesiredState == "running" {
-		o.event(ctx, run, "runtime.reused", "이미 실행 중인 Runtime을 재사용합니다.", map[string]any{"runtimeId": existing.ID, "podName": existing.PodName})
-		return &acquiredRuntime{runtimeID: existing.ID}, nil
+		// A runtime the pool warmed was started for this work, so the task owns
+		// it and must be allowed to release it; one a person started is theirs.
+		warmed := existing.WarmUntil != nil
+		if warmed {
+			// Extend the hold past this run so the pool cannot stop it mid-task.
+			if _, err := o.store.ClaimWarmRuntime(ctx, existing.ID, time.Now().Add(runtimeReadyTimeout)); err != nil {
+				o.logger.Warn("warm hold not extended", "runtime", existing.ID, "error", err)
+			}
+		}
+		o.event(ctx, run, "runtime.reused", "이미 실행 중인 Runtime을 재사용합니다.", map[string]any{"runtimeId": existing.ID, "podName": existing.PodName, "warm": warmed})
+		return &acquiredRuntime{runtimeID: existing.ID, startedByTask: warmed}, nil
 	}
 
 	spec, instance, err := o.runtimeSpec(ctx, agent, existing, errors.Is(err, store.ErrNotFound))
@@ -120,6 +129,19 @@ func (o *Orchestrator) releaseRuntime(ctx context.Context, run store.AgentRun, a
 	if !acquired.startedByTask {
 		o.event(ctx, run, "runtime.retained", "사용자가 이미 사용 중이던 Runtime이라 중지하지 않았습니다.", map[string]any{"runtimeId": acquired.runtimeID})
 		return
+	}
+	// Hold it instead of stopping it when the agent asks for a warm window: a
+	// burst of tasks then pays the start cost once rather than per task. The
+	// pool stops it when the hold expires and nothing is queued.
+	if goal.KeepWarmSeconds > 0 {
+		until := time.Now().Add(time.Duration(goal.KeepWarmSeconds) * time.Second)
+		if _, err := o.store.ClaimWarmRuntime(ctx, acquired.runtimeID, until); err != nil {
+			o.logger.Warn("warm hold not recorded", "runtime", acquired.runtimeID, "error", err)
+		} else {
+			o.event(ctx, run, "runtime.kept_warm", "다음 작업을 위해 Runtime을 유지합니다.",
+				map[string]any{"runtimeId": acquired.runtimeID, "warmUntil": until})
+			return
+		}
 	}
 	instance, err := o.store.RuntimeByID(ctx, acquired.runtimeID, agent.OwnerID, true)
 	if err != nil {

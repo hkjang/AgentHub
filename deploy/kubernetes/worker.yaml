@@ -30,7 +30,10 @@ spec:
           envFrom:
             - secretRef: {name: agenthub-bootstrap}
           env:
+            # The floor the worker always offers, and the ceiling it may grow
+            # to while the queue is backed up. Equal values keep it fixed.
             - {name: AGENTHUB_WORKER_CONCURRENCY, value: "2"}
+            - {name: AGENTHUB_WORKER_MAX_CONCURRENCY, value: "8"}
           resources:
             requests: {cpu: 100m, memory: 128Mi}
             limits: {cpu: "1", memory: 512Mi}

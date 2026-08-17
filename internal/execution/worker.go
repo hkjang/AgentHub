@@ -26,8 +26,13 @@ type Worker struct {
 	logger       *slog.Logger
 	id           string
 
-	// Concurrency bounds how many tasks this worker runs at once.
-	Concurrency int
+	// Concurrency is the floor: the worker always offers at least this many
+	// slots. MaxConcurrency is the ceiling it may scale up to when the queue
+	// backs up; equal values disable scaling.
+	Concurrency    int
+	MaxConcurrency int
+	// ScaleInterval is how often the queue is measured.
+	ScaleInterval time.Duration
 	// PollInterval is how long to wait after finding an empty queue.
 	PollInterval time.Duration
 	// Lease is how long a claim is held before another worker may take over.
@@ -37,7 +42,8 @@ type Worker struct {
 func NewWorker(db *store.Store, orchestrator *Orchestrator, logger *slog.Logger, id string) *Worker {
 	return &Worker{
 		store: db, orchestrator: orchestrator, logger: logger, id: id,
-		Concurrency: 2, PollInterval: 3 * time.Second, Lease: 5 * time.Minute,
+		Concurrency: 2, MaxConcurrency: 2, PollInterval: 3 * time.Second, Lease: 5 * time.Minute,
+		ScaleInterval: 10 * time.Second,
 	}
 }
 
@@ -51,8 +57,18 @@ func NewWorkerID(hostname string) string {
 
 // Run drains the queue until the context is cancelled.
 func (w *Worker) Run(ctx context.Context) error {
-	w.logger.Info("execution worker started", "worker", w.id, "concurrency", w.Concurrency)
-	slots := make(chan struct{}, w.Concurrency)
+	if w.MaxConcurrency < w.Concurrency {
+		w.MaxConcurrency = w.Concurrency
+	}
+	// The channel is sized for the ceiling and the scaler holds the difference,
+	// so the limit can move without rebuilding it under running tasks.
+	slots := make(chan struct{}, w.MaxConcurrency)
+	scale := newScaler(slots, w.Concurrency, w.MaxConcurrency)
+	w.logger.Info("execution worker started", "worker", w.id,
+		"concurrency", w.Concurrency, "maxConcurrency", w.MaxConcurrency)
+	if w.MaxConcurrency > w.Concurrency {
+		go w.autoscale(ctx, scale)
+	}
 	for {
 		select {
 		case <-ctx.Done():

@@ -343,3 +343,4 @@
 .usage-summary .unpriced strong{color:#b2720b}
 .import-agent{position:relative;overflow:hidden;cursor:pointer}
 .import-agent input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.warm-tag{margin-left:6px;padding:2px 7px;border-radius:5px;background:#fff1e6;border:1px solid #f6d5bb;color:#b5651d;font-size:10px;font-weight:650}
