@@ -81,9 +81,14 @@ type AgentTrigger struct {
 	NextFireAt  *time.Time `json:"nextFireAt,omitempty"`
 	// HasSecret reports whether a webhook secret is configured. The secret itself
 	// is never returned.
-	HasSecret bool      `json:"hasSecret"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	HasSecret bool `json:"hasSecret"`
+	// EventType and EventFilter apply to event triggers: the platform event to
+	// react to, and an optional equality filter over its payload so one agent can
+	// watch a single subject rather than every event of that type.
+	EventType   string          `json:"eventType"`
+	EventFilter json.RawMessage `json:"eventFilter,omitempty"`
+	CreatedAt   time.Time       `json:"createdAt"`
+	UpdatedAt   time.Time       `json:"updatedAt"`
 }
 
 type AgentTask struct {
@@ -616,12 +621,25 @@ func (s *Store) ArtifactByID(ctx context.Context, id, ownerID string) (AgentArti
 
 // --- Triggers ---
 
-const triggerColumns = `id,agent_id,owner_id,name,type,enabled,schedule,timezone,task_title,task_input,priority,last_fired_at,next_fire_at,webhook_secret <> '',created_at,updated_at`
+const triggerColumns = `id,agent_id,owner_id,name,type,enabled,schedule,timezone,task_title,task_input,priority,last_fired_at,next_fire_at,webhook_secret <> '',event_type,event_filter,created_at,updated_at`
 
 func scanTrigger(row pgx.Row) (AgentTrigger, error) {
 	var item AgentTrigger
-	err := row.Scan(&item.ID, &item.AgentID, &item.OwnerID, &item.Name, &item.Type, &item.Enabled, &item.Schedule, &item.Timezone, &item.TaskTitle, &item.TaskInput, &item.Priority, &item.LastFiredAt, &item.NextFireAt, &item.HasSecret, &item.CreatedAt, &item.UpdatedAt)
+	err := row.Scan(&item.ID, &item.AgentID, &item.OwnerID, &item.Name, &item.Type, &item.Enabled, &item.Schedule, &item.Timezone, &item.TaskTitle, &item.TaskInput, &item.Priority, &item.LastFiredAt, &item.NextFireAt, &item.HasSecret, &item.EventType, &item.EventFilter, &item.CreatedAt, &item.UpdatedAt)
 	return item, err
+}
+
+// scanTriggers reads a whole result set of triggers.
+func scanTriggers(rows pgx.Rows) ([]AgentTrigger, error) {
+	items := []AgentTrigger{}
+	for rows.Next() {
+		item, err := scanTrigger(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 // PutAgentTrigger creates or updates a trigger. An empty secret leaves any
@@ -637,6 +655,9 @@ func (s *Store) PutAgentTrigger(ctx context.Context, item AgentTrigger, secret s
 	if item.Priority == "" {
 		item.Priority = "normal"
 	}
+	if len(item.EventFilter) == 0 {
+		item.EventFilter = json.RawMessage(`{}`)
+	}
 	var encrypted any
 	if strings.TrimSpace(secret) != "" {
 		value, err := s.cipher.Encrypt([]byte(secret), "trigger-secret:"+item.ID)
@@ -645,13 +666,13 @@ func (s *Store) PutAgentTrigger(ctx context.Context, item AgentTrigger, secret s
 		}
 		encrypted = value
 	}
-	row := s.pool.QueryRow(ctx, `INSERT INTO agent_triggers(id,agent_id,owner_id,name,type,enabled,schedule,timezone,webhook_secret,task_title,task_input,priority,next_fire_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9,''),$10,$11,$12,$13)
+	row := s.pool.QueryRow(ctx, `INSERT INTO agent_triggers(id,agent_id,owner_id,name,type,enabled,schedule,timezone,webhook_secret,task_title,task_input,priority,next_fire_at,event_type,event_filter)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9,''),$10,$11,$12,$13,$14,$15)
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name,type=excluded.type,enabled=excluded.enabled,schedule=excluded.schedule,timezone=excluded.timezone,
 			webhook_secret=COALESCE($9,agent_triggers.webhook_secret),task_title=excluded.task_title,task_input=excluded.task_input,priority=excluded.priority,
-			next_fire_at=excluded.next_fire_at,updated_at=now()
+			next_fire_at=excluded.next_fire_at,event_type=excluded.event_type,event_filter=excluded.event_filter,updated_at=now()
 		RETURNING `+triggerColumns,
-		item.ID, item.AgentID, item.OwnerID, item.Name, item.Type, item.Enabled, item.Schedule, item.Timezone, encrypted, item.TaskTitle, item.TaskInput, item.Priority, item.NextFireAt)
+		item.ID, item.AgentID, item.OwnerID, item.Name, item.Type, item.Enabled, item.Schedule, item.Timezone, encrypted, item.TaskTitle, item.TaskInput, item.Priority, item.NextFireAt, item.EventType, item.EventFilter)
 	return scanTrigger(row)
 }
 
@@ -668,15 +689,7 @@ func (s *Store) AgentTriggers(ctx context.Context, ownerID, agentID string) ([]A
 		return nil, err
 	}
 	defer rows.Close()
-	items := []AgentTrigger{}
-	for rows.Next() {
-		item, err := scanTrigger(rows)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	return items, rows.Err()
+	return scanTriggers(rows)
 }
 
 func (s *Store) AgentTriggerByID(ctx context.Context, id string) (AgentTrigger, error) {

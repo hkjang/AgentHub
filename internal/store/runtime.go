@@ -616,12 +616,38 @@ func (s *Store) UpdateRuntimeDesiredState(ctx context.Context, id, ownerID, stat
 	return r, err
 }
 
+// runtimeFailureStatuses are the observed states an operator would want an agent
+// to react to.
+var runtimeFailureStatuses = map[string]bool{"failed": true, "crashed": true, "spawn_failed": true, "unhealthy": true}
+
 func (s *Store) UpdateRuntimeObserved(ctx context.Context, id, phase, podName, nodeName, endpoint string, restartCount int, failureReason string) error {
 	status := strings.ToLower(phase)
-	_, err := s.pool.Exec(ctx, `UPDATE agent_runtimes SET status=$1,pod_name=$2,node_name=$3,endpoint=$4,restart_count=$5,failure_reason=$6,
+	var previous, ownerID, agentID string
+	err := s.pool.QueryRow(ctx, `UPDATE agent_runtimes r SET status=$1,pod_name=$2,node_name=$3,endpoint=$4,restart_count=$5,failure_reason=$6,
 started_at=CASE WHEN $1 IN ('running','ready') THEN COALESCE(started_at,now()) ELSE started_at END,
-stopped_at=CASE WHEN $1='stopped' THEN now() ELSE stopped_at END,updated_at=now() WHERE id=$7`, status, podName, nodeName, endpoint, restartCount, failureReason, id)
-	return err
+stopped_at=CASE WHEN $1='stopped' THEN now() ELSE stopped_at END,updated_at=now()
+FROM (SELECT id, status FROM agent_runtimes WHERE id=$7) old
+WHERE r.id=old.id RETURNING old.status, r.owner_id, r.agent_id`, status, podName, nodeName, endpoint, restartCount, failureReason, id).
+		Scan(&previous, &ownerID, &agentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	// Only the transition is an event. The operator re-observes continuously, so
+	// publishing on every pass would wake a subscribed agent every few seconds.
+	if runtimeFailureStatuses[status] && previous != status {
+		payload, _ := json.Marshal(map[string]any{
+			"agentId": agentID, "status": status, "reason": failureReason, "restartCount": restartCount, "podName": podName,
+		})
+		if publishErr := s.PublishEvent(ctx, PlatformEvent{
+			Type: EventRuntimeFailed, OwnerID: ownerID, SubjectType: "runtime", SubjectID: id, Payload: payload,
+		}); publishErr != nil {
+			return publishErr
+		}
+	}
+	return nil
 }
 
 func (s *Store) TouchRuntime(ctx context.Context, id string) {

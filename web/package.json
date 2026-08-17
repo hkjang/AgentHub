@@ -10,7 +10,8 @@
     "test:ui": "node scripts/ui-smoke.mjs",
     "test:e2e": "node scripts/ui-e2e.mjs",
     "test:runtimes": "node scripts/runtime-e2e.mjs",
-    "test:control": "node scripts/control-e2e.mjs"
+    "test:control": "node scripts/control-e2e.mjs",
+    "test:events": "node scripts/event-e2e.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",

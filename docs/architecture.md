@@ -149,6 +149,23 @@ worker that advances `next_fire_at` first owns that firing, so a schedule fires
 once no matter how many workers are running. Webhook triggers verify an HMAC over
 the raw body; it is the only unauthenticated route in the API.
 
+Event triggers let an agent react to what happens on the platform — a task that
+failed, a runtime that crashed, an approval that was decided, an artifact that
+was produced. Events go to a durable outbox in PostgreSQL rather than an
+in-process bus: the API publishes some of them and the worker dispatches all of
+them, an offline site has no broker to lean on, and a restart must not drop what
+was in flight. The dispatcher claims a batch and marks it delivered in the same
+statement, so every worker can run one without anything being delivered twice.
+
+Two things keep event triggers from becoming a feedback loop. A subscription
+carries an optional payload filter, applied as jsonb containment in SQL, so an
+agent watching one runtime is not woken by every other runtime's failures. And
+every event records the trigger that caused the work it reports on; a trigger
+never fires on an event its own task produced, which is what stops an agent from
+waking itself forever. Publishing is best-effort throughout: the task already
+finished, and failing it because nothing could be told about it would be worse
+than a missed trigger.
+
 ## Autonomous control
 
 Four controls sit on top of the execution plane. They exist because an agent that

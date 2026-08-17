@@ -43,6 +43,7 @@ func (s *Server) userRoutes(r chi.Router) {
 	r.Post("/agents/{id}/triggers", s.saveAgentTrigger)
 	r.Post("/agents/{id}/run", s.runAgent)
 	r.Delete("/triggers/{id}", s.deleteAgentTrigger)
+	r.Get("/events", s.events)
 	r.Get("/agents/{id}/memories", s.agentMemories)
 	r.Delete("/memories/{id}", s.deleteMemory)
 	r.Get("/tasks", s.tasks)
@@ -1558,6 +1559,11 @@ func (s *Server) decideApproval(decision string) http.HandlerFunc {
 			}
 		}
 		s.store.Audit(r.Context(), &u, "approval."+decision, item.ResourceType, item.ResourceID, "success", clientIP(r), nil)
+		s.publishEvent(r.Context(), store.PlatformEvent{
+			Type: store.EventApprovalDecided, OwnerID: item.RequesterID,
+			SubjectType: item.ResourceType, SubjectID: item.ResourceID,
+			Payload: eventPayload(map[string]any{"decision": decision, "action": item.Action, "reason": item.Reason}),
+		})
 		_ = s.store.CreateNotification(r.Context(), item.RequesterID, "approval", "승인 요청 "+decision, item.Reason, resourceURL)
 		writeJSON(w, 200, item)
 	}

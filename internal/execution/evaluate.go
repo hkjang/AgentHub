@@ -232,6 +232,15 @@ func (o *Orchestrator) saveArtifacts(ctx context.Context, run *store.AgentRun, t
 				continue
 			}
 			o.event(ctx, *run, "artifact.created", saved.Name, map[string]any{"artifactId": saved.ID, "type": saved.Type, "sizeBytes": saved.SizeBytes})
+			// A run event is only visible inside this run; the platform event is
+			// what another agent can subscribe to.
+			payload, _ := json.Marshal(map[string]any{"name": saved.Name, "type": saved.Type, "agentId": agent.ID, "taskId": task.ID})
+			if err := o.store.PublishEvent(ctx, store.PlatformEvent{
+				Type: store.EventArtifactCreated, OwnerID: task.OwnerID,
+				SubjectType: "artifact", SubjectID: saved.ID, Payload: payload, CauseTriggerID: task.TriggerID,
+			}); err != nil {
+				o.logger.Warn("artifact event could not be published", "run", run.ID, "artifact", saved.ID, "error", err)
+			}
 		}
 	}
 }

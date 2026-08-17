@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -401,9 +403,27 @@ func (s *Server) saveAgentTrigger(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_trigger_name", "Trigger 이름은 1~80자여야 합니다.")
 		return
 	}
-	if !contains([]string{"manual", "cron", "webhook"}, trigger.Type) {
+	if !contains([]string{"manual", "cron", "webhook", "event"}, trigger.Type) {
 		writeError(w, http.StatusBadRequest, "invalid_trigger_type", "Trigger 유형을 확인해 주세요.")
 		return
+	}
+	if trigger.Type == "event" {
+		// An unknown event type would leave a trigger that looks armed but can
+		// never fire, so it is rejected at save time.
+		if !store.IsPublishableEvent(trigger.EventType) {
+			writeError(w, http.StatusBadRequest, "invalid_event_type",
+				"이벤트 종류를 확인해 주세요. 사용 가능한 값: "+strings.Join(store.PublishableEvents, ", "))
+			return
+		}
+		if len(trigger.EventFilter) > 0 {
+			var filter map[string]any
+			if err := json.Unmarshal(trigger.EventFilter, &filter); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_event_filter", "이벤트 필터는 JSON 객체여야 합니다.")
+				return
+			}
+		}
+	} else {
+		trigger.EventType, trigger.EventFilter = "", nil
 	}
 	if trigger.Type == "cron" {
 		// Validate here so a broken schedule is rejected at save time rather than
@@ -540,4 +560,36 @@ func (s *Server) deleteMemory(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.Audit(r.Context(), &u, "agent.memory.delete", "memory", id, "success", clientIP(r), nil)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// publishEvent records a platform event for the event dispatcher.
+//
+// Publishing is deliberately best-effort: the thing that produced the event has
+// already happened, and failing the request because nothing could be told about
+// it would be worse than a missed trigger.
+func (s *Server) publishEvent(ctx context.Context, event store.PlatformEvent) {
+	if err := s.store.PublishEvent(ctx, event); err != nil {
+		s.logger.Warn("platform event could not be published", "type", event.Type, "subject", event.SubjectID, "error", err)
+	}
+}
+
+func eventPayload(fields map[string]any) json.RawMessage {
+	encoded, err := json.Marshal(fields)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return encoded
+}
+
+// events lists what has happened recently, so an operator can see which event
+// types are actually available to subscribe a trigger to.
+func (s *Server) events(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	items, err := s.store.RecentEvents(r.Context(), u.ID, r.URL.Query().Get("type"), limit)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "types": store.PublishableEvents})
 }

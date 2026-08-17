@@ -36,9 +36,14 @@ export type AgentGoal = {
 export type AgentMemory = { id: string; scope: string; key: string; value: string; updatedAt: string }
 export type AgentPlan = { id: string; runId: string; mode: string; goal: string; steps: unknown; createdAt: string }
 export type AgentTrigger = {
-  id: string; agentId: string; name: string; type: 'manual' | 'cron' | 'webhook'; enabled: boolean
+  id: string; agentId: string; name: string; type: 'manual' | 'cron' | 'webhook' | 'event'; enabled: boolean
   schedule: string; timezone: string; taskTitle: string; taskInput: string; priority: string
   lastFiredAt?: string; nextFireAt?: string; hasSecret: boolean
+  eventType?: string; eventFilter?: Record<string, unknown>
+}
+export type PlatformEvent = {
+  id: string; type: string; subjectType: string; subjectId: string
+  payload: Record<string, unknown>; createdAt: string; dispatchedAt?: string
 }
 export type AgentTask = {
   id: string; agentId: string; agentName?: string; title: string; input: string; priority: string

@@ -2,6 +2,7 @@ package execution
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -124,6 +125,7 @@ func (w *Worker) execute(ctx context.Context, task store.AgentTask) {
 			logger.Error("task completion not recorded", "error", err)
 		}
 		w.notify(finish, task, "작업을 완료했습니다", task.Title)
+		w.publish(finish, task, store.EventTaskCompleted, map[string]any{"title": task.Title, "agentId": task.AgentID})
 		logger.Info("task completed")
 		return
 	}
@@ -152,6 +154,11 @@ func (w *Worker) execute(ctx context.Context, task store.AgentTask) {
 		logger.Error("task failure not recorded", "error", err)
 	}
 	w.notify(finish, task, "작업이 실패했습니다", task.Title+" — "+outcome.Failure)
+	eventType := store.EventTaskFailed
+	if status == store.TaskDeadLetter {
+		eventType = store.EventTaskDeadLettered
+	}
+	w.publish(finish, task, eventType, map[string]any{"title": task.Title, "agentId": task.AgentID, "reason": outcome.Failure})
 	logger.Warn("task finished unsuccessfully", "status", status, "reason", outcome.Failure)
 }
 
@@ -160,6 +167,25 @@ func (w *Worker) execute(ctx context.Context, task store.AgentTask) {
 func (w *Worker) notify(ctx context.Context, task store.AgentTask, title, message string) {
 	if err := w.store.CreateNotification(ctx, task.OwnerID, "task", title, message, "/tasks"); err != nil {
 		w.logger.Warn("task notification not delivered", "task", task.ID, "error", err)
+	}
+}
+
+// publish records what happened so event triggers can react to it. The task has
+// already finished either way, so a publish failure is logged, not surfaced.
+//
+// The trigger that created this task is carried along as the cause, which is
+// what stops an event trigger from waking itself in a loop.
+func (w *Worker) publish(ctx context.Context, task store.AgentTask, eventType string, payload map[string]any) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		w.logger.Warn("event payload could not be encoded", "task", task.ID, "type", eventType, "error", err)
+		return
+	}
+	if err := w.store.PublishEvent(ctx, store.PlatformEvent{
+		Type: eventType, OwnerID: task.OwnerID, SubjectType: "task", SubjectID: task.ID,
+		Payload: body, CauseTriggerID: task.TriggerID,
+	}); err != nil {
+		w.logger.Warn("event could not be published", "task", task.ID, "type", eventType, "error", err)
 	}
 }
 

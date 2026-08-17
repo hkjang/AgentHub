@@ -345,7 +345,10 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
         : <div className="tool-links">{triggers.map((trigger)=><div key={trigger.id} className="trigger-row">
             <ListChecks size={16}/>
             <div><strong>{trigger.name}</strong>
-              <small>{trigger.type==='cron'?`${trigger.schedule} · ${trigger.timezone}`:trigger.type==='webhook'?(trigger.hasSecret?'Webhook · 서명 설정됨':'Webhook · 서명 미설정'):'수동'}</small>
+              <small>{trigger.type==='cron'?`${trigger.schedule} · ${trigger.timezone}`
+                :trigger.type==='webhook'?(trigger.hasSecret?'Webhook · 서명 설정됨':'Webhook · 서명 미설정')
+                :trigger.type==='event'?`이벤트 · ${EVENT_TYPES.find(([value])=>value===trigger.eventType)?.[1]??trigger.eventType}`
+                :'수동'}</small>
               {trigger.nextFireAt&&<small>다음 실행 {new Date(trigger.nextFireAt).toLocaleString('ko-KR')}</small>}
             </div>
             <StatusBadge status={trigger.enabled?'active':'disabled'}/>
@@ -369,9 +372,21 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
   </Drawer>
 }
 
+/** Platform events an agent can subscribe to, labelled for the console. */
+const EVENT_TYPES: [string, string][] = [
+  ['task.completed','작업 완료'],
+  ['task.failed','작업 실패'],
+  ['task.dead_lettered','작업 재시도 소진'],
+  ['approval.decided','승인 처리됨'],
+  ['runtime.failed','런타임 장애'],
+  ['artifact.created','산출물 생성'],
+]
+
 function TriggerDrawer({agent,close,done}:{agent:Agent;close:()=>void;done:()=>void}) {
   const [name,setName]=useState('')
-  const [type,setType]=useState<'cron'|'webhook'>('cron')
+  const [type,setType]=useState<'cron'|'webhook'|'event'>('cron')
+  const [eventType,setEventType]=useState(EVENT_TYPES[0][0])
+  const [eventFilter,setEventFilter]=useState('')
   const [schedule,setSchedule]=useState('0 8 * * *')
   const [timezone,setTimezone]=useState('Asia/Seoul')
   const [taskTitle,setTaskTitle]=useState('')
@@ -382,8 +397,16 @@ function TriggerDrawer({agent,close,done}:{agent:Agent;close:()=>void;done:()=>v
   const [error,setError]=useState('')
   const submit=async(event:FormEvent)=>{
     event.preventDefault(); setBusy(true); setError('')
+    // Parsing here keeps a typo out of the request, where it would come back as
+    // a generic 400 with no hint about which field was wrong.
+    let filter: unknown = undefined
+    if(type==='event'&&eventFilter.trim()){
+      try{ filter=JSON.parse(eventFilter) }
+      catch{ setError('이벤트 필터는 JSON 객체여야 합니다. 예) {"agentId":"…"}'); setBusy(false); return }
+    }
     try{
-      await api.post(`/api/v1/agents/${agent.id}/triggers`,{name,type,enabled,schedule:type==='cron'?schedule:'',timezone,taskTitle,taskInput,priority:'normal',secret:type==='webhook'?secret:''})
+      await api.post(`/api/v1/agents/${agent.id}/triggers`,{name,type,enabled,schedule:type==='cron'?schedule:'',timezone,taskTitle,taskInput,priority:'normal',
+        secret:type==='webhook'?secret:'',eventType:type==='event'?eventType:'',eventFilter:filter})
       done()
     }catch(e){ setError(e instanceof Error?e.message:'Trigger를 저장하지 못했습니다.'); setBusy(false) }
   }
@@ -394,17 +417,24 @@ function TriggerDrawer({agent,close,done}:{agent:Agent;close:()=>void;done:()=>v
       {error&&<ErrorBanner message={error} onClose={()=>setError('')}/>}
       <label><span>이름 <b>*</b></span><input required maxLength={80} value={name} onChange={(e)=>setName(e.target.value)} placeholder="매일 아침 장애 점검"/></label>
       <label><span>유형</span>
-        <select value={type} onChange={(e)=>setType(e.target.value as 'cron'|'webhook')}>
+        <select value={type} onChange={(e)=>setType(e.target.value as 'cron'|'webhook'|'event')}>
           <option value="cron">예약 (cron)</option>
           <option value="webhook">Webhook</option>
+          <option value="event">플랫폼 이벤트</option>
         </select>
       </label>
-      {type==='cron'
-        ? <><label><span>일정 <b>*</b></span><input required value={schedule} onChange={(e)=>setSchedule(e.target.value)} placeholder="0 8 * * *"/>
-            <small>분 시 일 월 요일. 예) <code>0 8 * * *</code> 매일 08:00, <code>*/30 * * * *</code> 30분마다</small></label>
-          <label><span>시간대</span><input value={timezone} onChange={(e)=>setTimezone(e.target.value)} placeholder="Asia/Seoul"/></label></>
-        : <label><span>Webhook 서명 키 <b>*</b></span><input required type="password" autoComplete="new-password" value={secret} onChange={(e)=>setSecret(e.target.value)}/>
-            <small>호출 측은 본문 HMAC-SHA256을 <code>X-AgentHub-Signature</code> 헤더로 보내야 합니다.</small></label>}
+      {type==='cron'&&<><label><span>일정 <b>*</b></span><input required value={schedule} onChange={(e)=>setSchedule(e.target.value)} placeholder="0 8 * * *"/>
+          <small>분 시 일 월 요일. 예) <code>0 8 * * *</code> 매일 08:00, <code>*/30 * * * *</code> 30분마다</small></label>
+        <label><span>시간대</span><input value={timezone} onChange={(e)=>setTimezone(e.target.value)} placeholder="Asia/Seoul"/></label></>}
+      {type==='webhook'&&<label><span>Webhook 서명 키 <b>*</b></span><input required type="password" autoComplete="new-password" value={secret} onChange={(e)=>setSecret(e.target.value)}/>
+          <small>호출 측은 본문 HMAC-SHA256을 <code>X-AgentHub-Signature</code> 헤더로 보내야 합니다.</small></label>}
+      {type==='event'&&<><label><span>이벤트 종류 <b>*</b></span>
+          <select value={eventType} onChange={(e)=>setEventType(e.target.value)}>
+            {EVENT_TYPES.map(([value,label])=><option key={value} value={value}>{label} ({value})</option>)}
+          </select></label>
+        <label><span>이벤트 필터</span><input value={eventFilter} onChange={(e)=>setEventFilter(e.target.value)} placeholder={'{"agentId":"…"}'}/>
+          <small>비워 두면 이 종류의 모든 이벤트에 반응합니다. JSON 객체를 넣으면 해당 값이 일치하는 이벤트에만 반응합니다.</small></label>
+        <div className="info-note">이 Trigger가 만든 작업이 다시 같은 Trigger를 깨우지는 않습니다.</div></>}
       <label><span>작업 제목</span><input maxLength={200} value={taskTitle} onChange={(e)=>setTaskTitle(e.target.value)} placeholder="비워 두면 Trigger 이름을 사용합니다"/></label>
       <label><span>작업 내용</span><textarea rows={4} value={taskInput} onChange={(e)=>setTaskInput(e.target.value)} placeholder="이 Trigger가 만들 작업의 지시 내용"/></label>
       <label className="toggle-row"><span>활성화</span><input type="checkbox" checked={enabled} onChange={(e)=>setEnabled(e.target.checked)}/><i/></label>

@@ -98,7 +98,7 @@ func run(logger *slog.Logger) error {
 		}
 	}
 
-	errs := make(chan error, 2)
+	errs := make(chan error, 3)
 	go func() { errs <- worker.Run(ctx) }()
 
 	if os.Getenv(envDisableScheduler) != "true" {
@@ -107,6 +107,11 @@ func run(logger *slog.Logger) error {
 	} else {
 		logger.Info("cron scheduler disabled on this worker")
 	}
+
+	// The event dispatcher claims and marks events delivered in one statement,
+	// so unlike the scheduler it is safe — and useful — to run on every worker.
+	dispatcher := execution.NewDispatcher(db, logger)
+	go func() { errs <- dispatcher.Run(ctx) }()
 
 	select {
 	case <-ctx.Done():

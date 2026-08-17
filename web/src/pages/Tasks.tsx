@@ -1,9 +1,9 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
-import { Bot, ClipboardList, Clock3, ExternalLink, ListChecks, Play, Plus, RefreshCw, RotateCcw, Square } from 'lucide-react'
+import { Bot, ClipboardList, Clock3, ExternalLink, ListChecks, Play, Plus, Radio, RefreshCw, RotateCcw, Square } from 'lucide-react'
 import { api } from '../api'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, Loading, PageHeader, StatusBadge, statusLabel } from '../components/UI'
 import { relativeTime, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
-import type { Agent, AgentArtifact, AgentPlan, AgentRun, AgentRunEvent, AgentRunStep, AgentTask } from '../types'
+import type { Agent, AgentArtifact, AgentPlan, AgentRun, AgentRunEvent, AgentRunStep, AgentTask, PlatformEvent } from '../types'
 
 /** Statuses that are still moving, and therefore worth polling for. */
 const ACTIVE = ['queued', 'planning', 'ready', 'running', 'waiting_tool', 'waiting_approval', 'retrying']
@@ -13,7 +13,12 @@ const PRIORITY_LABELS: Record<string, string> = {
 }
 
 const SOURCE_LABELS: Record<string, string> = {
-  manual: '직접 실행', cron: '예약', webhook: 'Webhook', agent: '다른 에이전트',
+  manual: '직접 실행', cron: '예약', webhook: 'Webhook', agent: '다른 에이전트', event: '이벤트',
+}
+
+const EVENT_LABELS: Record<string, string> = {
+  'task.completed': '작업 완료', 'task.failed': '작업 실패', 'task.dead_lettered': '재시도 소진',
+  'approval.decided': '승인 처리', 'runtime.failed': '런타임 장애', 'artifact.created': '산출물 생성',
 }
 
 export function Tasks() {
@@ -132,6 +137,8 @@ export function Tasks() {
             </tr>)}</tbody>
           </table></div></section>}
 
+    <EventFeed />
+
     {creating && <CreateTaskDrawer agents={agents} close={() => setCreating(false)} done={() => { setCreating(false); void load() }} />}
     {openRun && <RunDrawer runId={openRun} close={() => setOpenRun(null)} />}
     {cancelling && <ConfirmDialog title="작업을 취소할까요?"
@@ -139,6 +146,33 @@ export function Tasks() {
       confirmLabel="취소하기" busy={busy}
       onConfirm={() => void cancel()} onCancel={() => setCancelling(null)} />}
   </div>
+}
+
+/** What the platform has published lately. An event trigger can only react to
+ *  something that actually happens, so this is where an operator checks that it
+ *  does before wiring one up. */
+function EventFeed() {
+  const [events, setEvents] = useState<PlatformEvent[]>([])
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    if (!open) return
+    void api.get<{ items?: PlatformEvent[] }>('/api/v1/events?limit=20')
+      .then((result) => setEvents(result.items ?? []))
+      .catch(() => setEvents([]))
+  }, [open])
+  return <section className="event-feed">
+    <button className="event-feed-toggle" onClick={() => setOpen(!open)}>
+      <Radio size={15} />최근 플랫폼 이벤트 {open ? '숨기기' : '보기'}
+    </button>
+    {open && (events.length === 0
+      ? <div className="empty-compact">아직 발행된 이벤트가 없습니다.</div>
+      : <ul className="event-list">{events.map((event) => <li key={event.id}>
+          <span className="event-kind">{EVENT_LABELS[event.type] ?? event.type}</span>
+          <span className="event-subject">{event.subjectType} {event.subjectId.slice(0, 8)}</span>
+          <span className="row-time" title={new Date(event.createdAt).toLocaleString('ko-KR')}>{relativeTime(event.createdAt)}</span>
+          {!event.dispatchedAt && <span className="event-pending">전달 대기</span>}
+        </li>)}</ul>)}
+  </section>
 }
 
 function CreateTaskDrawer({ agents, close, done }: { agents: Agent[]; close: () => void; done: () => void }) {
