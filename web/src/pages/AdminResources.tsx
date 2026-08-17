@@ -216,6 +216,12 @@ function facts(kind: Kind, item: Item): [string, unknown][] {
       ["Provider", item.provider],
       ["Model", item.defaultModel],
       ["Secret", item.secretConfigured ? "설정됨" : "없음"],
+      [
+        "단가",
+        Number(item.inputPricePerMTok) || Number(item.outputPricePerMTok)
+          ? `입력 ${item.inputPricePerMTok} / 출력 ${item.outputPricePerMTok} ${item.currency ?? ""}`
+          : "미산정",
+      ],
     ];
   if (kind === "bundles")
     return [
@@ -281,6 +287,9 @@ function ResourceDrawer({
               provider: "openai-compatible",
               baseUrl: "",
               defaultModel: "",
+              inputPricePerMTok: 0,
+              outputPricePerMTok: 0,
+              currency: "KRW",
               secret: "",
               enabled: true,
             }
@@ -584,6 +593,41 @@ function ResourceDrawer({
                 }
               />
             </label>
+            <fieldset>
+              <legend>토큰 단가</legend>
+              <div className="form-grid">
+                <label>
+                  <span>입력 (100만 토큰당)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.0001"
+                    value={field("inputPricePerMTok")}
+                    onChange={(e) => update("inputPricePerMTok", Number(e.target.value))}
+                  />
+                </label>
+                <label>
+                  <span>출력 (100만 토큰당)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.0001"
+                    value={field("outputPricePerMTok")}
+                    onChange={(e) => update("outputPricePerMTok", Number(e.target.value))}
+                  />
+                </label>
+                <label>
+                  <span>통화</span>
+                  <input
+                    maxLength={8}
+                    value={field("currency")}
+                    onChange={(e) => update("currency", e.target.value)}
+                    placeholder="KRW"
+                  />
+                </label>
+              </div>
+              <small>단가를 비워 두면 사용량 화면에서 토큰만 집계하고 금액은 &apos;미산정&apos;으로 표시합니다.</small>
+            </fieldset>
             <Check label="사용" name="enabled" form={form} update={update} />
           </>
         )}

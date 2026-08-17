@@ -269,3 +269,25 @@ plane's image (`AGENTHUB_SIDECAR_IMAGE`), not the runtime image. Pinning an agen
 to an older runtime image is a supported way to keep a definition reproducible;
 it must not also pin the platform's code, which once meant a policy shipped in a
 new release crash-looping inside an old Pod.
+
+## Token spend
+
+Agents in the execution plane run when nobody is watching, which is exactly when
+a loop that fails to converge costs money quietly. Spend is therefore reported
+from what the runs already recorded — every step stores its prompt and
+completion tokens — rather than from a second meter that would drift from
+reality the first time one of them was missed.
+
+Input and output are priced separately because every provider charges them
+separately, and an agent that reads a large workspace to write a short summary
+has a very different bill from one that does the reverse. Prices live on the
+model endpoint, per million tokens, in whatever currency the site uses: an
+offline deployment has no rate to convert with, so the currency is a label on
+the number rather than a conversion.
+
+An endpoint with no price is reported as tokens and never as money. Pricing it
+at zero would produce a confident total that understates the bill, so those
+tokens are counted separately and the console says they are unpriced. A report
+is scoped to the caller's own agents unless an admin asks for the whole
+platform, and the window is bounded, because a year of steps is a table scan
+nobody is waiting for.

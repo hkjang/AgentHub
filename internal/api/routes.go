@@ -44,6 +44,7 @@ func (s *Server) userRoutes(r chi.Router) {
 	r.Post("/agents/{id}/run", s.runAgent)
 	r.Delete("/triggers/{id}", s.deleteAgentTrigger)
 	r.Get("/events", s.events)
+	r.Get("/usage", s.usage)
 	r.Get("/agents/{id}/mcp-policies", s.agentMCPPolicies)
 	r.Put("/agents/{id}/mcp-policies", s.saveAgentMCPPolicy)
 	r.Delete("/mcp-policies/{id}", s.deleteAgentMCPPolicy)

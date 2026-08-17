@@ -24,14 +24,20 @@ type RuntimeImage struct {
 	CreatedAt   time.Time `json:"createdAt"`
 }
 type ModelEndpoint struct {
-	ID               string    `json:"id"`
-	Name             string    `json:"name"`
-	Provider         string    `json:"provider"`
-	BaseURL          string    `json:"baseUrl"`
-	DefaultModel     string    `json:"defaultModel"`
-	SecretConfigured bool      `json:"secretConfigured"`
-	Enabled          bool      `json:"enabled"`
-	CreatedAt        time.Time `json:"createdAt"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Provider         string `json:"provider"`
+	BaseURL          string `json:"baseUrl"`
+	DefaultModel     string `json:"defaultModel"`
+	SecretConfigured bool   `json:"secretConfigured"`
+	Enabled          bool   `json:"enabled"`
+	// InputPricePerMTok and OutputPricePerMTok price this endpoint's tokens, per
+	// million, in Currency. Zero means the endpoint is not priced, which the
+	// usage report says rather than showing a confident zero.
+	InputPricePerMTok  float64   `json:"inputPricePerMTok"`
+	OutputPricePerMTok float64   `json:"outputPricePerMTok"`
+	Currency           string    `json:"currency"`
+	CreatedAt          time.Time `json:"createdAt"`
 }
 type MCPServer struct {
 	ID               string `json:"id"`
@@ -218,7 +224,7 @@ func (s *Store) UpsertRuntimeImage(ctx context.Context, item RuntimeImage) (Runt
 	return item, err
 }
 func (s *Store) ModelEndpoints(ctx context.Context) ([]ModelEndpoint, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id,name,provider,base_url,default_model,secret_value IS NOT NULL,enabled,created_at FROM model_endpoints ORDER BY name`)
+	rows, err := s.pool.Query(ctx, `SELECT id,name,provider,base_url,default_model,secret_value IS NOT NULL,enabled,input_price_per_mtok,output_price_per_mtok,currency,created_at FROM model_endpoints ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +232,7 @@ func (s *Store) ModelEndpoints(ctx context.Context) ([]ModelEndpoint, error) {
 	items := []ModelEndpoint{}
 	for rows.Next() {
 		var item ModelEndpoint
-		if err := rows.Scan(&item.ID, &item.Name, &item.Provider, &item.BaseURL, &item.DefaultModel, &item.SecretConfigured, &item.Enabled, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.Provider, &item.BaseURL, &item.DefaultModel, &item.SecretConfigured, &item.Enabled, &item.InputPricePerMTok, &item.OutputPricePerMTok, &item.Currency, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -277,7 +283,17 @@ func (s *Store) UpsertModelEndpoint(ctx context.Context, item ModelEndpoint, sec
 		}
 		encrypted = &value
 	}
-	err := s.pool.QueryRow(ctx, `INSERT INTO model_endpoints(id,name,provider,base_url,default_model,secret_value,enabled) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO UPDATE SET name=excluded.name,provider=excluded.provider,base_url=excluded.base_url,default_model=excluded.default_model,secret_value=COALESCE(excluded.secret_value,model_endpoints.secret_value),enabled=excluded.enabled,updated_at=now() RETURNING id,name,provider,base_url,default_model,secret_value IS NOT NULL,enabled,created_at`, item.ID, item.Name, item.Provider, item.BaseURL, item.DefaultModel, encrypted, item.Enabled).Scan(&item.ID, &item.Name, &item.Provider, &item.BaseURL, &item.DefaultModel, &item.SecretConfigured, &item.Enabled, &item.CreatedAt)
+	if strings.TrimSpace(item.Currency) == "" {
+		item.Currency = "KRW"
+	}
+	err := s.pool.QueryRow(ctx, `INSERT INTO model_endpoints(id,name,provider,base_url,default_model,secret_value,enabled,input_price_per_mtok,output_price_per_mtok,currency)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		ON CONFLICT(id) DO UPDATE SET name=excluded.name,provider=excluded.provider,base_url=excluded.base_url,default_model=excluded.default_model,
+			secret_value=COALESCE(excluded.secret_value,model_endpoints.secret_value),enabled=excluded.enabled,
+			input_price_per_mtok=excluded.input_price_per_mtok,output_price_per_mtok=excluded.output_price_per_mtok,currency=excluded.currency,updated_at=now()
+		RETURNING id,name,provider,base_url,default_model,secret_value IS NOT NULL,enabled,input_price_per_mtok,output_price_per_mtok,currency,created_at`,
+		item.ID, item.Name, item.Provider, item.BaseURL, item.DefaultModel, encrypted, item.Enabled, item.InputPricePerMTok, item.OutputPricePerMTok, item.Currency).
+		Scan(&item.ID, &item.Name, &item.Provider, &item.BaseURL, &item.DefaultModel, &item.SecretConfigured, &item.Enabled, &item.InputPricePerMTok, &item.OutputPricePerMTok, &item.Currency, &item.CreatedAt)
 	return item, err
 }
 func (s *Store) MCPServers(ctx context.Context) ([]MCPServer, error) {

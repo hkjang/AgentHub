@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -592,4 +593,56 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "types": store.PublishableEvents})
+}
+
+// maxUsageWindowDays bounds a report. A year of steps is a table scan nobody is
+// waiting for, and the console never asks for more than a quarter.
+const maxUsageWindowDays = 120
+
+// usage reports token spend. A user sees their own agents; an admin may ask for
+// the whole platform with ?scope=all, which is how the bill is reconciled.
+func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	to := time.Now().UTC()
+	from := to.AddDate(0, 0, -30)
+	if raw := r.URL.Query().Get("from"); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_from", "from은 RFC3339 시각이어야 합니다.")
+			return
+		}
+		from = parsed.UTC()
+	}
+	if raw := r.URL.Query().Get("to"); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_to", "to는 RFC3339 시각이어야 합니다.")
+			return
+		}
+		to = parsed.UTC()
+	}
+	if !to.After(from) {
+		writeError(w, http.StatusBadRequest, "invalid_window", "조회 종료 시각은 시작 시각보다 뒤여야 합니다.")
+		return
+	}
+	if to.Sub(from) > maxUsageWindowDays*24*time.Hour {
+		writeError(w, http.StatusBadRequest, "window_too_wide", fmt.Sprintf("조회 기간은 최대 %d일입니다.", maxUsageWindowDays))
+		return
+	}
+
+	// Scope defaults to the caller's own agents; only an admin may widen it.
+	owner := u.ID
+	if r.URL.Query().Get("scope") == "all" {
+		if u.Role != "admin" {
+			writeError(w, http.StatusForbidden, "forbidden", "전체 사용량은 관리자만 조회할 수 있습니다.")
+			return
+		}
+		owner = ""
+	}
+	report, err := s.store.Usage(r.Context(), owner, r.URL.Query().Get("agentId"), from, to)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
 }

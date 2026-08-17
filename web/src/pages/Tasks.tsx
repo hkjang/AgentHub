@@ -1,9 +1,9 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
-import { Bot, ClipboardList, Clock3, ExternalLink, ListChecks, Play, Plus, Radio, RefreshCw, RotateCcw, Square } from 'lucide-react'
+import { Bot, ClipboardList, Clock3, Coins, ExternalLink, ListChecks, Play, Plus, Radio, RefreshCw, RotateCcw, Square } from 'lucide-react'
 import { api } from '../api'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, Loading, PageHeader, StatusBadge, statusLabel } from '../components/UI'
 import { relativeTime, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
-import type { Agent, AgentArtifact, AgentPlan, AgentRun, AgentRunEvent, AgentRunStep, AgentTask, PlatformEvent } from '../types'
+import type { Agent, AgentArtifact, AgentPlan, AgentRun, AgentRunEvent, AgentRunStep, AgentTask, PlatformEvent, UsageReport } from '../types'
 
 /** Statuses that are still moving, and therefore worth polling for. */
 const ACTIVE = ['queued', 'planning', 'ready', 'running', 'waiting_tool', 'waiting_approval', 'retrying']
@@ -137,6 +137,8 @@ export function Tasks() {
             </tr>)}</tbody>
           </table></div></section>}
 
+    <UsagePanel />
+
     <EventFeed />
 
     {creating && <CreateTaskDrawer agents={agents} close={() => setCreating(false)} done={() => { setCreating(false); void load() }} />}
@@ -146,6 +148,60 @@ export function Tasks() {
       confirmLabel="취소하기" busy={busy}
       onConfirm={() => void cancel()} onCancel={() => setCancelling(null)} />}
   </div>
+}
+
+/** Token spend over the last 30 days.
+ *  Autonomous agents run unattended, which is exactly when a runaway loop costs
+ *  money quietly, so the bill belongs next to the queue rather than buried in an
+ *  admin screen. */
+function UsagePanel() {
+  const [report, setReport] = useState<UsageReport>()
+  const [open, setOpen] = useState(false)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    if (!open || report) return
+    void api.get<UsageReport>('/api/v1/usage')
+      .then(setReport)
+      .catch((e) => setError(e instanceof Error ? e.message : '사용량을 불러오지 못했습니다.'))
+  }, [open, report])
+
+  const money = (value: number, currency: string) =>
+    `${value.toLocaleString('ko-KR', { maximumFractionDigits: 2 })} ${currency}`
+  const tokens = (value: number) => value.toLocaleString('ko-KR')
+
+  return <section className="event-feed">
+    <button className="event-feed-toggle" onClick={() => setOpen(!open)}>
+      <Coins size={15} />최근 30일 토큰 사용량 {open ? '숨기기' : '보기'}
+    </button>
+    {open && (error
+      ? <div className="empty-compact">{error}</div>
+      : !report
+        ? <div className="empty-compact">불러오는 중…</div>
+        : report.agents.length === 0
+          ? <div className="empty-compact">기록된 실행이 없습니다.</div>
+          : <>
+              <div className="usage-summary">
+                <div><span>입력</span><strong>{tokens(report.inputTokens)}</strong></div>
+                <div><span>출력</span><strong>{tokens(report.outputTokens)}</strong></div>
+                <div><span>금액</span><strong>{money(report.cost, report.currency)}</strong></div>
+                {report.unpricedTokens > 0 && <div className="unpriced">
+                  <span>미산정</span><strong>{tokens(report.unpricedTokens)} 토큰</strong>
+                </div>}
+              </div>
+              <div className="table-wrap custom-scroll"><table>
+                <thead><tr><th>에이전트</th><th>모델</th><th>실행</th><th>입력</th><th>출력</th><th>금액</th></tr></thead>
+                <tbody>{report.agents.map((row) => <tr key={`${row.agentId}-${row.modelName}`}>
+                  <td>{row.agentName}</td>
+                  <td>{row.modelName || '—'}</td>
+                  <td>{row.runs}</td>
+                  <td>{tokens(row.inputTokens)}</td>
+                  <td>{tokens(row.outputTokens)}</td>
+                  <td>{row.priced ? money(row.cost, row.currency) : <span className="row-time">미산정</span>}</td>
+                </tr>)}</tbody>
+              </table></div>
+              {report.unpricedTokens > 0 && <small>단가가 등록되지 않은 모델의 토큰은 금액에 포함되지 않습니다. 관리자 · 리소스 · 모델 엔드포인트에서 단가를 입력하세요.</small>}
+            </>)}
+  </section>
 }
 
 /** What the platform has published lately. An event trigger can only react to

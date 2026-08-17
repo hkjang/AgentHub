@@ -335,3 +335,9 @@
 .consensus-verdict small{margin-left:auto;color:#7a8699}
 .trace-vote{display:flex;align-items:center;gap:10px;padding:7px 11px;border:1px solid #eef2f7;border-radius:8px;font-size:12px}
 .trace-vote span.abstained{color:#98a2b3;font-style:italic}
+.usage-summary{display:flex;gap:9px;margin:10px 0}
+.usage-summary div{flex:1;padding:9px 12px;border:1px solid #e6ebf3;border-radius:9px;background:#fff}
+.usage-summary span{display:block;font-size:10px;color:#7a8699;margin-bottom:3px}
+.usage-summary strong{font-size:14px;color:#1f2a3a}
+.usage-summary .unpriced{background:#fffaf0;border-color:#f3ddb0}
+.usage-summary .unpriced strong{color:#b2720b}
