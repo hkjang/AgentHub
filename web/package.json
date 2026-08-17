@@ -12,7 +12,8 @@
     "test:runtimes": "node scripts/runtime-e2e.mjs",
     "test:control": "node scripts/control-e2e.mjs",
     "test:events": "node scripts/event-e2e.mjs",
-    "test:mcp-policy": "node scripts/mcp-policy-e2e.mjs"
+    "test:mcp-policy": "node scripts/mcp-policy-e2e.mjs",
+    "test:custom": "node scripts/custom-runtime-e2e.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
