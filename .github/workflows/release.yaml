@@ -32,11 +32,10 @@ jobs:
         run: |
           set -euo pipefail
           # The base image is several GB and dominates release time, so it is
-          # published only when BASE_VERSION says it changed. Everything listed
-          # here feeds Dockerfile.base or the binaries it copies in, so a change
-          # to one of them without a BASE_VERSION bump is a mistake: the control
-          # plane would keep pointing at a base tag that no longer matches.
-          inputs=(Dockerfile.base deploy/runtime cmd/runtime-proxy go.mod go.sum)
+          # published only when BASE_VERSION says it changed. Changing what it
+          # is built from without bumping BASE_VERSION is a mistake: the control
+          # plane would keep pointing at a tag whose image no longer matches.
+          sources=(Dockerfile.base deploy/runtime cmd/runtime-proxy)
           previous="$(git tag --list 'v*.*.*' --sort=-v:refname | grep -v "^${GITHUB_REF_NAME}$" | head -1 || true)"
           if [ -z "${previous}" ]; then
             echo "no previous release tag; building the base image"
@@ -45,14 +44,41 @@ jobs:
           fi
           echo "comparing ${previous}..${GITHUB_REF_NAME}"
           previous_base="$(git show "${previous}:BASE_VERSION" 2>/dev/null | tr -d '\r\n' || true)"
-          if git diff --quiet "${previous}" "${GITHUB_REF_NAME}" -- "${inputs[@]}"; then
-            inputs_changed=false
-          else
-            git diff --name-only "${previous}" "${GITHUB_REF_NAME}" -- "${inputs[@]}"
+          inputs_changed=false
+          if ! git diff --quiet "${previous}" "${GITHUB_REF_NAME}" -- "${sources[@]}"; then
+            git diff --name-only "${previous}" "${GITHUB_REF_NAME}" -- "${sources[@]}"
             inputs_changed=true
           fi
+          # Dependency files matter only when they move a module the proxy in
+          # the base image actually compiles. Treating every go.mod edit as a
+          # base change forced a multi-gigabyte rebuild for dependencies the
+          # image never links — which is the cost this whole mechanism exists
+          # to avoid.
+          if [ "${inputs_changed}" = false ] && ! git diff --quiet "${previous}" "${GITHUB_REF_NAME}" -- go.mod go.sum; then
+            if ! modules="$(go list -deps -f '{{if .Module}}{{.Module.Path}}{{end}}' ./cmd/runtime-proxy | sort -u)"; then
+              # Unable to tell: assume the base image is affected rather than
+              # publishing a release whose base tag may be stale.
+              echo "could not resolve the proxy's module graph; treating the dependency change as a base change"
+              modules=""
+              inputs_changed=true
+            fi
+            moved="$(git diff -U0 "${previous}" "${GITHUB_REF_NAME}" -- go.mod go.sum \
+              | grep -E '^[+-][^+-]' | grep -oE '[a-z0-9.-]+\.[a-z]{2,}/[^ ]+' | sed 's/ .*//' | sort -u || true)"
+            hit=false
+            for module in ${moved}; do
+              if printf '%s\n' "${modules}" | grep -qx "${module}"; then
+                echo "dependency ${module} is compiled into the base image"
+                hit=true
+              fi
+            done
+            if [ "${hit}" = true ]; then
+              inputs_changed=true
+            else
+              echo "go.mod/go.sum changed, but no module the base image compiles moved"
+            fi
+          fi
           if [ "${inputs_changed}" = true ] && [ "${BASE_VERSION}" = "${previous_base}" ]; then
-            echo "::error::base image inputs changed since ${previous} but BASE_VERSION is still ${BASE_VERSION}; bump BASE_VERSION so the new image gets its own tag" >&2
+            echo "::error::base image sources changed since ${previous} but BASE_VERSION is still ${BASE_VERSION}; bump BASE_VERSION so the new image gets its own tag" >&2
             exit 1
           fi
           if [ "${BASE_VERSION}" = "${previous_base}" ]; then
