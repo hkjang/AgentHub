@@ -71,6 +71,10 @@ spec:
                     repositoryUrl: {type: string}
                     branch: {type: string}
                     snapshotName: {type: string}
+                    # How the clone authenticates against a private repository.
+                    # The credential is read from the runtime Secret, never here.
+                    gitCredentialKind: {type: string, enum: ["", token, ssh-key]}
+                    gitCredentialUsername: {type: string}
                 model:
                   type: object
                   properties:
@@ -88,6 +92,12 @@ spec:
                       endpoint: {type: string}
                       image: {type: string}
                       port: {type: integer, minimum: 1, maximum: 65535, default: 8000}
+                      # How the runtime authenticates to this MCP server. The
+                      # credential itself lives in the runtime Secret; only the
+                      # key that holds it is named here.
+                      authType: {type: string, enum: [none, bearer, header, basic], default: none}
+                      authHeader: {type: string}
+                      credentialKey: {type: string}
                 security:
                   type: object
                   properties:

@@ -9,6 +9,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Tag history is needed to diff this release against the previous one.
+          fetch-depth: 0
       - name: Resolve version
         id: version
         shell: bash
@@ -18,6 +21,31 @@ jobs:
           test "${version}" = "$(tr -d '\r\n' < VERSION)"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - name: Decide whether the runtime base image must be rebuilt
+        id: base
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The base image is several GB and dominates release time, so it is only
+          # rebuilt when something it is actually built from changed. Everything
+          # listed here feeds Dockerfile.base or the binaries it copies in.
+          inputs=(Dockerfile.base deploy/runtime cmd/runtime-proxy go.mod go.sum)
+          previous="$(git tag --list 'v*.*.*' --sort=-v:refname | grep -v "^${GITHUB_REF_NAME}$" | head -1 || true)"
+          if [ -z "${previous}" ]; then
+            echo "no previous release tag; building the base image"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "comparing ${previous}..${GITHUB_REF_NAME}"
+          if git diff --quiet "${previous}" "${GITHUB_REF_NAME}" -- "${inputs[@]}"; then
+            echo "base image inputs are unchanged since ${previous}"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "previous=${previous}" >> "$GITHUB_OUTPUT"
+          else
+            git diff --name-only "${previous}" "${GITHUB_REF_NAME}" -- "${inputs[@]}"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Reclaim runner disk
         shell: bash
         run: |
@@ -31,13 +59,20 @@ jobs:
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          BASE_CHANGED: ${{ steps.base.outputs.changed }}
+          BASE_PREVIOUS: ${{ steps.base.outputs.previous }}
         run: |
           docker build --build-arg VERSION="${RELEASE_VERSION}" --build-arg COMMIT="${GITHUB_SHA}" --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -t "agenthub:${RELEASE_TAG}" .
-          docker build -f Dockerfile.base -t "agenthub-base:${RELEASE_TAG}" .
+          if [ "${BASE_CHANGED}" = "true" ]; then
+            docker build -f Dockerfile.base -t "agenthub-base:${RELEASE_TAG}" .
+          else
+            echo "skipping the runtime base image build; ${BASE_PREVIOUS} still applies"
+          fi
       - name: Package archives
         shell: bash
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          BASE_CHANGED: ${{ steps.base.outputs.changed }}
         run: |
           set -euo pipefail
           mkdir -p release
@@ -59,7 +94,9 @@ jobs:
             docker image rm "${image}" >/dev/null 2>&1 || true
           }
           package "agenthub:${RELEASE_TAG}" "agenthub-${RELEASE_TAG}.tar.gz"
-          package "agenthub-base:${RELEASE_TAG}" "agenthub-base-${RELEASE_TAG}.tar.gz"
+          if [ "${BASE_CHANGED}" = "true" ]; then
+            package "agenthub-base:${RELEASE_TAG}" "agenthub-base-${RELEASE_TAG}.tar.gz"
+          fi
           # Glob only the archives: including SHA256SUMS in its own listing is
           # both meaningless and racy with the redirect.
           ( cd release && sha256sum -- agenthub-* > SHA256SUMS )
@@ -75,6 +112,10 @@ jobs:
           # Reassemble through a pipe: this proves the parts concatenate back
           # into a valid archive without needing room for a second copy.
           for name in "agenthub-${RELEASE_TAG}.tar.gz" "agenthub-base-${RELEASE_TAG}.tar.gz"; do
+            if [ -z "$(ls -d release/"${name}"* 2>/dev/null)" ]; then
+              echo "skipped ${name}"
+              continue
+            fi
             if [ -f "release/${name}" ]; then
               gzip -t "release/${name}"
               echo "verified ${name}"
@@ -89,8 +130,29 @@ jobs:
             echo "asset exceeds the 2 GiB GitHub limit: ${oversized}" >&2
             exit 1
           fi
+      - name: Note the base image this release runs on
+        id: notes
+        shell: bash
+        env:
+          BASE_CHANGED: ${{ steps.base.outputs.changed }}
+          BASE_PREVIOUS: ${{ steps.base.outputs.previous }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          {
+            echo 'body<<RELEASE_NOTE'
+            if [ "${BASE_CHANGED}" = "true" ]; then
+              echo "런타임 base 이미지: \`agenthub-base-${RELEASE_TAG}.tar.gz\` (이 릴리즈에 포함)"
+            else
+              echo "런타임 base 이미지: **변경 없음**. ${BASE_PREVIOUS} 릴리즈의 \`agenthub-base-${BASE_PREVIOUS}.tar.gz\`를 그대로 사용하세요."
+              echo ""
+              echo "base 이미지는 용량이 커서 빌드 입력(\`Dockerfile.base\`, \`deploy/runtime/\`, \`cmd/runtime-proxy/\`, \`go.mod\`, \`go.sum\`)이 바뀐 경우에만 다시 게시합니다."
+            fi
+            echo 'RELEASE_NOTE'
+          } >> "$GITHUB_OUTPUT"
+
       - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+          body: ${{ steps.notes.outputs.body }}
           files: release/*
           fail_on_unmatched_files: true

@@ -27,6 +27,8 @@ func (s *Server) userRoutes(r chi.Router) {
 	r.Get("/runtime-profiles", s.runtimeProfiles)
 	r.Get("/models", s.models)
 	r.Get("/mcp-servers", s.mcpServers)
+	r.Put("/mcp-servers/{id}/credential", s.putMCPCredential(false))
+	r.Delete("/mcp-servers/{id}/credential", s.deleteMCPCredential(false))
 	r.Get("/mcp-bundles", s.mcpBundles)
 	r.Get("/agents", s.agents)
 	r.Post("/agents", s.createAgent)
@@ -56,6 +58,8 @@ func (s *Server) userRoutes(r chi.Router) {
 	r.Post("/workflows", s.saveWorkflow)
 	r.Post("/workflows/{id}/validate", s.validateWorkflowDefinition)
 	r.Delete("/workflows/{id}", s.deleteWorkflow)
+	r.Post("/workflows/{id}/run", s.runWorkflow)
+	r.Get("/workflow-runs", s.workflowRuns)
 	r.Get("/evaluation/test-sets", s.evaluationTestSets)
 	r.Post("/evaluation/test-sets", s.saveEvaluationTestSet)
 	r.Delete("/evaluation/test-sets/{id}", s.deleteEvaluationTestSet)
@@ -97,10 +101,23 @@ func (s *Server) mcpBundles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) mcpServers(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
 	items, err := s.store.EnabledMCPServers(r.Context())
 	if err != nil {
 		writeStoreError(w, err)
 		return
+	}
+	// CredentialConfigured is stored per shared credential; for per-user servers
+	// it must reflect this caller's own keyring instead.
+	status, statusErr := s.store.MCPCredentialStatus(r.Context(), u.ID)
+	if statusErr != nil {
+		writeStoreError(w, statusErr)
+		return
+	}
+	for index := range items {
+		if configured, tracked := status[items[index].ID]; tracked {
+			items[index].CredentialConfigured = configured
+		}
 	}
 	writeJSON(w, 200, map[string]any{"items": items})
 }
@@ -308,7 +325,10 @@ func (s *Server) runtimeAction(state string) http.HandlerFunc {
 			return
 		}
 		if state == "running" && current.DesiredState != "running" {
-			if err := s.store.CheckRuntimeQuota(r.Context(), u.ID, spec.Profile.ID); err != nil {
+			// The quota belongs to whoever owns the runtime, not whoever pressed
+			// start: an administrator acting on another user's agent must not spend
+			// their own allowance nor let the owner exceed theirs.
+			if err := s.store.CheckRuntimeQuota(r.Context(), agent.OwnerID, spec.Profile.ID); err != nil {
 				writeError(w, http.StatusConflict, "quota_exceeded", err.Error())
 				return
 			}
@@ -365,6 +385,47 @@ func (s *Server) runtimeSpec(r *http.Request, rt store.Runtime, agent store.Agen
 	return s.runtimeSpecContext(r.Context(), rt, agent)
 }
 
+// resolveRuntimeImage honours the image the agent is pinned to so a definition
+// keeps running the build it was created against; the catalog's current approved
+// image is only a fallback for agents created before pinning existed. A pinned
+// entry that has since been deprecated still wins — that is what makes rollback
+// possible — but a pin whose row was deleted falls back rather than failing the
+// spawn.
+func (s *Server) resolveRuntimeImage(ctx context.Context, agent store.Agent) string {
+	if agent.RuntimeImageID != nil && *agent.RuntimeImageID != "" {
+		if pinned, err := s.store.RuntimeImageByID(ctx, *agent.RuntimeImageID); err == nil {
+			if reference := runtimeImageReference(pinned); reference != "" {
+				return reference
+			}
+		} else if !errors.Is(err, store.ErrNotFound) {
+			s.logger.Warn("pinned runtime image lookup failed", "agent", agent.ID, "error", err)
+		}
+	}
+	if approved, err := s.store.ApprovedRuntimeImage(ctx, agent.RuntimeType); err == nil {
+		if reference := runtimeImageReference(approved); reference != "" {
+			return reference
+		}
+	}
+	return runtime.DefaultBaseImage()
+}
+
+// runtimeImageReference builds a pullable reference, preferring the digest so the
+// deployment is reproducible even if the tag is later moved.
+func runtimeImageReference(item store.RuntimeImage) string {
+	if item.Image == "" || strings.HasPrefix(item.Image, "registry.local/") {
+		// registry.local is the documentation placeholder, never a real mirror.
+		return ""
+	}
+	reference := item.Image
+	if item.Digest != "" {
+		return reference + "@" + item.Digest
+	}
+	if item.Version != "" && !strings.Contains(reference[strings.LastIndex(reference, "/")+1:], ":") {
+		reference += ":" + item.Version
+	}
+	return reference
+}
+
 func (s *Server) runtimeSpecContext(ctx context.Context, rt store.Runtime, agent store.Agent) (runtime.Spec, error) {
 	profiles, err := s.store.RuntimeProfiles(ctx)
 	if err != nil {
@@ -380,6 +441,7 @@ func (s *Server) runtimeSpecContext(ctx context.Context, rt store.Runtime, agent
 		}
 	}
 	pvc, workspaceType, repositoryURL, branch, snapshotName, workspaceSize := "", "empty", "", "", "", profile.StorageGB
+	gitCredentialKind, gitCredentialUsername, gitCredential := "", "", ""
 	if agent.WorkspaceID != nil {
 		workspace, workspaceErr := s.store.WorkspaceByID(ctx, *agent.WorkspaceID, agent.OwnerID, true)
 		if workspaceErr != nil {
@@ -387,6 +449,21 @@ func (s *Server) runtimeSpecContext(ctx context.Context, rt store.Runtime, agent
 		}
 		pvc = workspace.PVCName
 		workspaceType, repositoryURL, branch, workspaceSize = workspace.Type, workspace.RepositoryURL, workspace.Branch, workspace.SizeGB
+		if workspace.GitCredentialSecretID != nil && *workspace.GitCredentialSecretID != "" {
+			// Read from the owner's keyring, not the caller's: an administrator may
+			// be starting this runtime on the owner's behalf.
+			_, value, secretErr := s.store.RevealPersonalSecret(ctx, workspace.OwnerID, *workspace.GitCredentialSecretID)
+			switch {
+			case secretErr == nil:
+				gitCredentialKind, gitCredentialUsername, gitCredential = workspace.GitCredentialKind, workspace.GitCredentialUsername, value
+			case errors.Is(secretErr, store.ErrNotFound):
+				// The secret was deleted; clone unauthenticated so the failure is a
+				// clear git error rather than a spawn that never happens.
+				s.logger.Warn("workspace git credential is missing", "workspace", workspace.ID)
+			default:
+				return runtime.Spec{}, secretErr
+			}
+		}
 		if workspace.SourceSnapshotID != nil {
 			snapshot, _, snapshotErr := s.store.WorkspaceSnapshotByID(ctx, agent.OwnerID, *workspace.SourceSnapshotID)
 			if snapshotErr != nil {
@@ -395,20 +472,7 @@ func (s *Server) runtimeSpecContext(ctx context.Context, rt store.Runtime, agent
 			snapshotName = snapshot.StorageRef
 		}
 	}
-	image := runtime.DefaultBaseImage()
-	if approved, imageErr := s.store.ApprovedRuntimeImage(ctx, agent.RuntimeType); imageErr == nil && approved.Image != "" {
-		if strings.HasPrefix(approved.Image, "registry.local/") {
-			// registry.local is the documentation placeholder, never a real mirror.
-			image = runtime.DefaultBaseImage()
-		} else {
-			image = approved.Image
-			if approved.Digest != "" {
-				image += "@" + approved.Digest
-			} else if approved.Version != "" && !strings.Contains(approved.Image[strings.LastIndex(approved.Image, "/")+1:], ":") {
-				image += ":" + approved.Version
-			}
-		}
-	}
+	image := s.resolveRuntimeImage(ctx, agent)
 	modelBaseURL, modelName, modelAPIKey := "", "", ""
 	if agent.ModelEndpointID != nil {
 		model, key, modelErr := s.store.ModelEndpointByID(ctx, *agent.ModelEndpointID)
@@ -437,7 +501,21 @@ func (s *Server) runtimeSpecContext(ctx context.Context, rt store.Runtime, agent
 			return runtime.Spec{}, bundleErr
 		}
 		for _, server := range servers {
-			bindings = append(bindings, runtime.MCPBinding{Name: server.Name, Mode: server.Mode, Endpoint: server.Endpoint, Image: server.Image, Port: server.Port})
+			binding := runtime.MCPBinding{Name: server.Name, Mode: server.Mode, Endpoint: server.Endpoint, Image: server.Image, Port: server.Port, AuthType: server.AuthType, AuthHeader: server.AuthHeader}
+			if binding.AuthType != "" && binding.AuthType != "none" {
+				credential, credentialErr := s.store.MCPCredential(ctx, server, agent.OwnerID)
+				switch {
+				case credentialErr == nil:
+					binding.Credential = credential
+				case errors.Is(credentialErr, store.ErrNotFound):
+					// Bind it anyway: the runtime reports a clear 401 from the MCP
+					// server, which is easier to act on than the tool vanishing.
+					s.logger.Warn("MCP credential is not configured", "server", server.Name, "agent", agent.ID, "perUser", server.PerUserCredential)
+				default:
+					return runtime.Spec{}, credentialErr
+				}
+			}
+			bindings = append(bindings, binding)
 		}
 	}
 	security := runtime.SecurityProfile{RunAsNonRoot: true, AllowPrivilegeEscalation: false, AutomountServiceAccountToken: false, SeccompProfile: "RuntimeDefault"}
@@ -471,7 +549,7 @@ func (s *Server) runtimeSpecContext(ctx context.Context, rt store.Runtime, agent
 			}
 		}
 	}
-	return runtime.Spec{Runtime: rt, Agent: agent, Profile: profile, Image: image, WorkspacePVC: pvc, WorkspaceType: workspaceType, WorkspaceRepositoryURL: repositoryURL, WorkspaceBranch: branch, WorkspaceSnapshot: snapshotName, WorkspaceSizeGB: workspaceSize, ModelBaseURL: modelBaseURL, ModelName: modelName, ModelAPIKey: modelAPIKey, MCPServers: bindings, Security: security, Network: network}, nil
+	return runtime.Spec{Runtime: rt, Agent: agent, Profile: profile, Image: image, WorkspacePVC: pvc, WorkspaceType: workspaceType, WorkspaceRepositoryURL: repositoryURL, WorkspaceBranch: branch, WorkspaceSnapshot: snapshotName, WorkspaceSizeGB: workspaceSize, WorkspaceGitCredentialKind: gitCredentialKind, WorkspaceGitCredentialUsername: gitCredentialUsername, WorkspaceGitCredential: gitCredential, ModelBaseURL: modelBaseURL, ModelName: modelName, ModelAPIKey: modelAPIKey, MCPServers: bindings, Security: security, Network: network}, nil
 }
 func (s *Server) runtimeLogs(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
@@ -523,6 +601,27 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.CheckWorkspaceQuota(r.Context(), u.ID, item.SizeGB); err != nil {
 		writeError(w, http.StatusConflict, "quota_exceeded", err.Error())
 		return
+	}
+	if item.GitCredentialSecretID != nil && strings.TrimSpace(*item.GitCredentialSecretID) != "" {
+		if item.Type != "git" {
+			writeError(w, http.StatusBadRequest, "invalid_git_credential", "Git Credential은 Git Repository Workspace에만 연결할 수 있습니다.")
+			return
+		}
+		if !slices.Contains([]string{"token", "ssh-key"}, item.GitCredentialKind) {
+			writeError(w, http.StatusBadRequest, "invalid_git_credential_kind", "Git 인증 방식은 token 또는 ssh-key여야 합니다.")
+			return
+		}
+		// Confirm the caller actually owns the secret before storing the reference.
+		if _, _, err := s.store.RevealPersonalSecret(r.Context(), u.ID, *item.GitCredentialSecretID); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusBadRequest, "invalid_git_credential", "선택한 개인 Secret을 찾을 수 없습니다.")
+				return
+			}
+			writeStoreError(w, err)
+			return
+		}
+	} else {
+		item.GitCredentialSecretID, item.GitCredentialKind, item.GitCredentialUsername = nil, "", ""
 	}
 	created, err := s.store.CreateWorkspace(r.Context(), u.ID, item)
 	if err != nil {
@@ -1119,6 +1218,8 @@ func (s *Server) adminRoutes(r chi.Router) {
 	r.Get("/mcp-servers", s.adminMCPServers)
 	r.Post("/mcp-servers", s.saveMCPServer)
 	r.Delete("/mcp-servers/{id}", s.deleteAdminResource("mcp-servers"))
+	r.Put("/mcp-servers/{id}/credential", s.putMCPCredential(true))
+	r.Delete("/mcp-servers/{id}/credential", s.deleteMCPCredential(true))
 	r.Get("/mcp-bundles", s.adminMCPBundles)
 	r.Post("/mcp-bundles", s.saveMCPBundle)
 	r.Delete("/mcp-bundles/{id}", s.deleteAdminResource("mcp-bundles"))
@@ -1241,6 +1342,17 @@ func (s *Server) saveMCPServer(w http.ResponseWriter, r *http.Request) {
 	}
 	if item.Mode != "shared" && item.Image == "" {
 		writeError(w, 400, "invalid_mcp_image", "Dedicated/Sidecar MCP Image를 입력해 주세요.")
+		return
+	}
+	if item.AuthType == "" {
+		item.AuthType = "none"
+	}
+	if !slices.Contains([]string{"none", "bearer", "header", "basic"}, item.AuthType) {
+		writeError(w, 400, "invalid_mcp_auth", "MCP 인증 방식은 none, bearer, header, basic 중 하나여야 합니다.")
+		return
+	}
+	if item.AuthType == "header" && strings.TrimSpace(item.AuthHeader) == "" {
+		writeError(w, 400, "invalid_mcp_auth_header", "header 인증에는 헤더 이름이 필요합니다.")
 		return
 	}
 	if item.Port < 0 || item.Port > 65535 {

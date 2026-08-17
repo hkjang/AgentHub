@@ -215,7 +215,8 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, request rpcRequ
 			break
 		}
 		if action == "start" && current.DesiredState != "running" {
-			if quotaErr := s.store.CheckRuntimeQuota(r.Context(), user.ID, runtimeSpec.Profile.ID); quotaErr != nil {
+			// Charged to the runtime's owner for the same reason as the REST path.
+			if quotaErr := s.store.CheckRuntimeQuota(r.Context(), agent.OwnerID, runtimeSpec.Profile.ID); quotaErr != nil {
 				err = quotaErr
 				break
 			}

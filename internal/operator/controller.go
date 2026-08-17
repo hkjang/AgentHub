@@ -131,6 +131,20 @@ func (c *Controller) consume(ctx context.Context, watcher watch.Interface) error
 	}
 }
 
+// mcpBinding is one MCP server attached to a runtime. AuthType/AuthHeader
+// describe the scheme; CredentialKey names the entry in the runtime Secret that
+// holds the value, so the credential never appears in the CRD.
+type mcpBinding struct {
+	Name          string `json:"name"`
+	Mode          string `json:"mode"`
+	Endpoint      string `json:"endpoint"`
+	Image         string `json:"image"`
+	Port          int32  `json:"port"`
+	AuthType      string `json:"authType"`
+	AuthHeader    string `json:"authHeader"`
+	CredentialKey string `json:"credentialKey"`
+}
+
 type spec struct {
 	Owner   string `json:"owner"`
 	Runtime struct {
@@ -151,19 +165,17 @@ type spec struct {
 		RepositoryURL string `json:"repositoryUrl"`
 		Branch        string `json:"branch"`
 		SnapshotName  string `json:"snapshotName"`
+		// How to authenticate the clone. The credential itself is read from the
+		// runtime Secret at clone time.
+		GitCredentialKind     string `json:"gitCredentialKind"`
+		GitCredentialUsername string `json:"gitCredentialUsername"`
 	} `json:"workspace"`
 	Model struct {
 		BaseURL   string `json:"baseUrl"`
 		Name      string `json:"name"`
 		SecretRef string `json:"secretRef"`
 	} `json:"model"`
-	MCP []struct {
-		Name     string `json:"name"`
-		Mode     string `json:"mode"`
-		Endpoint string `json:"endpoint"`
-		Image    string `json:"image"`
-		Port     int32  `json:"port"`
-	} `json:"mcp"`
+	MCP      []mcpBinding `json:"mcp"`
 	Security struct {
 		RunAsNonRoot                 bool   `json:"runAsNonRoot"`
 		ReadOnlyRootFilesystem       bool   `json:"readOnlyRootFilesystem"`
@@ -249,7 +261,7 @@ func effectiveMCP(ns, runtimeName string, value spec) []map[string]any {
 		case "dedicated":
 			endpoint = fmt.Sprintf("http://%s.%s.svc:%d/mcp", mcpResourceName(runtimeName, item.Name), ns, port)
 		}
-		result = append(result, map[string]any{"name": item.Name, "mode": item.Mode, "endpoint": endpoint, "image": item.Image, "port": port})
+		result = append(result, map[string]any{"name": item.Name, "mode": item.Mode, "endpoint": endpoint, "image": item.Image, "port": port, "authType": item.AuthType, "authHeader": item.AuthHeader, "credentialKey": item.CredentialKey})
 	}
 	return result
 }
@@ -258,6 +270,45 @@ func effectiveMCP(ns, runtimeName string, value spec) []map[string]any {
 // and the model reference points at. They must stay identical or OpenCode
 // cannot resolve the bound model.
 const openCodeProvider = "agenthub"
+
+// mcpCredentialEnv is the environment variable a Pod reads one MCP credential
+// from. Environment names allow only letters, digits and underscore.
+func mcpCredentialEnv(credentialKey string) string {
+	var b strings.Builder
+	b.WriteString("AGENTHUB_MCP_")
+	for _, r := range strings.ToUpper(strings.TrimPrefix(credentialKey, "mcp-credential-")) {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
+}
+
+// mcpAuthHeader renders the header an adapter should send. The value is an
+// ${ENV} placeholder so the credential stays out of the generated configuration.
+func mcpAuthHeader(binding map[string]any) (string, string) {
+	authType := fmt.Sprint(binding["authType"])
+	credentialKey := fmt.Sprint(binding["credentialKey"])
+	if credentialKey == "" || credentialKey == "<nil>" || authType == "" || authType == "none" || authType == "<nil>" {
+		return "", ""
+	}
+	placeholder := "${" + mcpCredentialEnv(credentialKey) + "}"
+	switch authType {
+	case "bearer":
+		return "Authorization", "Bearer " + placeholder
+	case "basic":
+		return "Authorization", "Basic " + placeholder
+	case "header":
+		name := fmt.Sprint(binding["authHeader"])
+		if name == "" || name == "<nil>" {
+			name = "Authorization"
+		}
+		return name, placeholder
+	}
+	return "", ""
+}
 
 func runtimeConfigs(ns, runtimeName string, value spec) (string, string, string) {
 	bindings := effectiveMCP(ns, runtimeName, value)
@@ -292,8 +343,16 @@ func runtimeConfigs(ns, runtimeName string, value spec) (string, string, string)
 		if endpoint == "" {
 			continue
 		}
-		openMCP[name] = map[string]any{"type": "remote", "url": endpoint, "enabled": true, "oauth": false}
-		hermesMCP[name] = map[string]any{"url": endpoint, "enabled": true, "timeout": 120, "connect_timeout": 60}
+		open := map[string]any{"type": "remote", "url": endpoint, "enabled": true, "oauth": false}
+		hermesEntry := map[string]any{"url": endpoint, "enabled": true, "timeout": 120, "connect_timeout": 60}
+		// The ConfigMap is not a Secret, so the credential is referenced by the
+		// environment variable the Pod reads from the runtime Secret.
+		if headerName, headerValue := mcpAuthHeader(item); headerName != "" {
+			open["headers"] = map[string]any{headerName: headerValue}
+			hermesEntry["headers"] = map[string]any{headerName: headerValue}
+		}
+		openMCP[name] = open
+		hermesMCP[name] = hermesEntry
 	}
 	openRaw, _ := json.MarshalIndent(opencode, "", "  ")
 	hermesRaw, _ := json.MarshalIndent(hermes, "", "  ")
@@ -338,6 +397,9 @@ func (c *Controller) Reconcile(ctx context.Context, object *unstructured.Unstruc
 		pvcName = name + "-workspace"
 	}
 	if err := c.ensurePVC(ctx, namespace, pvcName, value, object); err != nil {
+		return err
+	}
+	if err := c.ensureHomePVC(ctx, namespace, name, object); err != nil {
 		return err
 	}
 	if err := c.ensureService(ctx, namespace, name, value, object); err != nil {
@@ -452,6 +514,87 @@ func (c *Controller) ensurePVC(ctx context.Context, ns, name string, value spec,
 	_, err = c.client.CoreV1().PersistentVolumeClaims(ns).Create(ctx, desired, metav1.CreateOptions{})
 	return err
 }
+
+// homePVCName is the per-runtime volume backing /home/agent. The adapters keep
+// their state there — QwenPaw's provider registry and skills, Hermes' memory,
+// OpenCode's auth and settings — so an emptyDir discards the user's setup every
+// time the Pod is recreated, which now happens on any configuration change.
+func homePVCName(runtimeName string) string { return runtimeName + "-home" }
+
+// homeSizeGB is deliberately modest: this volume holds adapter state and caches,
+// not project files, which live on the workspace volume.
+const homeSizeGB = 5
+
+func (c *Controller) ensureHomePVC(ctx context.Context, ns, runtimeName string, owner *unstructured.Unstructured) error {
+	name := homePVCName(runtimeName)
+	_, err := c.client.CoreV1().PersistentVolumeClaims(ns).Get(ctx, name, metav1.GetOptions{})
+	if err == nil {
+		return nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return err
+	}
+	// Unlike the workspace volume this one is owned by the runtime: it holds
+	// adapter state rather than the user's project files, so it should be
+	// collected when the agent is deleted instead of leaving an orphan behind.
+	desired := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels(runtimeName, map[string]string{"agenthub.io/volume": "home"}), OwnerReferences: ownerRef(owner)},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Resources:   corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: apiresource.MustParse(strconv.Itoa(homeSizeGB) + "Gi")}},
+		},
+	}
+	_, err = c.client.CoreV1().PersistentVolumeClaims(ns).Create(ctx, desired, metav1.CreateOptions{})
+	return err
+}
+
+// gitCloneScript clones the workspace repository, authenticating when the
+// workspace is bound to a credential. The credential is never placed in the
+// remote URL or on a command line: a token goes into a 0600 credential file that
+// git reads through the store helper, and an SSH key into a 0600 file referenced
+// by GIT_SSH_COMMAND. Both live on the tmpfs and are removed before the clone
+// container exits.
+const gitCloneScript = `
+if [ -d /workspace/.git ] || [ -n "$(ls -A /workspace 2>/dev/null)" ]; then
+  echo "workspace is already populated; skipping clone"
+  exit 0
+fi
+umask 077
+CREDENTIAL_FILE=/tmp/.git-credentials
+KEY_FILE=/tmp/.git-ssh-key
+cleanup() { rm -f "$CREDENTIAL_FILE" "$KEY_FILE"; }
+trap cleanup EXIT
+
+set --
+if [ -n "${GIT_CREDENTIAL:-}" ]; then
+  case "${GIT_CREDENTIAL_KIND:-}" in
+    token)
+      user="${GIT_CREDENTIAL_USERNAME:-git}"
+      host="$(printf '%s' "$REPOSITORY_URL" | sed -e 's#^\([a-z+]*\)://##' -e 's#/.*##' -e 's#^.*@##')"
+      scheme="$(printf '%s' "$REPOSITORY_URL" | sed -n 's#^\([a-z+]*\)://.*#\1#p')"
+      [ -n "$scheme" ] || scheme=https
+      printf '%s://%s:%s@%s\n' "$scheme" "$user" "$GIT_CREDENTIAL" "$host" > "$CREDENTIAL_FILE"
+      chmod 600 "$CREDENTIAL_FILE"
+      set -- -c credential.helper= -c "credential.helper=store --file=$CREDENTIAL_FILE"
+      ;;
+    ssh-key)
+      printf '%s\n' "$GIT_CREDENTIAL" > "$KEY_FILE"
+      chmod 600 "$KEY_FILE"
+      GIT_SSH_COMMAND="ssh -i $KEY_FILE -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/.git-known-hosts"
+      export GIT_SSH_COMMAND
+      ;;
+  esac
+elif [ -n "${GIT_CREDENTIAL_KIND:-}" ]; then
+  echo "workspace is bound to a git credential but none was provided; attempting an unauthenticated clone" >&2
+fi
+
+if [ -n "${BRANCH:-}" ]; then
+  git "$@" clone --depth 1 --branch "$BRANCH" "$REPOSITORY_URL" /workspace
+else
+  git "$@" clone --depth 1 "$REPOSITORY_URL" /workspace
+fi
+`
+
 func runtimePort(rt string) int32 { return runtimetype.Port(rt) }
 
 func (c *Controller) ensureService(ctx context.Context, ns, name string, value spec, owner *unstructured.Unstructured) error {
@@ -560,20 +703,40 @@ func (c *Controller) ensureNetworkPolicy(ctx context.Context, ns, name string, v
 	if value.Network.AllowDNS {
 		egress = append(egress, networkingv1.NetworkPolicyEgressRule{Ports: []networkingv1.NetworkPolicyPort{{Protocol: &udp, Port: ptr(intstr.FromInt32(53))}, {Protocol: &tcp, Port: ptr(intstr.FromInt32(53))}}})
 	}
-	allowedPorts := map[int32]bool{}
-	if p := endpointPort(value.Model.BaseURL); p > 0 {
-		allowedPorts[p] = true
-	}
-	if p := endpointPort(value.Workspace.RepositoryURL); p > 0 {
-		allowedPorts[p] = true
-	}
+	// Each dependency is allowed to its own destination rather than to every host
+	// that happens to listen on the same port. Literal addresses become a /32
+	// IPBlock and in-cluster services are scoped to their namespace; only public
+	// DNS names, which NetworkPolicy cannot express, fall back to port-only.
+	endpoints := []string{value.Model.BaseURL, value.Workspace.RepositoryURL}
 	for _, item := range effectiveMCP(ns, name, value) {
-		if p := endpointPort(fmt.Sprint(item["endpoint"])); p > 0 {
-			allowedPorts[p] = true
-		}
+		endpoints = append(endpoints, fmt.Sprint(item["endpoint"]))
 	}
-	for allowed := range allowedPorts {
-		p := intstr.FromInt32(allowed)
+	unresolved := map[int32]bool{}
+	seen := map[string]bool{}
+	for _, raw := range endpoints {
+		port := endpointPort(raw)
+		if port <= 0 {
+			continue
+		}
+		peers, resolved := egressPeers(raw)
+		if !resolved {
+			unresolved[port] = true
+			continue
+		}
+		if len(peers) == 0 {
+			// Loopback: a sidecar in this very Pod, which egress never governs.
+			continue
+		}
+		key := fmt.Sprintf("%d/%s", port, raw)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		p := intstr.FromInt32(port)
+		egress = append(egress, networkingv1.NetworkPolicyEgressRule{To: peers, Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &p}}})
+	}
+	for port := range unresolved {
+		p := intstr.FromInt32(port)
 		egress = append(egress, networkingv1.NetworkPolicyEgressRule{Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &p}}})
 	}
 	for _, destination := range value.Network.AllowedDestinations {
@@ -609,6 +772,42 @@ func (c *Controller) ensureNetworkPolicy(ctx context.Context, ns, name string, v
 	desired.ResourceVersion = existing.ResourceVersion
 	_, err = c.client.NetworkingV1().NetworkPolicies(ns).Update(ctx, desired, metav1.UpdateOptions{})
 	return err
+}
+
+// egressPeers narrows an endpoint URL to the NetworkPolicy peers that can serve
+// it. It reports resolved=false for public DNS names: NetworkPolicy matches on
+// addresses and selectors, not hostnames, so those still need a port-only rule
+// and are better constrained through an explicit allowed-destination CIDR.
+func egressPeers(raw string) ([]networkingv1.NetworkPolicyPeer, bool) {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Hostname() == "" {
+		return nil, false
+	}
+	host := parsed.Hostname()
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() {
+			return nil, true
+		}
+		suffix := "/32"
+		if ip.To4() == nil {
+			suffix = "/128"
+		}
+		return []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: ip.String() + suffix}}}, true
+	}
+	if host == "localhost" {
+		return nil, true
+	}
+	// Cluster DNS: <service>.<namespace>.svc[.cluster.local]. The namespace is the
+	// tightest selector available without resolving the Service's Pod labels.
+	labelsOfHost := strings.Split(strings.TrimSuffix(strings.TrimSuffix(host, ".cluster.local"), "."), ".")
+	for index, part := range labelsOfHost {
+		if part != "svc" || index < 2 {
+			continue
+		}
+		namespace := labelsOfHost[index-1]
+		return []networkingv1.NetworkPolicyPeer{{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": namespace}}}}, true
+	}
+	return nil, false
 }
 
 func endpointPort(raw string) int32 {
@@ -789,33 +988,30 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 	limits := corev1.ResourceList{corev1.ResourceCPU: *apiresource.NewMilliQuantity(cpu, apiresource.DecimalSI), corev1.ResourceMemory: *apiresource.NewQuantity(memory*1024*1024, apiresource.BinarySI)}
 	env := []corev1.EnvVar{{Name: "AGENTHUB_RUNTIME_TYPE", Value: value.Runtime.Type}, {Name: "AGENTHUB_MODEL_BASE_URL", Value: value.Model.BaseURL}, {Name: "AGENTHUB_RUNTIME_CONFIG", Value: "/etc/agenthub/runtime.json"}, {Name: "OPENCODE_CONFIG", Value: "/etc/agenthub/opencode.json"}, {Name: "HERMES_CONFIG", Value: "/etc/agenthub/hermes-config.yaml"}, {Name: "HOME", Value: "/home/agent"}, {Name: "QWENPAW_HOME", Value: "/home/agent/.qwenpaw"}, {Name: "AGENTHUB_RUNTIME_TOKEN", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "runtime-token"}}}}
 	env = append(env, corev1.EnvVar{Name: "AGENTHUB_MODEL_NAME", Value: value.Model.Name}, corev1.EnvVar{Name: "OPENAI_BASE_URL", Value: value.Model.BaseURL}, corev1.EnvVar{Name: "OPENAI_API_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "model-api-key"}}})
-	if value.Runtime.Type == "opencode" {
-		env = append(env,
-			corev1.EnvVar{Name: "OPENCODE_SERVER_PASSWORD", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "runtime-token"}}},
-			corev1.EnvVar{Name: "OLLAMA_HOST", Value: value.Model.BaseURL},
-			corev1.EnvVar{Name: "OPENCODE_CONFIG_DIR", Value: "/home/agent/.config/opencode"},
-		)
-	} else if value.Runtime.Type == "hermes" {
-		env = append(env, corev1.EnvVar{Name: "API_SERVER_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "runtime-token"}}})
+	// Each authenticated MCP server contributes one optional Secret key; optional
+	// so a server whose credential is not configured yet does not block start-up.
+	for _, item := range effectiveMCP(ns, name, value) {
+		credentialKey := fmt.Sprint(item["credentialKey"])
+		if credentialKey == "" || credentialKey == "<nil>" {
+			continue
+		}
+		env = append(env, corev1.EnvVar{Name: mcpCredentialEnv(credentialKey), ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: credentialKey, Optional: ptr(true)}}})
 	}
-	var agentCmd []string
-	var agentArgs []string
-	if value.Runtime.Type == "opencode" {
-		agentCmd = []string{"opencode"}
-		agentArgs = []string{"serve", "--hostname", "0.0.0.0", "--port", "4096"}
-	} else if value.Runtime.Type == "hermes" {
-		agentCmd = []string{"/bin/sh", "-ec"}
-		agentArgs = []string{"mkdir -p /home/agent/.hermes\nif [ -f /etc/agenthub/hermes-config.yaml ]; then cp /etc/agenthub/hermes-config.yaml /home/agent/.hermes/config.yaml; fi\nexport API_SERVER_ENABLED=true\nexport API_SERVER_HOST=0.0.0.0\nexport API_SERVER_PORT=8642\nexport API_SERVER_KEY=\"${API_SERVER_KEY:-${AGENTHUB_RUNTIME_TOKEN:-}}\"\nexec /opt/hermes/.venv/bin/hermes gateway run --no-supervise"}
-	} else if value.Runtime.Type == "qwenpaw" {
-		agentCmd = []string{"/bin/sh", "-ec"}
-		agentArgs = []string{"/usr/local/bin/agenthub-qwenpaw-configure || true\nexec /opt/qwenpaw/.venv/bin/qwenpaw app --host 0.0.0.0 --port 8642"}
+	adapter := adapterFor(value.Runtime.Type)
+	build := adapterBuild{Name: name, Value: value}
+	if adapter.Env != nil {
+		env = append(env, adapter.Env(build)...)
 	}
+	// The adapter's own init containers need the completed environment, so the
+	// build context is only finalised once every variable has been added.
+	build.Env = env
+
 	agentContainer := corev1.Container{
 		Name:            "agent",
 		Image:           value.Runtime.Image,
 		ImagePullPolicy: corev1.PullIfNotPresent,
-		Command:         agentCmd,
-		Args:            agentArgs,
+		Command:         adapter.Command,
+		Args:            adapter.Args,
 		Ports:           []corev1.ContainerPort{{Name: "http", ContainerPort: port}},
 		Env:             env,
 		Resources:       corev1.ResourceRequirements{Requests: requests, Limits: limits},
@@ -825,35 +1021,22 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 		LivenessProbe:   &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)}}, InitialDelaySeconds: 20, PeriodSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 4},
 	}
 	containers := []corev1.Container{agentContainer}
-	switch value.Runtime.Type {
-	case "hermes":
-		// The Hermes Dashboard has no authenticator, so it binds to loopback and
-		// is published only through the token-enforcing runtime proxy.
-		dashboardResources := corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("100m"), corev1.ResourceMemory: apiresource.MustParse("128Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("1000m"), corev1.ResourceMemory: apiresource.MustParse("1024Mi")}}
-		containers = append(containers,
-			corev1.Container{Name: "hermes-dashboard", Image: value.Runtime.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/opt/hermes/.venv/bin/hermes"}, Args: []string{"dashboard", "--host", "127.0.0.1", "--port", "9120", "--no-open"}, Env: []corev1.EnvVar{{Name: "HERMES_HOME", Value: "/home/agent/.hermes"}, {Name: "API_SERVER_URL", Value: "http://127.0.0.1:8642"}, {Name: "API_SERVER_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "runtime-token"}}}}, Resources: dashboardResources, SecurityContext: restrictedContainerSecurityContext(value.Security.ReadOnlyRootFilesystem), VolumeMounts: []corev1.VolumeMount{{Name: "home", MountPath: "/home/agent"}, {Name: "tmp", MountPath: "/tmp"}, {Name: "config", MountPath: "/etc/agenthub", ReadOnly: true}}},
-			runtimeProxyContainer("hermes-dashboard-proxy", name, value.Runtime.Image, "http://127.0.0.1:9120"),
-		)
-	case "qwenpaw":
-		// `qwenpaw app` ships no authenticator either; the same proxy fronts it so
-		// that every browser session still has to present the runtime token.
-		containers = append(containers, runtimeProxyContainer("qwenpaw-proxy", name, value.Runtime.Image, "http://127.0.0.1:8642"))
+	if adapter.Sidecars != nil {
+		containers = append(containers, adapter.Sidecars(build)...)
 	}
 	containers = append(containers, sidecarContainers(value)...)
 	initContainers := []corev1.Container{}
-	if value.Runtime.Type == "opencode" {
-		initContainers = append(initContainers, corev1.Container{Name: "opencode-config-init", Image: value.Runtime.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/sh", "-ec"}, Args: []string{"mkdir -p /home/agent/.config/opencode\ncp /etc/agenthub/opencode.json /home/agent/.config/opencode/opencode.json\ncp /etc/agenthub/opencode.json /home/agent/.config/opencode/config.json\ncp /etc/agenthub/opencode.json /home/agent/.opencode.json\nif [ -n \"$OPENAI_BASE_URL\" ]; then\n  printf 'OPENAI_BASE_URL=%s\\nOPENAI_API_KEY=%s\\nOLLAMA_HOST=%s\\nMODEL=%s\\nOPENAI_MODEL=%s\\n' \"$OPENAI_BASE_URL\" \"$OPENAI_API_KEY\" \"$OPENAI_BASE_URL\" \"$AGENTHUB_MODEL_NAME\" \"$AGENTHUB_MODEL_NAME\" > /home/agent/.config/opencode/.env\nfi"}, Env: env, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("10m"), corev1.ResourceMemory: apiresource.MustParse("32Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("200m"), corev1.ResourceMemory: apiresource.MustParse("256Mi")}}, SecurityContext: restrictedContainerSecurityContext(value.Security.ReadOnlyRootFilesystem), VolumeMounts: []corev1.VolumeMount{{Name: "home", MountPath: "/home/agent"}, {Name: "config", MountPath: "/etc/agenthub", ReadOnly: true}, {Name: "tmp", MountPath: "/tmp"}}})
-	}
-	if value.Runtime.Type == "hermes" {
-		initContainers = append(initContainers, corev1.Container{Name: "hermes-config-init", Image: value.Runtime.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/sh", "-ec"}, Args: []string{"mkdir -p /home/agent/.hermes\ncp /etc/agenthub/hermes-config.yaml /home/agent/.hermes/config.yaml\nif [ -n \"$OPENAI_BASE_URL\" ] && [ -n \"$AGENTHUB_MODEL_NAME\" ]; then\n  /opt/hermes/.venv/bin/hermes config set model.default \"$AGENTHUB_MODEL_NAME\" || true\n  /opt/hermes/.venv/bin/hermes config set model.provider custom || true\n  /opt/hermes/.venv/bin/hermes config set model.base_url \"$OPENAI_BASE_URL\" || true\n  /opt/hermes/.venv/bin/hermes config set model.api_key \"$OPENAI_API_KEY\" || true\n  printf 'OPENAI_BASE_URL=%s\\nOPENAI_API_KEY=%s\\nCUSTOM_BASE_URL=%s\\nCUSTOM_API_KEY=%s\\nHERMES_MODEL=%s\\nMODEL=%s\\n' \"$OPENAI_BASE_URL\" \"$OPENAI_API_KEY\" \"$OPENAI_BASE_URL\" \"$OPENAI_API_KEY\" \"$AGENTHUB_MODEL_NAME\" \"$AGENTHUB_MODEL_NAME\" > /home/agent/.hermes/.env\nfi"}, Env: env, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("10m"), corev1.ResourceMemory: apiresource.MustParse("32Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("200m"), corev1.ResourceMemory: apiresource.MustParse("256Mi")}}, SecurityContext: restrictedContainerSecurityContext(value.Security.ReadOnlyRootFilesystem), VolumeMounts: []corev1.VolumeMount{{Name: "home", MountPath: "/home/agent"}, {Name: "config", MountPath: "/etc/agenthub", ReadOnly: true}, {Name: "tmp", MountPath: "/tmp"}}})
-	}
-	if value.Runtime.Type == "qwenpaw" {
-		initContainers = append(initContainers, corev1.Container{Name: "qwenpaw-config-init", Image: value.Runtime.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/usr/local/bin/agenthub-qwenpaw-configure"}, Env: env, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("10m"), corev1.ResourceMemory: apiresource.MustParse("32Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("500m"), corev1.ResourceMemory: apiresource.MustParse("512Mi")}}, SecurityContext: restrictedContainerSecurityContext(value.Security.ReadOnlyRootFilesystem), VolumeMounts: []corev1.VolumeMount{{Name: "home", MountPath: "/home/agent"}, {Name: "tmp", MountPath: "/tmp"}}})
+	if adapter.InitContainers != nil {
+		initContainers = append(initContainers, adapter.InitContainers(build)...)
 	}
 	if value.Workspace.Type == "git" && value.Workspace.RepositoryURL != "" {
-		initContainers = append(initContainers, corev1.Container{Name: "workspace-git-clone", Image: value.Runtime.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/sh", "-ec"}, Args: []string{`if [ ! -d /workspace/.git ] && [ -z "$(ls -A /workspace 2>/dev/null)" ]; then
-  if [ -n "$BRANCH" ]; then git clone --depth 1 --branch "$BRANCH" "$REPOSITORY_URL" /workspace; else git clone --depth 1 "$REPOSITORY_URL" /workspace; fi
-fi`}, Env: []corev1.EnvVar{{Name: "REPOSITORY_URL", Value: value.Workspace.RepositoryURL}, {Name: "BRANCH", Value: value.Workspace.Branch}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("100m"), corev1.ResourceMemory: apiresource.MustParse("128Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("500m"), corev1.ResourceMemory: apiresource.MustParse("512Mi")}}, SecurityContext: restrictedContainerSecurityContext(value.Security.ReadOnlyRootFilesystem), VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "tmp", MountPath: "/tmp"}}})
+		cloneEnv := []corev1.EnvVar{{Name: "REPOSITORY_URL", Value: value.Workspace.RepositoryURL}, {Name: "BRANCH", Value: value.Workspace.Branch}, {Name: "GIT_CREDENTIAL_KIND", Value: value.Workspace.GitCredentialKind}, {Name: "GIT_CREDENTIAL_USERNAME", Value: value.Workspace.GitCredentialUsername}}
+		if value.Workspace.GitCredentialKind != "" {
+			// Optional: a deleted secret must produce a clear git failure rather than
+			// a Pod that never starts.
+			cloneEnv = append(cloneEnv, corev1.EnvVar{Name: "GIT_CREDENTIAL", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "workspace-git-credential", Optional: ptr(true)}}})
+		}
+		initContainers = append(initContainers, corev1.Container{Name: "workspace-git-clone", Image: value.Runtime.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/sh", "-ec"}, Args: []string{gitCloneScript}, Env: cloneEnv, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("100m"), corev1.ResourceMemory: apiresource.MustParse("128Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("500m"), corev1.ResourceMemory: apiresource.MustParse("512Mi")}}, SecurityContext: restrictedContainerSecurityContext(value.Security.ReadOnlyRootFilesystem), VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "tmp", MountPath: "/tmp"}}})
 	}
 	// The generated configuration is delivered through a ConfigMap and copied into
 	// the agent's home directory by an init container, so a config-only change is
@@ -866,7 +1049,7 @@ fi`}, Env: []corev1.EnvVar{{Name: "REPOSITORY_URL", Value: value.Workspace.Repos
 	desired := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels(name, nil), OwnerReferences: ownerRef(owner)}, Spec: appsv1.StatefulSetSpec{ServiceName: name, Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"agenthub.io/runtime": name}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels(name, map[string]string{"agenthub.io/owner": safeLabel(value.Owner)}), Annotations: podAnnotations}, Spec: corev1.PodSpec{
 		ServiceAccountName: name, AutomountServiceAccountToken: ptr(false), EnableServiceLinks: ptr(false), SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonRoot, RunAsUser: &runAs, RunAsGroup: &runAs, FSGroup: &runAs, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
 		InitContainers: initContainers, Containers: containers,
-		Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName}}}, {Name: "home", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}, {Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}, {Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}}}}},
+		Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName}}}, {Name: "home", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: homePVCName(name)}}}, {Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}, {Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}}}}},
 	}}}}
 	existing, err := c.client.AppsV1().StatefulSets(ns).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {

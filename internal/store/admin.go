@@ -34,18 +34,26 @@ type ModelEndpoint struct {
 	CreatedAt        time.Time `json:"createdAt"`
 }
 type MCPServer struct {
-	ID               string    `json:"id"`
-	Name             string    `json:"name"`
-	Description      string    `json:"description"`
-	Mode             string    `json:"mode"`
-	Transport        string    `json:"transport"`
-	Endpoint         string    `json:"endpoint"`
-	Image            string    `json:"image"`
-	Port             int       `json:"port"`
-	RiskLevel        string    `json:"riskLevel"`
-	ApprovalRequired bool      `json:"approvalRequired"`
-	Enabled          bool      `json:"enabled"`
-	CreatedAt        time.Time `json:"createdAt"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	Mode             string `json:"mode"`
+	Transport        string `json:"transport"`
+	Endpoint         string `json:"endpoint"`
+	Image            string `json:"image"`
+	Port             int    `json:"port"`
+	RiskLevel        string `json:"riskLevel"`
+	ApprovalRequired bool   `json:"approvalRequired"`
+	Enabled          bool   `json:"enabled"`
+	// AuthType selects how the runtime authenticates: none, bearer, header or
+	// basic. AuthHeader names the header for auth_type=header.
+	AuthType   string `json:"authType"`
+	AuthHeader string `json:"authHeader"`
+	// PerUserCredential routes the credential through each user's own keyring
+	// instead of one shared platform credential.
+	PerUserCredential    bool      `json:"perUserCredential"`
+	CredentialConfigured bool      `json:"credentialConfigured"`
+	CreatedAt            time.Time `json:"createdAt"`
 }
 type MCPBundle struct {
 	ID          string    `json:"id"`
@@ -189,6 +197,19 @@ func (s *Store) ApprovedRuntimeImage(ctx context.Context, runtimeType string) (R
 	}
 	return item, err
 }
+
+// RuntimeImageByID resolves a specific catalog entry. Agents pin the image they
+// were created against so a later catalog change cannot silently move a running
+// definition onto a different build.
+func (s *Store) RuntimeImageByID(ctx context.Context, id string) (RuntimeImage, error) {
+	var item RuntimeImage
+	err := s.pool.QueryRow(ctx, `SELECT id,runtime_type,name,image,version,digest,sbom_uri,approved,deprecated,created_at FROM runtime_images WHERE id=$1`, id).Scan(&item.ID, &item.RuntimeType, &item.Name, &item.Image, &item.Version, &item.Digest, &item.SBOMURI, &item.Approved, &item.Deprecated, &item.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RuntimeImage{}, ErrNotFound
+	}
+	return item, err
+}
+
 func (s *Store) UpsertRuntimeImage(ctx context.Context, item RuntimeImage) (RuntimeImage, error) {
 	if item.ID == "" {
 		item.ID = uuid.NewString()
@@ -260,7 +281,7 @@ func (s *Store) UpsertModelEndpoint(ctx context.Context, item ModelEndpoint, sec
 	return item, err
 }
 func (s *Store) MCPServers(ctx context.Context) ([]MCPServer, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id,name,description,mode,transport,endpoint,image,port,risk_level,approval_required,enabled,created_at FROM mcp_servers ORDER BY name`)
+	rows, err := s.pool.Query(ctx, `SELECT id,name,description,mode,transport,endpoint,image,port,risk_level,approval_required,enabled,auth_type,auth_header,per_user_credential,EXISTS(SELECT 1 FROM mcp_credentials c WHERE c.server_id=mcp_servers.id AND c.owner_id IS NULL),created_at FROM mcp_servers ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +289,7 @@ func (s *Store) MCPServers(ctx context.Context) ([]MCPServer, error) {
 	items := []MCPServer{}
 	for rows.Next() {
 		var item MCPServer
-		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &item.Mode, &item.Transport, &item.Endpoint, &item.Image, &item.Port, &item.RiskLevel, &item.ApprovalRequired, &item.Enabled, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &item.Mode, &item.Transport, &item.Endpoint, &item.Image, &item.Port, &item.RiskLevel, &item.ApprovalRequired, &item.Enabled, &item.AuthType, &item.AuthHeader, &item.PerUserCredential, &item.CredentialConfigured, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -289,6 +310,17 @@ func (s *Store) EnabledMCPServers(ctx context.Context) ([]MCPServer, error) {
 	}
 	return result, nil
 }
+
+// MCPServerByID resolves one server, including how it authenticates.
+func (s *Store) MCPServerByID(ctx context.Context, id string) (MCPServer, error) {
+	var item MCPServer
+	err := s.pool.QueryRow(ctx, `SELECT id,name,description,mode,transport,endpoint,image,port,risk_level,approval_required,enabled,auth_type,auth_header,per_user_credential,EXISTS(SELECT 1 FROM mcp_credentials c WHERE c.server_id=mcp_servers.id AND c.owner_id IS NULL),created_at FROM mcp_servers WHERE id=$1`, id).Scan(&item.ID, &item.Name, &item.Description, &item.Mode, &item.Transport, &item.Endpoint, &item.Image, &item.Port, &item.RiskLevel, &item.ApprovalRequired, &item.Enabled, &item.AuthType, &item.AuthHeader, &item.PerUserCredential, &item.CredentialConfigured, &item.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return MCPServer{}, ErrNotFound
+	}
+	return item, err
+}
+
 func (s *Store) UpsertMCPServer(ctx context.Context, item MCPServer) (MCPServer, error) {
 	if item.ID == "" {
 		item.ID = uuid.NewString()
@@ -302,7 +334,10 @@ func (s *Store) UpsertMCPServer(ctx context.Context, item MCPServer) (MCPServer,
 	if item.Port <= 0 {
 		item.Port = 8000
 	}
-	err := s.pool.QueryRow(ctx, `INSERT INTO mcp_servers(id,name,description,mode,transport,endpoint,image,port,risk_level,approval_required,enabled) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(id) DO UPDATE SET name=excluded.name,description=excluded.description,mode=excluded.mode,transport=excluded.transport,endpoint=excluded.endpoint,image=excluded.image,port=excluded.port,risk_level=excluded.risk_level,approval_required=excluded.approval_required,enabled=excluded.enabled,updated_at=now() RETURNING id,name,description,mode,transport,endpoint,image,port,risk_level,approval_required,enabled,created_at`, item.ID, item.Name, item.Description, item.Mode, item.Transport, item.Endpoint, item.Image, item.Port, item.RiskLevel, item.ApprovalRequired, item.Enabled).Scan(&item.ID, &item.Name, &item.Description, &item.Mode, &item.Transport, &item.Endpoint, &item.Image, &item.Port, &item.RiskLevel, &item.ApprovalRequired, &item.Enabled, &item.CreatedAt)
+	if item.AuthType == "" {
+		item.AuthType = "none"
+	}
+	err := s.pool.QueryRow(ctx, `INSERT INTO mcp_servers(id,name,description,mode,transport,endpoint,image,port,risk_level,approval_required,enabled,auth_type,auth_header,per_user_credential) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(id) DO UPDATE SET name=excluded.name,description=excluded.description,mode=excluded.mode,transport=excluded.transport,endpoint=excluded.endpoint,image=excluded.image,port=excluded.port,risk_level=excluded.risk_level,approval_required=excluded.approval_required,enabled=excluded.enabled,auth_type=excluded.auth_type,auth_header=excluded.auth_header,per_user_credential=excluded.per_user_credential,updated_at=now() RETURNING id,name,description,mode,transport,endpoint,image,port,risk_level,approval_required,enabled,auth_type,auth_header,per_user_credential,EXISTS(SELECT 1 FROM mcp_credentials c WHERE c.server_id=mcp_servers.id AND c.owner_id IS NULL),created_at`, item.ID, item.Name, item.Description, item.Mode, item.Transport, item.Endpoint, item.Image, item.Port, item.RiskLevel, item.ApprovalRequired, item.Enabled, item.AuthType, item.AuthHeader, item.PerUserCredential).Scan(&item.ID, &item.Name, &item.Description, &item.Mode, &item.Transport, &item.Endpoint, &item.Image, &item.Port, &item.RiskLevel, &item.ApprovalRequired, &item.Enabled, &item.AuthType, &item.AuthHeader, &item.PerUserCredential, &item.CredentialConfigured, &item.CreatedAt)
 	return item, err
 }
 func (s *Store) MCPBundles(ctx context.Context, enabledOnly bool) ([]MCPBundle, error) {
@@ -334,7 +369,7 @@ func (s *Store) UpsertMCPBundle(ctx context.Context, item MCPBundle) (MCPBundle,
 	return item, err
 }
 func (s *Store) MCPServersForBundle(ctx context.Context, bundleID string) ([]MCPServer, error) {
-	rows, err := s.pool.Query(ctx, `SELECT s.id,s.name,s.description,s.mode,s.transport,s.endpoint,s.image,s.port,s.risk_level,s.approval_required,s.enabled,s.created_at FROM mcp_servers s JOIN mcp_bundles b ON s.id=ANY(b.server_ids) WHERE b.id=$1 AND b.enabled AND s.enabled ORDER BY s.name`, bundleID)
+	rows, err := s.pool.Query(ctx, `SELECT s.id,s.name,s.description,s.mode,s.transport,s.endpoint,s.image,s.port,s.risk_level,s.approval_required,s.enabled,s.auth_type,s.auth_header,s.per_user_credential,EXISTS(SELECT 1 FROM mcp_credentials c WHERE c.server_id=s.id AND c.owner_id IS NULL),s.created_at FROM mcp_servers s JOIN mcp_bundles b ON s.id=ANY(b.server_ids) WHERE b.id=$1 AND b.enabled AND s.enabled ORDER BY s.name`, bundleID)
 	if err != nil {
 		return nil, err
 	}
@@ -342,7 +377,7 @@ func (s *Store) MCPServersForBundle(ctx context.Context, bundleID string) ([]MCP
 	items := []MCPServer{}
 	for rows.Next() {
 		var item MCPServer
-		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &item.Mode, &item.Transport, &item.Endpoint, &item.Image, &item.Port, &item.RiskLevel, &item.ApprovalRequired, &item.Enabled, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &item.Mode, &item.Transport, &item.Endpoint, &item.Image, &item.Port, &item.RiskLevel, &item.ApprovalRequired, &item.Enabled, &item.AuthType, &item.AuthHeader, &item.PerUserCredential, &item.CredentialConfigured, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)

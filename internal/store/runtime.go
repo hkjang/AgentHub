@@ -39,18 +39,23 @@ type Template struct {
 }
 
 type Workspace struct {
-	ID               string    `json:"id"`
-	OwnerID          string    `json:"ownerId"`
-	Name             string    `json:"name"`
-	Type             string    `json:"type"`
-	SizeGB           int       `json:"sizeGb"`
-	RepositoryURL    string    `json:"repositoryUrl"`
-	Branch           string    `json:"branch"`
-	PVCName          string    `json:"pvcName"`
-	SourceSnapshotID *string   `json:"sourceSnapshotId,omitempty"`
-	Status           string    `json:"status"`
-	CreatedAt        time.Time `json:"createdAt"`
-	UpdatedAt        time.Time `json:"updatedAt"`
+	ID               string  `json:"id"`
+	OwnerID          string  `json:"ownerId"`
+	Name             string  `json:"name"`
+	Type             string  `json:"type"`
+	SizeGB           int     `json:"sizeGb"`
+	RepositoryURL    string  `json:"repositoryUrl"`
+	Branch           string  `json:"branch"`
+	PVCName          string  `json:"pvcName"`
+	SourceSnapshotID *string `json:"sourceSnapshotId,omitempty"`
+	Status           string  `json:"status"`
+	// GitCredentialSecretID names one of the owner's personal secrets. Kind picks
+	// the authentication method and Username is only used for token auth.
+	GitCredentialSecretID *string   `json:"gitCredentialSecretId,omitempty"`
+	GitCredentialKind     string    `json:"gitCredentialKind"`
+	GitCredentialUsername string    `json:"gitCredentialUsername"`
+	CreatedAt             time.Time `json:"createdAt"`
+	UpdatedAt             time.Time `json:"updatedAt"`
 }
 
 type WorkspaceSnapshot struct {
@@ -219,7 +224,7 @@ func (s *Store) SeedTemplates(ctx context.Context, adminID string) error {
 }
 
 func (s *Store) Workspaces(ctx context.Context, ownerID string, admin bool) ([]Workspace, error) {
-	query := `SELECT id,owner_id,name,type,size_gb,repository_url,branch,pvc_name,source_snapshot_id,status,created_at,updated_at FROM workspaces`
+	query := `SELECT id,owner_id,name,type,size_gb,repository_url,branch,pvc_name,source_snapshot_id,status,git_credential_secret_id,git_credential_kind,git_credential_username,created_at,updated_at FROM workspaces`
 	args := []any{}
 	if !admin {
 		query += ` WHERE owner_id=$1`
@@ -234,7 +239,7 @@ func (s *Store) Workspaces(ctx context.Context, ownerID string, admin bool) ([]W
 	items := []Workspace{}
 	for rows.Next() {
 		var item Workspace
-		if err := rows.Scan(&item.ID, &item.OwnerID, &item.Name, &item.Type, &item.SizeGB, &item.RepositoryURL, &item.Branch, &item.PVCName, &item.SourceSnapshotID, &item.Status, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.OwnerID, &item.Name, &item.Type, &item.SizeGB, &item.RepositoryURL, &item.Branch, &item.PVCName, &item.SourceSnapshotID, &item.Status, &item.GitCredentialSecretID, &item.GitCredentialKind, &item.GitCredentialUsername, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -251,19 +256,22 @@ func (s *Store) CreateWorkspace(ctx context.Context, ownerID string, item Worksp
 		item.SizeGB = 10
 	}
 	item.PVCName = "workspace-" + item.ID[:8]
-	err := s.pool.QueryRow(ctx, `INSERT INTO workspaces(id,owner_id,name,type,size_gb,repository_url,branch,pvc_name,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'ready') RETURNING status,created_at,updated_at`, item.ID, item.OwnerID, item.Name, item.Type, item.SizeGB, item.RepositoryURL, item.Branch, item.PVCName).Scan(&item.Status, &item.CreatedAt, &item.UpdatedAt)
+	if item.GitCredentialSecretID != nil && item.GitCredentialKind == "" {
+		item.GitCredentialKind = "token"
+	}
+	err := s.pool.QueryRow(ctx, `INSERT INTO workspaces(id,owner_id,name,type,size_gb,repository_url,branch,pvc_name,status,git_credential_secret_id,git_credential_kind,git_credential_username) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'ready',$9,$10,$11) RETURNING status,created_at,updated_at`, item.ID, item.OwnerID, item.Name, item.Type, item.SizeGB, item.RepositoryURL, item.Branch, item.PVCName, item.GitCredentialSecretID, item.GitCredentialKind, item.GitCredentialUsername).Scan(&item.Status, &item.CreatedAt, &item.UpdatedAt)
 	return item, err
 }
 
 func (s *Store) WorkspaceByID(ctx context.Context, id, ownerID string, admin bool) (Workspace, error) {
-	query := `SELECT id,owner_id,name,type,size_gb,repository_url,branch,pvc_name,source_snapshot_id,status,created_at,updated_at FROM workspaces WHERE id=$1`
+	query := `SELECT id,owner_id,name,type,size_gb,repository_url,branch,pvc_name,source_snapshot_id,status,git_credential_secret_id,git_credential_kind,git_credential_username,created_at,updated_at FROM workspaces WHERE id=$1`
 	args := []any{id}
 	if !admin {
 		query += ` AND owner_id=$2`
 		args = append(args, ownerID)
 	}
 	var item Workspace
-	err := s.pool.QueryRow(ctx, query, args...).Scan(&item.ID, &item.OwnerID, &item.Name, &item.Type, &item.SizeGB, &item.RepositoryURL, &item.Branch, &item.PVCName, &item.SourceSnapshotID, &item.Status, &item.CreatedAt, &item.UpdatedAt)
+	err := s.pool.QueryRow(ctx, query, args...).Scan(&item.ID, &item.OwnerID, &item.Name, &item.Type, &item.SizeGB, &item.RepositoryURL, &item.Branch, &item.PVCName, &item.SourceSnapshotID, &item.Status, &item.GitCredentialSecretID, &item.GitCredentialKind, &item.GitCredentialUsername, &item.CreatedAt, &item.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Workspace{}, ErrNotFound
 	}
@@ -444,6 +452,10 @@ type CreateAgentInput struct {
 	ModelEndpointID   string `json:"modelEndpointId"`
 	SecurityProfileID string `json:"securityProfileId"`
 	NetworkProfileID  string `json:"networkProfileId"`
+	// RuntimeImageID pins the catalog entry this definition runs. Left empty on
+	// create, the store pins whatever is currently approved so the definition
+	// stays reproducible even after the catalog moves on.
+	RuntimeImageID string `json:"runtimeImageId"`
 }
 
 // nullText maps an empty optional identifier to SQL NULL so that the foreign
@@ -477,8 +489,13 @@ func (s *Store) CreateAgent(ctx context.Context, ownerID string, input CreateAge
 			input.ModelEndpointID = defaultModelID
 		}
 	}
+	if strings.TrimSpace(input.RuntimeImageID) == "" {
+		if approved, imageErr := s.ApprovedRuntimeImage(ctx, input.RuntimeType); imageErr == nil {
+			input.RuntimeImageID = approved.ID
+		}
+	}
 	var item Agent
-	err := s.pool.QueryRow(ctx, `INSERT INTO agent_definitions(id,owner_id,template_id,name,description,runtime_type,runtime_profile_id,workspace_id,mcp_bundle_id,model_endpoint_id,security_profile_id,network_profile_id,system_prompt,spec) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id,owner_id,name,description,runtime_type,runtime_profile_id,runtime_image_id,security_profile_id,network_profile_id,mcp_bundle_id,model_endpoint_id,workspace_id,version,spec,created_at,updated_at`, id, ownerID, nullText(input.TemplateID), input.Name, input.Description, input.RuntimeType, nullText(input.RuntimeProfileID), nullText(input.WorkspaceID), nullText(input.MCPBundleID), nullText(input.ModelEndpointID), input.SecurityProfileID, input.NetworkProfileID, input.SystemPrompt, spec).Scan(&item.ID, &item.OwnerID, &item.Name, &item.Description, &item.RuntimeType, &item.RuntimeProfileID, &item.RuntimeImageID, &item.SecurityProfileID, &item.NetworkProfileID, &item.MCPBundleID, &item.ModelEndpointID, &item.WorkspaceID, &item.Version, &item.Spec, &item.CreatedAt, &item.UpdatedAt)
+	err := s.pool.QueryRow(ctx, `INSERT INTO agent_definitions(id,owner_id,template_id,name,description,runtime_type,runtime_profile_id,workspace_id,mcp_bundle_id,model_endpoint_id,security_profile_id,network_profile_id,system_prompt,spec,runtime_image_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id,owner_id,name,description,runtime_type,runtime_profile_id,runtime_image_id,security_profile_id,network_profile_id,mcp_bundle_id,model_endpoint_id,workspace_id,version,spec,created_at,updated_at`, id, ownerID, nullText(input.TemplateID), input.Name, input.Description, input.RuntimeType, nullText(input.RuntimeProfileID), nullText(input.WorkspaceID), nullText(input.MCPBundleID), nullText(input.ModelEndpointID), input.SecurityProfileID, input.NetworkProfileID, input.SystemPrompt, spec, nullText(input.RuntimeImageID)).Scan(&item.ID, &item.OwnerID, &item.Name, &item.Description, &item.RuntimeType, &item.RuntimeProfileID, &item.RuntimeImageID, &item.SecurityProfileID, &item.NetworkProfileID, &item.MCPBundleID, &item.ModelEndpointID, &item.WorkspaceID, &item.Version, &item.Spec, &item.CreatedAt, &item.UpdatedAt)
 	return item, err
 }
 
@@ -502,8 +519,10 @@ func (s *Store) UpdateAgent(ctx context.Context, id, ownerID string, admin bool,
 	}
 	spec, _ := json.Marshal(map[string]any{"systemPrompt": input.SystemPrompt})
 	var item Agent
-	err = s.pool.QueryRow(ctx, `UPDATE agent_definitions SET name=$2,description=$3,runtime_profile_id=$4,workspace_id=$5,mcp_bundle_id=$6,model_endpoint_id=$7,security_profile_id=$8,network_profile_id=$9,system_prompt=$10,spec=$11,version=version+1,updated_at=now() WHERE id=$1 RETURNING id,owner_id,name,description,runtime_type,runtime_profile_id,runtime_image_id,security_profile_id,network_profile_id,mcp_bundle_id,model_endpoint_id,workspace_id,version,spec,created_at,updated_at`,
-		id, input.Name, input.Description, nullText(input.RuntimeProfileID), nullText(input.WorkspaceID), nullText(input.MCPBundleID), nullText(input.ModelEndpointID), input.SecurityProfileID, input.NetworkProfileID, input.SystemPrompt, spec).
+	// An empty RuntimeImageID keeps the current pin rather than unpinning: callers
+	// that only rename an agent must not silently move it onto a newer image.
+	err = s.pool.QueryRow(ctx, `UPDATE agent_definitions SET name=$2,description=$3,runtime_profile_id=$4,workspace_id=$5,mcp_bundle_id=$6,model_endpoint_id=$7,security_profile_id=$8,network_profile_id=$9,system_prompt=$10,spec=$11,runtime_image_id=COALESCE($12,runtime_image_id),version=version+1,updated_at=now() WHERE id=$1 RETURNING id,owner_id,name,description,runtime_type,runtime_profile_id,runtime_image_id,security_profile_id,network_profile_id,mcp_bundle_id,model_endpoint_id,workspace_id,version,spec,created_at,updated_at`,
+		id, input.Name, input.Description, nullText(input.RuntimeProfileID), nullText(input.WorkspaceID), nullText(input.MCPBundleID), nullText(input.ModelEndpointID), input.SecurityProfileID, input.NetworkProfileID, input.SystemPrompt, spec, nullText(input.RuntimeImageID)).
 		Scan(&item.ID, &item.OwnerID, &item.Name, &item.Description, &item.RuntimeType, &item.RuntimeProfileID, &item.RuntimeImageID, &item.SecurityProfileID, &item.NetworkProfileID, &item.MCPBundleID, &item.ModelEndpointID, &item.WorkspaceID, &item.Version, &item.Spec, &item.CreatedAt, &item.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Agent{}, ErrNotFound

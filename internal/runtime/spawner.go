@@ -45,12 +45,17 @@ type Spec struct {
 	WorkspaceBranch        string
 	WorkspaceSnapshot      string
 	WorkspaceSizeGB        int
-	ModelBaseURL           string
-	ModelName              string
-	ModelAPIKey            string
-	MCPServers             []MCPBinding
-	Security               SecurityProfile
-	Network                NetworkProfile
+	// Git credential for a private repository clone. Kind is "token" or
+	// "ssh-key"; the value travels in the runtime Secret, never the CRD.
+	WorkspaceGitCredentialKind     string
+	WorkspaceGitCredentialUsername string
+	WorkspaceGitCredential         string
+	ModelBaseURL                   string
+	ModelName                      string
+	ModelAPIKey                    string
+	MCPServers                     []MCPBinding
+	Security                       SecurityProfile
+	Network                        NetworkProfile
 }
 
 type MCPBinding struct {
@@ -59,6 +64,12 @@ type MCPBinding struct {
 	Endpoint string
 	Image    string
 	Port     int
+	// AuthType is none, bearer, header or basic. AuthHeader names the header for
+	// auth_type=header. Credential is the resolved plaintext for the requesting
+	// user; it is delivered through the runtime Secret, never the CRD spec.
+	AuthType   string
+	AuthHeader string
+	Credential string
 }
 
 type SecurityProfile struct {

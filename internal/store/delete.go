@@ -79,8 +79,8 @@ func (s *Store) DeleteWorkspaceSnapshot(ctx context.Context, id, ownerID string)
 // holds the user's files.
 func (s *Store) UpdateWorkspace(ctx context.Context, id, ownerID, name string) (Workspace, error) {
 	var item Workspace
-	err := s.pool.QueryRow(ctx, `UPDATE workspaces SET name=$3,updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING id,owner_id,name,type,size_gb,repository_url,branch,pvc_name,source_snapshot_id,status,created_at,updated_at`, id, ownerID, name).
-		Scan(&item.ID, &item.OwnerID, &item.Name, &item.Type, &item.SizeGB, &item.RepositoryURL, &item.Branch, &item.PVCName, &item.SourceSnapshotID, &item.Status, &item.CreatedAt, &item.UpdatedAt)
+	err := s.pool.QueryRow(ctx, `UPDATE workspaces SET name=$3,updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING id,owner_id,name,type,size_gb,repository_url,branch,pvc_name,source_snapshot_id,status,git_credential_secret_id,git_credential_kind,git_credential_username,created_at,updated_at`, id, ownerID, name).
+		Scan(&item.ID, &item.OwnerID, &item.Name, &item.Type, &item.SizeGB, &item.RepositoryURL, &item.Branch, &item.PVCName, &item.SourceSnapshotID, &item.Status, &item.GitCredentialSecretID, &item.GitCredentialKind, &item.GitCredentialUsername, &item.CreatedAt, &item.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Workspace{}, ErrNotFound
 	}

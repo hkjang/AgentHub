@@ -60,6 +60,11 @@ behavior lives in the offline `agenthub-base` image:
 Runtime UIs are proxied verbatim: the session gateway authenticates, rewrites
 redirects and strips cookies, but never rewrites the response body.
 
+Each adapter is registered in `internal/operator/adapter.go` as a `runtimeAdapter`
+describing its start command, extra environment, init containers and sidecars.
+Adding a runtime means registering one of those rather than threading another
+branch through the StatefulSet builder.
+
 `internal/runtimetype` is the single source of truth for this list. Changing it
 means updating the CRD enum in `deploy/kubernetes/crd.yaml` and the
 `runtime_type` CHECK constraints in the initial migration to match.
@@ -76,3 +81,33 @@ OpenCode receives the generated configuration through `OPENCODE_CONFIG`;
 Hermes receives a generated `config.yaml` under its isolated `HERMES_HOME`;
 QwenPaw is initialised with `qwenpaw init --defaults` and receives the model
 binding as an `.env` file under `QWENPAW_HOME`.
+
+## Workspace and home persistence
+
+Two volumes back every runtime. The workspace PVC holds the user's project files
+and is deliberately preserved when an agent is deleted. A second, runtime-owned
+PVC backs `/home/agent`, where the adapters keep their own state — QwenPaw's
+provider registry and skill pool, Hermes' memory, OpenCode's settings. That was
+an emptyDir until v0.5.0, which discarded the user's setup on every Pod
+recreation; because a configuration change now rolls the Pod, that happened
+often.
+
+Private repositories are cloned with a credential the workspace is bound to: one
+of the owner's personal secrets, either an HTTPS token or an SSH private key. The
+value reaches the Pod through the runtime Secret and is written to a 0600 file on
+the tmpfs, never onto a command line or into the remote URL.
+
+## Multi-agent workflows
+
+`internal/workflow` executes a saved graph. Steps run in topological levels
+bounded by the workflow's own guardrails — depth, agent calls, parallelism and a
+wall-clock deadline — and each step receives the run input plus the outputs of
+the steps it depends on, attributed to the agent that produced them. Router mode
+lets the entry step name the branch to follow and skips the rest.
+
+A step runs its agent's system prompt against that agent's model endpoint. This
+is model-level orchestration: tool use inside a single step belongs to the
+runtime adapters and is reached through their browser sessions. Every run is
+persisted with its per-step trace, latency and token accounting, and correlated
+to the originating request through a trace id that appears in both the response
+and the structured logs.

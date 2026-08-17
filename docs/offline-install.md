@@ -14,6 +14,11 @@ than that is emitted as `<name>.tar.gz.part-aa`, `.part-ab`, … instead of a
 single file; smaller archives stay a plain `.tar.gz`. Set `RELEASE_CHUNK` to
 change the split size.
 
+GitHub releases only re-publish the runtime base image when something it is
+built from changed, because it is large and slow to build. A release whose notes
+say the base image is unchanged has no `agenthub-base-*.tar.gz` asset: keep using
+the archive from the release the notes point at.
+
 Transfer the whole `release/` directory, `compose.yaml`, and the Kubernetes
 manifests through the approved media path. On the offline host, verify the media
 first, then reassemble any split archive before loading it:

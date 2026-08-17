@@ -259,3 +259,15 @@
 
 /* Failed runtimes must not read like ordinary supporting text. */
 .metric-card small.alert-note{color:#c43b52;font-weight:650}
+
+/* Per-step trace of a workflow run. */
+.run-trace{display:flex;flex-direction:column;gap:9px}
+.run-trace article{border:1px solid #e4e9f0;border-radius:9px;padding:11px;background:#fff}
+.run-trace article.failed{border-color:#f3c3cb;background:#fff8f9}
+.run-trace article.skipped{opacity:.62}
+.run-trace header{display:flex;align-items:center;gap:9px;margin-bottom:7px}
+.run-trace header strong{font-size:12px;color:#101828}
+.run-trace header small{margin-left:auto;color:#98a2b3;font-size:10px}
+.run-trace pre{margin:0;max-height:190px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:11px;color:#344054;background:#f7f9fc;border-radius:6px;padding:9px}
+.run-trace p{margin:0;font-size:11px;color:#667085}
+.run-trace p.run-error{color:#c43b52}

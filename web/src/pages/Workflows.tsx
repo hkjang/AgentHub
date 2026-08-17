@@ -1,8 +1,9 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, GitBranch, Pencil, Plus, ShieldCheck, Trash2, Workflow as WorkflowIcon, X } from 'lucide-react'
+import { CheckCircle2, GitBranch, Pencil, Play, Plus, ShieldCheck, Trash2, Workflow as WorkflowIcon, X } from 'lucide-react'
 import { api } from '../api'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, Loading, PageHeader, StatusBadge, SuccessBanner } from '../components/UI'
-import type { Agent, Workflow } from '../types'
+import { statusLabel } from '../components/UI'
+import type { Agent, Workflow, WorkflowRunResult } from '../types'
 
 export function Workflows() {
   const [items,setItems] = useState<Workflow[]>()
@@ -13,6 +14,7 @@ export function Workflows() {
   const [removing,setRemoving] = useState<Workflow|null>(null)
   const [removeBusy,setRemoveBusy] = useState(false)
   const [removeError,setRemoveError] = useState('')
+  const [running,setRunning] = useState<Workflow|null>(null)
   const names = useMemo(() => new Map(agents.map((item) => [item.id,item.name])),[agents])
   const load = () => Promise.all([api.get<{items?:Workflow[]}>('/api/v1/workflows').then((v)=>setItems(v.items??[])),api.get<{items?:Agent[]}>('/api/v1/agents').then((v)=>setAgents(v.items??[]))]).catch((e)=>{setItems([]);setError(e instanceof Error?e.message:'워크플로 목록을 불러오지 못했습니다.')})
   useEffect(()=>{void load()},[])
@@ -25,7 +27,8 @@ export function Workflows() {
   }
   if(!items)return <Loading/>
   const validate = async (id:string) => { try { const result=await api.post<{levels:string[][]}>(`/api/v1/workflows/${id}/validate`);setSuccess(`정책·소유권·순환 검사 통과 · 실행 단계 ${result.levels.length}`) } catch(e) { setError(e instanceof Error?e.message:'검증하지 못했습니다.') } }
-  return <div className="page"><PageHeader eyebrow="멀티 에이전트" title="에이전트 워크플로" description="에이전트 간 의존관계를 정의하고 실행 전에 깊이·호출량·순환·병렬 한도를 검증합니다." actions={<button className="button primary" disabled={agents.length===0} onClick={()=>setSelected(null)}><Plus size={16}/>워크플로 만들기</button>}/>{error&&<ErrorBanner message={error} onClose={()=>setError('')}/>} {success&&<SuccessBanner message={success}/>} {items.length===0?<Empty icon={<WorkflowIcon/>} title="워크플로가 없습니다" description="에이전트를 먼저 만든 뒤 순차 또는 병렬 실행 그래프를 구성하세요."/>:<section className="workflow-grid">{items.map((item)=><article key={item.id} onClick={()=>setSelected(item)}><header><div className="list-icon"><GitBranch/></div><StatusBadge status={item.enabled?'active':'disabled'}/></header><h3>{item.name}</h3><p>{item.description||'멀티 에이전트 실행 정의'}</p><div className="workflow-chain">{item.definition.steps.map((step,index)=><span key={step.id}>{index>0&&<i>→</i>}<b>{names.get(step.agentId)??'알 수 없는 에이전트'}</b></span>)}</div><footer><span>{item.mode} · 깊이 {item.maxDepth} · 호출 {item.maxAgentCalls}</span><div className="card-actions"><button className="button ghost" onClick={(event)=>{event.stopPropagation();void validate(item.id)}}><ShieldCheck size={14}/>검증</button><button title="수정" onClick={(event)=>{event.stopPropagation();setSelected(item)}}><Pencil size={15}/></button><button className="danger" title="삭제" onClick={(event)=>{event.stopPropagation();setRemoveError('');setRemoving(item)}}><Trash2 size={15}/></button></div></footer></article>)}</section>}{selected!==undefined&&<WorkflowDrawer item={selected} agents={agents} close={()=>setSelected(undefined)} done={()=>{setSelected(undefined);void load()}} error={setError}/>}
+  return <div className="page"><PageHeader eyebrow="멀티 에이전트" title="에이전트 워크플로" description="에이전트 간 의존관계를 정의하고 실행 전에 깊이·호출량·순환·병렬 한도를 검증합니다." actions={<button className="button primary" disabled={agents.length===0} onClick={()=>setSelected(null)}><Plus size={16}/>워크플로 만들기</button>}/>{error&&<ErrorBanner message={error} onClose={()=>setError('')}/>} {success&&<SuccessBanner message={success}/>} {items.length===0?<Empty icon={<WorkflowIcon/>} title="워크플로가 없습니다" description="에이전트를 먼저 만든 뒤 순차 또는 병렬 실행 그래프를 구성하세요."/>:<section className="workflow-grid">{items.map((item)=><article key={item.id} onClick={()=>setSelected(item)}><header><div className="list-icon"><GitBranch/></div><StatusBadge status={item.enabled?'active':'disabled'}/></header><h3>{item.name}</h3><p>{item.description||'멀티 에이전트 실행 정의'}</p><div className="workflow-chain">{item.definition.steps.map((step,index)=><span key={step.id}>{index>0&&<i>→</i>}<b>{names.get(step.agentId)??'알 수 없는 에이전트'}</b></span>)}</div><footer><span>{item.mode} · 깊이 {item.maxDepth} · 호출 {item.maxAgentCalls}</span><div className="card-actions"><button className="button primary" disabled={!item.enabled} title={item.enabled?undefined:'비활성화된 Workflow는 실행할 수 없습니다.'} onClick={(event)=>{event.stopPropagation();setRunning(item)}}><Play size={14}/>실행</button><button className="button ghost" onClick={(event)=>{event.stopPropagation();void validate(item.id)}}><ShieldCheck size={14}/>검증</button><button title="수정" onClick={(event)=>{event.stopPropagation();setSelected(item)}}><Pencil size={15}/></button><button className="danger" title="삭제" onClick={(event)=>{event.stopPropagation();setRemoveError('');setRemoving(item)}}><Trash2 size={15}/></button></div></footer></article>)}</section>}{selected!==undefined&&<WorkflowDrawer item={selected} agents={agents} close={()=>setSelected(undefined)} done={()=>{setSelected(undefined);void load()}} error={setError}/>}
+    {running&&<RunDrawer item={running} close={()=>setRunning(null)}/>}
     {removing&&<ConfirmDialog title="워크플로를 삭제할까요?" message={<><strong>{removing.name}</strong> 실행 그래프 정의가 삭제됩니다. 연결된 에이전트는 그대로 유지됩니다.</>} busy={removeBusy} error={removeError} onConfirm={()=>void remove()} onCancel={()=>setRemoving(null)}/>}</div>
 }
 
@@ -37,3 +40,40 @@ function WorkflowDrawer({item,agents,close,done,error}:{item:Workflow|null;agent
 }
 
 function NumberField({label,value,set,min,max}:{label:string;value:number;set:(value:number)=>void;min:number;max:number}){return <label><span>{label}</span><input required type="number" min={min} max={max} value={value} onChange={(e)=>set(Number(e.target.value))}/></label>}
+
+/** Runs a saved graph and shows the per-step trace the engine returns. */
+function RunDrawer({item,close}:{item:Workflow;close:()=>void}) {
+  const [input,setInput] = useState('')
+  const [busy,setBusy] = useState(false)
+  const [error,setError] = useState('')
+  const [result,setResult] = useState<WorkflowRunResult|null>(null)
+  const submit = async (event:FormEvent) => {
+    event.preventDefault(); setBusy(true); setError(''); setResult(null)
+    try {
+      const response = await api.post<{status:string;result:WorkflowRunResult}>(`/api/v1/workflows/${item.id}/run`,{input})
+      setResult(response.result)
+      if (response.status !== 'succeeded') setError('일부 단계가 실패했습니다. 아래 실행 기록을 확인하세요.')
+    } catch (e) {
+      setError(e instanceof Error?e.message:'Workflow를 실행하지 못했습니다.')
+    } finally { setBusy(false) }
+  }
+  return <Drawer title={`${item.name} 실행`} subtitle={`${item.mode} · 최대 ${item.maxAgentCalls}회 호출 · ${item.maxDurationSeconds}초`} close={close}
+    footer={<><button className="button ghost" onClick={close}>닫기</button><button className="button primary" form="workflow-run" disabled={busy}><Play size={15}/>{busy?'실행 중…':'실행'}</button></>}>
+    <form id="workflow-run" className="drawer-form" onSubmit={submit}>
+      {error&&<ErrorBanner message={error} onClose={()=>setError('')}/>}
+      <label><span>요청 내용</span><textarea rows={4} value={input} onChange={(e)=>setInput(e.target.value)} placeholder="에이전트들에게 전달할 작업을 입력하세요."/></label>
+      <div className="info-box"><WorkflowIcon size={17}/><div><strong>모델 단위 실행</strong><p>각 단계는 해당 에이전트의 시스템 프롬프트와 연결된 모델로 실행되며, 의존 단계의 결과를 입력으로 받습니다.</p></div></div>
+    </form>
+    {result&&<>
+      <section className="detail-section"><h4>실행 결과</h4><pre className="runtime-log-preview custom-scroll">{result.output||'출력이 없습니다.'}</pre></section>
+      <section className="detail-section"><h4>단계별 기록 · 호출 {result.agentCalls}회</h4>
+        <div className="run-trace">{result.steps.map((step)=>
+          <article key={step.id} className={step.status}>
+            <header><strong>{step.agentName||step.id}</strong><StatusBadge status={step.status}/><small>L{step.level+1} · {step.durationMs}ms</small></header>
+            {step.error?<p className="run-error">{step.error}</p>:step.skipped?<p>{statusLabel('skipped')} — 라우터가 선택하지 않은 분기입니다.</p>:<pre className="custom-scroll">{step.output}</pre>}
+          </article>)}
+        </div>
+      </section>
+    </>}
+  </Drawer>
+}

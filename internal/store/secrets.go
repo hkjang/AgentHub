@@ -218,3 +218,40 @@ func (s *Store) UserAndScopesByAPIKey(ctx context.Context, token string) (User, 
 	}
 	return user, scopes, err
 }
+
+// RevealPersonalSecret decrypts one of a user's secrets. It exists so the
+// control plane can hand a credential to a Runtime it is provisioning; every
+// call is a disclosure, so the read is recorded through last_used_at and callers
+// must never return the value to a browser.
+func (s *Store) RevealPersonalSecret(ctx context.Context, userID, id string) (PersonalSecret, string, error) {
+	var item PersonalSecret
+	var encrypted string
+	var version int
+	err := s.pool.QueryRow(ctx, `SELECT id,name,kind,key_version,last_used_at,created_at,updated_at,encrypted_value,key_version FROM personal_secrets WHERE id=$1 AND user_id=$2`, id, userID).
+		Scan(&item.ID, &item.Name, &item.Kind, &item.KeyVersion, &item.LastUsedAt, &item.CreatedAt, &item.UpdatedAt, &encrypted, &version)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PersonalSecret{}, "", ErrNotFound
+	}
+	if err != nil {
+		return PersonalSecret{}, "", err
+	}
+	key, activeVersion, err := s.activeUserKey(ctx, userID)
+	if err != nil {
+		return PersonalSecret{}, "", err
+	}
+	if activeVersion != version {
+		// The keyring was rotated without re-wrapping this row; rotation rewrites
+		// every secret, so this means the row predates a failed rotation.
+		return PersonalSecret{}, "", fmt.Errorf("secret %q was encrypted with key version %d but the active version is %d", item.Name, version, activeVersion)
+	}
+	userCipher, err := cryptox.New(key)
+	if err != nil {
+		return PersonalSecret{}, "", err
+	}
+	plain, err := userCipher.Decrypt(encrypted, fmt.Sprintf("personal-secret:%s:%s:%d", userID, item.ID, version))
+	if err != nil {
+		return PersonalSecret{}, "", err
+	}
+	_, _ = s.pool.Exec(ctx, `UPDATE personal_secrets SET last_used_at=now() WHERE id=$1`, id)
+	return item, string(plain), nil
+}

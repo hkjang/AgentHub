@@ -3,7 +3,7 @@ import { Camera, Database, FolderGit2, HardDrive, Pencil, Plus, Trash2 } from 'l
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, Loading, PageHeader, StatusBadge } from '../components/UI'
-import type { Workspace } from '../types'
+import type { PersonalSecret, Workspace } from '../types'
 
 export function Workspaces(){
   const navigate=useNavigate()
@@ -46,4 +46,21 @@ function RenameWorkspaceDrawer({item,close,done}:{item:Workspace;close:()=>void;
   </Drawer>
 }
 
-function WorkspaceDrawer({close,done,setError}:{close:()=>void;done:()=>void;setError:(v:string)=>void}){const [name,setName]=useState(''),[type,setType]=useState('empty'),[size,setSize]=useState(20),[repository,setRepository]=useState(''),[branch,setBranch]=useState(''),[busy,setBusy]=useState(false);const submit=async(e:FormEvent)=>{e.preventDefault();setBusy(true);try{await api.post('/api/v1/workspaces',{name,type,sizeGb:size,repositoryUrl:repository,branch});done()}catch(err){setError(err instanceof Error?err.message:'작업공간을 만들지 못했습니다.')}finally{setBusy(false)}};return <Drawer title="새 작업공간" subtitle="에이전트 Pod가 종료되어도 데이터는 유지됩니다." close={close} footer={<><button className="button ghost" onClick={close}>취소</button><button className="button primary" form="workspace-form" disabled={busy}>{busy?'생성 중…':'작업공간 생성'}</button></>}><form className="drawer-form" id="workspace-form" onSubmit={submit}><label><span>이름 <b>*</b></span><input required maxLength={80} value={name} onChange={e=>setName(e.target.value)} placeholder="project-backend"/></label><fieldset><legend>초기화 방식</legend><div className="choice-grid"><button type="button" className={type==='empty'?'selected':''} onClick={()=>setType('empty')}><Database/><strong>빈 공간</strong><span>비어 있는 작업공간</span></button><button type="button" className={type==='git'?'selected':''} onClick={()=>setType('git')}><FolderGit2/><strong>Git 복제</strong><span>저장소 복제</span></button></div></fieldset>{type==='git'&&<><label><span>저장소 URL <b>*</b></span><input required type="url" value={repository} onChange={e=>setRepository(e.target.value)} placeholder="https://git.example.local/team/project.git"/></label><label><span>브랜치</span><input value={branch} onChange={e=>setBranch(e.target.value)} placeholder="main"/></label></>}<label><span>용량</span><div className="range-value"><input type="range" min="5" max="200" step="5" value={size} onChange={e=>setSize(Number(e.target.value))}/><strong>{size} GB</strong></div></label></form></Drawer>}
+function WorkspaceDrawer({close,done,setError}:{close:()=>void;done:()=>void;setError:(v:string)=>void}){
+  const [name,setName]=useState(''),[type,setType]=useState('empty'),[size,setSize]=useState(20),[repository,setRepository]=useState(''),[branch,setBranch]=useState(''),[busy,setBusy]=useState(false)
+  const [secrets,setSecrets]=useState<PersonalSecret[]>([])
+  const [credentialId,setCredentialId]=useState('')
+  const [credentialKind,setCredentialKind]=useState<'token'|'ssh-key'>('token')
+  const [credentialUser,setCredentialUser]=useState('')
+  useEffect(()=>{void api.get<{items?:PersonalSecret[]}>('/api/v1/secrets').then(v=>setSecrets(v.items??[])).catch(()=>undefined)},[])
+  const submit=async(e:FormEvent)=>{
+    e.preventDefault();setBusy(true)
+    try{
+      await api.post('/api/v1/workspaces',{name,type,sizeGb:size,repositoryUrl:repository,branch,
+        ...(type==='git'&&credentialId?{gitCredentialSecretId:credentialId,gitCredentialKind:credentialKind,gitCredentialUsername:credentialUser}:{})})
+      done()
+    }catch(err){setError(err instanceof Error?err.message:'작업공간을 만들지 못했습니다.')}finally{setBusy(false)}
+  };return <Drawer title="새 작업공간" subtitle="에이전트 Pod가 종료되어도 데이터는 유지됩니다." close={close} footer={<><button className="button ghost" onClick={close}>취소</button><button className="button primary" form="workspace-form" disabled={busy}>{busy?'생성 중…':'작업공간 생성'}</button></>}><form className="drawer-form" id="workspace-form" onSubmit={submit}><label><span>이름 <b>*</b></span><input required maxLength={80} value={name} onChange={e=>setName(e.target.value)} placeholder="project-backend"/></label><fieldset><legend>초기화 방식</legend><div className="choice-grid"><button type="button" className={type==='empty'?'selected':''} onClick={()=>setType('empty')}><Database/><strong>빈 공간</strong><span>비어 있는 작업공간</span></button><button type="button" className={type==='git'?'selected':''} onClick={()=>setType('git')}><FolderGit2/><strong>Git 복제</strong><span>저장소 복제</span></button></div></fieldset>{type==='git'&&<><label><span>저장소 URL <b>*</b></span><input required type="url" value={repository} onChange={e=>setRepository(e.target.value)} placeholder="https://git.example.local/team/project.git"/></label><label><span>브랜치</span><input value={branch} onChange={e=>setBranch(e.target.value)} placeholder="main"/></label>
+    <label><span>Private 저장소 인증</span><select value={credentialId} onChange={e=>setCredentialId(e.target.value)}><option value="">공개 저장소 (인증 없음)</option>{secrets.map(v=><option key={v.id} value={v.id}>{v.name} · {v.kind}</option>)}</select><small>시크릿 · API 키 화면에 등록한 개인 Secret을 선택합니다. 값은 Runtime에 Secret으로만 전달됩니다.</small></label>
+    {credentialId&&<><label><span>인증 방식</span><select value={credentialKind} onChange={e=>setCredentialKind(e.target.value as 'token'|'ssh-key')}><option value="token">HTTPS 토큰 (PAT)</option><option value="ssh-key">SSH 개인키</option></select></label>
+    {credentialKind==='token'&&<label><span>사용자 이름</span><input value={credentialUser} onChange={e=>setCredentialUser(e.target.value)} placeholder="Bitbucket 계정명 · GitLab은 oauth2"/></label>}</>}</>}<label><span>용량</span><div className="range-value"><input type="range" min="5" max="200" step="5" value={size} onChange={e=>setSize(Number(e.target.value))}/><strong>{size} GB</strong></div></label></form></Drawer>}

@@ -191,3 +191,74 @@ func (s *Server) deleteAdminResource(kind string) http.HandlerFunc {
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
+
+// putMCPCredential stores the credential a runtime presents to an MCP server.
+// Administrators manage the shared platform credential; every user manages their
+// own for servers configured with per-user credentials.
+func (s *Server) putMCPCredential(shared bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		u, _ := userFromContext(r.Context())
+		serverID := chi.URLParam(r, "id")
+		var input struct {
+			Value string `json:"value"`
+		}
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+		if strings.TrimSpace(input.Value) == "" {
+			writeError(w, http.StatusBadRequest, "invalid_credential", "MCP 자격증명 값을 입력해 주세요.")
+			return
+		}
+		server, err := s.store.MCPServerByID(r.Context(), serverID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		if server.AuthType == "" || server.AuthType == "none" {
+			writeError(w, http.StatusConflict, "mcp_auth_disabled", "이 MCP 서버는 인증을 사용하지 않도록 설정되어 있습니다.")
+			return
+		}
+		owner := u.ID
+		if shared {
+			if server.PerUserCredential {
+				writeError(w, http.StatusConflict, "mcp_per_user_credential", "이 MCP 서버는 사용자별 자격증명을 사용합니다. 각 사용자가 직접 등록해야 합니다.")
+				return
+			}
+			owner = ""
+		} else if !server.PerUserCredential {
+			writeError(w, http.StatusConflict, "mcp_shared_credential", "이 MCP 서버는 공용 자격증명을 사용합니다. 관리자에게 요청해 주세요.")
+			return
+		}
+		if err := s.store.PutMCPCredential(r.Context(), serverID, owner, input.Value); err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		// The value itself is never logged or echoed back.
+		s.store.Audit(r.Context(), &u, "mcp.credential.update", "mcp-server", serverID, "success", clientIP(r), map[string]any{"scope": credentialScope(shared)})
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func (s *Server) deleteMCPCredential(shared bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		u, _ := userFromContext(r.Context())
+		serverID := chi.URLParam(r, "id")
+		owner := u.ID
+		if shared {
+			owner = ""
+		}
+		if err := s.store.DeleteMCPCredential(r.Context(), serverID, owner); err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		s.store.Audit(r.Context(), &u, "mcp.credential.delete", "mcp-server", serverID, "success", clientIP(r), map[string]any{"scope": credentialScope(shared)})
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func credentialScope(shared bool) string {
+	if shared {
+		return store.MCPCredentialShared
+	}
+	return store.MCPCredentialPerUser
+}

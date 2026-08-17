@@ -11,6 +11,7 @@ const STATUS_LABELS: Record<string, string> = {
   starting: '시작 중', spawning: '생성 중', provisioning: '준비 중', pending: '대기', stopping: '중지 중',
   idle: '유휴', stopped: '중지됨', disabled: '비활성', unsupported: '미지원',
   failed: '실패', crashed: '비정상 종료', error: '오류', rejected: '거부됨', approved: '승인됨',
+  succeeded: '성공', skipped: '건너뜀', validating: '검증 중',
 }
 export function statusLabel(status: string) { return STATUS_LABELS[status.toLowerCase()] ?? status }
 export function StatusBadge({status}:{status:string}) { const normal=status.toLowerCase().replaceAll('_','-');return <span className={`status-badge status-${normal}`} title={status}><span/>{statusLabel(status)}</span> }

@@ -223,10 +223,19 @@ function facts(kind: Kind, item: Item): [string, unknown][] {
       ["Status", item.enabled ? "Enabled" : "Disabled"],
       ["Type", "Bundle"],
     ];
+  const authType = String(item.authType ?? "none");
+  const auth =
+    authType === "none"
+      ? "없음"
+      : item.perUserCredential
+        ? `${authType} · 사용자별`
+        : item.credentialConfigured
+          ? `${authType} · 등록됨`
+          : `${authType} · 미등록`;
   return [
     ["Mode", item.mode],
-    ["Transport", item.transport],
     ["Risk", item.riskLevel],
+    ["인증", auth],
   ];
 }
 
@@ -288,7 +297,13 @@ function ResourceDrawer({
                 riskLevel: "low",
                 approvalRequired: false,
                 enabled: true,
+                authType: "none",
+                authHeader: "",
+                perUserCredential: false,
               };
+  // Kept out of `form`: the credential is write-only and must never be part of a
+  // resource body that a listing echoes back.
+  const [credential, setCredential] = useState("");
   const [form, setForm] = useState<Record<string, unknown>>({
       ...defaults,
       ...item,
@@ -308,7 +323,12 @@ function ResourceDrawer({
     e.preventDefault();
     setBusy(true);
     try {
-      await api.post(`/api/v1/admin/${meta[kind].endpoint}`, form);
+      const saved = await api.post<Item>(`/api/v1/admin/${meta[kind].endpoint}`, form);
+      if (kind === "mcp" && credential.trim() && !form.perUserCredential) {
+        await api.put(`/api/v1/admin/mcp-servers/${saved.id}/credential`, {
+          value: credential,
+        });
+      }
       done();
     } catch (e) {
       error(e instanceof Error ? e.message : "저장하지 못했습니다.");
@@ -393,6 +413,65 @@ function ResourceDrawer({
               form={form}
               update={update}
             />
+          </>
+        )}
+        {kind === "mcp" && (
+          <>
+            <label>
+              <span>인증 방식</span>
+              <select
+                value={String(field("authType") || "none")}
+                onChange={(e) => update("authType", e.target.value)}
+              >
+                <option value="none">없음 (공개 MCP)</option>
+                <option value="bearer">Bearer 토큰</option>
+                <option value="header">커스텀 헤더</option>
+                <option value="basic">Basic 인증</option>
+              </select>
+            </label>
+            {String(field("authType") || "none") === "header" && (
+              <label>
+                <span>
+                  헤더 이름 <b>*</b>
+                </span>
+                <input
+                  required
+                  value={String(field("authHeader") || "")}
+                  onChange={(e) => update("authHeader", e.target.value)}
+                  placeholder="X-Api-Key"
+                />
+              </label>
+            )}
+            {String(field("authType") || "none") !== "none" && (
+              <>
+                <Check
+                  label="사용자별 자격증명 사용"
+                  name="perUserCredential"
+                  form={form}
+                  update={update}
+                />
+                <label>
+                  <span>공용 자격증명</span>
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    value={credential}
+                    disabled={Boolean(form.perUserCredential)}
+                    onChange={(e) => setCredential(e.target.value)}
+                    placeholder={
+                      form.perUserCredential
+                        ? "사용자별 자격증명 모드에서는 각 사용자가 직접 등록합니다"
+                        : item?.credentialConfigured
+                          ? "등록됨 · 변경하려면 새 값을 입력하세요"
+                          : "미등록"
+                    }
+                  />
+                  <small>
+                    값은 암호화되어 저장되며 Runtime에는 Secret으로만 전달됩니다.
+                  </small>
+                </label>
+              </>
+            )}
           </>
         )}
         {kind === "images" && (

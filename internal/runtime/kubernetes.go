@@ -79,7 +79,15 @@ func (k *KubernetesSpawner) object(spec Spec) *unstructured.Unstructured {
 		if port <= 0 {
 			port = 8000
 		}
-		bindings = append(bindings, map[string]any{"name": m.Name, "mode": m.Mode, "endpoint": m.Endpoint, "image": m.Image, "port": int64(port)})
+		binding := map[string]any{"name": m.Name, "mode": m.Mode, "endpoint": m.Endpoint, "image": m.Image, "port": int64(port)}
+		if m.AuthType != "" && m.AuthType != "none" {
+			// The credential itself goes to the Secret; the CRD only names the key,
+			// because an AgentRuntime object is readable by anyone with RBAC on it.
+			binding["authType"] = m.AuthType
+			binding["authHeader"] = m.AuthHeader
+			binding["credentialKey"] = mcpCredentialKey(m.Name)
+		}
+		bindings = append(bindings, binding)
 	}
 	image := spec.Image
 	if image == "" {
@@ -92,10 +100,37 @@ func (k *KubernetesSpawner) object(spec Spec) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "agenthub.io/v1alpha1", "kind": "AgentRuntime",
 		"metadata": map[string]any{"name": spec.Runtime.CRDName, "labels": map[string]any{"app.kubernetes.io/managed-by": "agenthub", "agenthub.io/owner": labelValue(spec.Agent.OwnerID), "agenthub.io/agent": labelValue(spec.Agent.ID)}},
-		"spec": map[string]any{"owner": spec.Agent.OwnerID, "agentRef": map[string]any{"id": spec.Agent.ID, "version": int64(spec.Agent.Version)}, "runtime": map[string]any{"type": spec.Agent.RuntimeType, "image": image}, "profile": profile, "workspace": map[string]any{"type": spec.WorkspaceType, "pvcName": spec.WorkspacePVC, "sizeGb": int64(workspaceSize), "repositoryUrl": spec.WorkspaceRepositoryURL, "branch": spec.WorkspaceBranch, "snapshotName": spec.WorkspaceSnapshot}, "model": map[string]any{"baseUrl": spec.ModelBaseURL, "name": spec.ModelName, "secretRef": spec.Runtime.CRDName}, "mcp": bindings,
+		"spec": map[string]any{"owner": spec.Agent.OwnerID, "agentRef": map[string]any{"id": spec.Agent.ID, "version": int64(spec.Agent.Version)}, "runtime": map[string]any{"type": spec.Agent.RuntimeType, "image": image}, "profile": profile, "workspace": map[string]any{"type": spec.WorkspaceType, "pvcName": spec.WorkspacePVC, "sizeGb": int64(workspaceSize), "repositoryUrl": spec.WorkspaceRepositoryURL, "branch": spec.WorkspaceBranch, "snapshotName": spec.WorkspaceSnapshot, "gitCredentialKind": spec.WorkspaceGitCredentialKind, "gitCredentialUsername": spec.WorkspaceGitCredentialUsername}, "model": map[string]any{"baseUrl": spec.ModelBaseURL, "name": spec.ModelName, "secretRef": spec.Runtime.CRDName}, "mcp": bindings,
 			"security":  map[string]any{"runAsNonRoot": spec.Security.RunAsNonRoot, "readOnlyRootFilesystem": spec.Security.ReadOnlyRootFilesystem, "allowPrivilegeEscalation": spec.Security.AllowPrivilegeEscalation, "automountServiceAccountToken": spec.Security.AutomountServiceAccountToken, "seccompProfile": spec.Security.SeccompProfile},
 			"network":   map[string]any{"defaultDeny": spec.Network.DefaultDeny, "allowDNS": spec.Network.AllowDNS, "allowedDestinations": spec.Network.AllowedDestinations},
 			"lifecycle": map[string]any{"desiredState": "Running", "autoRestart": true, "idleTimeoutSeconds": int64(spec.Profile.IdleTimeoutSeconds)}}}}
+}
+
+// gitCredentialKey names the Secret entry holding the workspace clone credential.
+const gitCredentialKey = "workspace-git-credential"
+
+// mcpCredentialKey names the Secret entry holding one MCP server's credential.
+// Secret keys allow alphanumerics, '-', '_' and '.', which labelValue already
+// guarantees.
+func mcpCredentialKey(serverName string) string {
+	return "mcp-credential-" + labelValue(serverName)
+}
+
+// runtimeCredentialData collects every credential that belongs in the runtime
+// Secret: the workspace clone credential and one entry per authenticated MCP
+// server. None of these may appear in the CRD or the ConfigMap.
+func runtimeCredentialData(spec Spec) map[string]string {
+	data := map[string]string{}
+	if spec.WorkspaceGitCredential != "" {
+		data[gitCredentialKey] = spec.WorkspaceGitCredential
+	}
+	for _, binding := range spec.MCPServers {
+		if binding.AuthType == "" || binding.AuthType == "none" || binding.Credential == "" {
+			continue
+		}
+		data[mcpCredentialKey(binding.Name)] = binding.Credential
+	}
+	return data
 }
 
 func labelValue(value string) string {
@@ -149,7 +184,11 @@ func (k *KubernetesSpawner) Spawn(ctx context.Context, spec Spec) error {
 	if _, err = rand.Read(tokenBytes); err != nil {
 		return err
 	}
-	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: spec.Runtime.CRDName, Namespace: namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "agenthub", "agenthub.io/runtime": spec.Runtime.CRDName}}, Type: corev1.SecretTypeOpaque, StringData: map[string]string{"runtime-token": base64.RawURLEncoding.EncodeToString(tokenBytes), "model-api-key": spec.ModelAPIKey}}
+	secretData := map[string]string{"runtime-token": base64.RawURLEncoding.EncodeToString(tokenBytes), "model-api-key": spec.ModelAPIKey}
+	for key, value := range runtimeCredentialData(spec) {
+		secretData[key] = value
+	}
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: spec.Runtime.CRDName, Namespace: namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "agenthub", "agenthub.io/runtime": spec.Runtime.CRDName}}, Type: corev1.SecretTypeOpaque, StringData: secretData}
 	secretCreated := false
 	if _, err = coreClient.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
 		if !apierrors.IsAlreadyExists(err) {
@@ -192,6 +231,15 @@ func (k *KubernetesSpawner) ensureSecret(ctx context.Context, coreClient kuberne
 	}
 	if spec.ModelAPIKey != "" || existing.Data["model-api-key"] == nil {
 		existing.Data["model-api-key"] = []byte(spec.ModelAPIKey)
+	}
+	// Drop stale MCP credentials so unbinding a server also revokes its secret.
+	for key := range existing.Data {
+		if strings.HasPrefix(key, "mcp-credential-") || key == gitCredentialKey {
+			delete(existing.Data, key)
+		}
+	}
+	for key, value := range runtimeCredentialData(spec) {
+		existing.Data[key] = []byte(value)
 	}
 	_, err = coreClient.CoreV1().Secrets(namespace).Update(ctx, existing, metav1.UpdateOptions{})
 	return err
