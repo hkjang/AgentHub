@@ -14,7 +14,7 @@
 [![MCP Ready](https://img.shields.io/badge/MCP-Streamable%20HTTP-FF6B6B?style=flat)](https://modelcontextprotocol.io)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-[🌐 웹 쇼케이스 둘러보기](docs/index.html) · [📖 사용자 매뉴얼](docs/user-guide.md) · [🚀 CRU 실전 워크스루](docs/cru-walkthrough.md) · [📐 시스템 아키텍처](docs/architecture.md)
+[🌐 웹 쇼케이스 둘러보기](docs/index.html) · [📘 공식 사용자 가이드 (PDF)](docs/AgentHub_User_Guide.pdf) · [📗 CRU 매뉴얼 (PDF)](docs/AgentHub_CRU_Operations_Manual.pdf) · [📙 아키텍처 백서 (PDF)](docs/AgentHub_Architecture_and_MCP_Whitepaper.pdf)
 
 </div>
 
