@@ -140,6 +140,14 @@ func (b *Builder) Build(ctx context.Context, rt store.Runtime, agent store.Agent
 		if bundleErr != nil {
 			return runtime.Spec{}, bundleErr
 		}
+		policies, policyErr := b.store.MCPToolPolicies(ctx, agent.ID)
+		if policyErr != nil {
+			return runtime.Spec{}, policyErr
+		}
+		policyByServer := make(map[string]store.MCPToolPolicy, len(policies))
+		for _, policy := range policies {
+			policyByServer[policy.ServerID] = policy
+		}
 		for _, server := range servers {
 			binding := runtime.MCPBinding{Name: server.Name, Mode: server.Mode, Endpoint: server.Endpoint, Image: server.Image, Port: server.Port, AuthType: server.AuthType, AuthHeader: server.AuthHeader}
 			if binding.AuthType != "" && binding.AuthType != "none" {
@@ -154,6 +162,9 @@ func (b *Builder) Build(ctx context.Context, rt store.Runtime, agent store.Agent
 				default:
 					return runtime.Spec{}, credentialErr
 				}
+			}
+			if policy, ok := policyByServer[server.ID]; ok {
+				binding.ToolPolicyMode, binding.ToolPolicyTools = policy.Mode, policy.Tools
 			}
 			bindings = append(bindings, binding)
 		}
@@ -189,5 +200,5 @@ func (b *Builder) Build(ctx context.Context, rt store.Runtime, agent store.Agent
 			}
 		}
 	}
-	return runtime.Spec{Runtime: rt, Agent: agent, Profile: profile, Image: image, WorkspacePVC: pvc, WorkspaceType: workspaceType, WorkspaceRepositoryURL: repositoryURL, WorkspaceBranch: branch, WorkspaceSnapshot: snapshotName, WorkspaceSizeGB: workspaceSize, WorkspaceGitCredentialKind: gitCredentialKind, WorkspaceGitCredentialUsername: gitCredentialUsername, WorkspaceGitCredential: gitCredential, ModelBaseURL: modelBaseURL, ModelName: modelName, ModelAPIKey: modelAPIKey, MCPServers: bindings, Security: security, Network: network}, nil
+	return runtime.Spec{Runtime: rt, Agent: agent, SidecarImage: runtime.SidecarImage(), Profile: profile, Image: image, WorkspacePVC: pvc, WorkspaceType: workspaceType, WorkspaceRepositoryURL: repositoryURL, WorkspaceBranch: branch, WorkspaceSnapshot: snapshotName, WorkspaceSizeGB: workspaceSize, WorkspaceGitCredentialKind: gitCredentialKind, WorkspaceGitCredentialUsername: gitCredentialUsername, WorkspaceGitCredential: gitCredential, ModelBaseURL: modelBaseURL, ModelName: modelName, ModelAPIKey: modelAPIKey, MCPServers: bindings, Security: security, Network: network}, nil
 }

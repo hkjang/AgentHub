@@ -614,3 +614,120 @@ func TestProxiedRuntimesRegisterTheAuthenticatingSidecar(t *testing.T) {
 		}
 	}
 }
+
+// A tool policy that the agent process could route around would not be a policy,
+// so a policied binding must reach the agent as the loopback gateway address and
+// the real upstream must only be known to the gateway container.
+func TestPoliciedMCPBindingIsRoutedThroughTheGateway(t *testing.T) {
+	var value spec
+	value.Owner = "user-1"
+	value.Runtime.Type = "opencode"
+	value.Runtime.Image = "agenthub-base:v0.7.0"
+	value.MCP = append(value.MCP,
+		mcpBinding{Name: "context7", Mode: "shared", Endpoint: "https://mcp.context7.test/mcp",
+			AuthType: "bearer", CredentialKey: "mcp-credential-context7",
+			ToolPolicy: &mcpToolPolicy{Mode: "allow", Tools: []string{"resolve-library-id"}}},
+		mcpBinding{Name: "jira", Mode: "shared", Endpoint: "https://mcp.jira.test/mcp"},
+	)
+
+	bindings := effectiveMCP("agent-runtime-dev", "rt-1", value)
+	policied, plain := bindings[0], bindings[1]
+	if got := policied["endpoint"]; got != "http://127.0.0.1:9129/mcp/context7" {
+		t.Fatalf("policied endpoint = %v, want the loopback gateway", got)
+	}
+	if got := policied["upstream"]; got != "https://mcp.context7.test/mcp" {
+		t.Fatalf("the real upstream must be preserved for the gateway, got %v", got)
+	}
+	// A binding with no policy keeps talking to its server directly.
+	if got := plain["endpoint"]; got != "https://mcp.jira.test/mcp" {
+		t.Fatalf("unpolicied endpoint = %v, want the server itself", got)
+	}
+	if _, ok := plain["toolPolicyMode"]; ok {
+		t.Fatal("a binding with no policy must not be marked as policied")
+	}
+
+	_, openRaw, hermesRaw := runtimeConfigs("agent-runtime-dev", "rt-1", value)
+	for _, raw := range []string{openRaw, hermesRaw} {
+		if strings.Contains(raw, "mcp.context7.test") {
+			t.Fatalf("the agent config must not learn the upstream address:\n%s", raw)
+		}
+		// The credential belongs to the gateway now, not the agent process.
+		if strings.Contains(raw, "AGENTHUB_MCP_CONTEXT7") {
+			t.Fatalf("a policied binding must not hand the credential to the agent:\n%s", raw)
+		}
+		if !strings.Contains(raw, "127.0.0.1:9129/mcp/context7") {
+			t.Fatalf("the agent should be pointed at the gateway:\n%s", raw)
+		}
+	}
+
+	gateway, ok := mcpGatewayContainer(value.Runtime.Image, "rt-1", bindings, value.MCP)
+	if !ok {
+		t.Fatal("a policied binding must produce a gateway container")
+	}
+	var config, credential string
+	for _, env := range gateway.Env {
+		switch env.Name {
+		case "AGENTHUB_MCP_GATEWAY":
+			config = env.Value
+		case "AGENTHUB_MCP_CONTEXT7":
+			if env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil {
+				t.Fatal("the credential must come from the runtime Secret, not a literal")
+			}
+			credential = env.ValueFrom.SecretKeyRef.Key
+		}
+	}
+	if credential != "mcp-credential-context7" {
+		t.Fatalf("gateway credential key = %q", credential)
+	}
+	var upstreams []struct {
+		Name         string   `json:"name"`
+		Upstream     string   `json:"upstream"`
+		AuthTemplate string   `json:"authTemplate"`
+		Mode         string   `json:"mode"`
+		Tools        []string `json:"tools"`
+	}
+	if err := json.Unmarshal([]byte(config), &upstreams); err != nil {
+		t.Fatalf("gateway config is not valid JSON: %v (%s)", err, config)
+	}
+	if len(upstreams) != 1 || upstreams[0].Upstream != "https://mcp.context7.test/mcp" {
+		t.Fatalf("only the policied server belongs in the gateway: %#v", upstreams)
+	}
+	if upstreams[0].Mode != "allow" || len(upstreams[0].Tools) != 1 {
+		t.Fatalf("policy was not carried through: %#v", upstreams[0])
+	}
+	// The template is what lets the gateway substitute the secret it holds.
+	if upstreams[0].AuthTemplate != "Bearer %s" {
+		t.Fatalf("auth template = %q, want a substitutable template", upstreams[0].AuthTemplate)
+	}
+}
+
+func TestNoGatewayContainerWithoutAPolicy(t *testing.T) {
+	var value spec
+	value.Runtime.Type = "opencode"
+	value.MCP = append(value.MCP, mcpBinding{Name: "jira", Mode: "shared", Endpoint: "https://mcp.jira.test/mcp"})
+	if _, ok := mcpGatewayContainer("image", "rt-1", effectiveMCP("ns", "rt-1", value), value.MCP); ok {
+		t.Fatal("a runtime with no tool policy must not carry the gateway sidecar")
+	}
+}
+
+// Pinning an agent to an older runtime image must not pin the platform's own
+// sidecars with it, or a policy shipped in this release would silently run last
+// release's code — or, as it did once, crash-loop.
+func TestPlatformSidecarsRunTheControlPlaneImage(t *testing.T) {
+	var value spec
+	value.Runtime.Type = "opencode"
+	value.Runtime.Image = "agenthub-base:v0.4.0"
+	value.Runtime.SidecarImage = "agenthub:v0.7.0"
+	value.MCP = append(value.MCP, mcpBinding{Name: "context7", Mode: "shared", Endpoint: "https://mcp.context7.test/mcp",
+		ToolPolicy: &mcpToolPolicy{Mode: "allow", Tools: []string{"resolve-library-id"}}})
+
+	gateway, ok := mcpGatewayContainer(value.sidecarImage(), "rt-1", effectiveMCP("ns", "rt-1", value), value.MCP)
+	if !ok || gateway.Image != "agenthub:v0.7.0" {
+		t.Fatalf("gateway image = %q, want the control plane image", gateway.Image)
+	}
+	// An object written before sidecarImage existed still has to work.
+	value.Runtime.SidecarImage = ""
+	if got := value.sidecarImage(); got != "agenthub-base:v0.4.0" {
+		t.Fatalf("fallback image = %q, want the runtime image", got)
+	}
+}

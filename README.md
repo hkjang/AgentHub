@@ -29,6 +29,7 @@
   - **OpenCode**: 브라우저 기반 풀스택 코딩 IDE 및 실시간 파일/터미널 워크스페이스
   - **Hermes Agent**: 장기 기억(Long-term Memory) 및 도구 실행 자율 에이전트
 - 🤖 **자율 실행 플레인**: Agent에 Goal과 Trigger를 주면 예약·Webhook·수동으로 스스로 Task를 수행하고, 완료 조건을 플랫폼이 검증한 뒤 산출물과 실행 타임라인을 남깁니다. 기존 Interactive 방식은 그대로 유지됩니다.
+- 🛡️ **MCP 도구 정책**: MCP 서버 단위가 아니라 도구 단위로 호출 권한을 제한합니다. Pod 내부 게이트웨이가 강제하므로 에이전트가 우회할 수 없고, 차단된 도구는 목록에서도 숨겨지며, 자격 증명은 에이전트 컨테이너에 들어가지 않습니다.
 - 📡 **이벤트 Trigger**: 작업 실패·런타임 장애·승인 처리·산출물 생성 같은 플랫폼 이벤트에 다른 Agent가 반응해 후속 작업을 시작합니다. 이벤트는 DB 아웃박스에 적재되어 재시작에도 유실되지 않으며, 페이로드 필터와 순환 방지로 불필요한 기동을 막습니다.
 - 🧭 **자율 제어(Planner · Approval · Memory · Delegation)**: 실행 전 계획을 수립하고, 상태 변경 작업은 사람의 승인을 받은 뒤 재개하며, 학습한 사실을 Agent 범위로 영속화하고, 권한 밖의 일은 순환·깊이 제한 아래 다른 Agent에게 위임합니다.
 - 🇰🇷 **한국어 우선 관리 콘솔**: 메뉴, 상태, 안내 문구를 한국어로 제공하며 빠른 이동(⌘K)은 한글·영문 키워드를 모두 검색합니다.
@@ -127,7 +128,7 @@ kubectl apply -k deploy/kubernetes
 make image image-base
 # base 이미지는 BASE_VERSION 파일을 따르며, 변경이 없으면 이전 태그를 그대로 사용합니다.
 minikube image load agenthub:v0.7.0
-minikube image load agenthub-base:v0.6.0
+minikube image load agenthub-base:v0.7.0
 
 # 4. 파드 상태 확인
 kubectl get pods -n agent-platform-system

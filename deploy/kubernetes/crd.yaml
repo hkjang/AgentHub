@@ -54,6 +54,11 @@ spec:
                     # Keep in sync with internal/runtimetype.Supported.
                     type: {type: string, enum: [opencode, hermes, qwenpaw, custom]}
                     image: {type: string, minLength: 1}
+                    # AgentHub's own sidecars run this image rather than the
+                    # runtime image, so pinning an agent to an older runtime
+                    # cannot pin the platform's code with it. Empty falls back
+                    # to the runtime image.
+                    sidecarImage: {type: string}
                 profile:
                   type: object
                   properties:
@@ -98,6 +103,18 @@ spec:
                       authType: {type: string, enum: [none, bearer, header, basic], default: none}
                       authHeader: {type: string}
                       credentialKey: {type: string}
+                      # Which of this server's tools the agent may call. When
+                      # present the binding is routed through the in-Pod egress
+                      # gateway, so the agent process cannot reach the server
+                      # directly and cannot call what it is not allowed to.
+                      toolPolicy:
+                        type: object
+                        required: [mode]
+                        properties:
+                          mode: {type: string, enum: [allow, deny]}
+                          tools:
+                            type: array
+                            items: {type: string}
                 security:
                   type: object
                   properties:

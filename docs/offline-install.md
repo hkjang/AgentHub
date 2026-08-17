@@ -36,7 +36,7 @@ for archive in *.tar.gz.part-aa; do
 done
 
 docker load < agenthub-v0.7.0.tar.gz
-docker load < agenthub-base-v0.6.0.tar.gz
+docker load < agenthub-base-v0.7.0.tar.gz
 export AGENTHUB_BOOTSTRAP_ADMIN=admin
 export AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD='a-long-unique-password'
 export AGENTHUB_ENCRYPTION_KEY="$(openssl rand -base64 32)"

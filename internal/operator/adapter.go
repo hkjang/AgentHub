@@ -47,6 +47,10 @@ type adapterBuild struct {
 
 func (b adapterBuild) image() string { return b.Value.Runtime.Image }
 
+// sidecarImage is the control plane's own image, so a platform sidecar never
+// runs the code of whatever runtime image the agent happens to be pinned to.
+func (b adapterBuild) sidecarImage() string { return b.Value.sidecarImage() }
+
 // secretEnv reads one key from the runtime Secret.
 func (b adapterBuild) secretEnv(name, key string) corev1.EnvVar {
 	return corev1.EnvVar{Name: name, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: b.Name}, Key: key}}}
@@ -158,7 +162,7 @@ var runtimeAdapters = map[string]runtimeAdapter{
 				SecurityContext: restrictedContainerSecurityContext(build.Value.Security.ReadOnlyRootFilesystem),
 				VolumeMounts:    homeAndConfigMounts,
 			}
-			return []corev1.Container{dashboard, runtimeProxyContainer("hermes-dashboard-proxy", build.Name, build.image(), "http://127.0.0.1:9120")}
+			return []corev1.Container{dashboard, runtimeProxyContainer("hermes-dashboard-proxy", build.Name, build.sidecarImage(), "http://127.0.0.1:9120")}
 		},
 	},
 	runtimetype.QwenPaw: {
@@ -179,7 +183,7 @@ var runtimeAdapters = map[string]runtimeAdapter{
 		Sidecars: func(build adapterBuild) []corev1.Container {
 			// `qwenpaw app` ships no authenticator either, so the same proxy fronts
 			// it and every browser session still has to present the runtime token.
-			return []corev1.Container{runtimeProxyContainer("qwenpaw-proxy", build.Name, build.image(), "http://127.0.0.1:8642")}
+			return []corev1.Container{runtimeProxyContainer("qwenpaw-proxy", build.Name, build.sidecarImage(), "http://127.0.0.1:8642")}
 		},
 	},
 }

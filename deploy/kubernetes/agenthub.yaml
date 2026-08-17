@@ -35,6 +35,10 @@ spec:
           imagePullPolicy: IfNotPresent
           envFrom:
             - secretRef: {name: agenthub-bootstrap}
+          env:
+            # AgentHub's sidecars run the control plane's own image. Change this
+            # together with the image above when deploying from a registry.
+            - {name: AGENTHUB_SIDECAR_IMAGE, value: "agenthub:v0.7.0"}
           ports:
             - {name: http, containerPort: 8080}
           readinessProbe:

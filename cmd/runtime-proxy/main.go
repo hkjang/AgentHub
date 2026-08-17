@@ -11,7 +11,16 @@ import (
 	"time"
 )
 
+// envMCPGateway carries the MCP egress configuration. When it is set the binary
+// runs as the MCP tool policy gateway instead of the runtime session proxy; both
+// modes are one image so the offline bundle carries one binary, not two.
+const envMCPGateway = "AGENTHUB_MCP_GATEWAY"
+
 func main() {
+	if config := os.Getenv(envMCPGateway); config != "" {
+		runMCPGateway(config)
+		return
+	}
 	token := os.Getenv("AGENTHUB_RUNTIME_PROXY_TOKEN")
 	if token == "" {
 		log.Fatal("AGENTHUB_RUNTIME_PROXY_TOKEN is required")
@@ -56,6 +65,21 @@ func main() {
 	handler := mux
 	server := &http.Server{Addr: listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
 	log.Printf("runtime proxy listening on %s", listen)
+	log.Fatal(server.ListenAndServe())
+}
+
+// runMCPGateway serves every configured MCP server behind its tool policy.
+func runMCPGateway(config string) {
+	upstreams, err := loadUpstreams(config)
+	if err != nil {
+		log.Fatal(err)
+	}
+	listen := envOr("AGENTHUB_MCP_GATEWAY_LISTEN", "127.0.0.1:9129")
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /livez", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	mux.Handle("/mcp/", mcpGateway(upstreams, auditToLog))
+	server := &http.Server{Addr: listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
+	log.Printf("MCP tool policy gateway listening on %s for %d server(s)", listen, len(upstreams))
 	log.Fatal(server.ListenAndServe())
 }
 

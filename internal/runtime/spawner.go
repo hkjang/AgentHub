@@ -34,6 +34,21 @@ func DefaultBaseImage() string {
 	return "agenthub-base:v" + strings.TrimSuffix(buildinfo.BaseVersion, "-dev")
 }
 
+// EnvSidecarImage names the image AgentHub's own sidecars run. Deployments that
+// pull from a private registry set it to the same reference the control plane
+// itself was deployed with.
+const EnvSidecarImage = "AGENTHUB_SIDECAR_IMAGE"
+
+// SidecarImage is the image for the session proxy and the MCP tool policy
+// gateway. It follows the control plane's version rather than the runtime's, so
+// an agent pinned to an older runtime image still gets this release's sidecars.
+func SidecarImage() string {
+	if override := strings.TrimSpace(os.Getenv(EnvSidecarImage)); override != "" {
+		return override
+	}
+	return "agenthub:v" + strings.TrimSuffix(buildinfo.Version, "-dev")
+}
+
 type Spec struct {
 	Runtime                store.Runtime
 	Agent                  store.Agent
@@ -54,9 +69,14 @@ type Spec struct {
 	ModelBaseURL                   string
 	ModelName                      string
 	ModelAPIKey                    string
-	MCPServers                     []MCPBinding
-	Security                       SecurityProfile
-	Network                        NetworkProfile
+	// SidecarImage runs AgentHub's own sidecars — the session proxy and the MCP
+	// tool policy gateway. It is the control plane's image rather than the
+	// runtime's, so pinning an agent to an older runtime image cannot leave it
+	// running platform code from that older release.
+	SidecarImage string
+	MCPServers   []MCPBinding
+	Security     SecurityProfile
+	Network      NetworkProfile
 }
 
 type MCPBinding struct {
@@ -71,6 +91,11 @@ type MCPBinding struct {
 	AuthType   string
 	AuthHeader string
 	Credential string
+	// ToolPolicyMode is allow, deny, or empty for no policy. ToolPolicyTools is
+	// the list it applies to. The policy is enforced by the egress gateway in the
+	// Pod rather than the agent process, so it holds whatever the model tries.
+	ToolPolicyMode  string
+	ToolPolicyTools []string
 }
 
 type SecurityProfile struct {

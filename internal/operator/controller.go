@@ -143,6 +143,14 @@ type mcpBinding struct {
 	AuthType      string `json:"authType"`
 	AuthHeader    string `json:"authHeader"`
 	CredentialKey string `json:"credentialKey"`
+	// ToolPolicy, when present, routes this server through the in-Pod egress
+	// gateway so the agent process cannot reach it directly.
+	ToolPolicy *mcpToolPolicy `json:"toolPolicy,omitempty"`
+}
+
+type mcpToolPolicy struct {
+	Mode  string   `json:"mode"`
+	Tools []string `json:"tools"`
 }
 
 type spec struct {
@@ -150,6 +158,11 @@ type spec struct {
 	Runtime struct {
 		Type  string `json:"type"`
 		Image string `json:"image"`
+		// SidecarImage runs AgentHub's own sidecars. It is the control plane's
+		// image, so an agent pinned to an older runtime image still gets the
+		// session proxy and MCP gateway from this release. Empty falls back to
+		// the runtime image, which is what pre-0.7 objects carry.
+		SidecarImage string `json:"sidecarImage"`
 	} `json:"runtime"`
 	Profile struct {
 		CPUMillis          int64 `json:"cpuMillis"`
@@ -261,9 +274,100 @@ func effectiveMCP(ns, runtimeName string, value spec) []map[string]any {
 		case "dedicated":
 			endpoint = fmt.Sprintf("http://%s.%s.svc:%d/mcp", mcpResourceName(runtimeName, item.Name), ns, port)
 		}
-		result = append(result, map[string]any{"name": item.Name, "mode": item.Mode, "endpoint": endpoint, "image": item.Image, "port": port, "authType": item.AuthType, "authHeader": item.AuthHeader, "credentialKey": item.CredentialKey})
+		binding := map[string]any{"name": item.Name, "mode": item.Mode, "endpoint": endpoint, "image": item.Image, "port": port, "authType": item.AuthType, "authHeader": item.AuthHeader, "credentialKey": item.CredentialKey}
+		if item.ToolPolicy != nil {
+			// The adapter config must point at the gateway, never the server: a
+			// policy the agent process could route around would not be a policy.
+			binding["upstream"] = endpoint
+			binding["endpoint"] = fmt.Sprintf("http://127.0.0.1:%d/mcp/%s", mcpGatewayPort, safeLabel(item.Name))
+			binding["toolPolicyMode"] = item.ToolPolicy.Mode
+		}
+		result = append(result, binding)
 	}
 	return result
+}
+
+// sidecarImage picks the image AgentHub's own sidecars run.
+func (v spec) sidecarImage() string {
+	if strings.TrimSpace(v.Runtime.SidecarImage) != "" {
+		return v.Runtime.SidecarImage
+	}
+	return v.Runtime.Image
+}
+
+// mcpGatewayPort is where the in-Pod MCP tool policy gateway listens. It binds
+// to loopback only, so nothing outside the Pod can reach it.
+const mcpGatewayPort int32 = 9129
+
+// mcpGatewayContainer runs the egress gateway for every policied binding.
+//
+// It holds the credentials rather than the agent container, so a tool the agent
+// may not call is one it cannot authenticate to either.
+func mcpGatewayContainer(image, runtimeName string, bindings []map[string]any, policies []mcpBinding) (corev1.Container, bool) {
+	byName := make(map[string]*mcpToolPolicy, len(policies))
+	for _, item := range policies {
+		if item.ToolPolicy != nil {
+			byName[item.Name] = item.ToolPolicy
+		}
+	}
+	type upstreamConfig struct {
+		Name          string   `json:"name"`
+		Upstream      string   `json:"upstream"`
+		AuthHeader    string   `json:"authHeader,omitempty"`
+		AuthTemplate  string   `json:"authTemplate,omitempty"`
+		CredentialEnv string   `json:"credentialEnv,omitempty"`
+		Mode          string   `json:"mode"`
+		Tools         []string `json:"tools"`
+	}
+	configs := []upstreamConfig{}
+	env := []corev1.EnvVar{}
+	for _, binding := range bindings {
+		policy, ok := byName[fmt.Sprint(binding["name"])]
+		if !ok {
+			continue
+		}
+		entry := upstreamConfig{
+			Name: safeLabel(fmt.Sprint(binding["name"])), Upstream: fmt.Sprint(binding["upstream"]),
+			Mode: policy.Mode, Tools: policy.Tools,
+		}
+		if entry.Tools == nil {
+			entry.Tools = []string{}
+		}
+		if headerName, headerValue := mcpAuthHeader(binding); headerName != "" {
+			credentialKey := fmt.Sprint(binding["credentialKey"])
+			variable := mcpCredentialEnv(credentialKey)
+			entry.AuthHeader = headerName
+			// The rendered value is an ${ENV} placeholder for the adapter; the
+			// gateway substitutes the secret itself, so it needs the template.
+			entry.AuthTemplate = strings.ReplaceAll(headerValue, "${"+variable+"}", "%s")
+			entry.CredentialEnv = variable
+			env = append(env, corev1.EnvVar{Name: variable, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: runtimeName}, Key: credentialKey, Optional: ptr(true)}}})
+		}
+		configs = append(configs, entry)
+	}
+	if len(configs) == 0 {
+		return corev1.Container{}, false
+	}
+	encoded, err := json.Marshal(configs)
+	if err != nil {
+		return corev1.Container{}, false
+	}
+	env = append(env,
+		corev1.EnvVar{Name: "AGENTHUB_MCP_GATEWAY", Value: string(encoded)},
+		corev1.EnvVar{Name: "AGENTHUB_MCP_GATEWAY_LISTEN", Value: fmt.Sprintf("127.0.0.1:%d", mcpGatewayPort)})
+	return corev1.Container{
+		Name:            "agenthub-mcp-gateway",
+		Image:           image,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{"/usr/local/bin/agenthub-runtime-proxy"},
+		Env:             env,
+		Resources:       corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("10m"), corev1.ResourceMemory: apiresource.MustParse("32Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("200m"), corev1.ResourceMemory: apiresource.MustParse("256Mi")}},
+		SecurityContext: restrictedContainerSecurityContext(true),
+		// No probe: the gateway binds to loopback so nothing outside the Pod can
+		// reach it, and the restricted Pod Security standard forbids pointing a
+		// probe at 127.0.0.1. A gateway that is down fails MCP calls closed,
+		// which is the behaviour a tool policy should have anyway.
+	}, true
 }
 
 // openCodeProvider is the provider key the generated OpenCode config declares
@@ -347,7 +451,9 @@ func runtimeConfigs(ns, runtimeName string, value spec) (string, string, string)
 		hermesEntry := map[string]any{"url": endpoint, "enabled": true, "timeout": 120, "connect_timeout": 60}
 		// The ConfigMap is not a Secret, so the credential is referenced by the
 		// environment variable the Pod reads from the runtime Secret.
-		if headerName, headerValue := mcpAuthHeader(item); headerName != "" {
+		// A policied binding is authenticated by the gateway, so the credential
+		// must not be handed to the agent process at all.
+		if headerName, headerValue := mcpAuthHeader(item); headerName != "" && item["toolPolicyMode"] == nil {
 			open["headers"] = map[string]any{headerName: headerValue}
 			hermesEntry["headers"] = map[string]any{headerName: headerValue}
 		}
@@ -1025,6 +1131,9 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 		containers = append(containers, adapter.Sidecars(build)...)
 	}
 	containers = append(containers, sidecarContainers(value)...)
+	if gateway, ok := mcpGatewayContainer(value.sidecarImage(), name, effectiveMCP(ns, name, value), value.MCP); ok {
+		containers = append(containers, gateway)
+	}
 	initContainers := []corev1.Container{}
 	if adapter.InitContainers != nil {
 		initContainers = append(initContainers, adapter.InitContainers(build)...)

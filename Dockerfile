@@ -18,11 +18,15 @@ COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X github.com/hkjang/AgentHub/internal/buildinfo.Version=${VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.Commit=${COMMIT} -X github.com/hkjang/AgentHub/internal/buildinfo.BuildTime=${BUILD_TIME} -X github.com/hkjang/AgentHub/internal/buildinfo.BaseVersion=${BASE_VERSION}" -o /out/agenthub ./cmd/agenthub \
  && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X github.com/hkjang/AgentHub/internal/buildinfo.Version=${VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.Commit=${COMMIT} -X github.com/hkjang/AgentHub/internal/buildinfo.BuildTime=${BUILD_TIME} -X github.com/hkjang/AgentHub/internal/buildinfo.BaseVersion=${BASE_VERSION}" -o /out/agenthub-operator ./cmd/operator \
- && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X github.com/hkjang/AgentHub/internal/buildinfo.Version=${VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.Commit=${COMMIT} -X github.com/hkjang/AgentHub/internal/buildinfo.BuildTime=${BUILD_TIME} -X github.com/hkjang/AgentHub/internal/buildinfo.BaseVersion=${BASE_VERSION}" -o /out/agenthub-worker ./cmd/worker
+ && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X github.com/hkjang/AgentHub/internal/buildinfo.Version=${VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.Commit=${COMMIT} -X github.com/hkjang/AgentHub/internal/buildinfo.BuildTime=${BUILD_TIME} -X github.com/hkjang/AgentHub/internal/buildinfo.BaseVersion=${BASE_VERSION}" -o /out/agenthub-worker ./cmd/worker \
+ && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/agenthub-runtime-proxy ./cmd/runtime-proxy
 
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
 COPY --from=go-build /out/agenthub /out/agenthub-operator /out/agenthub-worker /app/
+# Platform sidecars run this image, so the binary has to live where the
+# generated Pod spec expects it.
+COPY --from=go-build /out/agenthub-runtime-proxy /usr/local/bin/agenthub-runtime-proxy
 COPY --from=web-build /src/web/dist /app/web/dist
 USER 65532:65532
 EXPOSE 8080

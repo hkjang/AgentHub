@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, Loading, PageHeader, StatusBadge } from '../components/UI'
 import { RUNTIME_TYPES, relativeTime, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
-import type { Agent, AgentGoal, AgentMemory, AgentTrigger, ExecutionMode, MCPBundle, ModelEndpoint, RuntimeProfile, Workspace } from '../types'
+import type { Agent, AgentGoal, AgentMemory, AgentTrigger, ExecutionMode, MCPBundle, MCPServerRef, MCPToolPolicy, ModelEndpoint, RuntimeProfile, Workspace } from '../types'
 
 export function Agents({runtimeOnly=false}:{runtimeOnly?:boolean}) {
   const [agents,setAgents]=useState<Agent[]|null>(null)
@@ -209,15 +209,19 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
   const [error,setError]=useState('')
   const [notice,setNotice]=useState('')
   const [addingTrigger,setAddingTrigger]=useState(false)
+  const [policies,setPolicies]=useState<MCPToolPolicy[]>([])
+  const [mcpServers,setMcpServers]=useState<MCPServerRef[]>([])
 
   const load=useCallback(async()=>{
     try{
-      const [goalResult,triggerResult,memoryResult]=await Promise.all([
+      const [goalResult,triggerResult,memoryResult,policyResult]=await Promise.all([
         api.get<{goal:AgentGoal;executionMode:ExecutionMode}>(`/api/v1/agents/${agent.id}/goal`),
         api.get<{items?:AgentTrigger[]}>(`/api/v1/agents/${agent.id}/triggers`),
         api.get<{items?:AgentMemory[]}>(`/api/v1/agents/${agent.id}/memories`),
+        api.get<{items?:MCPToolPolicy[];servers?:MCPServerRef[]}>(`/api/v1/agents/${agent.id}/mcp-policies`),
       ])
       setGoal(goalResult.goal); setMode(goalResult.executionMode); setTriggers(triggerResult.items??[]); setMemories(memoryResult.items??[])
+      setPolicies(policyResult.items??[]); setMcpServers(policyResult.servers??[])
     }catch(e){ setError(e instanceof Error?e.message:'목표 설정을 불러오지 못했습니다.') }
   },[agent.id])
   useEffect(()=>{void load()},[load])
@@ -239,6 +243,18 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
       await api.post(`/api/v1/agents/${agent.id}/run`,{title:`${agent.name} 수동 실행`,input:goal?.description??'',priority:'normal'})
       setNotice('작업을 대기열에 넣었습니다. 작업 대기열 화면에서 진행 상황을 볼 수 있습니다.')
     }catch(e){ setError(e instanceof Error?e.message:'작업을 시작하지 못했습니다.') }
+  }
+  const savePolicy=async(serverId:string,mode:'allow'|'deny',tools:string[])=>{
+    setError(''); setNotice('')
+    try{
+      const result=await api.put<{warning?:string}>(`/api/v1/agents/${agent.id}/mcp-policies`,{serverId,mode,tools})
+      setNotice(result.warning??'도구 정책을 저장했습니다.')
+      await load()
+    }catch(e){ setError(e instanceof Error?e.message:'도구 정책을 저장하지 못했습니다.') }
+  }
+  const removePolicy=async(id:string)=>{
+    try{ await api.delete(`/api/v1/mcp-policies/${id}`); await load() }
+    catch(e){ setError(e instanceof Error?e.message:'도구 정책을 삭제하지 못했습니다.') }
   }
   const removeMemory=async(id:string)=>{
     try{ await api.delete(`/api/v1/memories/${id}`); await load() }
@@ -368,8 +384,45 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
       <small>기억은 Runtime 홈이 아니라 플랫폼에 저장되므로 Pod가 사라져도 유지됩니다.</small>
     </section>
 
+    {mcpServers.length>0&&<section className="detail-section"><h4>MCP 도구 정책</h4>
+      <div className="tool-links">{mcpServers.map((server)=>{
+        const policy=policies.find((item)=>item.serverId===server.id)
+        return <McpPolicyRow key={server.id} server={server} policy={policy}
+          save={(mode,tools)=>void savePolicy(server.id,mode,tools)}
+          remove={policy?()=>void removePolicy(policy.id):undefined}/>
+      })}</div>
+      <small>정책이 있는 서버는 Pod 안의 게이트웨이를 통해서만 호출되며, 자격 증명도 에이전트가 아닌 게이트웨이가 보관합니다. 정책 변경은 Runtime 재시작 후 적용됩니다.</small>
+    </section>}
+
     {addingTrigger&&<TriggerDrawer agent={agent} close={()=>setAddingTrigger(false)} done={()=>{setAddingTrigger(false);void load()}}/>}
   </Drawer>
+}
+
+/** One MCP server's tool policy. Tools are edited as a comma separated list,
+ *  which is how an operator reads them out of the server's documentation. */
+function McpPolicyRow({server,policy,save,remove}:{server:MCPServerRef;policy?:MCPToolPolicy;save:(mode:'allow'|'deny',tools:string[])=>void;remove?:()=>void}) {
+  const [mode,setMode]=useState<'allow'|'deny'>(policy?.mode==='deny'?'deny':'allow')
+  const [tools,setTools]=useState((policy?.tools??[]).join(', '))
+  const parsed=tools.split(',').map((tool)=>tool.trim()).filter(Boolean)
+  const dirty=mode!==(policy?.mode??'allow')||parsed.join(',')!==(policy?.tools??[]).join(',')
+  return <div className="policy-row">
+    <div className="policy-head">
+      <strong>{server.name}</strong>
+      {policy
+        ? <span className={`policy-tag ${policy.mode}`}>{policy.mode==='allow'?'허용 목록':'차단 목록'} {policy.tools.length}개</span>
+        : <span className="policy-tag none">정책 없음 · 모든 도구 허용</span>}
+    </div>
+    <div className="policy-edit">
+      <select value={mode} onChange={(e)=>setMode(e.target.value as 'allow'|'deny')}>
+        <option value="allow">이 도구만 허용</option>
+        <option value="deny">이 도구만 차단</option>
+      </select>
+      <input value={tools} onChange={(e)=>setTools(e.target.value)} placeholder="resolve-library-id, get-library-docs"/>
+      <button type="button" className="button ghost" disabled={!dirty} onClick={()=>save(mode,parsed)}>저장</button>
+      {remove&&<button type="button" className="danger" title="정책 삭제" onClick={remove}><Trash2 size={15}/></button>}
+    </div>
+    {mode==='allow'&&parsed.length===0&&<small className="policy-warn">허용 목록이 비어 있으면 이 서버의 모든 도구가 차단됩니다.</small>}
+  </div>
 }
 
 /** Platform events an agent can subscribe to, labelled for the console. */

@@ -203,3 +203,35 @@ handed off and what was not.
 Directives are parsed from fenced blocks (`<<<KIND arg … >>>`). An unterminated
 block, an unknown kind, or prose that merely describes the protocol yields
 nothing, so an agent explaining how approvals work cannot request one.
+
+## MCP tool policy
+
+Binding a bundle decides which MCP servers an agent reaches, but a server is not
+a permission boundary: one MCP server commonly exposes a harmless lookup and a
+destructive write side by side. A tool policy narrows that to named tools, in
+either direction — `allow` lists exactly what may be called, `deny` blocks the
+listed tools and permits the rest. An `allow` policy with an empty list permits
+nothing, because the alternative reading turns a misconfiguration into open
+access.
+
+The policy is enforced by an egress gateway in the Pod, not by the agent. A
+policied binding's generated configuration points at `127.0.0.1:9129/mcp/<name>`
+and the real upstream address is known only to the gateway, so the agent process
+cannot route around the policy even if the model decides to try. The gateway
+refuses a forbidden `tools/call` with a JSON-RPC error — a transport 200, since
+the exchange itself succeeded — and filters `tools/list` so a tool that cannot be
+called is not advertised either; otherwise the model keeps planning around
+something that always fails. Streamable HTTP answers with either JSON or SSE, so
+both framings are filtered. Every decision, allowed or denied, is logged.
+
+The credential moves with the enforcement: for a policied binding it is mounted
+into the gateway container and attached on the way out, so it never enters the
+agent container at all. A binding with no policy still talks to its server
+directly and keeps its credential in the runtime, which is what makes adopting
+this incremental rather than a flag day.
+
+AgentHub's own sidecars — this gateway and the session proxy — run the control
+plane's image (`AGENTHUB_SIDECAR_IMAGE`), not the runtime image. Pinning an agent
+to an older runtime image is a supported way to keep a definition reproducible;
+it must not also pin the platform's code, which once meant a policy shipped in a
+new release crash-looping inside an old Pod.
