@@ -113,6 +113,9 @@ func validateGoal(goal *store.AgentGoal) error {
 	if goal.MaxConcurrentRuns == 0 {
 		goal.MaxConcurrentRuns = defaults.MaxConcurrentRuns
 	}
+	if goal.PlannerMode == "" {
+		goal.PlannerMode = defaults.PlannerMode
+	}
 	if goal.SuccessCriteria == nil {
 		goal.SuccessCriteria = []string{}
 	}
@@ -136,6 +139,12 @@ func validateGoal(goal *store.AgentGoal) error {
 	}
 	if !contains([]string{"reject", "queue", "parallel", "replace"}, goal.ConcurrencyPolicy) {
 		return errors.New("중복 실행 정책을 확인해 주세요")
+	}
+	if !contains([]string{"none", "native", "platform", "hybrid"}, goal.PlannerMode) {
+		return errors.New("Planner 모드를 확인해 주세요")
+	}
+	if goal.MaxDelegationDepth < 0 || goal.MaxDelegationDepth > 5 {
+		return errors.New("위임 깊이는 0~5여야 합니다")
 	}
 	// A strategy that checks criteria is meaningless without any.
 	if len(goal.SuccessCriteria) == 0 && (goal.CompletionStrategy == "rule" || goal.CompletionStrategy == "composite") {
@@ -320,7 +329,14 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"run": item, "steps": steps, "events": events, "artifacts": artifacts})
+	response := map[string]any{"run": item, "steps": steps, "events": events, "artifacts": artifacts}
+	// A run only has a plan when the agent's planner mode produced one.
+	if plan, planErr := s.store.PlanForRun(r.Context(), item.ID); planErr == nil {
+		response["plan"] = plan
+	} else if !errors.Is(planErr, store.ErrNotFound) {
+		s.logger.Warn("plan could not be read", "run", item.ID, "error", planErr)
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // --- Artifacts ---
@@ -494,4 +510,34 @@ func validSignature(secret string, body []byte, header string) bool {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(body)
 	return hmac.Equal(provided, mac.Sum(nil))
+}
+
+// --- Memory ---
+
+// agentMemories exposes what an agent remembers, which is the only way to see or
+// correct it: memory lives in the platform, not in the Runtime filesystem.
+func (s *Server) agentMemories(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	agent, err := s.store.AgentByID(r.Context(), chi.URLParam(r, "id"), u.ID, u.Role == "admin")
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	items, err := s.store.Memories(r.Context(), agent.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) deleteMemory(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	id := chi.URLParam(r, "id")
+	if err := s.store.DeleteMemory(r.Context(), id, u.ID); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	s.store.Audit(r.Context(), &u, "agent.memory.delete", "memory", id, "success", clientIP(r), nil)
+	w.WriteHeader(http.StatusNoContent)
 }

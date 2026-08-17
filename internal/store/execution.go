@@ -43,6 +43,14 @@ type AgentGoal struct {
 	CompletionStrategy string   `json:"completionStrategy"`
 	ConcurrencyPolicy  string   `json:"concurrencyPolicy"`
 	MaxConcurrentRuns  int      `json:"maxConcurrentRuns"`
+	// PlannerMode decides who plans: 'native' leaves it to the runtime adapter,
+	// 'platform' has AgentHub produce a plan first, 'hybrid' does both.
+	PlannerMode string `json:"plannerMode"`
+	// ApprovalRequired parks the task before any state-changing action the agent
+	// declares, until a reviewer decides.
+	ApprovalRequired bool `json:"approvalRequired"`
+	// MaxDelegationDepth bounds agent-to-agent hand-off; 0 forbids it.
+	MaxDelegationDepth int `json:"maxDelegationDepth"`
 }
 
 // DefaultAgentGoal is what an agent without an explicit goal runs with, so a
@@ -53,6 +61,7 @@ func DefaultAgentGoal(agentID string) AgentGoal {
 		MaxSteps: 10, MaxToolCalls: 50, MaxDurationSeconds: 1800, MaxRetries: 2,
 		StartOnDemand: true, StopAfterTask: false,
 		CompletionStrategy: "agent", ConcurrencyPolicy: "queue", MaxConcurrentRuns: 1,
+		PlannerMode: "native", ApprovalRequired: false, MaxDelegationDepth: 0,
 	}
 }
 
@@ -92,6 +101,9 @@ type AgentTask struct {
 	ScheduledAt  time.Time  `json:"scheduledAt"`
 	DeadlineAt   *time.Time `json:"deadlineAt,omitempty"`
 	CurrentRunID *string    `json:"currentRunId,omitempty"`
+	ParentTaskID *string    `json:"parentTaskId,omitempty"`
+	Delegation   int        `json:"delegationDepth"`
+	ApprovalID   *string    `json:"approvalId,omitempty"`
 	LastError    string     `json:"lastError"`
 	CreatedAt    time.Time  `json:"createdAt"`
 	UpdatedAt    time.Time  `json:"updatedAt"`
@@ -167,8 +179,8 @@ type AgentArtifact struct {
 func (s *Store) AgentGoalByID(ctx context.Context, agentID string) (AgentGoal, error) {
 	item := AgentGoal{AgentID: agentID}
 	var success, failure []byte
-	err := s.pool.QueryRow(ctx, `SELECT description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs FROM agent_goals WHERE agent_id=$1`, agentID).
-		Scan(&item.Description, &success, &failure, &item.Constraints, &item.MaxSteps, &item.MaxToolCalls, &item.MaxDurationSeconds, &item.MaxRetries, &item.StartOnDemand, &item.StopAfterTask, &item.CompletionStrategy, &item.ConcurrencyPolicy, &item.MaxConcurrentRuns)
+	err := s.pool.QueryRow(ctx, `SELECT description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth FROM agent_goals WHERE agent_id=$1`, agentID).
+		Scan(&item.Description, &success, &failure, &item.Constraints, &item.MaxSteps, &item.MaxToolCalls, &item.MaxDurationSeconds, &item.MaxRetries, &item.StartOnDemand, &item.StopAfterTask, &item.CompletionStrategy, &item.ConcurrencyPolicy, &item.MaxConcurrentRuns, &item.PlannerMode, &item.ApprovalRequired, &item.MaxDelegationDepth)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DefaultAgentGoal(agentID), nil
 	}
@@ -189,10 +201,10 @@ func (s *Store) AgentGoalByID(ctx context.Context, agentID string) (AgentGoal, e
 func (s *Store) PutAgentGoal(ctx context.Context, item AgentGoal) (AgentGoal, error) {
 	success, _ := json.Marshal(item.SuccessCriteria)
 	failure, _ := json.Marshal(item.FailureCriteria)
-	_, err := s.pool.Exec(ctx, `INSERT INTO agent_goals(agent_id,description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-		ON CONFLICT(agent_id) DO UPDATE SET description=excluded.description,success_criteria=excluded.success_criteria,failure_criteria=excluded.failure_criteria,constraints=excluded.constraints,max_steps=excluded.max_steps,max_tool_calls=excluded.max_tool_calls,max_duration_seconds=excluded.max_duration_seconds,max_retries=excluded.max_retries,start_on_demand=excluded.start_on_demand,stop_after_task=excluded.stop_after_task,completion_strategy=excluded.completion_strategy,concurrency_policy=excluded.concurrency_policy,max_concurrent_runs=excluded.max_concurrent_runs,updated_at=now()`,
-		item.AgentID, item.Description, success, failure, item.Constraints, item.MaxSteps, item.MaxToolCalls, item.MaxDurationSeconds, item.MaxRetries, item.StartOnDemand, item.StopAfterTask, item.CompletionStrategy, item.ConcurrencyPolicy, item.MaxConcurrentRuns)
+	_, err := s.pool.Exec(ctx, `INSERT INTO agent_goals(agent_id,description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+		ON CONFLICT(agent_id) DO UPDATE SET description=excluded.description,success_criteria=excluded.success_criteria,failure_criteria=excluded.failure_criteria,constraints=excluded.constraints,max_steps=excluded.max_steps,max_tool_calls=excluded.max_tool_calls,max_duration_seconds=excluded.max_duration_seconds,max_retries=excluded.max_retries,start_on_demand=excluded.start_on_demand,stop_after_task=excluded.stop_after_task,completion_strategy=excluded.completion_strategy,concurrency_policy=excluded.concurrency_policy,max_concurrent_runs=excluded.max_concurrent_runs,planner_mode=excluded.planner_mode,approval_required=excluded.approval_required,max_delegation_depth=excluded.max_delegation_depth,updated_at=now()`,
+		item.AgentID, item.Description, success, failure, item.Constraints, item.MaxSteps, item.MaxToolCalls, item.MaxDurationSeconds, item.MaxRetries, item.StartOnDemand, item.StopAfterTask, item.CompletionStrategy, item.ConcurrencyPolicy, item.MaxConcurrentRuns, item.PlannerMode, item.ApprovalRequired, item.MaxDelegationDepth)
 	if err != nil {
 		return AgentGoal{}, err
 	}
@@ -228,16 +240,18 @@ func (s *Store) AgentExecutionMode(ctx context.Context, agentID string) (string,
 // --- Tasks ---
 
 type CreateTaskInput struct {
-	AgentID     string
-	OwnerID     string
-	Title       string
-	Input       string
-	Priority    string
-	Source      string
-	TriggerID   *string
-	CreatedBy   string
-	ScheduledAt *time.Time
-	DeadlineAt  *time.Time
+	AgentID      string
+	OwnerID      string
+	Title        string
+	Input        string
+	Priority     string
+	Source       string
+	TriggerID    *string
+	CreatedBy    string
+	ScheduledAt  *time.Time
+	DeadlineAt   *time.Time
+	ParentTaskID *string
+	Delegation   int
 }
 
 func (s *Store) CreateAgentTask(ctx context.Context, input CreateTaskInput) (AgentTask, error) {
@@ -252,23 +266,23 @@ func (s *Store) CreateAgentTask(ctx context.Context, input CreateTaskInput) (Age
 		scheduled = *input.ScheduledAt
 	}
 	var item AgentTask
-	err := s.pool.QueryRow(ctx, `INSERT INTO agent_tasks(id,agent_id,owner_id,title,input,priority,source,trigger_id,created_by,scheduled_at,deadline_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-		RETURNING id,agent_id,owner_id,title,input,priority,status,source,trigger_id,attempts,scheduled_at,deadline_at,current_run_id,last_error,created_at,updated_at`,
-		uuid.NewString(), input.AgentID, input.OwnerID, input.Title, input.Input, input.Priority, input.Source, input.TriggerID, nullText(input.CreatedBy), scheduled, input.DeadlineAt).
-		Scan(&item.ID, &item.AgentID, &item.OwnerID, &item.Title, &item.Input, &item.Priority, &item.Status, &item.Source, &item.TriggerID, &item.Attempts, &item.ScheduledAt, &item.DeadlineAt, &item.CurrentRunID, &item.LastError, &item.CreatedAt, &item.UpdatedAt)
+	err := s.pool.QueryRow(ctx, `INSERT INTO agent_tasks(id,agent_id,owner_id,title,input,priority,source,trigger_id,created_by,scheduled_at,deadline_at,parent_task_id,delegation_depth)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		RETURNING id,agent_id,owner_id,title,input,priority,status,source,trigger_id,attempts,scheduled_at,deadline_at,current_run_id,parent_task_id,delegation_depth,approval_id,last_error,created_at,updated_at`,
+		uuid.NewString(), input.AgentID, input.OwnerID, input.Title, input.Input, input.Priority, input.Source, input.TriggerID, nullText(input.CreatedBy), scheduled, input.DeadlineAt, input.ParentTaskID, input.Delegation).
+		Scan(&item.ID, &item.AgentID, &item.OwnerID, &item.Title, &item.Input, &item.Priority, &item.Status, &item.Source, &item.TriggerID, &item.Attempts, &item.ScheduledAt, &item.DeadlineAt, &item.CurrentRunID, &item.ParentTaskID, &item.Delegation, &item.ApprovalID, &item.LastError, &item.CreatedAt, &item.UpdatedAt)
 	return item, err
 }
 
 // taskCoreColumns are the task's own fields; scanTask additionally expects the
 // agent name, which the listing joins and the claim query sub-selects.
-const taskCoreColumns = `t.id,t.agent_id,t.owner_id,t.title,t.input,t.priority,t.status,t.source,t.trigger_id,t.attempts,t.scheduled_at,t.deadline_at,t.current_run_id,t.last_error,t.created_at,t.updated_at`
+const taskCoreColumns = `t.id,t.agent_id,t.owner_id,t.title,t.input,t.priority,t.status,t.source,t.trigger_id,t.attempts,t.scheduled_at,t.deadline_at,t.current_run_id,t.parent_task_id,t.delegation_depth,t.approval_id,t.last_error,t.created_at,t.updated_at`
 
 const taskColumns = taskCoreColumns + `,a.name`
 
 func scanTask(row pgx.Row) (AgentTask, error) {
 	var item AgentTask
-	err := row.Scan(&item.ID, &item.AgentID, &item.OwnerID, &item.Title, &item.Input, &item.Priority, &item.Status, &item.Source, &item.TriggerID, &item.Attempts, &item.ScheduledAt, &item.DeadlineAt, &item.CurrentRunID, &item.LastError, &item.CreatedAt, &item.UpdatedAt, &item.AgentName)
+	err := row.Scan(&item.ID, &item.AgentID, &item.OwnerID, &item.Title, &item.Input, &item.Priority, &item.Status, &item.Source, &item.TriggerID, &item.Attempts, &item.ScheduledAt, &item.DeadlineAt, &item.CurrentRunID, &item.ParentTaskID, &item.Delegation, &item.ApprovalID, &item.LastError, &item.CreatedAt, &item.UpdatedAt, &item.AgentName)
 	return item, err
 }
 

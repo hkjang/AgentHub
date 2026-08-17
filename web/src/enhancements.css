@@ -302,3 +302,6 @@
 .trigger-row small{font-size:10px;color:#98a2b3}
 .trigger-row button{flex:none;padding:5px 8px;border:1px solid #e1e6ed;background:#fff;border-radius:6px;color:#475467;cursor:pointer}
 .trigger-row button.danger:hover{color:#c43b52;border-color:#f3c3cb;background:#fff5f6}
+.task-approval{display:inline-flex;align-items:center;padding:3px 8px;border-radius:6px;background:#fff5df;border:1px solid #f3ddb0;color:#b2720b;font-size:10px;font-weight:650;text-decoration:none}
+.task-approval:hover{background:#fff1d5}
+.detail-section h4 small{margin-left:6px;font-weight:400;color:#98a2b3;text-transform:none}

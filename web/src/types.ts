@@ -29,7 +29,12 @@ export type AgentGoal = {
   completionStrategy: 'agent' | 'rule' | 'judge' | 'composite'
   concurrencyPolicy: 'reject' | 'queue' | 'parallel' | 'replace'
   maxConcurrentRuns: number
+  plannerMode: 'none' | 'native' | 'platform' | 'hybrid'
+  approvalRequired: boolean
+  maxDelegationDepth: number
 }
+export type AgentMemory = { id: string; scope: string; key: string; value: string; updatedAt: string }
+export type AgentPlan = { id: string; runId: string; mode: string; goal: string; steps: unknown; createdAt: string }
 export type AgentTrigger = {
   id: string; agentId: string; name: string; type: 'manual' | 'cron' | 'webhook'; enabled: boolean
   schedule: string; timezone: string; taskTitle: string; taskInput: string; priority: string
@@ -38,6 +43,7 @@ export type AgentTrigger = {
 export type AgentTask = {
   id: string; agentId: string; agentName?: string; title: string; input: string; priority: string
   status: string; source: string; triggerId?: string; attempts: number; scheduledAt: string
+  parentTaskId?: string; delegationDepth: number; approvalId?: string
   currentRunId?: string; lastError: string; createdAt: string; updatedAt: string
 }
 export type AgentRun = {

@@ -3,7 +3,7 @@ import { Bot, ClipboardList, Clock3, ExternalLink, ListChecks, Play, Plus, Refre
 import { api } from '../api'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, Loading, PageHeader, StatusBadge, statusLabel } from '../components/UI'
 import { relativeTime, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
-import type { Agent, AgentArtifact, AgentRun, AgentRunEvent, AgentRunStep, AgentTask } from '../types'
+import type { Agent, AgentArtifact, AgentPlan, AgentRun, AgentRunEvent, AgentRunStep, AgentTask } from '../types'
 
 /** Statuses that are still moving, and therefore worth polling for. */
 const ACTIVE = ['queued', 'planning', 'ready', 'running', 'waiting_tool', 'waiting_approval', 'retrying']
@@ -91,7 +91,7 @@ export function Tasks() {
     {tasks.length > 0 && <div className="toolbar">
       <div className="filter-chips">
         <button className={filter === '' ? 'selected' : ''} onClick={() => setFilter('')}>전체 {tasks.length}</button>
-        {['running', 'queued', 'retrying', 'completed', 'failed', 'dead_letter'].filter((status) => counts[status])
+        {['running', 'queued', 'waiting_approval', 'retrying', 'completed', 'failed', 'dead_letter'].filter((status) => counts[status])
           .map((status) => <button key={status} className={filter === status ? 'selected' : ''} onClick={() => setFilter(status)}>
             {statusLabel(status)} {counts[status]}
           </button>)}
@@ -124,6 +124,7 @@ export function Tasks() {
               <td>{task.attempts}</td>
               <td><span title={new Date(task.updatedAt).toLocaleString('ko-KR')}>{relativeTime(task.updatedAt)}</span></td>
               <td><div className="row-actions">
+                {task.status === 'waiting_approval' && <a className="task-approval" title="승인 화면으로" href="/reviews">승인 대기</a>}
                 {task.currentRunId && <button title="실행 기록" onClick={() => setOpenRun(task.currentRunId!)}><ExternalLink size={15} /></button>}
                 {['failed', 'dead_letter', 'cancelled'].includes(task.status) && <button title="다시 실행" onClick={() => void retry(task)}><RotateCcw size={15} /></button>}
                 {ACTIVE.includes(task.status) && <button className="danger" title="취소" onClick={() => setCancelling(task)}><Square size={14} /></button>}
@@ -182,7 +183,7 @@ function CreateTaskDrawer({ agents, close, done }: { agents: Agent[]; close: () 
 
 /** The full picture of one attempt: timeline, per-step reasoning and artifacts. */
 export function RunDrawer({ runId, close }: { runId: string; close: () => void }) {
-  const [data, setData] = useState<{ run: AgentRun; steps: AgentRunStep[]; events: AgentRunEvent[]; artifacts: AgentArtifact[] }>()
+  const [data, setData] = useState<{ run: AgentRun; steps: AgentRunStep[]; events: AgentRunEvent[]; artifacts: AgentArtifact[]; plan?: AgentPlan }>()
   const [error, setError] = useState('')
   const load = useCallback(async () => {
     try {
@@ -200,7 +201,7 @@ export function RunDrawer({ runId, close }: { runId: string; close: () => void }
   if (error) return <Drawer title="실행 기록" close={close}><ErrorBanner message={error} /></Drawer>
   if (!data) return <Drawer title="실행 기록" close={close}><Loading /></Drawer>
 
-  const { run, steps, events, artifacts } = data
+  const { run, steps, events, artifacts, plan } = data
   const verdict = run.completion ?? {}
   return <Drawer title={`실행 기록 #${run.id.slice(0, 8)}`} subtitle={`시도 ${run.attempt} · ${run.modelName || '모델 미지정'}`} close={close}>
     <div className="detail-hero">
@@ -218,6 +219,10 @@ export function RunDrawer({ runId, close }: { runId: string; close: () => void }
           {verdict.unmet && verdict.unmet.length > 0 && <ul>{verdict.unmet.map((item) => <li key={item}>미충족: {item}</li>)}</ul>}
         </div>
       </div>
+    </section>}
+
+    {plan && <section className="detail-section"><h4>실행 계획 <small>{plan.mode}</small></h4>
+      <pre className="runtime-log-preview custom-scroll">{JSON.stringify(plan.steps, null, 1)}</pre>
     </section>}
 
     <section className="detail-section"><h4>타임라인</h4>

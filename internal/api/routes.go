@@ -43,6 +43,8 @@ func (s *Server) userRoutes(r chi.Router) {
 	r.Post("/agents/{id}/triggers", s.saveAgentTrigger)
 	r.Post("/agents/{id}/run", s.runAgent)
 	r.Delete("/triggers/{id}", s.deleteAgentTrigger)
+	r.Get("/agents/{id}/memories", s.agentMemories)
+	r.Delete("/memories/{id}", s.deleteMemory)
 	r.Get("/tasks", s.tasks)
 	r.Post("/tasks", s.createTask)
 	r.Get("/tasks/{id}", s.task)
@@ -1541,8 +1543,22 @@ func (s *Server) decideApproval(decision string) http.HandlerFunc {
 				}
 			}
 		}
+		// An agent parked at an approval gate resumes — or stops — on this decision.
+		resourceURL := "/agents"
+		if item.ResourceType == "task" {
+			resourceURL = "/tasks"
+			if decision == "approved" {
+				if _, resumeErr := s.store.ResumeApprovedTask(r.Context(), item.ID); resumeErr != nil && !errors.Is(resumeErr, store.ErrNotFound) {
+					writeStoreError(w, resumeErr)
+					return
+				}
+			} else if _, failErr := s.store.FailRejectedTask(r.Context(), item.ID, "승인이 거절되었습니다: "+item.Reason); failErr != nil && !errors.Is(failErr, store.ErrNotFound) {
+				writeStoreError(w, failErr)
+				return
+			}
+		}
 		s.store.Audit(r.Context(), &u, "approval."+decision, item.ResourceType, item.ResourceID, "success", clientIP(r), nil)
-		_ = s.store.CreateNotification(r.Context(), item.RequesterID, "approval", "승인 요청 "+decision, item.Reason, "/agents")
+		_ = s.store.CreateNotification(r.Context(), item.RequesterID, "approval", "승인 요청 "+decision, item.Reason, resourceURL)
 		writeJSON(w, 200, item)
 	}
 }

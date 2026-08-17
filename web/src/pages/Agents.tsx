@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, Loading, PageHeader, StatusBadge } from '../components/UI'
 import { RUNTIME_TYPES, relativeTime, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
-import type { Agent, AgentGoal, AgentTrigger, ExecutionMode, MCPBundle, ModelEndpoint, RuntimeProfile, Workspace } from '../types'
+import type { Agent, AgentGoal, AgentMemory, AgentTrigger, ExecutionMode, MCPBundle, ModelEndpoint, RuntimeProfile, Workspace } from '../types'
 
 export function Agents({runtimeOnly=false}:{runtimeOnly?:boolean}) {
   const [agents,setAgents]=useState<Agent[]|null>(null)
@@ -204,6 +204,7 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
   const [mode,setMode]=useState<ExecutionMode>('interactive')
   const [goal,setGoal]=useState<AgentGoal|null>(null)
   const [triggers,setTriggers]=useState<AgentTrigger[]>([])
+  const [memories,setMemories]=useState<AgentMemory[]>([])
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
   const [notice,setNotice]=useState('')
@@ -211,11 +212,12 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
 
   const load=useCallback(async()=>{
     try{
-      const [goalResult,triggerResult]=await Promise.all([
+      const [goalResult,triggerResult,memoryResult]=await Promise.all([
         api.get<{goal:AgentGoal;executionMode:ExecutionMode}>(`/api/v1/agents/${agent.id}/goal`),
         api.get<{items?:AgentTrigger[]}>(`/api/v1/agents/${agent.id}/triggers`),
+        api.get<{items?:AgentMemory[]}>(`/api/v1/agents/${agent.id}/memories`),
       ])
-      setGoal(goalResult.goal); setMode(goalResult.executionMode); setTriggers(triggerResult.items??[])
+      setGoal(goalResult.goal); setMode(goalResult.executionMode); setTriggers(triggerResult.items??[]); setMemories(memoryResult.items??[])
     }catch(e){ setError(e instanceof Error?e.message:'목표 설정을 불러오지 못했습니다.') }
   },[agent.id])
   useEffect(()=>{void load()},[load])
@@ -237,6 +239,10 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
       await api.post(`/api/v1/agents/${agent.id}/run`,{title:`${agent.name} 수동 실행`,input:goal?.description??'',priority:'normal'})
       setNotice('작업을 대기열에 넣었습니다. 작업 대기열 화면에서 진행 상황을 볼 수 있습니다.')
     }catch(e){ setError(e instanceof Error?e.message:'작업을 시작하지 못했습니다.') }
+  }
+  const removeMemory=async(id:string)=>{
+    try{ await api.delete(`/api/v1/memories/${id}`); await load() }
+    catch(e){ setError(e instanceof Error?e.message:'기억을 삭제하지 못했습니다.') }
   }
   const removeTrigger=async(id:string)=>{
     try{ await api.delete(`/api/v1/triggers/${id}`); await load() }
@@ -289,6 +295,24 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
         </label>
       </fieldset>
 
+      <fieldset><legend>자율성</legend>
+        <label><span>계획 수립</span>
+          <select value={goal.plannerMode} onChange={(e)=>update({plannerMode:e.target.value as AgentGoal['plannerMode']})}>
+            <option value="native">Runtime 위임 — OpenCode·Hermes 자체 계획 사용</option>
+            <option value="platform">Platform — AgentHub가 계획을 세움</option>
+            <option value="hybrid">Hybrid — 계획 수립 후 Runtime이 세부 수행</option>
+            <option value="none">계획 없음</option>
+          </select>
+          <small>Runtime이 자체 Agent 기능을 가진 경우 Native가 적합합니다.</small>
+        </label>
+        <label className="toggle-row"><span>상태 변경 작업에 사람 승인 요구</span>
+          <input type="checkbox" checked={goal.approvalRequired} onChange={(e)=>update({approvalRequired:e.target.checked})}/><i/></label>
+        <label><span>다른 에이전트에 위임 허용 깊이</span>
+          <input type="number" min={0} max={5} value={goal.maxDelegationDepth} onChange={(e)=>update({maxDelegationDepth:Number(e.target.value)})}/>
+          <small>0이면 위임하지 않습니다. 순환 위임은 자동으로 차단됩니다.</small>
+        </label>
+      </fieldset>
+
       <fieldset><legend>실행 한도</legend>
         <div className="form-grid">
           <label><span>최대 단계</span><input type="number" min={1} max={100} value={goal.maxSteps} onChange={(e)=>update({maxSteps:Number(e.target.value)})}/></label>
@@ -328,6 +352,17 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
             <button className="danger" title="삭제" onClick={()=>void removeTrigger(trigger.id)}><Trash2 size={15}/></button>
           </div>)}</div>}
       <button type="button" className="button ghost" onClick={()=>setAddingTrigger(true)}><Plus size={14}/>Trigger 추가</button>
+    </section>
+
+    <section className="detail-section"><h4>기억</h4>
+      {memories.length===0
+        ? <div className="empty-compact">아직 저장된 기억이 없습니다. 실행 중 에이전트가 남긴 사실이 여기에 쌓입니다.</div>
+        : <div className="tool-links">{memories.map((memory)=><div key={memory.id} className="trigger-row">
+            <Bot size={16}/>
+            <div><strong>{memory.key}</strong><small>{memory.value}</small></div>
+            <button className="danger" title="삭제" onClick={()=>void removeMemory(memory.id)}><Trash2 size={15}/></button>
+          </div>)}</div>}
+      <small>기억은 Runtime 홈이 아니라 플랫폼에 저장되므로 Pod가 사라져도 유지됩니다.</small>
     </section>
 
     {addingTrigger&&<TriggerDrawer agent={agent} close={()=>setAddingTrigger(false)} done={()=>{setAddingTrigger(false);void load()}}/>}

@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
@@ -51,6 +52,9 @@ type Outcome struct {
 	Status  string
 	Result  string
 	Failure string
+	// parked is set when the task stopped for a reason that is neither success
+	// nor failure — today only a pending approval.
+	parked error
 	// Retryable distinguishes an infrastructure hiccup, which is worth another
 	// attempt, from the agent genuinely failing to meet its goal.
 	Retryable bool
@@ -90,12 +94,18 @@ func (o *Orchestrator) Execute(ctx context.Context, task store.AgentTask, traceI
 
 	outcome := o.run(ctx, &run, task, agent, goal)
 	run.DurationMs = time.Since(started).Milliseconds()
-	run.Status = "completed"
-	if outcome.Status != store.TaskCompleted {
+	switch {
+	case errors.Is(outcome.parked, ErrAwaitingApproval):
+		// The run ends here but the task has not: a new run is created when the
+		// reviewer decides, so this one is recorded as completed work rather than
+		// a failure.
+		run.Status = "completed"
+	case outcome.Status == store.TaskCompleted:
+		run.Status = "completed"
+	case errors.Is(ctx.Err(), context.Canceled):
+		run.Status = "cancelled"
+	default:
 		run.Status = "failed"
-		if errors.Is(ctx.Err(), context.Canceled) {
-			run.Status = "cancelled"
-		}
 	}
 	run.Result, run.FailureReason = outcome.Result, outcome.Failure
 	if err := o.store.FinishAgentRun(ctx, run); err != nil {
@@ -139,7 +149,12 @@ func (o *Orchestrator) run(ctx context.Context, run *store.AgentRun, task store.
 		}
 	}
 
-	transcript, outcome := o.think(ctx, run, task, agent, goal, model)
+	plan := o.plan(ctx, run, task, goal, model)
+
+	transcript, outcome := o.think(ctx, run, task, agent, goal, model, plan)
+	if errors.Is(outcome.parked, ErrAwaitingApproval) {
+		return outcome
+	}
 	if outcome.Status != "" {
 		return outcome
 	}
@@ -168,18 +183,27 @@ func (o *Orchestrator) resolveModel(ctx context.Context, agent store.Agent) (res
 
 // think drives the agent toward its goal, one reasoning step at a time, until it
 // reports completion or a guardrail stops it.
-func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task store.AgentTask, agent store.Agent, goal store.AgentGoal, model resolvedModel) ([]string, Outcome) {
+func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task store.AgentTask, agent store.Agent, goal store.AgentGoal, model resolvedModel, plan string) ([]string, Outcome) {
+	// Everything the agent knows before it starts: its goal, what it remembers
+	// from previous runs, the plan it just made, and any approval decision that
+	// resumed this task.
+	prelude := systemPrompt(agent, goal) + o.loadMemory(ctx, agent.ID)
 	step := workflow.Step{
 		ID: "task", AgentID: agent.ID, AgentName: agent.Name,
-		SystemPrompt: systemPrompt(agent, goal),
+		SystemPrompt: prelude,
 		ModelBaseURL: model.BaseURL, ModelName: model.ModelName, ModelAPIKey: model.APIKey,
 	}
+	preamble := ""
+	if strings.TrimSpace(plan) != "" {
+		preamble += "\n# 실행 계획\n" + plan + "\n"
+	}
+	preamble += o.approvalContext(ctx, task)
 	transcript := []string{}
 	for sequence := 1; sequence <= goal.MaxSteps; sequence++ {
 		if err := ctx.Err(); err != nil {
 			return transcript, Outcome{Status: store.TaskFailed, Failure: "최대 실행 시간을 초과했습니다.", Retryable: true}
 		}
-		prompt := stepPrompt(task, goal, transcript)
+		prompt := stepPrompt(task, goal, transcript) + preamble
 		startedAt := time.Now()
 		output, usage, err := o.complete(ctx, step, prompt)
 		elapsed := time.Since(startedAt).Milliseconds()
@@ -205,6 +229,28 @@ func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task stor
 		}
 		o.event(ctx, *run, "step.completed", record.Title, map[string]any{"sequence": sequence, "durationMs": elapsed, "tokens": usage.TotalTokens})
 		transcript = append(transcript, output)
+		o.saveMemory(ctx, *run, task, output)
+
+		// A request for approval stops the run here. The task is parked rather
+		// than failed, so it resumes on the reviewer's decision with its
+		// transcript intact.
+		if approvals := directivesOfKind(output, directiveApproval); goal.ApprovalRequired && len(approvals) > 0 {
+			if err := o.requestApproval(ctx, *run, task, approvals[0]); err != nil {
+				return transcript, Outcome{Status: store.TaskFailed, Failure: "승인 요청을 생성하지 못했습니다: " + err.Error(), Retryable: true}
+			}
+			return transcript, Outcome{Status: "waiting_approval", parked: ErrAwaitingApproval, Result: strings.Join(transcript, "\n\n")}
+		}
+
+		// Delegation results are fed back so the agent can carry on knowing what
+		// was handed off and what was refused.
+		if delegations := directivesOfKind(output, directiveDelegate); len(delegations) > 0 {
+			notes := make([]string, 0, len(delegations))
+			for _, directive := range delegations {
+				notes = append(notes, o.delegate(ctx, *run, task, goal, directive))
+			}
+			transcript = append(transcript, "# 위임 결과\n"+strings.Join(notes, "\n"))
+			continue
+		}
 
 		if declaresCompletion(output) {
 			return transcript, Outcome{}

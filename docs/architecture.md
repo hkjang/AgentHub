@@ -148,3 +148,41 @@ Cron schedules are parsed in-process rather than through a dependency, and the
 worker that advances `next_fire_at` first owns that firing, so a schedule fires
 once no matter how many workers are running. Webhook triggers verify an HMAC over
 the raw body; it is the only unauthenticated route in the API.
+
+## Autonomous control
+
+Four controls sit on top of the execution plane. They exist because an agent that
+runs unattended needs bounds that an interactive session gets from the person
+sitting in front of it.
+
+**Planning** is per-agent, not global. `native` leaves planning to the runtime
+adapter, which is right for OpenCode and Hermes because they already run their
+own agent loops; `platform` has AgentHub produce a plan first and store it beside
+the run; `hybrid` does both. A planner that cannot be reached does not stop the
+work — the plan is an aid, not a gate.
+
+**Approval** is the gate on state-changing action. The agent declares intent with
+an `APPROVAL` directive, the task moves to `waiting_approval`, and it stays out of
+the queue until a reviewer decides. Waiting is not a failed attempt, so the
+attempt counter is rolled back on resume; otherwise a slow approval would eat the
+retry budget. The decision — approved or rejected, with its reason — is written
+back into the transcript, so the resumed run knows what it may do. A rejection
+ends the task and is never retried, because a refusal is a decision.
+
+**Memory** is stored in PostgreSQL rather than the Runtime's home directory, so
+what an agent learns outlives the Pod. Entries are keyed per scope (`agent`,
+`task`, `workspace`) with a unique index, so rewriting a key replaces it instead
+of accumulating duplicates, and each value is capped so one remembered fact
+cannot crowd out the prompt.
+
+**Delegation** always goes through the task queue, never a direct call into
+another agent's Runtime — that is what keeps permissions, quota, depth and the
+audit trail intact. Depth is bounded per agent (`0` forbids delegation), and the
+parent chain is walked before the child task is created so that A → B → C → A is
+refused. A refused delegation is reported back to the delegating agent in its
+transcript rather than silently dropped, so it can carry on knowing what was
+handed off and what was not.
+
+Directives are parsed from fenced blocks (`<<<KIND arg … >>>`). An unterminated
+block, an unknown kind, or prose that merely describes the protocol yields
+nothing, so an agent explaining how approvals work cannot request one.

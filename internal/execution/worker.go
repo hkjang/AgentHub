@@ -112,10 +112,18 @@ func (w *Worker) execute(ctx context.Context, task store.AgentTask) {
 		logger.Error("task execution failed", "error", err)
 	}
 
+	// A task parked for approval has already been moved to waiting_approval by the
+	// orchestrator; touching its status here would drag it back out of the gate.
+	if errors.Is(outcome.parked, ErrAwaitingApproval) {
+		logger.Info("task is waiting for approval")
+		return
+	}
+
 	if outcome.Status == store.TaskCompleted {
 		if err := w.store.FinishAgentTask(finish, task.ID, store.TaskCompleted, ""); err != nil {
 			logger.Error("task completion not recorded", "error", err)
 		}
+		w.notify(finish, task, "작업을 완료했습니다", task.Title)
 		logger.Info("task completed")
 		return
 	}
@@ -143,7 +151,16 @@ func (w *Worker) execute(ctx context.Context, task store.AgentTask) {
 	if err := w.store.FinishAgentTask(finish, task.ID, status, outcome.Failure); err != nil {
 		logger.Error("task failure not recorded", "error", err)
 	}
+	w.notify(finish, task, "작업이 실패했습니다", task.Title+" — "+outcome.Failure)
 	logger.Warn("task finished unsuccessfully", "status", status, "reason", outcome.Failure)
+}
+
+// notify tells the owner their autonomous task finished. Nobody is watching the
+// screen when a scheduled task runs, so the outcome has to come to them.
+func (w *Worker) notify(ctx context.Context, task store.AgentTask, title, message string) {
+	if err := w.store.CreateNotification(ctx, task.OwnerID, "task", title, message, "/tasks"); err != nil {
+		w.logger.Warn("task notification not delivered", "task", task.ID, "error", err)
+	}
 }
 
 // keepClaim extends the lease periodically until the task finishes.

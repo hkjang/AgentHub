@@ -7,7 +7,7 @@ import { mkdir } from 'node:fs/promises'
 const baseURL = process.env.AGENTHUB_TEST_URL ?? 'http://localhost:18080'
 const executablePath = process.env.CHROMIUM_PATH ?? '/snap/bin/chromium'
 const username = process.env.AGENTHUB_TEST_USER ?? 'admin'
-const password = process.env.AGENTHUB_TEST_PASSWORD ?? 'password-at-least-12'
+const password = process.env.AGENTHUB_TEST_PASSWORD ?? 'local-development-password'
 const shotDir = process.env.AGENTHUB_SHOT_DIR ?? '../coverage/runtimes'
 
 const problems = []

@@ -13,11 +13,6 @@ import (
 // accident in ordinary prose.
 const completionMarker = "TASK_COMPLETE"
 
-// artifactFence wraps a document the agent wants preserved. Everything between
-// the fences becomes an artifact rather than being buried in the transcript.
-const artifactOpen = "<<<ARTIFACT"
-const artifactClose = ">>>"
-
 // systemPrompt turns an agent definition and its goal into the instruction the
 // model runs under. The agent's own system prompt still leads, so an agent that
 // was written for interactive use keeps its character when driven autonomously.
@@ -58,7 +53,14 @@ func systemPrompt(agent store.Agent, goal store.AgentGoal) string {
 	b.WriteString("- 한 번에 한 단계씩 진행하고, 그 단계에서 무엇을 했는지 서술하세요.\n")
 	b.WriteString("- 아직 끝나지 않았다면 다음에 무엇을 할지 적고 응답을 마치세요.\n")
 	b.WriteString(fmt.Sprintf("- 모든 완료 조건을 충족했다면 마지막 줄에 %s 를 단독으로 출력하세요.\n", completionMarker))
-	b.WriteString(fmt.Sprintf("- 보고서나 산출물을 남기려면 %s 이름 ... %s 형식으로 감싸세요.\n", artifactOpen, artifactClose))
+	b.WriteString(fmt.Sprintf("- 보고서나 산출물을 남기려면 %s%s 이름 ... %s 형식으로 감싸세요.\n", directiveOpen, directiveArtifact, directiveClose))
+	b.WriteString(fmt.Sprintf("- 다음 실행에서도 기억해야 할 사실은 %s%s 키 ... %s 로 남기세요.\n", directiveOpen, directiveMemory, directiveClose))
+	if goal.ApprovalRequired {
+		b.WriteString(fmt.Sprintf("- 상태를 변경하는 작업(배포, 삭제, 재시작, DB 쓰기, 권한 변경 등)은 직접 수행하지 말고 %s%s 작업요약 ... 상세 ... %s 로 승인을 요청한 뒤 응답을 마치세요. 승인 결과는 다음 단계에서 전달됩니다.\n", directiveOpen, directiveApproval, directiveClose))
+	}
+	if goal.MaxDelegationDepth > 0 {
+		b.WriteString(fmt.Sprintf("- 다른 에이전트가 처리해야 할 일은 %s%s 에이전트이름 ... 작업내용 ... %s 로 위임하세요.\n", directiveOpen, directiveDelegate, directiveClose))
+	}
 	return b.String()
 }
 
@@ -98,35 +100,19 @@ func declaresCompletion(output string) bool {
 	return false
 }
 
-// extractArtifacts pulls fenced documents out of a transcript entry.
+// extractArtifacts turns ARTIFACT directives into storable records.
 func extractArtifacts(output string) []store.AgentArtifact {
 	artifacts := []store.AgentArtifact{}
-	rest := output
-	for {
-		start := strings.Index(rest, artifactOpen)
-		if start < 0 {
-			return artifacts
+	for _, directive := range directivesOfKind(output, directiveArtifact) {
+		if directive.Arg == "" || directive.Body == "" {
+			continue
 		}
-		afterOpen := rest[start+len(artifactOpen):]
-		newline := strings.Index(afterOpen, "\n")
-		if newline < 0 {
-			return artifacts
-		}
-		name := strings.TrimSpace(afterOpen[:newline])
-		body := afterOpen[newline+1:]
-		end := strings.Index(body, artifactClose)
-		if end < 0 {
-			return artifacts
-		}
-		content := strings.TrimSpace(body[:end])
-		if name != "" && content != "" {
-			artifacts = append(artifacts, store.AgentArtifact{
-				Name: sanitiseArtifactName(name), Type: artifactType(name),
-				ContentType: "text/markdown", Content: content,
-			})
-		}
-		rest = body[end+len(artifactClose):]
+		artifacts = append(artifacts, store.AgentArtifact{
+			Name: sanitiseArtifactName(directive.Arg), Type: artifactType(directive.Arg),
+			ContentType: "text/markdown", Content: directive.Body,
+		})
 	}
+	return artifacts
 }
 
 // sanitiseArtifactName keeps a model-supplied name from becoming a path.
