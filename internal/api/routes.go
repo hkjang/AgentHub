@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/hkjang/AgentHub/internal/runtime"
+	"github.com/hkjang/AgentHub/internal/runtimeenv"
 	"github.com/hkjang/AgentHub/internal/runtimespec"
 	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
@@ -1385,7 +1387,7 @@ func (s *Server) secretConfigured(r *http.Request, key string) bool {
 func (s *Server) putAdminSetting(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	key := chi.URLParam(r, "key")
-	allowed := map[string]bool{"general": true, "authentication": true, "kubernetes": true, "sessionGateway": true, "governance": true, "logging": true, "release": true}
+	allowed := map[string]bool{"general": true, "authentication": true, "kubernetes": true, "sessionGateway": true, "governance": true, "logging": true, "release": true, runtimeenv.SettingKey: true}
 	if !allowed[key] {
 		writeError(w, 404, "setting_not_found", "지원하지 않는 설정입니다.")
 		return
@@ -1492,9 +1494,35 @@ func (s *Server) validateSetting(r *http.Request, key string, value map[string]a
 		if boolValue("offlineMode") && boolValue("updateCheckEnabled") {
 			return errors.New("Offline Mode에서는 외부 업데이트 확인을 사용할 수 없습니다")
 		}
+	case runtimeenv.SettingKey:
+		// Everything here ends up in a Pod spec, so it is checked against the same
+		// rules the operator enforces rather than stored and quietly dropped later.
+		settings, err := decodeRuntimeEnvironment(value)
+		if err != nil {
+			return err
+		}
+		return settings.Validate()
 	}
 	return nil
 }
+
+// decodeRuntimeEnvironment re-reads the submitted document into its typed form.
+// Settings arrive as a free-form object, and this is the one setting whose shape
+// the platform has to know exactly.
+func decodeRuntimeEnvironment(value map[string]any) (runtimeenv.Settings, error) {
+	var settings runtimeenv.Settings
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return settings, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&settings); err != nil {
+		return settings, errors.New("Runtime 공통 설정 형식을 확인해 주세요: files와 variables만 사용할 수 있습니다")
+	}
+	return settings, nil
+}
+
 func mapKeys(value map[string]any) []string {
 	result := make([]string, 0, len(value))
 	for k := range value {

@@ -40,9 +40,10 @@
   - **합의(Consensus) 모드**: 같은 질문을 독립적으로 물어 표결로 결론을 냅니다. 집계는 플랫폼이 직접 계산하며 만장일치·다수결·동률을 구분하고, 소수 의견과 기권까지 기록에 남깁니다.
   - **감독자(Supervisor) 모드**: 감독 에이전트가 결과를 검토해 보완이 필요한 에이전트만 다시 실행시키고, 개정된 결과를 재검토해 승인합니다. 검토 횟수는 제한되며 승인 여부가 실행 기록에 남습니다.
 - ⚡ **Runtime 예열 & 워커 자동 확장**: 예약 실행 전에 Runtime을 미리 띄워 콜드 스타트를 없애고, 대기열이 밀리면 워커가 동시 실행 수를 스스로 늘렸다가 한가해지면 되돌립니다. 예열된 Runtime은 사람이 손대는 순간 사용자 소유가 됩니다.
+- 🧰 **Runtime 공통 환경 & 바이브코딩 툴체인**: `/etc/pip.conf`, `.condarc`, `/etc/npmrc`, 프록시 변수처럼 모든 Runtime에 공통으로 필요한 설정을 관리자 화면에서 한 번만 정의하면 전체 Pod의 모든 컨테이너에 읽기 전용으로 배포됩니다. Runtime 이미지에는 `python`·`pip`·`conda`·`mamba`와 ruff·pytest·httpx·pandas·openai·typescript 같은 기본 라이브러리가 포함되어, 별도 설치 없이 바이브코딩 에이전트로 바로 쓸 수 있습니다.
 - 🔌 **MCP Fabric (Model Context Protocol)**: 사내 MCP 도구 레지스트리와 번들을 관리하고, Sidecar 또는 전용 StatefulSet 모드로 에이전트에 안전하게 주입합니다.
 - 🔐 **Envelope Encryption Vault**: 사용자별 개인 키(AES-256-GCM)로 Credential을 암호화하며, Agent 정의에는 원문 대신 식별 참조값만 주입됩니다.
-- 🌐 **Session Gateway**: One-Time Launch Ticket을 발급하여 네이티브 Web UI에 대한 안전한 쿠키 격리 및 감사 추적(Audit Trail)을 보장합니다.
+- 🌐 **Session Gateway**: One-Time Launch Ticket을 발급하여 네이티브 Web UI에 대한 안전한 쿠키 격리 및 감사 추적(Audit Trail)을 보장합니다. Runtime Base Domain을 설정하면 Runtime별 전용 Origin(권장)을 사용하고, 설정하지 않으면 Wildcard DNS 없이도 `포털주소/{runtimeId}/` 경로로 같은 세션을 바로 열 수 있습니다.
 
 ---
 

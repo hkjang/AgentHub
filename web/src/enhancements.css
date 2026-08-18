@@ -344,3 +344,17 @@
 .import-agent{position:relative;overflow:hidden;cursor:pointer}
 .import-agent input{position:absolute;inset:0;opacity:0;cursor:pointer}
 .warm-tag{margin-left:6px;padding:2px 7px;border-radius:5px;background:#fff1e6;border:1px solid #f6d5bb;color:#b5651d;font-size:10px;font-weight:650}
+
+.provisioning-list { display: grid; gap: 11px; }
+.provisioning-list article { display: grid; gap: 8px; padding: 13px; border: 1px solid #e2e7ee; border-radius: 10px; background: #fbfcfe; }
+.provisioning-list article > header { display: grid; grid-template-columns: 1fr 84px auto 30px; gap: 9px; align-items: center; }
+.provisioning-list article > header .toggle-row { margin: 0; padding: 0; border: 0; background: none; }
+.provisioning-list textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.55; }
+.provisioning-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.6fr) auto 30px; gap: 9px; align-items: center; }
+.provisioning-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.provisioning-actions .button { font-size: 10px; }
+
+@media (max-width: 800px) {
+  .provisioning-list article > header, .provisioning-row { grid-template-columns: 1fr 1fr; }
+  .provisioning-list article > header > input:first-child, .provisioning-row > input:first-child { grid-column: 1 / -1; }
+}

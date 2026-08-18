@@ -106,6 +106,11 @@ Kubernetes 클러스터 상에서 구동되는 각 에이전트 Pod의 파드 �
 ### 5.2 Session Gateway
 OpenCode나 Hermes와 같은 네이티브 Web UI에 접근할 때 1회용 런치 티켓(One-Time Launch Ticket)을 발급하여 안전한 격리 세션을 생성합니다.
 
+세션이 열리는 주소는 관리자 설정에 따라 두 가지입니다.
+
+- **Runtime Base Domain을 설정한 경우(권장)**: `https://<runtimeId>.agents.company.local/` 처럼 Runtime마다 전용 Origin을 사용합니다. Wildcard DNS와 인증서가 필요하지만 Runtime UI가 Portal과 Origin을 공유하지 않습니다.
+- **설정하지 않은 경우**: `https://<포털주소>/<runtimeId>/` 경로로 같은 세션이 열립니다. 별도 DNS 준비 없이 바로 쓸 수 있으며 런치 티켓·세션 만료·감사 로그는 동일하게 적용됩니다.
+
 ![세션 게이트웨이 콘솔](screenshots/13_sessions_gateway.png)
 
 ---
@@ -241,10 +246,20 @@ OpenCode·Hermes·Qwen Paw 외에 사내에서 직접 만든 에이전트를 올
 
 ![관리자 MCP Servers](screenshots/30_admin_mcp_servers.png)
 
-### 10.3 보안 및 전역 설정
+### 10.3 Runtime 공통 환경 (파일 · 환경변수)
+*System Settings ▸ Runtime Environment* 에서 **모든 Runtime Pod에 공통으로 들어갈 파일과 환경변수**를 한 번만 정의합니다. 사내 PyPI 미러(`/etc/pip.conf`), conda 채널(`/home/agent/.condarc`), npm 레지스트리(`/etc/npmrc`), 프록시 주소처럼 에이전트마다 반복할 필요가 없는 설정이 대상입니다.
+
+- **파일**: 절대경로, 권한(기본 `0644`), 내용을 입력하면 Pod의 모든 컨테이너에 같은 경로로 **읽기 전용 마운트**됩니다. 자주 쓰는 예시는 버튼 한 번으로 추가할 수 있습니다.
+- **환경변수**: `PIP_INDEX_URL`, `HTTPS_PROXY`, `NO_PROXY` 처럼 컨테이너 전체가 공유해야 하는 값을 넣습니다.
+- **사용 토글**: 항목을 지우지 않고 잠시 끌 수 있습니다. 저장 후 **다음 Runtime 시작 또는 재시작** 시점에 반영되며, 이미 실행 중인 Runtime은 Pod가 교체될 때 적용됩니다.
+- **비밀값은 넣지 않습니다**: 내용은 ConfigMap으로 전달되므로 토큰·비밀번호는 개인 Secret이나 MCP Credential로 관리하세요. `/etc/agenthub`, `/usr/local/bin`, `HOME`, `PATH`, `OPENAI_*`, `AGENTHUB_*` 등 플랫폼이 쓰는 경로와 변수는 저장 단계에서 거부됩니다.
+
+Runtime 이미지에는 `python`·`pip`(`/opt/agenthub/venv`)과 `conda`·`mamba`(`/opt/conda`)가 기본 포함되어 있고, ruff·pytest·httpx·pandas·openai 같은 코딩 에이전트가 바로 찾는 라이브러리와 typescript·tsx·prettier·pnpm이 함께 설치되어 있습니다. conda 환경과 pip/npm 캐시는 `/home/agent` 볼륨에 생성되므로 Pod가 재시작되어도 유지됩니다. 읽기 전용 루트 파일시스템 프로파일에서는 `python -m venv ~/.venvs/작업이름` 이나 `conda create -n 작업이름` 처럼 홈 또는 작업공간 안에 환경을 만들어 사용하세요.
+
+### 10.4 보안 및 전역 설정
 - **Users & Teams**: RBAC 역할(Admin, Manager, User) 및 팀별 접근 제어
 - **Security & Network**: Pod Security Standards, NetworkPolicy, 마스터 키 회전
-- **System Settings**: OIDC SSO, 승인 거버넌스 및 클러스터 설정
+- **System Settings**: OIDC SSO, 승인 거버넌스, 클러스터 및 Runtime 공통 환경 설정
 
 ![사용자 및 팀 관리](screenshots/31_admin_users_and_teams.png)
 

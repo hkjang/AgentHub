@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/hkjang/AgentHub/internal/buildinfo"
+	"github.com/hkjang/AgentHub/internal/runtimeenv"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -81,6 +82,12 @@ type Spec struct {
 	MCPServers   []MCPBinding
 	Security     SecurityProfile
 	Network      NetworkProfile
+	// ProvisionedFiles and ProvisionedVariables are the platform-wide runtime
+	// environment an administrator configures once in Admin ▸ Settings ▸ Runtime
+	// Environment. Every runtime gets the same set, which is the point: an
+	// offline site's /etc/pip.conf should not have to be repeated per agent.
+	ProvisionedFiles     []runtimeenv.File
+	ProvisionedVariables []runtimeenv.Variable
 }
 
 type MCPBinding struct {

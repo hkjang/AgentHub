@@ -41,6 +41,31 @@ host-only, `HttpOnly` Runtime cookie. Portal cookies and upstream cookies are
 never forwarded across this boundary; the gateway injects the per-Runtime
 credential server-side and audits the launch.
 
+### Without a runtime base domain
+
+A wildcard DNS name and a wildcard certificate are a real prerequisite, and a
+deployment that does not have them yet used to be unable to open a workspace at
+all. So when no Runtime Base Domain is configured, the same session is served
+from the Portal's own origin under `/{runtimeId}/`. The launch flow is unchanged
+— the same one-use ticket, exchanged for the same kind of encrypted `HttpOnly`
+session cookie — and the path prefix travels upstream as `X-Forwarded-Prefix`
+with redirects rewritten back under it.
+
+Two details make the shared origin work:
+
+- The first path segment must be a runtime UUID, which is what keeps this from
+  shadowing a Portal route, a static asset or `/api/...`.
+- A runtime UI that asks for `/assets/...` from the origin root is recognised by
+  its `Referer`: a request made from a `/{runtimeId}/` page is routed to that
+  runtime, and a request from a Portal page stays with the Portal. The session
+  cookie is named per runtime, so several open workspaces do not overwrite each
+  other's session. A request that carries no `Referer` at all — a WebSocket
+  handshake, for instance — cannot be attributed and stays with the Portal.
+
+An origin per runtime remains the recommended setup, because it is what keeps a
+runtime's UI out of the Portal's origin. This mode is a way to work before that
+DNS exists, not a replacement for it.
+
 Hermes Dashboard runs only on Pod loopback (`127.0.0.1:9120`). A small
 `agenthub-runtime-proxy` sidecar exposes port 9119, checks the per-Runtime token,
 and reports ready only after the Dashboard responds. NetworkPolicy then limits
@@ -96,6 +121,62 @@ Private repositories are cloned with a credential the workspace is bound to: one
 of the owner's personal secrets, either an HTTPS token or an SSH private key. The
 value reaches the Pod through the runtime Secret and is written to a 0600 file on
 the tmpfs, never onto a command line or into the remote URL.
+
+## Common runtime environment
+
+Every offline site has settings that belong to all runtimes rather than to one
+agent: the internal PyPI index in `/etc/pip.conf`, the npm registry, an HTTP
+proxy. Administration ▸ System Settings ▸ Runtime Environment holds them once —
+a list of files with their target paths and permissions, and a list of
+environment variables — and every runtime is provisioned with the same set.
+
+The path is short on purpose. The control plane validates the declaration, puts
+it on the `AgentRuntime` object under `spec.provisioning`, and the operator
+renders the files into a ConfigMap of their own (`<runtime>-files`) which every
+container in the Pod mounts read-only through `subPath` at the declared path.
+Variables are prepended to every container's environment, including the
+adapters' init containers and the platform's sidecars: an init container that
+installs packages needs the index as much as the agent does.
+
+Three properties are worth knowing:
+
+- **Not a secret store.** A ConfigMap and a CRD are both readable by anyone with
+  RBAC on the namespace. Credentials belong in personal secrets or MCP
+  credentials, which travel in the runtime Secret instead.
+- **The platform's own paths and variables are refused.** `/etc/agenthub`,
+  `/usr/local/bin`, an adapter's installation directory, `HOME`, `PATH`,
+  `OPENAI_*`, `AGENTHUB_*` and the rest are rejected on save and dropped again
+  by the operator. Otherwise this setting would be a way to redirect a model
+  binding or replace a platform binary for every agent at once.
+- **An edit rolls the Pod.** A `subPath` mount never sees a ConfigMap update, so
+  the provisioned set is part of the Pod template's configuration hash. Changing
+  a file therefore replaces the Pod rather than silently doing nothing.
+
+## Agent toolchain in the base image
+
+The runtime image carries a toolchain, because an agent asked to write code has
+to be able to run it. `python` and `pip` come from a virtualenv at
+`/opt/agenthub/venv` that leads `PATH`, with the libraries a coding agent
+reaches for first — ruff, black, mypy, pytest, ipython, httpx, pydantic, numpy,
+pandas, matplotlib, beautifulsoup4, openai, anthropic and mcp among them. Node
+carries typescript, tsx, prettier, eslint and pnpm
+alongside OpenCode, and the image also has build-essential, ripgrep, jq and
+sqlite3.
+
+`conda` and `mamba` come from Miniforge in `/opt/conda`, configured for
+conda-forge only, with `envs_dirs` and `pkgs_dirs` pointed at `/home/agent` so
+an environment an agent creates survives the Pod that created it. pip, uv and
+npm caches are pointed at the same volume for the same reason.
+
+The toolchain is a virtualenv rather than the system interpreter so that an agent
+installing a package cannot break the three adapters that share the image. It is
+owned by the runtime user, so `pip install` works directly when a security
+profile leaves the root filesystem writable; under the default read-only root
+filesystem an agent creates its own environment under `$HOME` or `/workspace`,
+both of which are persistent volumes. Debian's `/etc/profile` rewrites `PATH`
+for login shells, so `/etc/profile.d/agenthub-toolchain.sh` puts the toolchain
+back and sources conda's shell hook — `conda activate` is a shell function and
+does not exist without it.
 
 ## Multi-agent workflows
 

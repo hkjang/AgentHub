@@ -46,7 +46,7 @@ func New(db *store.Store, cipher *cryptox.Cipher, logger *slog.Logger, logs *app
 
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer, s.accessLog, s.runtimeHostGateway, s.securityHeaders)
+	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer, s.accessLog, s.runtimeHostGateway, s.runtimePathGateway, s.securityHeaders)
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.store.Ping(r.Context()); err != nil {

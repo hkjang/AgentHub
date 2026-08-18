@@ -29,6 +29,30 @@ type sessionGatewaySettings struct {
 	SessionHours int    `json:"sessionHours"`
 }
 
+// hostMode reports whether runtimes get an origin of their own. Without a usable
+// Runtime Base Domain the platform falls back to serving them from the Portal's
+// own origin under /{runtimeId}/, so a deployment with no wildcard DNS can still
+// open a workspace.
+func (v sessionGatewaySettings) hostMode() (hostname, port string, ok bool) {
+	if !v.Enabled {
+		return "", "", false
+	}
+	hostname, port, err := splitHostPort(v.BaseDomain)
+	if err != nil {
+		return "", "", false
+	}
+	return hostname, port, true
+}
+
+// sessionLifetime bounds how long a runtime browser session lasts.
+func (v sessionGatewaySettings) sessionLifetime() time.Duration {
+	hours := v.SessionHours
+	if hours < 1 || hours > 24 {
+		hours = 8
+	}
+	return time.Duration(hours) * time.Hour
+}
+
 type runtimeAccess struct {
 	RuntimeID   string    `json:"runtimeId"`
 	UserID      string    `json:"userId"`
@@ -68,27 +92,31 @@ func (s *Server) launchRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	settings := s.cachedSessionGatewaySettings(r.Context())
-	hostname, port, err := splitHostPort(settings.BaseDomain)
-	if !settings.Enabled || err != nil {
-		writeError(w, http.StatusServiceUnavailable, "session_gateway_unavailable", "관리자가 Runtime Session Gateway 도메인을 먼저 설정해야 합니다.")
-		return
-	}
 	ticket, expires, err := s.store.CreateRuntimeLaunchTicket(r.Context(), runtimeID, instance.OwnerID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	host := runtimeID + "." + hostname
-	if port != "" {
-		host = net.JoinHostPort(host, port)
+	query := url.Values{"ticket": []string{ticket}}.Encode()
+	// With a Runtime Base Domain each runtime gets an origin of its own, which is
+	// what keeps a runtime UI out of the Portal's origin. Without one the session
+	// is served from the Portal itself under /{runtimeId}/ — a relative URL, so it
+	// works on whatever hostname the user already reached the Portal on.
+	mode, launch := "path", "/"+runtimeID+"/?"+query
+	if hostname, port, ok := settings.hostMode(); ok {
+		host := runtimeID + "." + hostname
+		if port != "" {
+			host = net.JoinHostPort(host, port)
+		}
+		mode = "host"
+		launch = (&url.URL{Scheme: settings.Scheme, Host: host, Path: "/", RawQuery: query}).String()
 	}
-	launch := url.URL{Scheme: settings.Scheme, Host: host, Path: "/", RawQuery: url.Values{"ticket": []string{ticket}}.Encode()}
 	s.store.TouchRuntime(r.Context(), runtimeID)
 	// Opening the workspace is a takeover: the warm pool must not stop a runtime
 	// somebody has just started working in.
 	s.releaseWarmClaim(r.Context(), instance)
-	s.store.Audit(r.Context(), &user, "runtime.launch", "runtime", runtimeID, "success", clientIP(r), nil)
-	writeJSON(w, http.StatusCreated, map[string]any{"url": launch.String(), "expiresAt": expires})
+	s.store.Audit(r.Context(), &user, "runtime.launch", "runtime", runtimeID, "success", clientIP(r), map[string]any{"mode": mode})
+	writeJSON(w, http.StatusCreated, map[string]any{"url": launch, "expiresAt": expires, "mode": mode})
 }
 
 func (s *Server) runtimeHostGateway(next http.Handler) http.Handler {
@@ -112,11 +140,7 @@ func (s *Server) runtimeHostGateway(next http.Handler) http.Handler {
 				writeRuntimeConnectionError(w, err)
 				return
 			}
-			hours := settings.SessionHours
-			if hours < 1 || hours > 24 {
-				hours = 8
-			}
-			access := runtimeAccess{RuntimeID: runtimeID, UserID: userID, Endpoint: connection.Endpoint, Token: connection.Token, RuntimeType: connection.RuntimeType, ExpiresAt: time.Now().UTC().Add(time.Duration(hours) * time.Hour)}
+			access := runtimeAccess{RuntimeID: runtimeID, UserID: userID, Endpoint: connection.Endpoint, Token: connection.Token, RuntimeType: connection.RuntimeType, ExpiresAt: time.Now().UTC().Add(settings.sessionLifetime())}
 			raw, _ := json.Marshal(access)
 			encrypted, err := s.cipher.Encrypt(raw, "runtime-host-session")
 			if err != nil {
@@ -245,11 +269,8 @@ func runtimeUnauthorized(w http.ResponseWriter, message string) {
 }
 
 func runtimeIDFromHost(requestHost string, settings sessionGatewaySettings) (string, bool) {
-	if !settings.Enabled {
-		return "", false
-	}
-	base, _, err := splitHostPort(settings.BaseDomain)
-	if err != nil {
+	base, _, ok := settings.hostMode()
+	if !ok {
 		return "", false
 	}
 	host, _, err := splitHostPort(requestHost)

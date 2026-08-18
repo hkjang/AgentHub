@@ -104,13 +104,35 @@ func (k *KubernetesSpawner) object(spec Spec) *unstructured.Unstructured {
 	if workspaceSize <= 0 {
 		workspaceSize = spec.Profile.StorageGB
 	}
-	return &unstructured.Unstructured{Object: map[string]any{
+	object := map[string]any{
 		"apiVersion": "agenthub.io/v1alpha1", "kind": "AgentRuntime",
 		"metadata": map[string]any{"name": spec.Runtime.CRDName, "labels": map[string]any{"app.kubernetes.io/managed-by": "agenthub", "agenthub.io/owner": labelValue(spec.Agent.OwnerID), "agenthub.io/agent": labelValue(spec.Agent.ID)}},
 		"spec": map[string]any{"owner": spec.Agent.OwnerID, "agentRef": map[string]any{"id": spec.Agent.ID, "version": int64(spec.Agent.Version)}, "runtime": runtimeObject(spec, image), "profile": profile, "workspace": map[string]any{"type": spec.WorkspaceType, "pvcName": spec.WorkspacePVC, "sizeGb": int64(workspaceSize), "repositoryUrl": spec.WorkspaceRepositoryURL, "branch": spec.WorkspaceBranch, "snapshotName": spec.WorkspaceSnapshot, "gitCredentialKind": spec.WorkspaceGitCredentialKind, "gitCredentialUsername": spec.WorkspaceGitCredentialUsername}, "model": map[string]any{"baseUrl": spec.ModelBaseURL, "name": spec.ModelName, "secretRef": spec.Runtime.CRDName}, "mcp": bindings,
 			"security":  map[string]any{"runAsNonRoot": spec.Security.RunAsNonRoot, "readOnlyRootFilesystem": spec.Security.ReadOnlyRootFilesystem, "allowPrivilegeEscalation": spec.Security.AllowPrivilegeEscalation, "automountServiceAccountToken": spec.Security.AutomountServiceAccountToken, "seccompProfile": spec.Security.SeccompProfile},
 			"network":   map[string]any{"defaultDeny": spec.Network.DefaultDeny, "allowDNS": spec.Network.AllowDNS, "allowedDestinations": spec.Network.AllowedDestinations},
-			"lifecycle": map[string]any{"desiredState": "Running", "autoRestart": true, "idleTimeoutSeconds": int64(spec.Profile.IdleTimeoutSeconds)}}}}
+			"lifecycle": map[string]any{"desiredState": "Running", "autoRestart": true, "idleTimeoutSeconds": int64(spec.Profile.IdleTimeoutSeconds)}}}
+	if provisioning := provisioningObject(spec); provisioning != nil {
+		object["spec"].(map[string]any)["provisioning"] = provisioning
+	}
+	return &unstructured.Unstructured{Object: object}
+}
+
+// provisioningObject renders the platform-wide runtime environment. It is left
+// off the object entirely when nothing is configured, so a site that never
+// touches this setting keeps producing exactly the CRDs it did before.
+func provisioningObject(spec Spec) map[string]any {
+	if len(spec.ProvisionedFiles) == 0 && len(spec.ProvisionedVariables) == 0 {
+		return nil
+	}
+	files := make([]any, 0, len(spec.ProvisionedFiles))
+	for _, file := range spec.ProvisionedFiles {
+		files = append(files, map[string]any{"path": file.Path, "content": file.Content, "mode": file.Mode})
+	}
+	variables := make([]any, 0, len(spec.ProvisionedVariables))
+	for _, variable := range spec.ProvisionedVariables {
+		variables = append(variables, map[string]any{"name": variable.Name, "value": variable.Value})
+	}
+	return map[string]any{"files": files, "env": variables}
 }
 
 // runtimeObject renders the runtime section of the CRD. A custom runtime carries

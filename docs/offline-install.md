@@ -56,9 +56,34 @@ After the first login, configure General → Public URL, Authentication →
 Keycloak, Kubernetes, Session Gateway, governance, logging, and offline policy
 in the admin UI.
 
+## Internal package mirrors
+
+The runtime image ships `pip`, `conda`/`mamba` and npm, all of which default to
+registries an offline site cannot reach. Point them at the internal mirrors once
+in Administration → System Settings → Runtime Environment; every runtime is then
+provisioned with the same files and variables:
+
+```text
+/etc/pip.conf            [global] index-url = https://nexus.company.local/repository/pypi-all/simple
+/home/agent/.condarc     channels / default_channels / channel_alias → the internal conda mirror
+/etc/npmrc               registry=https://nexus.company.local/repository/npm-all/
+HTTPS_PROXY / NO_PROXY   only if the site reaches its mirrors through a proxy
+```
+
+The screen offers those three files as one-click samples. Content is delivered
+through a ConfigMap, so put no credentials in it, and remember that the mirror
+host must also be in the network profile's egress allow-list. A change applies
+when a runtime next starts; a running runtime picks it up on restart.
+
 ## Runtime browser domain
 
-Native OpenCode/Hermes browser sessions require a Runtime-specific origin.
+An origin per runtime is the recommended way to open a workspace: it keeps a
+runtime's UI out of the Portal's origin. It is not a prerequisite for getting
+started — with no Runtime Base Domain configured, AgentHub serves the same
+session from the Portal's own origin at `https://<portal>/{runtimeId}/`, using
+the same one-use launch ticket. Nothing needs to be configured for that, and it
+is worth moving to the domain below once wildcard DNS exists.
+
 Create wildcard DNS for `*.agents.company.local`, issue a wildcard TLS
 certificate for that domain, and route both the Portal hostname and wildcard
 Runtime hostname to the AgentHub Service. Then set Administration → System
@@ -74,6 +99,12 @@ Session hours: 8
 For a single-host local test only, `http` and `localhost:8080` are accepted;
 modern browsers resolve `*.localhost` to loopback. Production validation rejects
 plain HTTP. A sample wildcard Ingress is provided under `deploy/examples`.
+
+Leaving the toggle off — or leaving Runtime Base Domain empty — is what selects
+the path form. A runtime UI that requests assets from the origin root is matched
+to its runtime by the `Referer` of the request, so a request that carries none
+(a WebSocket handshake, for instance) is not proxied; that is the practical limit
+of the shared origin.
 
 ## Kubernetes
 

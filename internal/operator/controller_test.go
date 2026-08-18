@@ -6,12 +6,14 @@ import (
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/hkjang/AgentHub/internal/runtimeenv"
 	"github.com/hkjang/AgentHub/internal/runtimetype"
 )
 
@@ -796,5 +798,172 @@ func TestPortFallsBackToTheAdapterDefault(t *testing.T) {
 	value.Runtime.Type, value.Runtime.Port = "hermes", 9000
 	if got := specPort(value); got != runtimetype.Port("hermes") {
 		t.Fatalf("an adapter runtime must keep its own port, got %d", got)
+	}
+}
+
+// provisionedRuntime builds one StatefulSet from a spec carrying the given
+// platform-wide files and variables.
+func provisionedRuntime(t *testing.T, files []runtimeenv.File, variables []runtimeenv.Variable) (*appsv1.StatefulSet, *fake.Clientset) {
+	t.Helper()
+	client := fake.NewSimpleClientset()
+	controller := &Controller{client: client}
+	owner := &unstructured.Unstructured{}
+	owner.SetAPIVersion("agenthub.io/v1alpha1")
+	owner.SetKind("AgentRuntime")
+	owner.SetName("prov-runtime")
+	owner.SetNamespace("agent-runtime-dev")
+	owner.SetUID(types.UID("prov-owner"))
+	var value spec
+	value.Owner = "user-1"
+	value.Runtime.Type = runtimetype.Hermes
+	value.Runtime.Image = "agenthub-base:v0.8.0"
+	value.Model.BaseURL = "http://gateway.svc:8000/v1"
+	value.Model.Name = "qwen"
+	value.Provisioning.Files = files
+	value.Provisioning.Env = variables
+	if err := controller.ensureProvisionedConfigMap(context.Background(), "agent-runtime-dev", "prov-runtime", value, owner); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.ensureStatefulSet(context.Background(), "agent-runtime-dev", "prov-runtime", "prov-workspace", value, owner); err != nil {
+		t.Fatal(err)
+	}
+	statefulSet, err := client.AppsV1().StatefulSets("agent-runtime-dev").Get(context.Background(), "prov-runtime", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return statefulSet, client
+}
+
+func TestProvisionedFilesAndVariablesReachEveryContainer(t *testing.T) {
+	files := []runtimeenv.File{{Path: "/etc/pip.conf", Content: "[global]\nindex-url = https://nexus.local/simple\n", Mode: "0644"}}
+	variables := []runtimeenv.Variable{{Name: "PIP_INDEX_URL", Value: "https://nexus.local/simple"}}
+	statefulSet, client := provisionedRuntime(t, files, variables)
+	pod := statefulSet.Spec.Template.Spec
+	key := runtimeenv.ConfigKey("/etc/pip.conf")
+
+	configMap, err := client.CoreV1().ConfigMaps("agent-runtime-dev").Get(context.Background(), "prov-runtime-files", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("the provisioned ConfigMap was not created: %v", err)
+	}
+	if !strings.Contains(configMap.Data[key], "nexus.local") {
+		t.Fatalf("the provisioned ConfigMap does not carry the file: %#v", configMap.Data)
+	}
+	// The platform's own ConfigMap is mounted whole at /etc/agenthub, so an
+	// administrator's file must not be delivered through it.
+	platform, err := client.CoreV1().ConfigMaps("agent-runtime-dev").Get(context.Background(), "prov-runtime", metav1.GetOptions{})
+	if err == nil {
+		if _, found := platform.Data[key]; found {
+			t.Fatal("the provisioned file leaked into the platform ConfigMap")
+		}
+	}
+
+	var volume *corev1.Volume
+	for i := range pod.Volumes {
+		if pod.Volumes[i].Name == "provisioned" {
+			volume = &pod.Volumes[i]
+		}
+	}
+	if volume == nil || volume.ConfigMap == nil || volume.ConfigMap.Name != "prov-runtime-files" {
+		t.Fatalf("the provisioned volume is missing or points elsewhere: %#v", pod.Volumes)
+	}
+	if len(volume.ConfigMap.Items) != 1 || volume.ConfigMap.Items[0].Mode == nil || *volume.ConfigMap.Items[0].Mode != 0o644 {
+		t.Fatalf("the provisioned volume does not carry the declared mode: %#v", volume.ConfigMap.Items)
+	}
+
+	containers := append(append([]corev1.Container{}, pod.InitContainers...), pod.Containers...)
+	if len(containers) < 4 {
+		t.Fatalf("expected the agent, its init container and the Hermes sidecars: %d containers", len(containers))
+	}
+	for _, container := range containers {
+		mounted := false
+		for _, mount := range container.VolumeMounts {
+			if mount.Name == "provisioned" && mount.MountPath == "/etc/pip.conf" && mount.SubPath == key && mount.ReadOnly {
+				mounted = true
+			}
+		}
+		if !mounted {
+			t.Fatalf("container %s does not mount /etc/pip.conf: %#v", container.Name, container.VolumeMounts)
+		}
+		exported := false
+		for _, variable := range container.Env {
+			if variable.Name == "PIP_INDEX_URL" && variable.Value == "https://nexus.local/simple" {
+				exported = true
+			}
+		}
+		if !exported {
+			t.Fatalf("container %s does not export PIP_INDEX_URL", container.Name)
+		}
+	}
+}
+
+func TestEditingAProvisionedFileRollsThePod(t *testing.T) {
+	// The file is mounted through subPath, which never picks up a ConfigMap
+	// update: if the Pod template does not change, the edit does not take.
+	before, _ := provisionedRuntime(t, []runtimeenv.File{{Path: "/etc/pip.conf", Content: "a"}}, nil)
+	after, _ := provisionedRuntime(t, []runtimeenv.File{{Path: "/etc/pip.conf", Content: "b"}}, nil)
+	unchanged, _ := provisionedRuntime(t, []runtimeenv.File{{Path: "/etc/pip.conf", Content: "a", Mode: "644"}}, nil)
+	hash := func(item *appsv1.StatefulSet) string {
+		return item.Spec.Template.Annotations["agenthub.io/config-hash"]
+	}
+	if hash(before) == hash(after) {
+		t.Fatal("editing a provisioned file left the Pod template unchanged")
+	}
+	if hash(before) != hash(unchanged) {
+		t.Fatal("an equivalent setting produced a different Pod template")
+	}
+}
+
+func TestEmptyingTheSettingRemovesTheProvisionedConfigMap(t *testing.T) {
+	_, client := provisionedRuntime(t, []runtimeenv.File{{Path: "/etc/pip.conf", Content: "a"}}, nil)
+	controller := &Controller{client: client}
+	owner := &unstructured.Unstructured{}
+	owner.SetAPIVersion("agenthub.io/v1alpha1")
+	owner.SetKind("AgentRuntime")
+	owner.SetName("prov-runtime")
+	owner.SetNamespace("agent-runtime-dev")
+	var value spec
+	value.Runtime.Type = runtimetype.Hermes
+	value.Runtime.Image = "agenthub-base:v0.8.0"
+	if err := controller.ensureProvisionedConfigMap(context.Background(), "agent-runtime-dev", "prov-runtime", value, owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CoreV1().ConfigMaps("agent-runtime-dev").Get(context.Background(), "prov-runtime-files", metav1.GetOptions{}); err == nil {
+		t.Fatal("the provisioned ConfigMap survived an emptied setting")
+	}
+	// Removing it again must stay a no-op rather than a reconcile failure.
+	if err := controller.ensureProvisionedConfigMap(context.Background(), "agent-runtime-dev", "prov-runtime", value, owner); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProvisioningDropsWhatThePlatformOwns(t *testing.T) {
+	files := []runtimeenv.File{{Path: "/etc/agenthub/runtime.json", Content: "hijack"}, {Path: "/tmp", Content: "hijack"}, {Path: "/etc/pip.conf", Content: "keep"}}
+	variables := []runtimeenv.Variable{{Name: "OPENAI_API_KEY", Value: "hijack"}, {Name: "HOME", Value: "/hijack"}, {Name: "HTTPS_PROXY", Value: "http://proxy.local:3128"}}
+	statefulSet, client := provisionedRuntime(t, files, variables)
+	configMap, err := client.CoreV1().ConfigMaps("agent-runtime-dev").Get(context.Background(), "prov-runtime-files", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(configMap.Data) != 1 {
+		t.Fatalf("a path the platform owns was provisioned: %#v", configMap.Data)
+	}
+	agent := statefulSet.Spec.Template.Spec.Containers[0]
+	for _, mount := range agent.VolumeMounts {
+		if mount.Name == "provisioned" && mount.MountPath != "/etc/pip.conf" {
+			t.Fatalf("unexpected provisioned mount at %s", mount.MountPath)
+		}
+	}
+	seen := map[string]string{}
+	for _, variable := range agent.Env {
+		if _, duplicate := seen[variable.Name]; duplicate {
+			t.Fatalf("%s was declared twice", variable.Name)
+		}
+		seen[variable.Name] = variable.Value
+	}
+	if seen["HOME"] != "/home/agent" || seen["OPENAI_API_KEY"] != "" {
+		t.Fatalf("the platform environment was overwritten: HOME=%q OPENAI_API_KEY=%q", seen["HOME"], seen["OPENAI_API_KEY"])
+	}
+	if seen["HTTPS_PROXY"] != "http://proxy.local:3128" {
+		t.Fatal("a legitimate variable was dropped alongside the reserved ones")
 	}
 }

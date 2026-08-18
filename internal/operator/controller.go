@@ -31,6 +31,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
+	"github.com/hkjang/AgentHub/internal/runtimeenv"
 	"github.com/hkjang/AgentHub/internal/runtimetype"
 )
 
@@ -194,7 +195,13 @@ type spec struct {
 		Name      string `json:"name"`
 		SecretRef string `json:"secretRef"`
 	} `json:"model"`
-	MCP      []mcpBinding `json:"mcp"`
+	MCP []mcpBinding `json:"mcp"`
+	// Provisioning is the platform-wide runtime environment: the files every
+	// container in this Pod is given and the variables all of them export.
+	Provisioning struct {
+		Files []runtimeenv.File     `json:"files"`
+		Env   []runtimeenv.Variable `json:"env"`
+	} `json:"provisioning"`
 	Security struct {
 		RunAsNonRoot                 bool   `json:"runAsNonRoot"`
 		ReadOnlyRootFilesystem       bool   `json:"readOnlyRootFilesystem"`
@@ -508,6 +515,9 @@ func (c *Controller) Reconcile(ctx context.Context, object *unstructured.Unstruc
 		return err
 	}
 	if err := c.ensureConfigMap(ctx, namespace, name, value, object); err != nil {
+		return err
+	}
+	if err := c.ensureProvisionedConfigMap(ctx, namespace, name, value, object); err != nil {
 		return err
 	}
 	pvcName := value.Workspace.PVCName
@@ -1184,6 +1194,9 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 		InitContainers: initContainers, Containers: containers,
 		Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName}}}, {Name: "home", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: homePVCName(name)}}}, {Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}, {Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}}}}},
 	}}}}
+	// Last, so the administrator's common files and variables reach every
+	// container the adapters contributed as well as the agent's own.
+	applyProvisioning(&desired.Spec.Template.Spec, name, value)
 	existing, err := c.client.AppsV1().StatefulSets(ns).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		_, err = c.client.AppsV1().StatefulSets(ns).Create(ctx, desired, metav1.CreateOptions{})
@@ -1198,11 +1211,12 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 	return err
 }
 
-// configHash fingerprints everything the ConfigMap carries so that any change to
-// the model binding, MCP bundle or system prompt produces a new Pod template.
+// configHash fingerprints everything the ConfigMaps carry so that any change to
+// the model binding, MCP bundle, system prompt or the administrator's common
+// files and variables produces a new Pod template.
 func configHash(ns, name string, value spec) string {
 	runtimeRaw, openRaw, hermesRaw := runtimeConfigs(ns, name, value)
-	sum := sha256.Sum256([]byte(runtimeRaw + "\x00" + openRaw + "\x00" + hermesRaw))
+	sum := sha256.Sum256([]byte(runtimeRaw + "\x00" + openRaw + "\x00" + hermesRaw + "\x00" + provisioningHash(value)))
 	return hex.EncodeToString(sum[:])
 }
 

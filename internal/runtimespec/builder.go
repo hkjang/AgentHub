@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/hkjang/AgentHub/internal/runtime"
+	"github.com/hkjang/AgentHub/internal/runtimeenv"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -200,7 +201,26 @@ func (b *Builder) Build(ctx context.Context, rt store.Runtime, agent store.Agent
 			}
 		}
 	}
+	provisionedFiles, provisionedVariables := b.runtimeEnvironment(ctx)
 	customCommand, customPort := agent.CustomRuntime()
-	return runtime.Spec{Runtime: rt, Agent: agent, SidecarImage: runtime.SidecarImage(),
+	return runtime.Spec{ProvisionedFiles: provisionedFiles, ProvisionedVariables: provisionedVariables, Runtime: rt, Agent: agent, SidecarImage: runtime.SidecarImage(),
 		CustomCommand: customCommand, CustomPort: int32(customPort), Profile: profile, Image: image, WorkspacePVC: pvc, WorkspaceType: workspaceType, WorkspaceRepositoryURL: repositoryURL, WorkspaceBranch: branch, WorkspaceSnapshot: snapshotName, WorkspaceSizeGB: workspaceSize, WorkspaceGitCredentialKind: gitCredentialKind, WorkspaceGitCredentialUsername: gitCredentialUsername, WorkspaceGitCredential: gitCredential, ModelBaseURL: modelBaseURL, ModelName: modelName, ModelAPIKey: modelAPIKey, MCPServers: bindings, Security: security, Network: network}, nil
+}
+
+// runtimeEnvironment resolves the platform-wide files and variables every
+// runtime is provisioned with. A site that never configured any has no setting
+// row, which is not a failure; a stored value that no longer parses is logged and
+// skipped rather than blocking every spawn on the cluster, because the API
+// validates this setting on the way in and only a hand-edited row can get here.
+func (b *Builder) runtimeEnvironment(ctx context.Context) ([]runtimeenv.File, []runtimeenv.Variable) {
+	var settings runtimeenv.Settings
+	switch err := b.store.Setting(ctx, runtimeenv.SettingKey, &settings); {
+	case err == nil:
+	case errors.Is(err, store.ErrNotFound):
+		return nil, nil
+	default:
+		b.logger.Error("runtime environment setting is unusable", "error", err)
+		return nil, nil
+	}
+	return settings.Effective()
 }

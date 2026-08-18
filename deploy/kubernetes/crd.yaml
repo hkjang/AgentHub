@@ -139,6 +139,35 @@ spec:
                       type: array
                       maxItems: 64
                       items: {type: string}
+                # Files and environment variables every runtime Pod is
+                # provisioned with, configured once in Admin ▸ Settings ▸
+                # Runtime Environment. Rendered into a ConfigMap and read by
+                # every container, so nothing here may be a secret.
+                provisioning:
+                  type: object
+                  properties:
+                    files:
+                      type: array
+                      maxItems: 32
+                      items:
+                        type: object
+                        required: [path]
+                        properties:
+                          # Absolute path inside the container. Paths the
+                          # platform owns are rejected by the control plane and
+                          # dropped by the operator.
+                          path: {type: string, minLength: 2, maxLength: 512, pattern: '^/'}
+                          content: {type: string, maxLength: 65536}
+                          mode: {type: string, pattern: '^0?[0-7]{3}$', default: '0644'}
+                    env:
+                      type: array
+                      maxItems: 64
+                      items:
+                        type: object
+                        required: [name]
+                        properties:
+                          name: {type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]*$'}
+                          value: {type: string, maxLength: 4096}
                 lifecycle:
                   type: object
                   required: [desiredState]
