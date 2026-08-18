@@ -14,6 +14,7 @@ import (
 type recorder struct {
 	mu       sync.Mutex
 	prompts  map[string]string
+	systems  map[string]string
 	replies  map[string]string
 	failures map[string]error
 	inFlight int32
@@ -22,7 +23,7 @@ type recorder struct {
 }
 
 func newRecorder() *recorder {
-	return &recorder{prompts: map[string]string{}, replies: map[string]string{}, failures: map[string]error{}}
+	return &recorder{prompts: map[string]string{}, systems: map[string]string{}, replies: map[string]string{}, failures: map[string]error{}}
 }
 
 func (r *recorder) Complete(ctx context.Context, step Step, prompt string) (string, error) {
@@ -46,6 +47,7 @@ func (r *recorder) Complete(ctx context.Context, step Step, prompt string) (stri
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.prompts[step.ID] = prompt
+	r.systems[step.ID] = step.SystemPrompt
 	if err, failing := r.failures[step.ID]; failing {
 		return "", err
 	}
@@ -157,23 +159,23 @@ func TestMaxDepthIsRejectedBeforeAnyAgentRuns(t *testing.T) {
 	}
 }
 
-func TestRouterRunsOnlyTheNamedBranch(t *testing.T) {
+func TestRouterRunsOnlyTheBranchItChose(t *testing.T) {
 	steps := []Step{
 		{ID: "route", AgentName: "Router"},
 		{ID: "billing", AgentName: "Billing", DependsOn: []string{"route"}},
 		{ID: "security", AgentName: "Security", DependsOn: []string{"route"}},
 	}
 	client := newRecorder()
-	client.replies["route"] = "이 요청은 security 담당입니다"
+	client.replies["route"] = `{"branches":["security"],"reason":"계정 탈취 신고","handoff":"로그인 로그를 확인해 주세요"}`
 	result, err := New(client).Run(context.Background(), "router", steps, Guardrails{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, ran := client.prompts["security"]; !ran {
-		t.Fatal("the named branch did not run")
+		t.Fatal("the chosen branch did not run")
 	}
 	if _, ran := client.prompts["billing"]; ran {
-		t.Fatal("an unnamed branch must be skipped")
+		t.Fatal("a branch that was not chosen must be skipped")
 	}
 	var skipped bool
 	for _, item := range result.Steps {
@@ -183,6 +185,89 @@ func TestRouterRunsOnlyTheNamedBranch(t *testing.T) {
 	}
 	if !skipped {
 		t.Fatalf("the skipped branch must be visible in the trace: %#v", result.Steps)
+	}
+	// The decision is on the record rather than inferred from what ran.
+	if result.Routing == nil || len(result.Routing.Chosen) != 1 || result.Routing.Chosen[0] != "security" {
+		t.Fatalf("unexpected routing record: %#v", result.Routing)
+	}
+	if result.Routing.FellBack || result.Routing.Reason != "계정 탈취 신고" {
+		t.Fatalf("unexpected routing record: %#v", result.Routing)
+	}
+	// The branch is told what to do, not handed the decision JSON.
+	if prompt := client.prompts["security"]; !strings.Contains(prompt, "로그인 로그를 확인해 주세요") {
+		t.Fatalf("the handoff never reached the branch: %q", prompt)
+	}
+	if prompt := client.prompts["security"]; strings.Contains(prompt, "branches") {
+		t.Fatalf("the branch was handed the raw decision: %q", prompt)
+	}
+}
+
+func TestRouterProseNoLongerSelectsByMentioningAName(t *testing.T) {
+	// The old reading looked for a branch's id or agent name anywhere in the
+	// answer, so a sentence that ruled a branch out selected it. An answer that is
+	// not a decision now runs the whole graph and says why, which is visible rather
+	// than being mistaken for a choice somebody made.
+	steps := []Step{
+		{ID: "route", AgentName: "Router"},
+		{ID: "billing", AgentName: "Billing", DependsOn: []string{"route"}},
+		{ID: "security", AgentName: "Security", DependsOn: []string{"route"}},
+	}
+	client := newRecorder()
+	client.replies["route"] = "이 건은 security 담당이 아니라 billing 쪽도 아닙니다"
+	result, err := New(client).Run(context.Background(), "router", steps, Guardrails{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Routing == nil || !result.Routing.FellBack {
+		t.Fatalf("an unreadable decision must be recorded as a fallback: %#v", result.Routing)
+	}
+	if result.Routing.Note == "" {
+		t.Fatal("the fallback must say what went wrong")
+	}
+	for _, id := range []string{"billing", "security"} {
+		if _, ran := client.prompts[id]; !ran {
+			t.Fatalf("the fallback must run every branch, %s did not run", id)
+		}
+	}
+}
+
+func TestRouterIgnoresBranchesThatDoNotExist(t *testing.T) {
+	steps := []Step{
+		{ID: "route", AgentName: "Router"},
+		{ID: "billing", AgentName: "Billing", DependsOn: []string{"route"}},
+	}
+	client := newRecorder()
+	client.replies["route"] = `{"branches":["legal","../billing"],"reason":"x","handoff":"y"}`
+	result, err := New(client).Run(context.Background(), "router", steps, Guardrails{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Routing == nil || !result.Routing.FellBack {
+		t.Fatalf("a decision naming nothing real must not be treated as a choice: %#v", result.Routing)
+	}
+}
+
+func TestRouterIsToldWhichBranchesExist(t *testing.T) {
+	steps := []Step{
+		{ID: "route", AgentName: "Router"},
+		{ID: "billing", AgentName: "Billing", DependsOn: []string{"route"}},
+		{ID: "security", AgentName: "Security", DependsOn: []string{"route"}},
+	}
+	client := newRecorder()
+	client.replies["route"] = `{"branches":["billing"],"reason":"결제 중복","handoff":"청구 내역 확인"}`
+	if _, err := New(client).Run(context.Background(), "router", steps, Guardrails{}, ""); err != nil {
+		t.Fatal(err)
+	}
+	// A constrained answer is only possible if the router knows which ids exist:
+	// the enum in the schema and the list in the prompt come from the same place.
+	instruction := client.systems["route"]
+	for _, want := range []string{"billing", "security", "branches"} {
+		if !strings.Contains(instruction, want) {
+			t.Fatalf("the router was not told about %q: %q", want, instruction)
+		}
+	}
+	if strings.Contains(client.systems["billing"], "branches") {
+		t.Fatal("a branch must not be given the router's instruction")
 	}
 }
 

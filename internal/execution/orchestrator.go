@@ -290,6 +290,16 @@ func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task stor
 	return transcript, Outcome{Status: store.TaskFailed, Failure: fmt.Sprintf("최대 단계 수(%d)에 도달했지만 목표를 완료하지 못했습니다.", goal.MaxSteps)}
 }
 
+// completeStructured asks for a schema-constrained answer when the model client
+// can, and asks in prose when it cannot — the caller validates either way.
+func (o *Orchestrator) completeStructured(ctx context.Context, step workflow.Step, prompt string, schema workflow.Schema) (workflow.StructuredResult, error) {
+	if structured, ok := o.completion.(workflow.StructuredCompleter); ok {
+		return structured.CompleteStructured(ctx, step, prompt, schema)
+	}
+	output, usage, err := o.complete(ctx, step, prompt)
+	return workflow.StructuredResult{Output: output, Usage: usage}, err
+}
+
 func (o *Orchestrator) complete(ctx context.Context, step workflow.Step, prompt string) (string, workflow.Usage, error) {
 	if reporter, ok := o.completion.(workflow.UsageReporter); ok {
 		return reporter.CompleteWithUsage(ctx, step, prompt)

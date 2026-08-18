@@ -19,6 +19,10 @@ type Verdict struct {
 	Reason   string   `json:"reason"`
 	Met      []string `json:"met,omitempty"`
 	Unmet    []string `json:"unmet,omitempty"`
+	// Validated is set when the judge's answer was constrained to a schema by the
+	// gateway rather than only asked for in the prompt. A verdict a task's
+	// completion rests on should say how much its shape can be trusted.
+	Validated bool `json:"validated,omitempty"`
 }
 
 // evaluate decides whether the goal was actually met and saves whatever the run
@@ -128,14 +132,19 @@ func significantWords(criterion string) []string {
 	return words
 }
 
-// judgeVerdict asks the model to assess the transcript against the criteria. The
-// judge is told to answer in JSON so the outcome is machine-readable rather than
-// something to grep prose for.
+// judgeVerdict asks the model to assess the transcript against the criteria.
+//
+// The answer is asked for as schema-constrained JSON, and the unmet criteria are
+// an enum of the criteria that actually exist: a verdict a task's completion rests
+// on should not be read out of prose, and a judge should not be able to fail a
+// task against a requirement nobody wrote. A gateway that cannot constrain the
+// answer is asked in prose instead and the verdict says so.
 func (o *Orchestrator) judgeVerdict(ctx context.Context, run *store.AgentRun, goal store.AgentGoal, model resolvedModel, transcript []string) Verdict {
 	step := workflow.Step{
 		ID: "judge", AgentName: "Completion Evaluator",
 		SystemPrompt: "당신은 엄격한 평가자입니다. 실행 기록이 완료 조건을 실제로 충족했는지 판정하고, 반드시 " +
-			`{"passed": true|false, "reason": "...", "unmet": ["..."]} 형식의 JSON만 출력하세요. ` +
+			`{"passed": true|false, "reason": "...", "unmet": ["충족되지 않은 완료 조건"]} 형식의 JSON만 출력하세요. ` +
+			"unmet 에는 주어진 완료 조건 문장만 그대로 넣고, 새로운 조건을 만들지 마세요. " +
 			"Agent가 완료했다고 주장하더라도 근거가 없으면 passed는 false입니다.",
 		ModelBaseURL: model.BaseURL, ModelName: model.ModelName, ModelAPIKey: model.APIKey,
 	}
@@ -150,7 +159,8 @@ func (o *Orchestrator) judgeVerdict(ctx context.Context, run *store.AgentRun, go
 	b.WriteString(strings.Join(transcript, "\n\n"))
 
 	startedAt := time.Now()
-	output, usage, err := o.complete(ctx, step, b.String())
+	structured, err := o.completeStructured(ctx, step, b.String(), verdictSchema(goal.SuccessCriteria))
+	output, usage := structured.Output, structured.Usage
 	run.TotalTokens += usage.TotalTokens
 	if _, storeErr := o.store.AppendRunStep(ctx, store.AgentRunStep{
 		RunID: run.ID, Sequence: run.StepCount + 1, Type: "completion", Title: "완료 판정",
@@ -172,13 +182,70 @@ func (o *Orchestrator) judgeVerdict(ctx context.Context, run *store.AgentRun, go
 		Unmet  []string `json:"unmet"`
 	}
 	if err := json.Unmarshal([]byte(extractJSON(output)), &decoded); err != nil {
-		return Verdict{Strategy: "judge", Passed: false, Reason: "완료 판정 결과를 해석하지 못했습니다: " + firstLine(output)}
+		// A verdict that cannot be read is not a pass. The task fails with the
+		// judge's own words attached, so the failure is diagnosable.
+		return Verdict{Strategy: "judge", Passed: false, Validated: structured.Validated,
+			Reason: "완료 판정 결과를 해석하지 못했습니다: " + firstLine(output)}
 	}
-	verdict := Verdict{Strategy: "judge", Passed: decoded.Passed, Reason: decoded.Reason, Unmet: decoded.Unmet}
+	unmet, invented := knownCriteria(goal.SuccessCriteria, decoded.Unmet)
+	verdict := Verdict{Strategy: "judge", Passed: decoded.Passed, Reason: decoded.Reason, Unmet: unmet, Validated: structured.Validated}
 	if verdict.Reason == "" {
 		verdict.Reason = fmt.Sprintf("완료 판정 결과: %v", decoded.Passed)
 	}
+	if len(invented) > 0 {
+		// A judge that fails a task against a requirement nobody wrote is reporting
+		// its own opinion as a criterion. The verdict stands, but it says so.
+		o.logger.Warn("judge named criteria that were not configured", "run", run.ID, "criteria", invented)
+		verdict.Reason += " (설정되지 않은 조건 언급: " + strings.Join(invented, ", ") + ")"
+	}
 	return verdict
+}
+
+// verdictSchema constrains the judge's answer. The unmet list is an enum of the
+// criteria that exist, so the answer can only be about them.
+func verdictSchema(criteria []string) workflow.Schema {
+	allowed := make([]any, 0, len(criteria))
+	for _, criterion := range criteria {
+		allowed = append(allowed, criterion)
+	}
+	unmet := map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
+	if len(allowed) > 0 {
+		unmet["items"] = map[string]any{"type": "string", "enum": allowed}
+	}
+	return workflow.Schema{
+		Name: "agenthub_completion_verdict",
+		Body: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"passed": map[string]any{"type": "boolean"},
+				"reason": map[string]any{"type": "string"},
+				"unmet":  unmet,
+			},
+			"required":             []any{"passed", "reason", "unmet"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+// knownCriteria splits what the judge named into the criteria that were actually
+// configured and the ones it made up.
+func knownCriteria(criteria, named []string) (known, invented []string) {
+	exists := make(map[string]bool, len(criteria))
+	for _, criterion := range criteria {
+		exists[strings.TrimSpace(criterion)] = true
+	}
+	for _, item := range named {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if exists[item] {
+			known = append(known, item)
+		} else {
+			invented = append(invented, item)
+		}
+	}
+	return known, invented
 }
 
 // extractJSON pulls the object out of a reply that may be wrapped in prose or a

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/hkjang/AgentHub/internal/store"
+	"github.com/hkjang/AgentHub/internal/workflow"
 )
 
 func goalWith(criteria ...string) store.AgentGoal {
@@ -157,5 +158,43 @@ func TestStepPromptCarriesTheTaskAndPriorTurns(t *testing.T) {
 	second := stepPrompt(task, goalWith(), []string{"로그를 조회했습니다."})
 	if !strings.Contains(second, "로그를 조회했습니다.") {
 		t.Fatalf("the follow-up prompt lost the earlier turn: %q", second)
+	}
+}
+
+func TestVerdictSchemaAllowsOnlyTheConfiguredCriteria(t *testing.T) {
+	var schema workflow.Schema = verdictSchema([]string{"보고서 작성", "원인 확인"})
+	if schema.Name == "" {
+		t.Fatal("a schema the gateway logs by needs a name")
+	}
+	properties, _ := schema.Body["properties"].(map[string]any)
+	unmet, _ := properties["unmet"].(map[string]any)
+	items, _ := unmet["items"].(map[string]any)
+	values, _ := items["enum"].([]any)
+	if len(values) != 2 || values[0] != "보고서 작성" {
+		t.Fatalf("the unmet list is not constrained to the criteria: %#v", items)
+	}
+	required, _ := schema.Body["required"].([]any)
+	if len(required) != 3 {
+		t.Fatalf("a verdict must require passed, reason and unmet: %#v", required)
+	}
+	// With no criteria configured there is nothing to enumerate, and an empty enum
+	// would reject every answer.
+	empty := verdictSchema(nil)
+	emptyProperties, _ := empty.Body["properties"].(map[string]any)
+	emptyUnmet, _ := emptyProperties["unmet"].(map[string]any)
+	emptyItems, _ := emptyUnmet["items"].(map[string]any)
+	if _, constrained := emptyItems["enum"]; constrained {
+		t.Fatal("an empty criteria list must not produce an empty enum")
+	}
+}
+
+func TestJudgeVerdictDropsCriteriaNobodyConfigured(t *testing.T) {
+	known, invented := knownCriteria([]string{"보고서 작성", "원인 확인"},
+		[]string{"원인 확인", "테스트 커버리지 90%", "  "})
+	if len(known) != 1 || known[0] != "원인 확인" {
+		t.Fatalf("configured criteria were lost: %#v", known)
+	}
+	if len(invented) != 1 || invented[0] != "테스트 커버리지 90%" {
+		t.Fatalf("an invented criterion was accepted as configured: %#v", invented)
 	}
 }

@@ -143,6 +143,12 @@ function WorkflowDrawer({item,agents,close,done,error}:{item:Workflow|null;agent
 
 function NumberField({label,value,set,min,max,hint}:{label:string;value:number;set:(value:number)=>void;min:number;max:number;hint?:string}){return <label><span>{label}</span><input required type="number" min={min} max={max} value={value} onChange={(e)=>set(Number(e.target.value))}/>{hint&&<small>{hint}</small>}</label>}
 
+/** stepName turns a step id into the agent's name, which is what the operator
+ *  recognises in the routing record. */
+function stepName(result:WorkflowRunResult,id:string){
+  return result.steps.find((step)=>step.id===id)?.agentName||id
+}
+
 /** Runs a saved graph and shows the per-step trace the engine returns. */
 function RunDrawer({item,close}:{item:Workflow;close:()=>void}) {
   const [input,setInput] = useState('')
@@ -183,6 +189,16 @@ function RunDrawer({item,close}:{item:Workflow;close:()=>void}) {
             <span className={vote.abstained?'abstained':''}>{vote.abstained?'기권 (VOTE 없음)':vote.choice}</span>
           </div>)}</div>
         <small>각 에이전트는 서로의 답을 보지 않고 같은 질문에 답한 뒤 표를 던집니다. 집계는 플랫폼이 직접 계산합니다.</small>
+      </section>}
+      {result.routing&&<section className="detail-section"><h4>분기 결정</h4>
+        <div className={`consensus-verdict ${result.routing.fellBack?'none':'unanimous'}`}>
+          <strong>{result.routing.fellBack?'결정 없음 · 전체 실행':`선택: ${result.routing.chosen.map((id)=>stepName(result,id)).join(', ')}`}</strong>
+          {result.routing.reason&&<span>{result.routing.reason}</span>}
+          <small>{result.routing.validated?'모델이 스키마에 맞춰 답했습니다':'스키마 미지원 게이트웨이 · 응답을 검증했습니다'}</small>
+        </div>
+        <small>{result.routing.fellBack
+          ? `라우터가 실행 가능한 분기를 지정하지 않아 모든 분기를 실행했습니다. ${result.routing.note??''}`
+          : '라우터는 후보 분기의 id 중에서만 선택할 수 있고, 선택되지 않은 분기는 건너뜁니다.'}</small>
       </section>}
       {result.supervision&&<section className="detail-section"><h4>감독 결과</h4>
         <div className={`consensus-verdict ${result.supervision.approved?'unanimous':result.supervision.exhausted?'tie':'none'}`}>

@@ -265,6 +265,37 @@ waking itself forever. Publishing is best-effort throughout: the task already
 finished, and failing it because nothing could be told about it would be worse
 than a missed trigger.
 
+## Decisions the platform acts on
+
+Two answers are not passed along to a person or another agent — they are acted on
+by the platform — and both used to be read out of prose.
+
+The router's choice was found by looking for a branch's step id or its agent's
+name anywhere in the answer. A router that wrote "이 건은 배포팀에 보내지
+않습니다" selected 배포팀, an answer that mentioned two teams selected both, and
+anything in the input that named a branch could steer the graph. The router is now
+told which ids exist and answers with a list of them, constrained by a JSON schema
+whose `branches` items are an enum of those ids. What comes back is validated
+against the same list, the chosen branch receives a `handoff` message rather than
+the decision JSON, and the decision itself — chosen branches, reason, whether the
+gateway constrained the answer — is kept on the run so it can be read afterwards
+instead of inferred from which steps happened to run.
+
+The completion verdict has the same shape: the judge is asked for
+`{passed, reason, unmet}` under a schema whose `unmet` items are an enum of the
+criteria that actually exist, so a judge cannot fail a task against a requirement
+nobody wrote. Anything it names that was not configured is dropped from the verdict
+and said out loud in the reason rather than stored as a criterion.
+
+Both fall back rather than fail. Not every OpenAI-compatible gateway implements
+`response_format`, and an offline site cannot choose its gateway freely, so a 4xx
+refusal of the schema means the same prompt is sent again without it and the answer
+is marked unvalidated — the caller parses and validates either way. What differs is
+what happens when the answer still cannot be read: a routing decision that cannot
+be read runs the whole graph and says so on the record, because an empty result is
+worse than an unrouted one; a verdict that cannot be read fails the task, because a
+completion nobody could confirm is not a completion.
+
 ## Consensus
 
 Consensus was selectable in the console long before it meant anything: the run

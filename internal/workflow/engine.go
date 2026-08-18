@@ -28,6 +28,9 @@ type Step struct {
 	ModelBaseURL string
 	ModelName    string
 	ModelAPIKey  string
+	// Schema constrains this step's answer, for the steps whose answer the
+	// platform acts on rather than passes along — today the router's decision.
+	Schema *Schema
 }
 
 // Guardrails bound a run. They mirror the limits validated when the workflow was
@@ -57,6 +60,9 @@ type StepResult struct {
 	PromptTokens     int `json:"promptTokens,omitempty"`
 	CompletionTokens int `json:"completionTokens,omitempty"`
 	TotalTokens      int `json:"totalTokens,omitempty"`
+	// SchemaValidated is set on a step whose answer the gateway constrained to a
+	// schema, as opposed to one that was only asked for JSON.
+	SchemaValidated bool `json:"schemaValidated,omitempty"`
 }
 
 // Result is the whole run.
@@ -76,6 +82,8 @@ type Result struct {
 	Consensus *ConsensusResult `json:"consensus,omitempty"`
 	// Supervision is the review record, present only for supervised runs.
 	Supervision *SupervisionResult `json:"supervision,omitempty"`
+	// Routing is the branch decision, present only for router runs.
+	Routing *Routing `json:"routing,omitempty"`
 }
 
 // Completion is the single capability a step needs: send a system prompt plus a
@@ -156,6 +164,26 @@ func (e *Engine) Run(ctx context.Context, mode string, steps []Step, guard Guard
 	// skipped rather than executed.
 	routing := mode == "router"
 	var selection map[string]bool
+	var candidates []routerCandidate
+	if routing && len(levels) > 0 {
+		// The router is asked for a decision, not for prose to search: it is told
+		// which ids exist and answers with a list of them.
+		routerIDs := make(map[string]*StepResult, len(levels[0]))
+		for _, id := range levels[0] {
+			routerIDs[id] = &StepResult{}
+		}
+		candidates = routerCandidates(byID, routerIDs)
+		if len(candidates) > 0 {
+			schema := routerSchema(candidates)
+			instruction := routerInstruction(candidates)
+			for id := range routerIDs {
+				step := byID[id]
+				step.SystemPrompt += instruction
+				step.Schema = &schema
+				byID[id] = step
+			}
+		}
+	}
 
 	calls := 0
 	for depth, level := range levels {
@@ -195,15 +223,9 @@ func (e *Engine) Run(ctx context.Context, mode string, steps []Step, guard Guard
 			return finish(result, results, steps, calls), nil
 		}
 		if routing && selection == nil {
-			selection = routeSelection(levelResults, byID)
-			if len(selection) == 0 {
-				// The router named nothing recognisable; running the whole graph is
-				// more useful than silently producing an empty result.
-				selection = map[string]bool{}
-				for id := range byID {
-					selection[id] = true
-				}
-			}
+			var record Routing
+			selection, record = e.route(levelResults, candidates, byID, outputs)
+			result.Routing = &record
 		} else if selection != nil {
 			// A step that ran is itself a valid dependency for the next level.
 			for id := range levelResults {
@@ -303,9 +325,17 @@ func (e *Engine) runLevel(ctx context.Context, level []Step, depth int, outputs 
 			var output string
 			var usage Usage
 			var err error
-			if reporter, ok := e.completion.(UsageReporter); ok {
+			switch {
+			case step.Schema != nil:
+				// The answer to this step is acted on rather than passed along, so it
+				// is asked for as schema-constrained JSON.
+				structured, structuredErr := e.completeStructured(ctx, step, prompt, *step.Schema)
+				output, usage, err = structured.Output, structured.Usage, structuredErr
+				item.SchemaValidated = structured.Validated
+			case isUsageReporter(e.completion):
+				reporter, _ := e.completion.(UsageReporter)
 				output, usage, err = reporter.CompleteWithUsage(ctx, step, prompt)
-			} else {
+			default:
 				output, err = e.completion.Complete(ctx, step, prompt)
 			}
 			item.DurationMs = time.Since(started).Milliseconds()
@@ -404,26 +434,6 @@ func compose(mode string, steps []Step, results map[string]*StepResult, outputs 
 		b.WriteString("\n\n")
 	}
 	return strings.TrimSpace(b.String())
-}
-
-// routeSelection reads the router's answer and returns the downstream steps it
-// named. The router's own id is deliberately excluded: every branch depends on
-// it, so treating it as a permitting dependency would let the whole graph
-// through and defeat the routing.
-func routeSelection(levelResults map[string]*StepResult, byID map[string]Step) map[string]bool {
-	selected := map[string]bool{}
-	for _, item := range levelResults {
-		answer := strings.ToLower(item.Output)
-		for id, step := range byID {
-			if _, isRouter := levelResults[id]; isRouter {
-				continue
-			}
-			if strings.Contains(answer, strings.ToLower(id)) || (step.AgentName != "" && strings.Contains(answer, strings.ToLower(step.AgentName))) {
-				selected[id] = true
-			}
-		}
-	}
-	return selected
 }
 
 func dependsOnAllowed(step Step, allowed map[string]bool) bool {
