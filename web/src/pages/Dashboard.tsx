@@ -23,4 +23,6 @@ export function Dashboard(){
       <section className="panel getting-started"><div className="panel-header"><div><h2>빠른 시작</h2><p>첫 런타임을 준비하는 3단계</p></div></div><ol><li><span>1</span><div><strong>템플릿 선택</strong><p>검증된 실행환경과 정책을 선택합니다.</p></div></li><li><span>2</span><div><strong>작업공간 연결</strong><p>새 공간 또는 Git 저장소를 연결합니다.</p></div></li><li><span>3</span><div><strong>런타임 시작</strong><p>개인 전용 Pod에서 바로 시작합니다.</p></div></li></ol><Link to="/catalog" className="text-link">에이전트 카탈로그 열기<ArrowUpRight size={15}/></Link></section></div>
   </div>
 }
-function Metric({icon,label,value,note,tone,alert}:{icon:React.ReactNode;label:string;value:React.ReactNode;note:string;tone:string;alert?:boolean}){return <article className="metric-card"><div className={`metric-icon ${tone}`}>{icon}</div><div><span>{label}</span><strong>{value}</strong><small className={alert?'alert-note':undefined}>{note}</small></div></article>}
+// A number gets the big display size; a phrase like "즉시 실행" does not, or it
+// wraps across the note beside it.
+function Metric({icon,label,value,note,tone,alert}:{icon:React.ReactNode;label:string;value:React.ReactNode;note:string;tone:string;alert?:boolean}){return <article className={typeof value==='number'?'metric-card':'metric-card text'}><div className={`metric-icon ${tone}`}>{icon}</div><div><span>{label}</span><strong>{value}</strong><small className={alert?'alert-note':undefined}>{note}</small></div></article>}

@@ -105,7 +105,7 @@ export function Agents({runtimeOnly=false}:{runtimeOnly?:boolean}) {
   const selected = list.find(a => a?.id === selectedId) || null
   const present = RUNTIME_TYPES.filter((type) => scoped.some((agent) => agent.runtimeType === type))
   return <div className="page">
-    <PageHeader eyebrow={runtimeOnly?'런타임 제어':'내 작업공간'} title={runtimeOnly?'내 런타임':'내 에이전트'} description={runtimeOnly?'사용자 전용 Kubernetes 런타임의 수명주기와 상태를 관리합니다.':'에이전트 정의와 실행 중인 런타임을 분리해서 안전하게 관리합니다.'} actions={<><label className="button ghost import-agent"><Upload size={16}/>정의 가져오기<input type="file" accept=".yaml,.yml,application/yaml,text/yaml" onChange={(e)=>{const file=e.target.files?.[0]; e.target.value=''; if(file) void importAgent(file)}}/></label><Link className="button primary" to="/catalog"><Plus size={17}/>새 에이전트</Link></>}/>
+    <PageHeader eyebrow={runtimeOnly?'런타임 제어':'에이전트 정의'} title={runtimeOnly?'내 런타임':'내 에이전트'} description={runtimeOnly?'사용자 전용 Kubernetes 런타임의 수명주기와 상태를 관리합니다.':'에이전트 정의와 실행 중인 런타임을 분리해서 안전하게 관리합니다.'} actions={<><label className="button ghost import-agent"><Upload size={16}/>정의 가져오기<input type="file" accept=".yaml,.yml,application/yaml,text/yaml" onChange={(e)=>{const file=e.target.files?.[0]; e.target.value=''; if(file) void importAgent(file)}}/></label><Link className="button primary" to="/catalog"><Plus size={17}/>새 에이전트</Link></>}/>
     {error&&<ErrorBanner message={error} onClose={()=>setError('')}/>}
     {notice&&<div className="notice-banner">{notice}</div>}
     {scoped.length>0&&<div className="toolbar">

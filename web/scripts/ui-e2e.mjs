@@ -19,7 +19,7 @@ const ROUTES = [
   ['/agents/builder', /에이전트 빌더/],
   ['/runtime', /내 런타임/],
   ['/sessions', /런타임 세션/],
-  ['/tasks', /에이전트 작업/],
+  ['/tasks', /작업 대기열/],
   ['/workspaces', /내 작업공간/],
   ['/workspaces/snapshots', /작업공간 스냅샷/],
   ['/mcp/catalog', /MCP/],
@@ -206,6 +206,40 @@ try {
   await confirm.waitFor({ timeout: 10000 })
   await confirm.getByRole('button', { name: '취소' }).click()
   if ((await page.getByRole('alertdialog').count()) !== 0) note(route, 'confirm', 'cancel did not dismiss the dialog')
+
+  // The two screens whose concepts need explaining carry that explanation in the
+  // page, and remember being dismissed.
+  for (const [path, marker] of [['/workflows', '워크플로는 이렇게 사용합니다'], ['/tasks', '작업 대기열은 이렇게 사용합니다']]) {
+    route = `${path}:guide`
+    await page.goto(baseURL + path, { waitUntil: 'networkidle' })
+    await page.waitForTimeout(400)
+    if ((await page.getByText(marker).count()) === 0) note(route, 'guide', 'no usage guide on the page')
+    if ((await page.locator('.guide-steps li').count()) < 4) note(route, 'guide', 'the guide has fewer steps than expected')
+    await page.getByRole('button', { name: new RegExp(marker) }).click()
+    await page.waitForTimeout(200)
+    if ((await page.locator('.guide-steps').count()) !== 0) note(route, 'guide', 'collapsing the guide did not hide it')
+    await page.reload({ waitUntil: 'networkidle' })
+    await page.waitForTimeout(400)
+    if ((await page.locator('.guide-steps').count()) !== 0) note(route, 'guide', 'a dismissed guide came back after a reload')
+    await page.getByRole('button', { name: new RegExp(marker) }).click()
+    await page.waitForTimeout(200)
+    if ((await page.locator('.guide-steps').count()) === 0) note(route, 'guide', 'the guide could not be reopened')
+  }
+
+  // Every collaboration mode explains what it does, rather than being an English
+  // word in a dropdown.
+  route = '/workflows:modes'
+  await page.goto(baseURL + '/workflows', { waitUntil: 'networkidle' })
+  await page.getByRole('button', { name: /워크플로 만들기/ }).click()
+  await page.locator('.drawer').waitFor({ timeout: 10000 })
+  const modeCards = page.locator('.mode-cards button')
+  if ((await modeCards.count()) !== 6) note(route, 'modes', `${await modeCards.count()} mode cards, expected 6`)
+  for (const label of ['순차 실행', '합의 표결', '감독 검토']) {
+    if ((await page.locator('.mode-cards button', { hasText: label }).count()) === 0) note(route, 'modes', `no card for ${label}`)
+  }
+  await page.locator('.mode-cards button', { hasText: '합의 표결' }).click()
+  if ((await page.locator('.mode-cards button.selected', { hasText: '합의 표결' }).count()) !== 1) note(route, 'modes', 'choosing a mode did not select it')
+  await page.keyboard.press('Escape')
 
   // Escape closes a modal. The shell answered Escape for its own overlays while
   // drawers and confirmations ignored it.

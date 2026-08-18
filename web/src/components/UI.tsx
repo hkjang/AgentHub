@@ -1,5 +1,5 @@
-import { useEffect, useRef, type ReactNode } from 'react'
-import { AlertCircle, CheckCircle2, X } from 'lucide-react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { AlertCircle, CheckCircle2, ChevronDown, ChevronUp, HelpCircle, X } from 'lucide-react'
 
 // Overlays opened, innermost last. Escape closes the topmost one only, so a
 // confirmation opened over a drawer does not take the drawer with it.
@@ -72,4 +72,42 @@ export function ConfirmDialog({title,message,confirmLabel='삭제',busy=false,er
       </div>
     </div>
   </div>
+}
+
+/**
+ * "How this screen works", in the screen itself. Workflows and the task queue are
+ * the two surfaces whose concepts cannot be guessed from the controls — what a
+ * mode does, what a worker is, why a task is waiting — and the documentation that
+ * explains them lives outside the product, where nobody reads it mid-task.
+ *
+ * Collapsed state is remembered per screen: it explains itself once and then
+ * stays out of the way, without disappearing for good.
+ */
+export function GuidePanel({id,title,steps,footer}:{id:string;title:string;steps:{title:string;body:ReactNode}[];footer?:ReactNode}) {
+  const key = `agenthub.guide.${id}`
+  const [open,setOpen] = useState(() => {
+    try { return window.localStorage.getItem(key) !== 'closed' } catch { return true }
+  })
+  const toggle = () => setOpen((value) => {
+    const next = !value
+    try { window.localStorage.setItem(key, next ? 'open' : 'closed') } catch { /* storage may be blocked */ }
+    return next
+  })
+  return <section className="guide-panel">
+    <button type="button" className="guide-toggle" onClick={toggle} aria-expanded={open}>
+      <HelpCircle size={16}/><strong>{title}</strong>
+      <span>{open ? '접기' : '사용법 보기'}</span>{open ? <ChevronUp size={15}/> : <ChevronDown size={15}/>}
+    </button>
+    {open && <div className="guide-body">
+      <ol className="guide-steps">{steps.map((step,index) => <li key={step.title}>
+        <span>{index+1}</span><div><strong>{step.title}</strong><div className="guide-text">{step.body}</div></div>
+      </li>)}</ol>
+      {footer}
+    </div>}
+  </section>
+}
+
+/** A row of "term — meaning" chips, for statuses and modes a label alone cannot explain. */
+export function GuideLegend({items}:{items:{label:ReactNode;meaning:string}[]}) {
+  return <div className="guide-legend">{items.map((item,index) => <span key={index}>{item.label}<small>{item.meaning}</small></span>)}</div>
 }

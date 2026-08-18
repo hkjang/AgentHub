@@ -1,7 +1,8 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { Bot, ClipboardList, Clock3, Coins, ExternalLink, ListChecks, Play, Plus, Radio, RefreshCw, RotateCcw, Square } from 'lucide-react'
 import { api } from '../api'
-import { ConfirmDialog, Drawer, Empty, ErrorBanner, Loading, PageHeader, StatusBadge, statusLabel } from '../components/UI'
+import { Link } from 'react-router-dom'
+import { ConfirmDialog, Drawer, Empty, ErrorBanner, GuideLegend, GuidePanel, Loading, PageHeader, StatusBadge, statusLabel } from '../components/UI'
 import { relativeTime, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
 import type { Agent, AgentArtifact, AgentPlan, AgentRun, AgentRunEvent, AgentRunStep, AgentTask, PlatformEvent, QueueSnapshot, UsageReport } from '../types'
 
@@ -15,6 +16,27 @@ const PRIORITY_LABELS: Record<string, string> = {
 const SOURCE_LABELS: Record<string, string> = {
   manual: '직접 실행', cron: '예약', webhook: 'Webhook', agent: '다른 에이전트', event: '이벤트',
 }
+
+/** What a status means for the person reading it, not what the worker calls it. */
+const STATUS_MEANINGS: Record<string, string> = {
+  queued: '워커가 가져가기를 기다립니다',
+  planning: '실행 계획을 세우는 중입니다',
+  running: '에이전트가 수행하는 중입니다',
+  waiting_tool: '도구 응답을 기다립니다',
+  waiting_approval: '사람이 승인해야 이어집니다',
+  retrying: '실패 후 자동으로 다시 시도합니다',
+  completed: '완료 조건을 충족하고 끝났습니다',
+  failed: '실패했습니다 · 다시 실행할 수 있습니다',
+  dead_letter: '재시도를 모두 소진했습니다',
+  cancelled: '사람이 취소했습니다',
+}
+
+/** Example task inputs, so the first task is not written from a blank page. */
+const TASK_EXAMPLES = [
+  { label: '저장소 정리', input: '작업공간의 오래된 브랜치와 사용하지 않는 의존성을 찾아 정리 계획을 정리하고, 실제로 적용할 변경은 목록으로 남겨 주세요.' },
+  { label: '테스트 보강', input: '테스트가 없는 모듈을 찾아 실패 케이스부터 테스트를 추가하고, 결과를 요약해 주세요.' },
+  { label: '로그 조사', input: '어제 발생한 오류 로그를 조사해 원인 후보와 근거, 확인 방법을 정리해 주세요.' },
+]
 
 const EVENT_LABELS: Record<string, string> = {
   'task.completed': '작업 완료', 'task.failed': '작업 실패', 'task.dead_lettered': '재시도 소진',
@@ -88,23 +110,30 @@ export function Tasks() {
   }
 
   return <div className="page">
-    <PageHeader eyebrow="실행 플레인" title="에이전트 작업"
-      description="에이전트가 스스로 수행하는 작업의 대기열과 실행 결과입니다."
+    <PageHeader eyebrow="실행 플레인" title="작업 대기열"
+      description="에이전트에게 맡긴 일이 대기열에 쌓이고, 워커가 가져가 스스로 수행한 결과가 여기에 남습니다."
       actions={<>
         <button className="button ghost" onClick={() => void load()}><RefreshCw size={15} />새로고침</button>
         <button className="button primary" disabled={agents.length === 0} onClick={() => setCreating(true)}><Plus size={16} />새 작업</button>
       </>} />
     {error && <ErrorBanner message={error} onClose={() => setError('')} />}
 
+    <GuidePanel id="tasks" title="작업 대기열은 이렇게 사용합니다" steps={[
+      { title: '작업을 맡깁니다', body: <><b>새 작업</b>에서 에이전트와 할 일을 적어 대기열에 넣습니다. 사람이 지켜보지 않아도 진행되며, 예약·Webhook·플랫폼 이벤트로 자동 등록되게 하려면 <Link to="/agents">내 에이전트</Link> 상세의 <b>목표·Trigger</b>에서 설정합니다.</> },
+      { title: '워커가 가져갑니다', body: <>대기 중인 작업은 워커가 우선순위 순서로 가져가고, 필요하면 그 에이전트의 런타임을 자동으로 띄웁니다. 아래 <b>대기 · 실행 · 워커</b> 숫자가 지금 상태이고, 대기열이 밀리면 워커 수는 스스로 늘어납니다.</> },
+      { title: '진행을 따라갑니다', body: <>상태 칩으로 걸러 보고, 각 행의 <b>실행 기록</b>에서 계획·단계별 수행 내역·산출물·토큰 사용량까지 확인합니다. 목록은 5초마다 자동 갱신됩니다.</> },
+      { title: '막힌 작업을 처리합니다', body: <><b>승인 대기</b>는 <Link to="/reviews">검토 · 승인</Link>에서 승인하면 이어서 진행되고, <b>실패</b>·<b>처리 불가</b>는 원인을 고친 뒤 다시 실행할 수 있습니다.</> },
+    ]} footer={<GuideLegend items={['queued','running','waiting_approval','retrying','completed','failed','dead_letter'].map((status) => ({ label: <StatusBadge status={status} />, meaning: STATUS_MEANINGS[status] ?? '' }))} />} />
+
     {tasks.length > 0 && <div className="toolbar">
       <div className="filter-chips">
         <button className={filter === '' ? 'selected' : ''} onClick={() => setFilter('')}>전체 {tasks.length}</button>
         {['running', 'queued', 'waiting_approval', 'retrying', 'completed', 'failed', 'dead_letter'].filter((status) => counts[status])
-          .map((status) => <button key={status} className={filter === status ? 'selected' : ''} onClick={() => setFilter(status)}>
+          .map((status) => <button key={status} title={STATUS_MEANINGS[status]} className={filter === status ? 'selected' : ''} onClick={() => setFilter(status)}>
             {statusLabel(status)} {counts[status]}
           </button>)}
       </div>
-      <span className="row-time">
+      <span className="row-time" title="대기: 아직 가져가지 않은 작업 · 실행: 지금 수행 중인 작업 · 워커: 동시에 실행할 수 있는 수(대기열에 따라 자동 조절)">
         <Clock3 size={14} />
         {queue ? `대기 ${queue.ready} · 실행 ${queue.running} · 워커 ${queue.workers}` : `진행 중 ${active}건`} · 5초마다 갱신
       </span>
@@ -112,12 +141,16 @@ export function Tasks() {
 
     {tasks.length === 0
       ? <Empty icon={<ListChecks />} title="아직 작업이 없습니다"
-          description="에이전트에 목표를 설정하고 작업을 맡기면 여기에 실행 기록이 쌓입니다."
-          action={agents.length ? <button className="button primary" onClick={() => setCreating(true)}>첫 작업 만들기</button> : undefined} />
+          description={agents.length
+            ? '에이전트에게 할 일을 맡기면 워커가 가져가 수행하고, 그 기록이 여기에 남습니다.'
+            : '먼저 에이전트를 만들어야 작업을 맡길 수 있습니다.'}
+          action={agents.length
+            ? <button className="button primary" onClick={() => setCreating(true)}><Plus size={16} />첫 작업 만들기</button>
+            : <Link className="button primary" to="/catalog"><Plus size={16} />에이전트 만들기</Link>} />
       : visible.length === 0
         ? <div className="empty-compact">해당 상태의 작업이 없습니다.</div>
         : <section className="table-panel"><div className="table-wrap custom-scroll"><table>
-            <thead><tr><th>작업</th><th>에이전트</th><th>상태</th><th>우선순위</th><th>출처</th><th>시도</th><th>마지막 변경</th><th aria-label="작업" /></tr></thead>
+            <thead><tr><th>작업</th><th>에이전트</th><th>상태</th><th title="워커가 가져가는 순서">우선순위</th><th title="이 작업이 어떻게 등록되었는지 (직접 실행 · 예약 · Webhook · 이벤트 · 다른 에이전트)">출처</th><th title="지금까지 실행을 시도한 횟수">시도</th><th>마지막 변경</th><th aria-label="작업" /></tr></thead>
             <tbody>{visible.map((task) => <tr key={task.id}>
               <td>
                 <div className="agent-main">
@@ -265,14 +298,19 @@ function CreateTaskDrawer({ agents, close, done }: { agents: Agent[]; close: () 
         </select>
       </label>
       <label><span>작업 제목</span><input maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="비워 두면 에이전트 이름으로 만들어집니다" /></label>
-      <label><span>작업 내용</span><textarea rows={6} value={input} onChange={(e) => setInput(e.target.value)} placeholder="에이전트가 수행할 작업을 구체적으로 적으세요." /></label>
+      <label><span>작업 내용</span>
+        <textarea rows={6} value={input} onChange={(e) => setInput(e.target.value)} placeholder="에이전트가 수행할 작업을 구체적으로 적으세요." />
+        <small>완료 여부를 판단할 수 있게 구체적으로 적는 편이 좋습니다. 비워 두면 에이전트에 설정된 목표만으로 실행됩니다.</small>
+      </label>
+      <div className="example-buttons">{TASK_EXAMPLES.map((example) => <button type="button" key={example.label} onClick={() => setInput(example.input)}>{example.label} 예시</button>)}</div>
       <label><span>우선순위</span>
         <select value={priority} onChange={(e) => setPriority(e.target.value)}>
           {Object.entries(PRIORITY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
+        <small>워커가 가져가는 순서만 정합니다. 실행 속도나 한도는 달라지지 않습니다.</small>
       </label>
-      <div className="info-box"><Bot size={17} /><div><strong>자동 실행</strong>
-        <p>Worker가 대기열에서 작업을 가져가 목표와 완료 조건에 따라 수행하고, 필요하면 Runtime을 자동으로 확보합니다.</p></div></div>
+      <div className="info-box"><Bot size={17} /><div><strong>등록하면 이렇게 진행됩니다</strong>
+        <p>대기열에 들어가면 워커가 우선순위 순으로 가져가 에이전트의 목표·완료 조건에 따라 수행하고, 필요하면 런타임을 자동으로 띄웁니다. 승인이 필요한 조치를 만나면 <b>승인 대기</b>로 멈추고 검토자에게 알림이 갑니다.</p></div></div>
     </form>
   </Drawer>
 }
