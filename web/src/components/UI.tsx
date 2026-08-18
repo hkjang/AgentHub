@@ -55,7 +55,7 @@ export function Drawer({title,subtitle,close,children,footer}:{title:string;subt
  * resources and platform records, so every call site routes through this rather
  * than firing on a single click.
  */
-export function ConfirmDialog({title,message,confirmLabel='삭제',busy=false,error,onConfirm,onCancel}:{title:string;message:ReactNode;confirmLabel?:string;busy?:boolean;error?:string;onConfirm:()=>void;onCancel:()=>void}) {
+export function ConfirmDialog({title,message,confirmLabel='삭제',busy=false,error,disableConfirm=false,onConfirm,onCancel}:{title:string;message:ReactNode;confirmLabel?:string;busy?:boolean;error?:string;disableConfirm?:boolean;onConfirm:()=>void;onCancel:()=>void}) {
   // Not while the action is in flight: the request is already on its way, and
   // closing the dialog would hide whether it succeeded.
   useEscape(() => { if (!busy) onCancel() })
@@ -68,7 +68,7 @@ export function ConfirmDialog({title,message,confirmLabel='삭제',busy=false,er
       {error&&<ErrorBanner message={error}/>}
       <div className="confirm-actions">
         <button className="button ghost" onClick={onCancel} disabled={busy}>취소</button>
-        <button className="button danger" onClick={onConfirm} disabled={busy} autoFocus>{busy?'처리 중…':confirmLabel}</button>
+        <button className="button danger" onClick={onConfirm} disabled={busy||disableConfirm} autoFocus>{busy?'처리 중…':confirmLabel}</button>
       </div>
     </div>
   </div>

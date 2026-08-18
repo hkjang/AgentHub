@@ -42,6 +42,7 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "agent_update_failed", err.Error())
 		return
 	}
+	s.snapshotAgent(r, item, "수정", u.ID)
 	s.store.Audit(r.Context(), &u, "agent.update", "agent", item.ID, "success", clientIP(r), map[string]any{"version": item.Version})
 	// The Pod still runs the previous definition until it is recreated, so tell
 	// the caller rather than letting the change look applied when it is not.

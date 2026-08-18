@@ -1,10 +1,11 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
-import { Activity, Bot, CircleStop, Download, ExternalLink, FileText, ListChecks, MoreHorizontal, Pencil, Play, Plus, RefreshCw, Search, ShieldAlert, Target, Trash2, Upload, Zap } from 'lucide-react'
+import { Activity, Bot, CircleStop, Download, ExternalLink, FileText, History, ListChecks, MoreHorizontal, Pencil, Play, Plus, RefreshCw, RotateCcw, Search, ShieldAlert, ShieldCheck, Target, Trash2, Upload, Zap } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { useAuth } from '../App'
 import { api } from '../api'
-import { ConfirmDialog, Drawer, Empty, ErrorBanner, Loading, PageHeader, StatusBadge } from '../components/UI'
+import { ConfirmDialog, Drawer, Empty, ErrorBanner, GuidePanel, Loading, PageHeader, StatusBadge } from '../components/UI'
 import { RUNTIME_TYPES, relativeTime, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
-import type { Agent, AgentGoal, AgentMemory, AgentTrigger, ExecutionMode, MCPBundle, MCPServerRef, MCPToolPolicy, ModelEndpoint, RuntimeProfile, Workspace } from '../types'
+import type { Agent, AgentGoal, AgentMemory, AgentRelease, AgentTrigger, AgentVersion, ExecutionMode, MCPBundle, MCPServerRef, MCPToolPolicy, ModelEndpoint, RuntimeProfile, Workspace } from '../types'
 
 export function Agents({runtimeOnly=false}:{runtimeOnly?:boolean}) {
   const [agents,setAgents]=useState<Agent[]|null>(null)
@@ -13,6 +14,7 @@ export function Agents({runtimeOnly=false}:{runtimeOnly?:boolean}) {
   const [error,setError]=useState('')
   const [editing,setEditing]=useState<Agent|null>(null)
   const [goalFor,setGoalFor]=useState<Agent|null>(null)
+  const [versionsFor,setVersionsFor]=useState<Agent|null>(null)
   const [removing,setRemoving]=useState<Agent|null>(null)
   const [removeBusy,setRemoveBusy]=useState(false)
   const [removeError,setRemoveError]=useState('')
@@ -115,10 +117,11 @@ export function Agents({runtimeOnly=false}:{runtimeOnly?:boolean}) {
         {present.map((type)=><button key={type} className={runtimeFilter===type?'selected':''} onClick={()=>setRuntimeFilter(type)}>{runtimeLabel(type)} {scoped.filter((a)=>a.runtimeType===type).length}</button>)}
       </div>
     </div>}
-    {scoped.length>0&&visible.length===0?<div className="empty-compact">검색 조건에 맞는 에이전트가 없습니다.</div>:visible.length===0?<Empty icon={<Bot/>} title="아직 에이전트가 없습니다" description="카탈로그에서 검증된 템플릿을 선택해 첫 에이전트를 만들어 보세요." action={<Link className="button primary" to="/catalog">카탈로그 열기</Link>}/>:<section className="table-panel"><div className="table-wrap custom-scroll"><table><thead><tr><th>에이전트</th><th>런타임</th><th>상태</th><th>Pod / 노드</th><th>마지막 변경</th><th aria-label="작업"/></tr></thead><tbody>{visible.map(agent=><tr key={agent.id}><td><button className="agent-cell" onClick={()=>setSelectedId(agent.id)}><div className={runtimeLogoClass(agent.runtimeType)}>{runtimeCode(agent.runtimeType)}</div><div><strong>{agent.name}</strong><span>정의 v{agent.version}</span></div></button></td><td><span className="runtime-name">{runtimeLabel(agent.runtimeType)}</span></td><td><StatusBadge status={agent.runtime?.status??'stopped'}/>{agent.runtime?.warmUntil&&<span className="warm-tag" title={`예열 유지 ${new Date(agent.runtime.warmUntil).toLocaleString('ko-KR')}까지`}>예열</span>}</td><td><div className="mono-stack"><code>{agent.runtime?.podName||'—'}</code><small>{agent.runtime?.nodeName||'할당 전'}</small></div></td><td><span title={new Date(agent.updatedAt).toLocaleString('ko-KR')}>{relativeTime(agent.updatedAt)}</span></td><td><div className="row-actions">{!agent.runtime||['stopped','failed','crashed'].includes(agent.runtime.status)?<button title="시작" disabled={!!busy} onClick={()=>void act(agent,agent.runtime?'start':'spawn')}><Play size={16}/></button>:<button title="중지" disabled={!!busy} onClick={()=>void act(agent,'stop')}><CircleStop size={16}/></button>}<button title="목표 · 자동화" onClick={()=>setGoalFor(agent)}><Target size={15}/></button><button title="정의 내보내기 (YAML)" onClick={()=>void exportAgent(agent)}><Download size={15}/></button><button title="수정" onClick={()=>setEditing(agent)}><Pencil size={15}/></button><button className="danger" title="삭제" disabled={!!busy} onClick={()=>{setRemoveError('');setRemoving(agent)}}><Trash2 size={15}/></button><button title="상세" onClick={()=>setSelectedId(agent.id)}><MoreHorizontal size={18}/></button></div></td></tr>)}</tbody></table></div></section>}
+    {scoped.length>0&&visible.length===0?<div className="empty-compact">검색 조건에 맞는 에이전트가 없습니다.</div>:visible.length===0?<Empty icon={<Bot/>} title="아직 에이전트가 없습니다" description="카탈로그에서 검증된 템플릿을 선택해 첫 에이전트를 만들어 보세요." action={<Link className="button primary" to="/catalog">카탈로그 열기</Link>}/>:<section className="table-panel"><div className="table-wrap custom-scroll"><table><thead><tr><th>에이전트</th><th>런타임</th><th>상태</th><th>Pod / 노드</th><th>마지막 변경</th><th aria-label="작업"/></tr></thead><tbody>{visible.map(agent=><tr key={agent.id}><td><button className="agent-cell" onClick={()=>setSelectedId(agent.id)}><div className={runtimeLogoClass(agent.runtimeType)}>{runtimeCode(agent.runtimeType)}</div><div><strong>{agent.name}</strong><span>정의 v{agent.version}</span></div></button></td><td><span className="runtime-name">{runtimeLabel(agent.runtimeType)}</span></td><td><StatusBadge status={agent.runtime?.status??'stopped'}/>{agent.runtime?.warmUntil&&<span className="warm-tag" title={`예열 유지 ${new Date(agent.runtime.warmUntil).toLocaleString('ko-KR')}까지`}>예열</span>}</td><td><div className="mono-stack"><code>{agent.runtime?.podName||'—'}</code><small>{agent.runtime?.nodeName||'할당 전'}</small></div></td><td><span title={new Date(agent.updatedAt).toLocaleString('ko-KR')}>{relativeTime(agent.updatedAt)}</span></td><td><div className="row-actions">{!agent.runtime||['stopped','failed','crashed'].includes(agent.runtime.status)?<button title="시작" disabled={!!busy} onClick={()=>void act(agent,agent.runtime?'start':'spawn')}><Play size={16}/></button>:<button title="중지" disabled={!!busy} onClick={()=>void act(agent,'stop')}><CircleStop size={16}/></button>}<button title="목표 · 자동화" onClick={()=>setGoalFor(agent)}><Target size={15}/></button><button title="버전 · 운영 승격" onClick={()=>setVersionsFor(agent)}><History size={15}/></button><button title="정의 내보내기 (YAML)" onClick={()=>void exportAgent(agent)}><Download size={15}/></button><button title="수정" onClick={()=>setEditing(agent)}><Pencil size={15}/></button><button className="danger" title="삭제" disabled={!!busy} onClick={()=>{setRemoveError('');setRemoving(agent)}}><Trash2 size={15}/></button><button title="상세" onClick={()=>setSelectedId(agent.id)}><MoreHorizontal size={18}/></button></div></td></tr>)}</tbody></table></div></section>}
     {selected&&<AgentDrawer agent={selected} close={()=>setSelectedId(null)} action={act} busy={!!busy} edit={()=>setEditing(selected)} remove={()=>{setRemoveError('');setRemoving(selected)}}/>}
     {editing&&<AgentEditDrawer agent={editing} close={()=>setEditing(null)} done={()=>{setEditing(null);void refresh()}}/>}
     {goalFor&&<GoalDrawer agent={goalFor} close={()=>setGoalFor(null)}/>}
+    {versionsFor&&<VersionsDrawer agent={versionsFor} close={()=>setVersionsFor(null)} done={()=>{setVersionsFor(null);void refresh()}}/>}
     {removing&&<ConfirmDialog
       title="에이전트를 삭제할까요?"
       message={<><strong>{removing.name}</strong> 정의와 실행 중인 런타임(Pod, Service, NetworkPolicy)이 함께 삭제됩니다.<br/>연결된 작업공간 볼륨은 보존됩니다.</>}
@@ -567,5 +570,89 @@ function TriggerDrawer({agent,close,done}:{agent:Agent;close:()=>void;done:()=>v
       <label><span>작업 내용</span><textarea rows={4} value={taskInput} onChange={(e)=>setTaskInput(e.target.value)} placeholder="이 Trigger가 만들 작업의 지시 내용"/></label>
       <label className="toggle-row"><span>활성화</span><input type="checkbox" checked={enabled} onChange={(e)=>setEnabled(e.target.checked)}/><i/></label>
     </form>
+  </Drawer>
+}
+
+/**
+ * Version history and the promotion gate.
+ *
+ * Saving used to be the whole release process: the next scheduled run executed
+ * whatever the definition said at that moment. This drawer is where an edit
+ * becomes a release — see what changed, check what the pre-flight evaluation
+ * said about that exact version, promote it, or put the previous one back.
+ */
+function VersionsDrawer({agent,close,done}:{agent:Agent;close:()=>void;done:()=>void}) {
+  const { user } = useAuth()
+  const [items,setItems]=useState<AgentVersion[]|null>(null)
+  const [release,setRelease]=useState<AgentRelease|null>(null)
+  const [error,setError]=useState('')
+  const [notice,setNotice]=useState('')
+  const [busy,setBusy]=useState(false)
+  // Forcing is a separate step on purpose: skipping the evaluation asks for a
+  // written reason, and that reason is what the audit log and the next reader see.
+  const [forcing,setForcing]=useState<AgentVersion|null>(null)
+  const [reason,setReason]=useState('')
+  const load=useCallback(async()=>{
+    try {
+      const result=await api.get<{items:AgentVersion[];release:AgentRelease}>(`/api/v1/agents/${agent.id}/versions`)
+      setItems(result.items); setRelease(result.release)
+    } catch(e) { setError(e instanceof Error?e.message:'버전 목록을 불러오지 못했습니다.') }
+  },[agent.id])
+  useEffect(()=>{void load()},[load])
+  const call=async(run:()=>Promise<string>)=>{
+    setBusy(true); setError(''); setNotice('')
+    try { setNotice(await run()); await load() }
+    catch(e) { setError(e instanceof Error?e.message:'요청을 처리하지 못했습니다.') }
+    finally { setBusy(false) }
+  }
+  const promote=(version:number,force=false,note='')=>call(async()=>{
+    await api.post(`/api/v1/agents/${agent.id}/promote`,{version,force,note})
+    setForcing(null); setReason('')
+    return `v${version}을(를) 운영 승격했습니다.`
+  })
+  const restore=(version:number)=>call(async()=>{
+    const result=await api.post<{warning?:string}>(`/api/v1/agents/${agent.id}/versions/${version}/restore`)
+    done()
+    return result.warning||`v${version} 정의를 복원했습니다.`
+  })
+  const gate=(required:boolean)=>call(async()=>{
+    await api.post(`/api/v1/agents/${agent.id}/promote`,{requirePromotion:required})
+    return required?'운영 승격을 거쳐야만 실행되도록 설정했습니다.':'운영 승격 없이도 실행되도록 설정했습니다.'
+  })
+  return <Drawer title={`${agent.name} · 버전`} subtitle={`현재 정의 v${release?.currentVersion??agent.version}${release?.promotedVersion?` · 운영 승격 v${release.promotedVersion}`:' · 승격된 버전 없음'}`} close={close}
+    footer={<button className="button ghost" onClick={close}>닫기</button>}>
+    <GuidePanel id="agent-versions" title="버전과 운영 승격은 이렇게 씁니다" steps={[
+      {title:'1. 저장하면 버전이 남습니다',body:'에이전트를 수정하거나 YAML을 가져올 때마다 그 시점의 정의가 버전으로 보존됩니다.'},
+      {title:'2. 사전검증을 실행합니다',body:<>사전검증 결과는 실행한 시점의 버전에 붙습니다. <Link to="/evaluation">사전검증</Link>에서 실행하세요.</>},
+      {title:'3. 통과한 버전을 승격합니다',body:'승격된 버전이 "운영에서 검증된 정의"입니다. 통과 결과가 없으면 관리자가 사유를 적어야만 승격할 수 있습니다.'},
+      {title:'4. 게이트를 켜면 승격본만 실행됩니다',body:'게이트를 켠 뒤 현재 정의가 승격본과 다르면 작업이 큐에 들어가지 않고 즉시 거절됩니다. 문제가 생긴 편집은 이전 버전을 복원해 되돌립니다.'},
+    ]}/>
+    {error&&<ErrorBanner message={error} onClose={()=>setError('')}/>}
+    {notice&&<div className="notice-banner">{notice}</div>}
+    {release&&<section className="detail-section"><h4>운영 승격</h4>
+      <label className="toggle-row"><span>승격된 정의만 실행</span><input type="checkbox" checked={release.requirePromotion} disabled={busy} onChange={(e)=>void gate(e.target.checked)}/><i/></label>
+      <p className="field-hint">{release.requirePromotion?'현재 정의가 승격본과 다르면 작업이 큐에 들어가지 않고 즉시 거절됩니다.':'끄면 저장한 최신 정의가 곧바로 실행됩니다.'}</p>
+      <dl className="detail-list"><div><dt>운영 승격</dt><dd>{release.promotedVersion?`v${release.promotedVersion}`:'없음'}</dd></div><div><dt>승격 시각</dt><dd>{release.promotedAt?new Date(release.promotedAt).toLocaleString('ko-KR'):'—'}</dd></div><div><dt>사유</dt><dd>{release.promotionNote||'—'}</dd></div></dl>
+      {release.requirePromotion&&release.promotedVersion!==release.currentVersion&&<ErrorBanner message={`현재 정의 v${release.currentVersion}는 승격되지 않아 지금은 작업이 실행되지 않습니다.`}/>}
+    </section>}
+    {!items?<Loading/>:items.length===0?<Empty icon={<History/>} title="저장된 버전이 없습니다" description="에이전트를 한 번 수정하면 그 시점의 정의가 버전으로 남습니다."/>:
+    <section className="detail-section"><h4>버전 기록 {items.length}개</h4><ul className="version-list">{items.map((item)=>{
+      const passed=item.evaluationStatus==='passed'
+      return <li key={item.version} className={item.promoted?'promoted':''}>
+        <div className="version-head"><strong>v{item.version}</strong>{item.promoted&&<span className="version-tag promoted"><ShieldCheck size={13}/>운영 승격</span>}{item.version===release?.currentVersion&&<span className="version-tag current">현재 정의</span>}{item.evaluationStatus?<span className={`version-tag ${passed?'passed':'failed'}`}>사전검증 {passed?'통과':'실패'} {item.evaluationScore}점</span>:<span className="version-tag muted">사전검증 없음</span>}</div>
+        <p>{item.note||'변경 사유 없음'}</p>
+        <small>{new Date(item.createdAt).toLocaleString('ko-KR')} · {item.name}</small>
+        <div className="version-actions">
+          {!item.promoted&&<button disabled={busy} onClick={()=>{ if(passed) void promote(item.version); else { setForcing(item); setReason('') } }}><ShieldCheck size={14}/>운영 승격</button>}
+          {item.version!==release?.currentVersion&&<button disabled={busy} onClick={()=>void restore(item.version)}><RotateCcw size={14}/>이 정의로 복원</button>}
+        </div>
+      </li>
+    })}</ul></section>}
+    {forcing&&<ConfirmDialog title={`사전검증 없이 v${forcing.version}을 승격할까요?`}
+      message={user.role==='admin'
+        ?<><strong>v{forcing.version}</strong>에는 통과한 사전검증 결과가 없습니다. 사유를 적으면 승격되며, 사유는 감사 로그와 승격 기록에 남습니다.<label className="confirm-field"><span>승격 사유</span><input value={reason} onChange={(e)=>setReason(e.target.value)} placeholder="예: 긴급 문구 수정, 사전검증 환경 점검 중"/></label></>
+        :<><strong>v{forcing.version}</strong>에는 통과한 사전검증 결과가 없습니다. 사전검증을 먼저 실행하거나, 관리자에게 승격을 요청하세요.</>}
+      busy={busy} confirmLabel="승격" disableConfirm={user.role!=='admin'||!reason.trim()}
+      onConfirm={()=>void promote(forcing.version,true,reason.trim())} onCancel={()=>setForcing(null)}/>}
   </Drawer>
 }

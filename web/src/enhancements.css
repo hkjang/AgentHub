@@ -401,3 +401,28 @@
 .usage-budget { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; padding: 10px 12px; margin-bottom: 10px; border: 1px solid #e6e2f7; border-radius: 9px; background: #faf9ff; font-size: 12px; color: #475467; }
 .usage-budget b { color: #344054; }
 .usage-budget small { flex-basis: 100%; color: #8a95a5; }
+
+/* Agent versions and the promotion gate. A version list is read by scanning:
+   which one runs, which one is approved, and what the evaluation said. */
+.field-hint { margin: 2px 0 0; font-size: 12px; line-height: 1.5; color: #8a95a5; }
+.version-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
+.version-list li { padding: 11px 13px; border: 1px solid #e2e7ee; border-radius: 10px; background: #fff; }
+.version-list li.promoted { border-color: #cbbdf7; background: #faf9ff; }
+.version-list p { margin: 7px 0 3px; font-size: 13px; color: #475467; line-height: 1.5; }
+.version-list small { font-size: 12px; color: #8a95a5; }
+.version-head { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.version-head strong { font-size: 14px; color: #1d2939; }
+.version-tag { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: #f1f4f8; color: #667085; }
+.version-tag.promoted { background: #eeeaff; color: #5d3ddd; }
+.version-tag.current { background: #e7f3ff; color: #175cd3; }
+.version-tag.passed { background: #e7f7ee; color: #067647; }
+.version-tag.failed { background: #fdecee; color: #b42318; }
+.version-tag.muted { background: #f5f6f8; color: #98a2b3; }
+.version-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 9px; }
+.version-actions button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; border: 1px solid #d7dee7; border-radius: 7px; background: #fff; color: #475467; font-size: 12px; font-weight: 600; }
+.version-actions button:hover:not(:disabled) { border-color: #8065ec; color: #5d3ddd; }
+.version-actions button:disabled { opacity: .55; }
+.confirm-field { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; text-align: left; }
+.confirm-field span { font-size: 13px; font-weight: 650; color: #475467; }
+.confirm-field input { width: 100%; min-height: 40px; padding: 9px 11px; border: 1px solid #d7dee7; border-radius: 7px; font-size: 13px; color: #344054; outline: 0; }
+.confirm-field input:focus { border-color: #8065ec; box-shadow: 0 0 0 3px #eeeaff; }

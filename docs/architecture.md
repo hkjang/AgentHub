@@ -437,6 +437,48 @@ The properties that make it a gate rather than a suggestion:
 - **Nobody has to be watching.** Creating the approval notifies the owner and
   places it in 검토 · 승인 next to every other pending decision.
 
+## Agent versions and promotion
+
+A definition's version counter went up on every save and nothing kept the
+definition it counted. Saving was the whole release process: the next scheduled
+run executed whatever the definition said at that moment, evaluated or not, and
+the only way back from a bad edit was to remember what it used to say.
+
+Every save now writes an `agent_versions` row — create, update and YAML import
+alike — holding the name, description, instruction, spec and the runtime, model,
+MCP, workspace, security and network bindings as they stood. The snapshot is best
+effort on purpose: the definition is already committed by then, and failing the
+caller's edit because its history could not be written would trade the working
+change for the record of it.
+
+An evaluation is recorded against the version it judged (`agent_evaluations
+.agent_version`). Without that column a passing result would keep vouching for an
+agent that has since been rewritten, which is the one thing a promotion gate
+exists to prevent.
+
+One version can be *promoted*: `promoted_version` on the definition, with who
+promoted it, when, and why. A promotion requires an evaluation that passed against
+that exact version. Administrators may override that, but not silently — an
+override needs a written reason and is stored as `검증 생략 승격: …`, visible in
+the console and in the audit log.
+
+The gate itself, `require_promotion`, is off by default, so an agent that never
+asked for one behaves exactly as it did before this existed. When it is on and the
+live version is not the promoted one, the execution plane refuses: the API returns
+409 at enqueue so the person who asked hears it immediately, and the worker fails
+any task already queued with a message naming both versions. It refuses rather
+than quietly running the promoted definition instead, because the Pod, its tools
+and its workspace are all provisioned from the live definition — serving an older
+instruction against a newer Pod would produce a run nobody could reason about. A
+gate that cannot be read does not stop the work, for the same reason a quota that
+cannot be read does not.
+
+Restoring writes an old definition back as a *new* version rather than rewinding
+the counter, so a run already recorded against v4 keeps meaning what it meant.
+Restoring the version that was promoted re-promotes it on the spot: it is the
+definition production was already approved to run, and asking for a fresh
+evaluation would leave the broken version live while somebody waited for one.
+
 ## Execution quotas
 
 Runtimes, CPU, memory and storage were bounded per user. What a user could *run*

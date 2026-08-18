@@ -44,6 +44,9 @@ func (s *Server) userRoutes(r chi.Router) {
 	// Execution plane: goals, triggers and the shortcut from an agent to a task.
 	r.Get("/agents/{id}/goal", s.agentGoal)
 	r.Put("/agents/{id}/goal", s.saveAgentGoal)
+	r.Get("/agents/{id}/versions", s.agentVersions)
+	r.Post("/agents/{id}/promote", s.promoteAgentVersion)
+	r.Post("/agents/{id}/versions/{version}/restore", s.restoreAgentVersion)
 	r.Get("/agents/{id}/triggers", s.agentTriggers)
 	r.Post("/agents/{id}/triggers", s.saveAgentTrigger)
 	r.Post("/agents/{id}/run", s.runAgent)
@@ -235,6 +238,9 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "agent_create_failed", err.Error())
 		return
 	}
+	// The first version is a version too: a rollback target has to exist from the
+	// beginning, not from the first edit.
+	s.snapshotAgent(r, item, "생성", u.ID)
 	s.store.Audit(r.Context(), &u, "agent.create", "agent", item.ID, "success", clientIP(r), map[string]any{"runtimeType": item.RuntimeType})
 	writeJSON(w, 201, item)
 }
@@ -955,7 +961,7 @@ func (s *Server) evaluateAgent(w http.ResponseWriter, r *http.Request) {
 		status = "passed"
 	}
 	metrics := map[string]any{"total": len(cases), "passed": passed, "failed": len(cases) - passed, "score": score, "threshold": testSet.PassThreshold, "evaluationType": "configuration-preflight"}
-	item, err := s.store.CreateAgentEvaluation(r.Context(), u.ID, agent.ID, testSet.ID, status, score, metrics, map[string]any{"cases": results})
+	item, err := s.store.CreateAgentEvaluation(r.Context(), u.ID, agent.ID, agent.Version, testSet.ID, status, score, metrics, map[string]any{"cases": results})
 	if err != nil {
 		writeStoreError(w, err)
 		return

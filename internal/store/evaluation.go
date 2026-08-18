@@ -22,17 +22,20 @@ type EvaluationTestSet struct {
 }
 
 type AgentEvaluation struct {
-	ID          string          `json:"id"`
-	AgentID     string          `json:"agentId"`
-	AgentName   string          `json:"agentName"`
-	TestSetID   string          `json:"testSetId"`
-	TestSetName string          `json:"testSetName"`
-	Status      string          `json:"status"`
-	Score       int             `json:"score"`
-	Metrics     json.RawMessage `json:"metrics"`
-	Result      json.RawMessage `json:"result"`
-	CreatedAt   time.Time       `json:"createdAt"`
-	CompletedAt *time.Time      `json:"completedAt,omitempty"`
+	ID        string `json:"id"`
+	AgentID   string `json:"agentId"`
+	AgentName string `json:"agentName"`
+	// AgentVersion is the definition this result judged. A result that does not
+	// name a version cannot vouch for the definition running today.
+	AgentVersion int             `json:"agentVersion"`
+	TestSetID    string          `json:"testSetId"`
+	TestSetName  string          `json:"testSetName"`
+	Status       string          `json:"status"`
+	Score        int             `json:"score"`
+	Metrics      json.RawMessage `json:"metrics"`
+	Result       json.RawMessage `json:"result"`
+	CreatedAt    time.Time       `json:"createdAt"`
+	CompletedAt  *time.Time      `json:"completedAt,omitempty"`
 }
 
 func (s *Store) EvaluationTestSets(ctx context.Context, ownerID string) ([]EvaluationTestSet, error) {
@@ -73,17 +76,21 @@ func (s *Store) EvaluationTestSetByID(ctx context.Context, ownerID, id string) (
 	return item, err
 }
 
-func (s *Store) CreateAgentEvaluation(ctx context.Context, ownerID, agentID, testSetID, status string, score int, metrics, result any) (AgentEvaluation, error) {
+// CreateAgentEvaluation records one evaluation against the exact definition it
+// judged. Without the version a passing result would keep vouching for an agent
+// that has since been rewritten, which is the whole thing a promotion gate exists
+// to prevent.
+func (s *Store) CreateAgentEvaluation(ctx context.Context, ownerID, agentID string, agentVersion int, testSetID, status string, score int, metrics, result any) (AgentEvaluation, error) {
 	id := uuid.NewString()
 	metricsJSON, _ := json.Marshal(metrics)
 	resultJSON, _ := json.Marshal(result)
 	var item AgentEvaluation
-	err := s.pool.QueryRow(ctx, `INSERT INTO agent_evaluations(id,owner_id,agent_id,test_set_id,status,score,metrics,result,completed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now()) RETURNING id,agent_id,test_set_id,status,score,metrics,result,created_at,completed_at`, id, ownerID, agentID, testSetID, status, score, metricsJSON, resultJSON).Scan(&item.ID, &item.AgentID, &item.TestSetID, &item.Status, &item.Score, &item.Metrics, &item.Result, &item.CreatedAt, &item.CompletedAt)
+	err := s.pool.QueryRow(ctx, `INSERT INTO agent_evaluations(id,owner_id,agent_id,agent_version,test_set_id,status,score,metrics,result,completed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,now()) RETURNING id,agent_id,agent_version,test_set_id,status,score,metrics,result,created_at,completed_at`, id, ownerID, agentID, agentVersion, testSetID, status, score, metricsJSON, resultJSON).Scan(&item.ID, &item.AgentID, &item.AgentVersion, &item.TestSetID, &item.Status, &item.Score, &item.Metrics, &item.Result, &item.CreatedAt, &item.CompletedAt)
 	return item, err
 }
 
 func (s *Store) AgentEvaluations(ctx context.Context, ownerID string) ([]AgentEvaluation, error) {
-	rows, err := s.pool.Query(ctx, `SELECT e.id,e.agent_id,a.name,e.test_set_id,t.name,e.status,e.score,e.metrics,e.result,e.created_at,e.completed_at FROM agent_evaluations e JOIN agent_definitions a ON a.id=e.agent_id JOIN evaluation_test_sets t ON t.id=e.test_set_id WHERE e.owner_id=$1 ORDER BY e.created_at DESC LIMIT 200`, ownerID)
+	rows, err := s.pool.Query(ctx, `SELECT e.id,e.agent_id,a.name,e.agent_version,e.test_set_id,t.name,e.status,e.score,e.metrics,e.result,e.created_at,e.completed_at FROM agent_evaluations e JOIN agent_definitions a ON a.id=e.agent_id JOIN evaluation_test_sets t ON t.id=e.test_set_id WHERE e.owner_id=$1 ORDER BY e.created_at DESC LIMIT 200`, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +98,7 @@ func (s *Store) AgentEvaluations(ctx context.Context, ownerID string) ([]AgentEv
 	items := []AgentEvaluation{}
 	for rows.Next() {
 		var item AgentEvaluation
-		if err := rows.Scan(&item.ID, &item.AgentID, &item.AgentName, &item.TestSetID, &item.TestSetName, &item.Status, &item.Score, &item.Metrics, &item.Result, &item.CreatedAt, &item.CompletedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.AgentID, &item.AgentName, &item.AgentVersion, &item.TestSetID, &item.TestSetName, &item.Status, &item.Score, &item.Metrics, &item.Result, &item.CreatedAt, &item.CompletedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)

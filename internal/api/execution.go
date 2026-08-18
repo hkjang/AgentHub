@@ -282,6 +282,14 @@ func (s *Server) enqueueTask(w http.ResponseWriter, r *http.Request, u store.Use
 		writeError(w, http.StatusConflict, "model_not_bound", "이 Agent에는 Model Endpoint가 연결되어 있지 않아 자동 실행할 수 없습니다.")
 		return store.AgentTask{}, errors.New("model not bound")
 	}
+	// An agent behind a promotion gate is refused here for the same reason: the
+	// answer will not change by waiting in the queue.
+	if reason, err := s.store.PromotionBlock(r.Context(), agent.ID); err != nil {
+		s.logger.Warn("promotion gate is unreadable; accepting the task", "agent", agent.ID, "error", err)
+	} else if reason != "" {
+		writeError(w, http.StatusConflict, "promotion_required", reason)
+		return store.AgentTask{}, errors.New("promotion required")
+	}
 	// A budget that is already spent is refused here rather than minutes later by
 	// a worker, so the person who asked hears it while they are still looking.
 	if reason := s.budgetRefusal(r, agent.OwnerID, agent.ID); reason != "" {

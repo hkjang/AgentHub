@@ -248,6 +248,7 @@ func (s *Server) importAgent(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "agent_import_failed", err.Error())
 			return
 		}
+		s.snapshotAgent(r, saved, "YAML 가져오기", u.ID)
 		s.store.Audit(r.Context(), &u, "agent.import", "agent", saved.ID, "success", clientIP(r), map[string]any{"mode": "update"})
 		writeJSON(w, http.StatusOK, map[string]any{"agent": saved, "mode": "updated"})
 	case errors.Is(lookupErr, store.ErrNotFound):
@@ -256,6 +257,7 @@ func (s *Server) importAgent(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "agent_import_failed", err.Error())
 			return
 		}
+		s.snapshotAgent(r, saved, "YAML 가져오기", u.ID)
 		s.store.Audit(r.Context(), &u, "agent.import", "agent", saved.ID, "success", clientIP(r), map[string]any{"mode": "create"})
 		writeJSON(w, http.StatusCreated, map[string]any{"agent": saved, "mode": "created"})
 	default:
