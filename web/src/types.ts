@@ -57,7 +57,7 @@ export type AgentTrigger = {
 export type MCPServerRef = { id: string; name: string; mode: string; riskLevel?: string }
 export type MCPToolPolicy = {
   id: string; agentId: string; serverId: string; serverName?: string
-  mode: 'allow' | 'deny'; tools: string[]; updatedAt: string
+  mode: 'allow' | 'deny'; tools: string[]; approvalTools: string[]; updatedAt: string
 }
 export type PlatformEvent = {
   id: string; type: string; subjectType: string; subjectId: string

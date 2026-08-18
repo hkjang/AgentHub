@@ -107,6 +107,12 @@ type MCPBinding struct {
 	// Pod rather than the agent process, so it holds whatever the model tries.
 	ToolPolicyMode  string
 	ToolPolicyTools []string
+	// ApprovalTools need a person's decision before they run; ApprovalAll gates
+	// every tool on the server, which is what an approval-required or high-risk
+	// entry in the admin catalogue means. The gateway holds the call open while it
+	// waits, so an agent that never asks for approval is gated anyway.
+	ApprovalTools []string
+	ApprovalAll   bool
 }
 
 type SecurityProfile struct {

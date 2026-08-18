@@ -662,7 +662,7 @@ func TestPoliciedMCPBindingIsRoutedThroughTheGateway(t *testing.T) {
 		}
 	}
 
-	gateway, ok := mcpGatewayContainer(value.Runtime.Image, "rt-1", bindings, value.MCP)
+	gateway, ok := mcpGatewayContainer(value.Runtime.Image, "rt-1", "runtime-1", bindings, value.MCP)
 	if !ok {
 		t.Fatal("a policied binding must produce a gateway container")
 	}
@@ -707,7 +707,7 @@ func TestNoGatewayContainerWithoutAPolicy(t *testing.T) {
 	var value spec
 	value.Runtime.Type = "opencode"
 	value.MCP = append(value.MCP, mcpBinding{Name: "jira", Mode: "shared", Endpoint: "https://mcp.jira.test/mcp"})
-	if _, ok := mcpGatewayContainer("image", "rt-1", effectiveMCP("ns", "rt-1", value), value.MCP); ok {
+	if _, ok := mcpGatewayContainer("image", "rt-1", "runtime-1", effectiveMCP("ns", "rt-1", value), value.MCP); ok {
 		t.Fatal("a runtime with no tool policy must not carry the gateway sidecar")
 	}
 }
@@ -723,7 +723,7 @@ func TestPlatformSidecarsRunTheControlPlaneImage(t *testing.T) {
 	value.MCP = append(value.MCP, mcpBinding{Name: "context7", Mode: "shared", Endpoint: "https://mcp.context7.test/mcp",
 		ToolPolicy: &mcpToolPolicy{Mode: "allow", Tools: []string{"resolve-library-id"}}})
 
-	gateway, ok := mcpGatewayContainer(value.sidecarImage(), "rt-1", effectiveMCP("ns", "rt-1", value), value.MCP)
+	gateway, ok := mcpGatewayContainer(value.sidecarImage(), "rt-1", "runtime-1", effectiveMCP("ns", "rt-1", value), value.MCP)
 	if !ok || gateway.Image != "agenthub:v0.7.0" {
 		t.Fatalf("gateway image = %q, want the control plane image", gateway.Image)
 	}

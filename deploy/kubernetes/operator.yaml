@@ -22,6 +22,11 @@ spec:
           image: agenthub:v0.14.2
           imagePullPolicy: IfNotPresent
           command: [/app/agenthub-operator]
+          env:
+            # Where a Pod's MCP gateway asks for a tool approval. It only matters
+            # for agents with a gated tool, and the default is the Service the
+            # manifests in this directory create.
+            - {name: AGENTHUB_CONTROL_PLANE_URL, value: "http://agenthub.agent-platform-system.svc:8080"}
           resources:
             requests: {cpu: 50m, memory: 64Mi}
             limits: {cpu: 500m, memory: 256Mi}

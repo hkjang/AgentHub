@@ -79,18 +79,20 @@ func (s *Server) saveAgentMCPPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tools := make([]string, 0, len(input.Tools))
-	for _, tool := range input.Tools {
-		tool = strings.TrimSpace(tool)
-		if tool != "" {
-			tools = append(tools, tool)
-		}
-	}
-	if len(tools) > maxPolicyTools {
+	tools := cleanToolNames(input.Tools)
+	approvalTools := cleanToolNames(input.ApprovalTools)
+	if len(tools) > maxPolicyTools || len(approvalTools) > maxPolicyTools {
 		writeError(w, http.StatusBadRequest, "too_many_tools", "도구 목록이 너무 깁니다.")
 		return
 	}
-	input.AgentID, input.Tools = agent.ID, tools
+	// A tool that is blocked cannot also be gated: the gate would ask a person to
+	// approve a call that is refused either way.
+	if conflict := blockedAndGated(input.Mode, tools, approvalTools); conflict != "" {
+		writeError(w, http.StatusBadRequest, "gated_tool_blocked",
+			"차단된 도구 "+conflict+" 에는 승인을 설정할 수 없습니다. 허용 목록에 넣거나 승인 목록에서 제외하세요.")
+		return
+	}
+	input.AgentID, input.Tools, input.ApprovalTools = agent.ID, tools, approvalTools
 	saved, err := s.store.PutMCPToolPolicy(r.Context(), input)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "policy_save_failed", err.Error())
@@ -118,4 +120,38 @@ func (s *Server) deleteAgentMCPPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.Audit(r.Context(), &u, "mcp.policy.delete", "mcp-tool-policy", chi.URLParam(r, "id"), "success", clientIP(r), nil)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// cleanToolNames trims what an operator pasted out of a server's documentation.
+func cleanToolNames(values []string) []string {
+	tools := make([]string, 0, len(values))
+	for _, tool := range values {
+		if tool = strings.TrimSpace(tool); tool != "" {
+			tools = append(tools, tool)
+		}
+	}
+	return tools
+}
+
+// blockedAndGated names the first tool that is gated for approval while the
+// policy already refuses it, which is a contradiction worth reporting rather than
+// storing.
+func blockedAndGated(mode string, tools, approvalTools []string) string {
+	listed := make(map[string]bool, len(tools))
+	for _, tool := range tools {
+		listed[tool] = true
+	}
+	for _, tool := range approvalTools {
+		switch mode {
+		case "allow":
+			if !listed[tool] {
+				return tool
+			}
+		case "deny":
+			if listed[tool] {
+				return tool
+			}
+		}
+	}
+	return ""
 }

@@ -35,6 +35,17 @@ type mcpUpstream struct {
 	// nothing, which is the safe reading of "allow exactly these".
 	Mode  string   `json:"mode"`
 	Tools []string `json:"tools"`
+	// ApprovalTools need a person's decision before they run, and
+	// ApprovalRequired gates every tool on this server. The gate is here rather
+	// than in the agent's prompt because this is the only place the agent cannot
+	// route around.
+	ApprovalTools    []string `json:"approvalTools"`
+	ApprovalRequired bool     `json:"approvalRequired"`
+}
+
+// needsApproval reports whether a call has to wait for a person.
+func (u mcpUpstream) needsApproval(tool string) bool {
+	return u.ApprovalRequired || contains(u.ApprovalTools, tool)
 }
 
 // permits reports whether a tool may be called.
@@ -65,6 +76,9 @@ type rpcRequest struct {
 	Method string          `json:"method"`
 	Params struct {
 		Name string `json:"name"`
+		// Arguments are shown to whoever decides on a gated call: "delete_branch"
+		// on its own is not enough to approve or refuse.
+		Arguments json.RawMessage `json:"arguments"`
 	} `json:"params"`
 }
 
@@ -86,6 +100,12 @@ func loadUpstreams(raw string) ([]mcpUpstream, error) {
 
 // mcpGateway serves /mcp/<name> for each configured upstream.
 func mcpGateway(upstreams []mcpUpstream, auditor func(entry map[string]any)) http.Handler {
+	return mcpGatewayWithApprover(upstreams, auditor, newApprover())
+}
+
+// mcpGatewayWithApprover is the constructor the tests drive, so the gate can be
+// exercised against a stand-in control plane.
+func mcpGatewayWithApprover(upstreams []mcpUpstream, auditor func(entry map[string]any), gate *approver) http.Handler {
 	byName := make(map[string]mcpUpstream, len(upstreams))
 	for _, upstream := range upstreams {
 		byName[upstream.Name] = upstream
@@ -113,6 +133,34 @@ func mcpGateway(upstreams []mcpUpstream, auditor func(entry map[string]any)) htt
 			auditor(map[string]any{"server": name, "tool": request.Params.Name, "decision": "denied", "mode": upstream.Mode})
 			writeRPCError(w, request.ID, -32601, fmt.Sprintf("도구 %q 는 이 Agent의 MCP 도구 정책에 의해 차단되었습니다.", request.Params.Name))
 			return
+		}
+		if request.Method == "tools/call" && upstream.needsApproval(request.Params.Name) {
+			if gate == nil {
+				// Configured to need a decision with no way to ask for one: refuse.
+				// Letting the call through would make the gate advisory again.
+				auditor(map[string]any{"server": name, "tool": request.Params.Name, "decision": "denied", "reason": "approval_unavailable"})
+				writeRPCError(w, request.ID, -32003, fmt.Sprintf("도구 %q 는 승인이 필요하지만 이 Runtime에서 승인 요청 경로가 설정되지 않았습니다.", request.Params.Name))
+				return
+			}
+			decision, approvalID, err := gate.decide(r.Context(), name, request.Params.Name, request.Params.Arguments)
+			entry := map[string]any{"server": name, "tool": request.Params.Name, "approvalId": approvalID, "decision": string(decision)}
+			if err != nil {
+				entry["error"] = err.Error()
+			}
+			auditor(entry)
+			switch decision {
+			case approvalGranted:
+				// Fall through to the upstream call.
+			case approvalRejected:
+				writeRPCError(w, request.ID, -32004, fmt.Sprintf("도구 %q 실행이 검토자에 의해 거절되었습니다.", request.Params.Name))
+				return
+			case approvalExpired:
+				writeRPCError(w, request.ID, -32005, fmt.Sprintf("도구 %q 실행 승인이 대기 시간 안에 처리되지 않았습니다. 승인 후 다시 시도하세요.", request.Params.Name))
+				return
+			default:
+				writeRPCError(w, request.ID, -32003, fmt.Sprintf("도구 %q 실행 승인을 요청할 수 없어 호출을 차단했습니다.", request.Params.Name))
+				return
+			}
 		}
 		if request.Method == "tools/call" {
 			auditor(map[string]any{"server": name, "tool": request.Params.Name, "decision": "allowed", "mode": upstream.Mode})

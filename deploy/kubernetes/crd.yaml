@@ -47,6 +47,13 @@ spec:
                   properties:
                     id: {type: string}
                     version: {type: integer, minimum: 1}
+                # The control plane's own id for this runtime. The in-Pod gateway
+                # sends it when it has to ask for a tool approval, so the request
+                # can be tied back to the agent and its owner.
+                runtimeRef:
+                  type: object
+                  properties:
+                    id: {type: string}
                 runtime:
                   type: object
                   required: [type, image]
@@ -116,12 +123,22 @@ spec:
                       # directly and cannot call what it is not allowed to.
                       toolPolicy:
                         type: object
-                        required: [mode]
                         properties:
                           mode: {type: string, enum: [allow, deny]}
                           tools:
                             type: array
                             items: {type: string}
+                          # Tools that need a person's decision before they run.
+                          # The gateway holds the call open while it asks the
+                          # control plane, so an agent that never declares what it
+                          # is about to do is gated anyway.
+                          approvalTools:
+                            type: array
+                            items: {type: string}
+                          # Every tool on this server needs that decision, which is
+                          # what an approval-required or high-risk catalogue entry
+                          # means.
+                          approvalRequired: {type: boolean, default: false}
                 security:
                   type: object
                   properties:

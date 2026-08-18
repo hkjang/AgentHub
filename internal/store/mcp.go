@@ -14,13 +14,18 @@ import (
 // permission boundary: one MCP server commonly exposes a harmless lookup and a
 // destructive write side by side.
 type MCPToolPolicy struct {
-	ID         string    `json:"id"`
-	AgentID    string    `json:"agentId"`
-	ServerID   string    `json:"serverId"`
-	ServerName string    `json:"serverName,omitempty"`
-	Mode       string    `json:"mode"`
-	Tools      []string  `json:"tools"`
-	UpdatedAt  time.Time `json:"updatedAt"`
+	ID         string   `json:"id"`
+	AgentID    string   `json:"agentId"`
+	ServerID   string   `json:"serverId"`
+	ServerName string   `json:"serverName,omitempty"`
+	Mode       string   `json:"mode"`
+	Tools      []string `json:"tools"`
+	// ApprovalTools need a person's decision before they run. Separate from the
+	// allow/deny list on purpose: a blocked tool never runs, a gated one runs once
+	// somebody says so, and the gate is held by the in-Pod gateway rather than by
+	// the agent's willingness to ask.
+	ApprovalTools []string  `json:"approvalTools"`
+	UpdatedAt     time.Time `json:"updatedAt"`
 }
 
 // PutMCPToolPolicy stores one agent's policy for one server.
@@ -31,20 +36,23 @@ func (s *Store) PutMCPToolPolicy(ctx context.Context, policy MCPToolPolicy) (MCP
 	if policy.Tools == nil {
 		policy.Tools = []string{}
 	}
+	if policy.ApprovalTools == nil {
+		policy.ApprovalTools = []string{}
+	}
 	if policy.ID == "" {
 		policy.ID = uuid.NewString()
 	}
-	err := s.pool.QueryRow(ctx, `INSERT INTO mcp_tool_policies(id,agent_id,server_id,mode,tools)
-		VALUES($1,$2,$3,$4,$5)
-		ON CONFLICT(agent_id,server_id) DO UPDATE SET mode=excluded.mode,tools=excluded.tools,updated_at=now()
-		RETURNING id,updated_at`, policy.ID, policy.AgentID, policy.ServerID, policy.Mode, policy.Tools).
+	err := s.pool.QueryRow(ctx, `INSERT INTO mcp_tool_policies(id,agent_id,server_id,mode,tools,approval_tools)
+		VALUES($1,$2,$3,$4,$5,$6)
+		ON CONFLICT(agent_id,server_id) DO UPDATE SET mode=excluded.mode,tools=excluded.tools,approval_tools=excluded.approval_tools,updated_at=now()
+		RETURNING id,updated_at`, policy.ID, policy.AgentID, policy.ServerID, policy.Mode, policy.Tools, policy.ApprovalTools).
 		Scan(&policy.ID, &policy.UpdatedAt)
 	return policy, err
 }
 
 // MCPToolPolicies returns an agent's policies, named for the console.
 func (s *Store) MCPToolPolicies(ctx context.Context, agentID string) ([]MCPToolPolicy, error) {
-	rows, err := s.pool.Query(ctx, `SELECT p.id,p.agent_id,p.server_id,m.name,p.mode,p.tools,p.updated_at
+	rows, err := s.pool.Query(ctx, `SELECT p.id,p.agent_id,p.server_id,m.name,p.mode,p.tools,p.approval_tools,p.updated_at
 		FROM mcp_tool_policies p JOIN mcp_servers m ON m.id=p.server_id
 		WHERE p.agent_id=$1 ORDER BY m.name`, agentID)
 	if err != nil {
@@ -54,7 +62,7 @@ func (s *Store) MCPToolPolicies(ctx context.Context, agentID string) ([]MCPToolP
 	items := []MCPToolPolicy{}
 	for rows.Next() {
 		var item MCPToolPolicy
-		if err := rows.Scan(&item.ID, &item.AgentID, &item.ServerID, &item.ServerName, &item.Mode, &item.Tools, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.AgentID, &item.ServerID, &item.ServerName, &item.Mode, &item.Tools, &item.ApprovalTools, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)

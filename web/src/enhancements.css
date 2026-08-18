@@ -388,3 +388,12 @@
 .example-buttons button:hover { border-color: #a996f2; color: #5635e8; }
 
 @media (max-width: 650px) { .guide-steps { grid-template-columns: 1fr; } }
+
+.policy-approval { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
+.policy-approval label { display: inline-flex; align-items: center; gap: 5px; color: #92400e; font-size: 12px; font-weight: 650; white-space: nowrap; }
+.policy-approval input { flex: 1; min-width: 0; }
+.policy-tag.approval { background: #fff5df; color: #b2720b; }
+
+.approval-tool { margin: 7px 0 0; padding: 9px 11px; border: 1px solid #e6e2f7; border-radius: 9px; background: #faf9ff; }
+.approval-tool > span { font-size: 12px; color: #5b4bb5; }
+.approval-tool pre { max-height: 170px; overflow: auto; margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: #475467; white-space: pre-wrap; word-break: break-all; }

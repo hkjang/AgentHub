@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -152,10 +153,27 @@ type mcpBinding struct {
 type mcpToolPolicy struct {
 	Mode  string   `json:"mode"`
 	Tools []string `json:"tools"`
+	// ApprovalTools need a person's decision before they run, and
+	// ApprovalRequired gates every tool on the server. The gateway holds the call
+	// open while it asks the control plane, which is the one place an agent cannot
+	// route around.
+	ApprovalTools    []string `json:"approvalTools"`
+	ApprovalRequired bool     `json:"approvalRequired"`
+}
+
+// gated reports whether this policy needs a decision for at least one tool.
+func (p *mcpToolPolicy) gated() bool {
+	return p != nil && (p.ApprovalRequired || len(p.ApprovalTools) > 0)
 }
 
 type spec struct {
-	Owner   string `json:"owner"`
+	Owner string `json:"owner"`
+	// RuntimeRef is the control plane's id for this runtime. The gateway sends it
+	// with an approval request so the request can be tied back to an agent, its
+	// owner and a reviewer.
+	RuntimeRef struct {
+		ID string `json:"id"`
+	} `json:"runtimeRef"`
 	Runtime struct {
 		Type  string `json:"type"`
 		Image string `json:"image"`
@@ -314,6 +332,29 @@ func (v spec) sidecarImage() string {
 	return v.Runtime.Image
 }
 
+// envControlPlaneURL is where a Pod's gateway reaches the control plane to ask for
+// a tool approval. It defaults to the in-cluster Service the manifests create.
+const envControlPlaneURL = "AGENTHUB_CONTROL_PLANE_URL"
+
+const defaultControlPlaneURL = "http://agenthub.agent-platform-system.svc:8080"
+
+func controlPlaneURL() string {
+	if value := strings.TrimSpace(os.Getenv(envControlPlaneURL)); value != "" {
+		return value
+	}
+	return defaultControlPlaneURL
+}
+
+// gatesApproval reports whether any binding needs a decision before a call.
+func gatesApproval(policies []mcpBinding) bool {
+	for _, item := range policies {
+		if item.ToolPolicy.gated() {
+			return true
+		}
+	}
+	return false
+}
+
 // mcpGatewayPort is where the in-Pod MCP tool policy gateway listens. It binds
 // to loopback only, so nothing outside the Pod can reach it.
 const mcpGatewayPort int32 = 9129
@@ -322,7 +363,7 @@ const mcpGatewayPort int32 = 9129
 //
 // It holds the credentials rather than the agent container, so a tool the agent
 // may not call is one it cannot authenticate to either.
-func mcpGatewayContainer(image, runtimeName string, bindings []map[string]any, policies []mcpBinding) (corev1.Container, bool) {
+func mcpGatewayContainer(image, runtimeName, runtimeRef string, bindings []map[string]any, policies []mcpBinding) (corev1.Container, bool) {
 	byName := make(map[string]*mcpToolPolicy, len(policies))
 	for _, item := range policies {
 		if item.ToolPolicy != nil {
@@ -337,6 +378,10 @@ func mcpGatewayContainer(image, runtimeName string, bindings []map[string]any, p
 		CredentialEnv string   `json:"credentialEnv,omitempty"`
 		Mode          string   `json:"mode"`
 		Tools         []string `json:"tools"`
+		// Tools that need a person's decision, and whether every tool on this
+		// server does.
+		ApprovalTools    []string `json:"approvalTools,omitempty"`
+		ApprovalRequired bool     `json:"approvalRequired,omitempty"`
 	}
 	configs := []upstreamConfig{}
 	env := []corev1.EnvVar{}
@@ -348,6 +393,7 @@ func mcpGatewayContainer(image, runtimeName string, bindings []map[string]any, p
 		entry := upstreamConfig{
 			Name: safeLabel(fmt.Sprint(binding["name"])), Upstream: fmt.Sprint(binding["upstream"]),
 			Mode: policy.Mode, Tools: policy.Tools,
+			ApprovalTools: policy.ApprovalTools, ApprovalRequired: policy.ApprovalRequired,
 		}
 		if entry.Tools == nil {
 			entry.Tools = []string{}
@@ -374,6 +420,15 @@ func mcpGatewayContainer(image, runtimeName string, bindings []map[string]any, p
 	env = append(env,
 		corev1.EnvVar{Name: "AGENTHUB_MCP_GATEWAY", Value: string(encoded)},
 		corev1.EnvVar{Name: "AGENTHUB_MCP_GATEWAY_LISTEN", Value: fmt.Sprintf("127.0.0.1:%d", mcpGatewayPort)})
+	// A gated tool needs a decision from the control plane, so the gateway is told
+	// where to ask, who it is, and how to authenticate — the runtime's own token,
+	// read from the Pod's Secret, whose hash the control plane holds.
+	if gatesApproval(policies) {
+		env = append(env,
+			corev1.EnvVar{Name: "AGENTHUB_APPROVAL_URL", Value: controlPlaneURL()},
+			corev1.EnvVar{Name: "AGENTHUB_RUNTIME_ID", Value: runtimeRef},
+			corev1.EnvVar{Name: "AGENTHUB_RUNTIME_TOKEN", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: runtimeName}, Key: "runtime-token"}}})
+	}
 	return corev1.Container{
 		Name:            "agenthub-mcp-gateway",
 		Image:           image,
@@ -848,6 +903,12 @@ func (c *Controller) ensureNetworkPolicy(ctx context.Context, ns, name string, v
 	for _, item := range effectiveMCP(ns, name, value) {
 		endpoints = append(endpoints, fmt.Sprint(item["endpoint"]))
 	}
+	// A gated tool call is decided by the control plane, so the gateway has to be
+	// able to reach it. Without this rule the default-deny policy would turn every
+	// approval into a refusal.
+	if gatesApproval(value.MCP) {
+		endpoints = append(endpoints, controlPlaneURL())
+	}
 	unresolved := map[int32]bool{}
 	seen := map[string]bool{}
 	for _, raw := range endpoints {
@@ -1165,7 +1226,7 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 		containers = append(containers, adapter.Sidecars(build)...)
 	}
 	containers = append(containers, sidecarContainers(value)...)
-	if gateway, ok := mcpGatewayContainer(value.sidecarImage(), name, effectiveMCP(ns, name, value), value.MCP); ok {
+	if gateway, ok := mcpGatewayContainer(value.sidecarImage(), name, value.RuntimeRef.ID, effectiveMCP(ns, name, value), value.MCP); ok {
 		containers = append(containers, gateway)
 	}
 	initContainers := []corev1.Container{}

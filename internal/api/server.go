@@ -66,6 +66,13 @@ func (s *Server) Handler() http.Handler {
 		// verifies an HMAC over the raw body instead, so it sits outside the
 		// authentication group but is not otherwise open.
 		r.Post("/triggers/{id}/webhook", s.triggerWebhook)
+		// The MCP gateway inside a runtime Pod asks for a tool approval here and
+		// polls for the decision, authenticating with the runtime's own token —
+		// whose hash the control plane holds. Outside the browser session group for
+		// the same reason the webhook route is, and no more open than it: without a
+		// valid runtime token these answer 401.
+		r.Post("/runtime-gateway/tool-approvals", s.requestToolApproval)
+		r.Get("/runtime-gateway/tool-approvals/{id}", s.toolApprovalStatus)
 		r.Group(func(r chi.Router) {
 			r.Use(s.authentication)
 			r.Get("/me", s.me)

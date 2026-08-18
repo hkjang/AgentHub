@@ -369,6 +369,42 @@ to an older runtime image is a supported way to keep a definition reproducible;
 it must not also pin the platform's code, which once meant a policy shipped in a
 new release crash-looping inside an old Pod.
 
+## Tool approval at the call
+
+Approval used to be something the agent volunteered. Its goal asked it to declare
+a state-changing action and wait, and the platform parked the task when it did —
+which works right up until an agent simply calls the tool. The "approval required"
+flag on an MCP server in the admin catalogue, and the high-risk-tool-approval
+governance switch, enforced nothing at all.
+
+The gate now sits in front of the call, in the in-Pod MCP gateway: the one place
+the agent process cannot route around, since its generated configuration points at
+the gateway and only the gateway knows the upstream address. On a gated
+`tools/call` the gateway holds the JSON-RPC request open, asks the control plane to
+create an approval, waits for a person, and then either forwards the call or
+answers with a refusal the model can read. What is gated comes from three places:
+the tools an agent's policy lists as needing approval, a server the catalogue marks
+approval-required, and — while the governance switch is on — every tool of a
+high-risk server.
+
+The properties that make it a gate rather than a suggestion:
+
+- **It fails closed.** A control plane that cannot be reached, a wait that runs
+  out, or a runtime configured to need approval with no way to ask for one all end
+  in a refusal, never in the call going through.
+- **The deny list still decides first.** A blocked tool is refused without
+  bothering a reviewer, and the API refuses to store a policy that gates a tool it
+  also blocks.
+- **The reviewer sees the call.** The approval carries the server, the tool and
+  the arguments — trimmed, because a tool argument can be a whole file — so it can
+  be judged on what it would do rather than on its name.
+- **The gateway authenticates as its runtime.** It presents the runtime token from
+  the Pod's Secret; the control plane stores only that token's hash and derives the
+  agent, owner and reviewer from the runtime it identifies. A request may not name
+  a different runtime, and one runtime cannot poll another's decisions.
+- **Nobody has to be watching.** Creating the approval notifies the owner and
+  places it in 검토 · 승인 next to every other pending decision.
+
 ## Token spend
 
 Agents in the execution plane run when nobody is watching, which is exactly when

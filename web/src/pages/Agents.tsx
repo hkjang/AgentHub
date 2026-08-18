@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
-import { Activity, Bot, CircleStop, Download, ExternalLink, FileText, ListChecks, MoreHorizontal, Pencil, Play, Plus, RefreshCw, Search, Target, Trash2, Upload, Zap } from 'lucide-react'
+import { Activity, Bot, CircleStop, Download, ExternalLink, FileText, ListChecks, MoreHorizontal, Pencil, Play, Plus, RefreshCw, Search, ShieldAlert, Target, Trash2, Upload, Zap } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, Loading, PageHeader, StatusBadge } from '../components/UI'
@@ -290,10 +290,10 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
       setNotice('작업을 대기열에 넣었습니다. 작업 대기열 화면에서 진행 상황을 볼 수 있습니다.')
     }catch(e){ setError(e instanceof Error?e.message:'작업을 시작하지 못했습니다.') }
   }
-  const savePolicy=async(serverId:string,mode:'allow'|'deny',tools:string[])=>{
+  const savePolicy=async(serverId:string,mode:'allow'|'deny',tools:string[],approvalTools:string[])=>{
     setError(''); setNotice('')
     try{
-      const result=await api.put<{warning?:string}>(`/api/v1/agents/${agent.id}/mcp-policies`,{serverId,mode,tools})
+      const result=await api.put<{warning?:string}>(`/api/v1/agents/${agent.id}/mcp-policies`,{serverId,mode,tools,approvalTools})
       setNotice(result.warning??'도구 정책을 저장했습니다.')
       await load()
     }catch(e){ setError(e instanceof Error?e.message:'도구 정책을 저장하지 못했습니다.') }
@@ -449,10 +449,10 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
       <div className="tool-links">{mcpServers.map((server)=>{
         const policy=policies.find((item)=>item.serverId===server.id)
         return <McpPolicyRow key={server.id} server={server} policy={policy}
-          save={(mode,tools)=>void savePolicy(server.id,mode,tools)}
+          save={(mode,tools,approvalTools)=>void savePolicy(server.id,mode,tools,approvalTools)}
           remove={policy?()=>void removePolicy(policy.id):undefined}/>
       })}</div>
-      <small>정책이 있는 서버는 Pod 안의 게이트웨이를 통해서만 호출되며, 자격 증명도 에이전트가 아닌 게이트웨이가 보관합니다. 정책 변경은 Runtime 재시작 후 적용됩니다.</small>
+      <small>정책이 있는 서버는 Pod 안의 게이트웨이를 통해서만 호출되며, 자격 증명도 에이전트가 아닌 게이트웨이가 보관합니다. <b>승인 필요 도구</b>로 지정하면 게이트웨이가 호출을 붙잡아 두고 검토자가 승인할 때까지 실행하지 않습니다 — 에이전트가 승인을 요청하지 않아도 마찬가지입니다. 정책 변경은 Runtime 재시작 후 적용됩니다.</small>
     </section>}
 
     {addingTrigger&&<TriggerDrawer agent={agent} close={()=>setAddingTrigger(false)} done={()=>{setAddingTrigger(false);void load()}}/>}
@@ -461,17 +461,22 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
 
 /** One MCP server's tool policy. Tools are edited as a comma separated list,
  *  which is how an operator reads them out of the server's documentation. */
-function McpPolicyRow({server,policy,save,remove}:{server:MCPServerRef;policy?:MCPToolPolicy;save:(mode:'allow'|'deny',tools:string[])=>void;remove?:()=>void}) {
+function McpPolicyRow({server,policy,save,remove}:{server:MCPServerRef;policy?:MCPToolPolicy;save:(mode:'allow'|'deny',tools:string[],approvalTools:string[])=>void;remove?:()=>void}) {
   const [mode,setMode]=useState<'allow'|'deny'>(policy?.mode==='deny'?'deny':'allow')
   const [tools,setTools]=useState((policy?.tools??[]).join(', '))
-  const parsed=tools.split(',').map((tool)=>tool.trim()).filter(Boolean)
-  const dirty=mode!==(policy?.mode??'allow')||parsed.join(',')!==(policy?.tools??[]).join(',')
+  const [approval,setApproval]=useState((policy?.approvalTools??[]).join(', '))
+  const parse=(value:string)=>value.split(',').map((tool)=>tool.trim()).filter(Boolean)
+  const parsed=parse(tools), parsedApproval=parse(approval)
+  const dirty=mode!==(policy?.mode??'allow')
+    ||parsed.join(',')!==(policy?.tools??[]).join(',')
+    ||parsedApproval.join(',')!==(policy?.approvalTools??[]).join(',')
   return <div className="policy-row">
     <div className="policy-head">
       <strong>{server.name}</strong>
       {policy
         ? <span className={`policy-tag ${policy.mode}`}>{policy.mode==='allow'?'허용 목록':'차단 목록'} {policy.tools.length}개</span>
         : <span className="policy-tag none">정책 없음 · 모든 도구 허용</span>}
+      {policy&&policy.approvalTools?.length>0&&<span className="policy-tag approval">승인 필요 {policy.approvalTools.length}개</span>}
     </div>
     <div className="policy-edit">
       <select value={mode} onChange={(e)=>setMode(e.target.value as 'allow'|'deny')}>
@@ -479,10 +484,15 @@ function McpPolicyRow({server,policy,save,remove}:{server:MCPServerRef;policy?:M
         <option value="deny">이 도구만 차단</option>
       </select>
       <input value={tools} onChange={(e)=>setTools(e.target.value)} placeholder="resolve-library-id, get-library-docs"/>
-      <button type="button" className="button ghost" disabled={!dirty} onClick={()=>save(mode,parsed)}>저장</button>
+      <button type="button" className="button ghost" disabled={!dirty} onClick={()=>save(mode,parsed,parsedApproval)}>저장</button>
       {remove&&<button type="button" className="danger" title="정책 삭제" onClick={remove}><Trash2 size={15}/></button>}
     </div>
+    <div className="policy-approval">
+      <label><ShieldAlert size={14}/>승인 필요 도구</label>
+      <input value={approval} onChange={(e)=>setApproval(e.target.value)} placeholder="delete_branch, run_migration"/>
+    </div>
     {mode==='allow'&&parsed.length===0&&<small className="policy-warn">허용 목록이 비어 있으면 이 서버의 모든 도구가 차단됩니다.</small>}
+    {parsedApproval.length>0&&<small>이 도구를 호출하면 Pod 안의 게이트웨이가 호출을 붙잡고 검토자의 승인을 기다립니다. 승인 전에는 실행되지 않고, 거절되면 에이전트에게 거절 사유가 전달됩니다.</small>}
   </div>
 }
 

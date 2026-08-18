@@ -136,6 +136,7 @@ func (b *Builder) Build(ctx context.Context, rt store.Runtime, agent store.Agent
 		}
 	}
 	bindings := []runtime.MCPBinding{}
+	highRiskApproval := b.highRiskApprovalEnabled(ctx)
 	if agent.MCPBundleID != nil {
 		servers, bundleErr := b.store.MCPServersForBundle(ctx, *agent.MCPBundleID)
 		if bundleErr != nil {
@@ -166,6 +167,14 @@ func (b *Builder) Build(ctx context.Context, rt store.Runtime, agent store.Agent
 			}
 			if policy, ok := policyByServer[server.ID]; ok {
 				binding.ToolPolicyMode, binding.ToolPolicyTools = policy.Mode, policy.Tools
+				binding.ApprovalTools = policy.ApprovalTools
+			}
+			// The catalogue's own switches finally mean something: a server marked
+			// "approval required", or a high-risk server while the governance switch
+			// asks for it, gates every tool on it rather than trusting the agent to
+			// declare what it is about to do.
+			if server.ApprovalRequired || (highRiskApproval && strings.EqualFold(server.RiskLevel, "high")) {
+				binding.ApprovalAll = true
 			}
 			bindings = append(bindings, binding)
 		}
@@ -223,4 +232,21 @@ func (b *Builder) runtimeEnvironment(ctx context.Context) ([]runtimeenv.File, []
 		return nil, nil
 	}
 	return settings.Effective()
+}
+
+// highRiskApprovalEnabled reads the governance switch that decides whether a
+// high-risk MCP server needs a decision per call. It defaults to on, matching the
+// seeded setting: a switch that failed open would be worse than one that asks for
+// an approval nobody expected.
+func (b *Builder) highRiskApprovalEnabled(ctx context.Context) bool {
+	var governance struct {
+		HighRiskToolApproval *bool `json:"highRiskToolApproval"`
+	}
+	if err := b.store.Setting(ctx, "governance", &governance); err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			b.logger.Warn("governance setting is unreadable; high-risk tools stay gated", "error", err)
+		}
+		return true
+	}
+	return governance.HighRiskToolApproval == nil || *governance.HighRiskToolApproval
 }
