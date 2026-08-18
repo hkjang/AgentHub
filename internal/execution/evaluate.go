@@ -19,9 +19,9 @@ type Verdict struct {
 	Reason   string   `json:"reason"`
 	Met      []string `json:"met,omitempty"`
 	Unmet    []string `json:"unmet,omitempty"`
-	// Validated is set when the judge's answer was constrained to a schema by the
-	// gateway rather than only asked for in the prompt. A verdict a task's
-	// completion rests on should say how much its shape can be trusted.
+	// Validated is set when the gateway accepted the schema rather than refusing
+	// it. It says how the answer was asked for, not that the gateway enforced it —
+	// which is why the verdict is validated against the configured criteria anyway.
 	Validated bool `json:"validated,omitempty"`
 }
 

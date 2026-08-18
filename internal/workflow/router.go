@@ -17,8 +17,9 @@ type Routing struct {
 	Chosen []string `json:"chosen"`
 	// Reason is what it said about the choice.
 	Reason string `json:"reason,omitempty"`
-	// Validated is true when the gateway constrained the answer to the schema
-	// rather than merely being asked for JSON.
+	// Validated is true when the gateway accepted the schema rather than refusing
+	// it. A gateway that ignores response_format also accepts it, so the answer is
+	// validated against the candidate ids regardless.
 	Validated bool `json:"validated"`
 	// FellBack is set when no usable decision came back and every branch was run.
 	// A router whose answer could not be read is worth seeing, not hiding.

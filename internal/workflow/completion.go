@@ -58,10 +58,11 @@ type Schema struct {
 type StructuredResult struct {
 	Output string
 	Usage  Usage
-	// Validated is true when the gateway accepted the schema, which means the
-	// answer was constrained rather than merely requested. An offline gateway that
-	// does not implement response_format still answers, and the caller still has
-	// to parse — this says which of the two happened.
+	// Validated is true when the gateway accepted the request carrying the schema,
+	// rather than refusing it. It is not proof the answer was constrained: a
+	// gateway that ignores response_format also accepts the request. It is the
+	// strongest thing the client can know from the outside, which is why the caller
+	// validates the answer either way.
 	Validated bool
 }
 

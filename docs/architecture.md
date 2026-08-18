@@ -276,10 +276,11 @@ name anywhere in the answer. A router that wrote "이 건은 배포팀에 보내
 anything in the input that named a branch could steer the graph. The router is now
 told which ids exist and answers with a list of them, constrained by a JSON schema
 whose `branches` items are an enum of those ids. What comes back is validated
-against the same list, the chosen branch receives a `handoff` message rather than
-the decision JSON, and the decision itself — chosen branches, reason, whether the
-gateway constrained the answer — is kept on the run so it can be read afterwards
-instead of inferred from which steps happened to run.
+against the same list — a gateway that ignores `response_format` accepts the
+request all the same, so the answer is never taken on trust — the chosen branch
+receives a `handoff` message rather than the decision JSON, and the decision itself
+is kept on the run so it can be read afterwards instead of inferred from which steps
+happened to run.
 
 The completion verdict has the same shape: the judge is asked for
 `{passed, reason, unmet}` under a schema whose `unmet` items are an enum of the

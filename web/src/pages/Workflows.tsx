@@ -194,7 +194,7 @@ function RunDrawer({item,close}:{item:Workflow;close:()=>void}) {
         <div className={`consensus-verdict ${result.routing.fellBack?'none':'unanimous'}`}>
           <strong>{result.routing.fellBack?'결정 없음 · 전체 실행':`선택: ${result.routing.chosen.map((id)=>stepName(result,id)).join(', ')}`}</strong>
           {result.routing.reason&&<span>{result.routing.reason}</span>}
-          <small>{result.routing.validated?'모델이 스키마에 맞춰 답했습니다':'스키마 미지원 게이트웨이 · 응답을 검증했습니다'}</small>
+          <small>{result.routing.validated?'스키마를 지원하는 게이트웨이로 요청했습니다':'스키마 미지원 게이트웨이 · 프롬프트로 요청했습니다'} · 응답은 후보 id로 검증됩니다</small>
         </div>
         <small>{result.routing.fellBack
           ? `라우터가 실행 가능한 분기를 지정하지 않아 모든 분기를 실행했습니다. ${result.routing.note??''}`
