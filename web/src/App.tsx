@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
-import { api } from './api'
+import { api, UNAUTHORIZED_EVENT } from './api'
 import type { User, Version } from './types'
 import { AppShell } from './components/AppShell'
 import { Login } from './pages/Login'
@@ -46,6 +46,14 @@ export function App() {
     api.get<Version>('/api/v1/version').then(setVersion).catch(() => undefined)
     void refresh()
   }, [refresh])
+
+  // An expired session takes the user back to the sign-in page instead of leaving
+  // every screen behind an error banner it cannot recover from.
+  useEffect(() => {
+    const listener = () => setUser((current) => (current ? null : current))
+    window.addEventListener(UNAUTHORIZED_EVENT, listener)
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, listener)
+  }, [])
 
   const logout = async () => { await api.post('/api/v1/auth/logout'); setUser(null) }
   if (user === undefined) return <div className="boot"><img src="/logo.svg" alt="AgentHub Logo" className="brand-logo-img large" /><span>AgentHub를 준비하고 있습니다</span></div>

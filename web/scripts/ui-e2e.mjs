@@ -39,9 +39,24 @@ const ROUTES = [
   ['/admin/security', /(보안|네트워크)/],
 ]
 
+// [route, the single menu that must be highlighted and named in the breadcrumb]
+const NAV_ACTIVE = [
+  ['/', '홈'],
+  ['/agents', '내 에이전트'],
+  ['/agents/builder', '에이전트 빌더'],
+  ['/workspaces', '작업공간'],
+  ['/workspaces/snapshots', '스냅샷'],
+  ['/mcp/bundles', 'MCP 번들'],
+  ['/admin/mcp', 'MCP 서버'],
+  ['/admin/mcp-bundles', 'MCP 번들 관리'],
+]
+
 const problems = []
 // The portal probes the session on boot, so a 401 before sign-in is expected.
 let collecting = false
+// The session-expiry check ends the session deliberately, so the 401 the browser
+// logs for it is the expected outcome rather than a problem.
+let expectingUnauthorized = false
 const note = (route, kind, detail) => {
   if (!collecting && kind !== 'fatal') return
   problems.push(`${route} :: ${kind} :: ${detail}`)
@@ -56,6 +71,7 @@ let route = 'startup'
 try {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } })
   page.on('console', (m) => {
+    if (expectingUnauthorized && /401/.test(m.text())) return
     if (m.type() === 'error' && !ignored(m.text())) note(route, 'console', m.text().slice(0, 300))
   })
   page.on('pageerror', (e) => note(route, 'pageerror', String(e).slice(0, 300)))
@@ -94,6 +110,36 @@ try {
 
     await page.screenshot({ path: `${shotDir}/${path.replace(/\//g, '_') || '_root'}.png`, fullPage: true })
   }
+
+  // Exactly one menu is highlighted, and it is the one for the open route. A
+  // prefix match used to leave the previous menu active — /agents stayed lit on
+  // /agents/builder, and /admin/mcp on /admin/mcp-bundles — and the breadcrumb
+  // named that stale menu too.
+  for (const [path, label] of NAV_ACTIVE) {
+    route = `${path}:nav`
+    await page.goto(baseURL + path, { waitUntil: 'networkidle' })
+    const highlighted = await page.locator('.nav-link.active').allInnerTexts()
+    if (highlighted.length !== 1) {
+      note(route, 'nav', `${highlighted.length} menus highlighted: ${highlighted.map((t) => t.trim()).join(', ')}`)
+    } else if (highlighted[0].trim() !== label) {
+      note(route, 'nav', `highlighted ${highlighted[0].trim()} instead of ${label}`)
+    }
+    const crumb = (await page.locator('.breadcrumb strong').innerText()).trim()
+    if (crumb !== label) note(route, 'breadcrumb', `named ${crumb} instead of ${label}`)
+  }
+
+  // A dropdown must not stay open over the page the user moves on to.
+  route = '/dismiss'
+  await page.goto(baseURL + '/agents', { waitUntil: 'networkidle' })
+  await page.locator('.profile-button').click()
+  await page.locator('.profile-menu').waitFor({ timeout: 5000 })
+  await page.locator('.content-scroll').click({ position: { x: 5, y: 5 } })
+  if ((await page.locator('.profile-menu').count()) !== 0) note(route, 'dropdown', 'a click outside did not close the profile menu')
+  await page.locator('.notification-button').click()
+  await page.locator('.notification-menu').waitFor({ timeout: 5000 })
+  await page.getByRole('link', { name: '내 에이전트' }).click()
+  await page.waitForTimeout(300)
+  if ((await page.locator('.notification-menu').count()) !== 0) note(route, 'dropdown', 'navigating did not close the notification menu')
 
   // Interactive spot-checks that a read-only route walk cannot cover.
   route = '/catalog:drawer'
@@ -161,6 +207,23 @@ try {
   await confirm.getByRole('button', { name: '취소' }).click()
   if ((await page.getByRole('alertdialog').count()) !== 0) note(route, 'confirm', 'cancel did not dismiss the dialog')
 
+  // Escape closes a modal. The shell answered Escape for its own overlays while
+  // drawers and confirmations ignored it.
+  route = '/escape'
+  await page.goto(baseURL + '/catalog', { waitUntil: 'networkidle' })
+  await page.locator('.template-card').first().click()
+  await page.getByRole('dialog', { name: '새 에이전트 만들기' }).waitFor({ timeout: 10000 })
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+  if ((await page.getByRole('dialog', { name: '새 에이전트 만들기' }).count()) !== 0) note(route, 'escape', 'Escape did not close the drawer')
+  await page.goto(baseURL + '/agents', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(500)
+  await page.locator('.row-actions button[title="삭제"]').first().click()
+  await page.getByRole('alertdialog').waitFor({ timeout: 10000 })
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+  if ((await page.getByRole('alertdialog').count()) !== 0) note(route, 'escape', 'Escape did not close the confirmation')
+
   route = '/palette'
   await page.keyboard.press('Escape')
   await page.keyboard.press('Control+K')
@@ -178,6 +241,20 @@ try {
   await page.waitForTimeout(500)
   if ((await page.getByRole('dialog', { name: '빠른 이동' }).count()) !== 0) note(route, 'keyboard', 'Enter did not navigate')
 
+  // Last, because it signs the session out: an expired session has to return to
+  // the sign-in page rather than leave an error banner on every screen.
+  route = '/session-expiry'
+  expectingUnauthorized = true
+  await page.goto(baseURL + '/', { waitUntil: 'networkidle' })
+  await page.context().clearCookies()
+  // A different route, so the click actually loads something: staying put makes
+  // no request and so cannot notice the session is gone.
+  await page.getByRole('link', { name: '내 에이전트', exact: true }).click()
+  await page.waitForTimeout(1500)
+  if ((await page.getByRole('button', { name: '로그인', exact: true }).count()) !== 1) {
+    note(route, 'session', 'an expired session did not return to the sign-in page')
+  }
+
   await writeFile(`${shotDir}/problems.json`, JSON.stringify(problems, null, 2))
 } catch (error) {
   note(route, 'fatal', String(error).slice(0, 400))
@@ -190,4 +267,4 @@ if (problems.length) {
   for (const p of problems) console.error('  - ' + p)
   process.exit(1)
 }
-console.log(`OK: ${ROUTES.length} routes + interactive checks passed with no console/network errors`)
+console.log(`OK: ${ROUTES.length} routes + ${NAV_ACTIVE.length} menu-state checks + interactive checks passed with no console/network errors`)

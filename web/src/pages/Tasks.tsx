@@ -288,11 +288,17 @@ export function RunDrawer({ runId, close }: { runId: string; close: () => void }
       setError(e instanceof Error ? e.message : '실행 기록을 불러오지 못했습니다.')
     }
   }, [runId])
+  useEffect(() => { void load() }, [load])
+  // A finished run cannot change, so polling it forever was a request every four
+  // seconds for nothing — in a background tab too.
+  const finished = Boolean(data?.run.finishedAt)
   useEffect(() => {
-    void load()
-    const timer = window.setInterval(() => void load(), 4000)
+    if (finished) return
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void load()
+    }, 4000)
     return () => window.clearInterval(timer)
-  }, [load])
+  }, [load, finished])
 
   if (error) return <Drawer title="실행 기록" close={close}><ErrorBanner message={error} /></Drawer>
   if (!data) return <Drawer title="실행 기록" close={close}><Loading /></Drawer>

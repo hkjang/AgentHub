@@ -48,6 +48,14 @@ const groups: NavGroup[] = [
   ]}
 ]
 
+// matchesRoute is segment-aware: a plain `startsWith` makes /agents match
+// /agents/builder — and /admin/mcp match /admin/mcp-bundles — which left the
+// previous menu highlighted after moving to the next one.
+function matchesRoute(pathname: string, to: string) {
+  if (to === '/') return pathname === '/'
+  return pathname === to || pathname.startsWith(to + '/')
+}
+
 export function AppShell() {
   const { user, version, capabilities, logout } = useAuth()
   const [sidebar, setSidebar] = useState(false), [command, setCommand] = useState(false), [profile, setProfile] = useState(false)
@@ -55,7 +63,12 @@ export function AppShell() {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const location = useLocation(), navigate = useNavigate()
   const visibleGroups = useMemo(() => groups.filter((g) => (!g.admin || user.role === 'admin') && (!g.review || (capabilities.teamApprovalEnabled && (user.role === 'manager' || user.role === 'admin')))), [user.role, capabilities.teamApprovalEnabled])
-  const active = visibleGroups.flatMap((g) => g.items).find((item) => item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to))
+  // The longest match wins, so /agents/builder highlights the builder rather than
+  // the first menu that happens to be a prefix of it. Exactly one item is active,
+  // and the breadcrumb names that same item.
+  const active = useMemo(() => visibleGroups.flatMap((g) => g.items)
+    .filter((item) => matchesRoute(location.pathname, item.to))
+    .sort((a, b) => b.to.length - a.to.length)[0], [visibleGroups, location.pathname])
 
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
@@ -65,7 +78,30 @@ export function AppShell() {
     window.addEventListener('keydown', listener); return () => window.removeEventListener('keydown', listener)
   }, [])
 
-  useEffect(()=>{const load=()=>api.get<{items:Notification[]}>('/api/v1/notifications').then((value)=>setNotifications(value.items)).catch(()=>undefined);void load();const timer=window.setInterval(()=>void load(),30000);return()=>window.clearInterval(timer)},[])
+  // Escape closed the menus but a click anywhere else did not, so a notification
+  // list stayed open over the page the user had moved on to.
+  useEffect(() => {
+    if (!profile && !notificationOpen) return
+    const listener = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('.profile-wrap')) return
+      if (target?.closest('.notification-wrap')) return
+      setProfile(false); setNotificationOpen(false)
+    }
+    document.addEventListener('mousedown', listener); return () => document.removeEventListener('mousedown', listener)
+  }, [profile, notificationOpen])
+
+  // Any navigation — a command palette jump, a notification, a browser Back —
+  // closes what was open on the previous screen.
+  useEffect(() => { setProfile(false); setNotificationOpen(false); setSidebar(false) }, [location.pathname])
+
+  // Poll notifications only while the tab is in front, like every other polling
+  // surface, and catch up immediately when the user comes back to it.
+  useEffect(()=>{const load=()=>api.get<{items:Notification[]}>('/api/v1/notifications').then((value)=>setNotifications(value.items)).catch(()=>undefined);void load()
+    const timer=window.setInterval(()=>{if(document.visibilityState==='visible')void load()},30000)
+    const onVisible=()=>{if(document.visibilityState==='visible')void load()}
+    document.addEventListener('visibilitychange',onVisible)
+    return()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',onVisible)}},[])
   const openNotification=async(item:Notification)=>{if(!item.readAt){await api.post(`/api/v1/notifications/${item.id}/read`).catch(()=>undefined);setNotifications((values)=>values.map((value)=>value.id===item.id?{...value,readAt:new Date().toISOString()}:value))}setNotificationOpen(false);if(item.resourceUrl)navigate(item.resourceUrl)}
 
   return <div className="app-frame">
@@ -77,7 +113,7 @@ export function AppShell() {
           <button className="nav-group-title" onClick={() => setCollapsed((v) => ({...v, [group.label]: !v[group.label]}))} aria-expanded={!collapsed[group.label]}>
             <span>{group.label}</span>{collapsed[group.label] ? <ChevronRight size={14}/> : <ChevronDown size={14}/>}
           </button>
-          {!collapsed[group.label] && group.items.map(({to,label,icon:Icon}) => <NavLink end={to === '/'} to={to} key={to} onClick={() => setSidebar(false)} className={({isActive}) => `nav-link ${isActive ? 'active' : ''}`}><Icon size={18}/><span>{label}</span></NavLink>)}
+          {!collapsed[group.label] && group.items.map(({to,label,icon:Icon}) => <NavLink end to={to} key={to} onClick={() => setSidebar(false)} className={active?.to === to ? 'nav-link active' : 'nav-link'}><Icon size={18}/><span>{label}</span></NavLink>)}
         </section>)}
       </nav>
       <div className="sidebar-status"><span className="status-dot online"/><div><strong>컨트롤 플레인</strong><span>정상 · v{version.version}</span></div></div>

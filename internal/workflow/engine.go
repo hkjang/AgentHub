@@ -81,6 +81,9 @@ type Result struct {
 // Completion is the single capability a step needs: send a system prompt plus a
 // user message to a model and return the reply. It is an interface so the engine
 // is testable without a live gateway.
+//
+// Implementations must be safe for concurrent use: every step in one level runs
+// in its own goroutine, and consensus puts every participant in the same level.
 type Completion interface {
 	Complete(ctx context.Context, step Step, prompt string) (string, error)
 }

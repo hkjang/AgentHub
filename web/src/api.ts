@@ -1,5 +1,20 @@
 type ErrorResponse = { error?: { code?: string; message?: string } }
 
+/**
+ * Fired when the portal session is gone — expired, revoked, or dropped by a
+ * restart. Until the shell listened for this, every screen just showed
+ * "로그인이 필요합니다." and stayed there: the session was over but the app never
+ * said so, and only a manual reload took the user back to the sign-in page.
+ */
+export const UNAUTHORIZED_EVENT = 'agenthub:unauthorized'
+
+function reportUnauthorized(url: string) {
+  // A rejected sign-in is a wrong password, not an expired session, and a 401
+  // relayed from a runtime's own API belongs to that runtime.
+  if (url.startsWith('/api/v1/auth/login') || url.includes('/session/')) return
+  window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
+}
+
 function cookie(name: string) {
   return document.cookie.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${name}=`))?.slice(name.length + 1) ?? ''
 }
@@ -11,6 +26,7 @@ export async function request<T>(url: string, options: RequestInit = {}): Promis
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) headers.set('X-CSRF-Token', decodeURIComponent(cookie('agenthub_csrf')))
   const response = await fetch(url, { ...options, headers, credentials: 'same-origin' })
   if (!response.ok) {
+    if (response.status === 401) reportUnauthorized(url)
     let payload: ErrorResponse = {}
     try { payload = await response.json() } catch { /* response is not JSON */ }
     throw new Error(payload.error?.message ?? `요청을 처리하지 못했습니다. (${response.status})`)
@@ -26,6 +42,7 @@ async function requestText(url: string, options: RequestInit = {}): Promise<stri
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) headers.set('X-CSRF-Token', decodeURIComponent(cookie('agenthub_csrf')))
   const response = await fetch(url, { ...options, headers, credentials: 'same-origin' })
   if (!response.ok) {
+    if (response.status === 401) reportUnauthorized(url)
     let payload: ErrorResponse = {}
     try { payload = await response.json() } catch { /* response is not JSON */ }
     throw new Error(payload.error?.message ?? `요청을 처리하지 못했습니다. (${response.status})`)

@@ -1,5 +1,32 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { AlertCircle, CheckCircle2, X } from 'lucide-react'
+
+// Overlays opened, innermost last. Escape closes the topmost one only, so a
+// confirmation opened over a drawer does not take the drawer with it.
+const escapeStack: Array<() => void> = []
+
+/**
+ * Closes this overlay on Escape. The shell already answers Escape for its own
+ * overlays — the command palette, the menus, the mobile sidebar — and a drawer
+ * that ignored it was the one place in the app where the key did nothing.
+ */
+function useEscape(close: () => void) {
+  const latest = useRef(close)
+  useEffect(() => { latest.current = close }, [close])
+  useEffect(() => {
+    const entry = () => latest.current()
+    escapeStack.push(entry)
+    const listener = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && escapeStack[escapeStack.length - 1] === entry) entry()
+    }
+    window.addEventListener('keydown', listener)
+    return () => {
+      window.removeEventListener('keydown', listener)
+      const index = escapeStack.lastIndexOf(entry)
+      if (index >= 0) escapeStack.splice(index, 1)
+    }
+  }, [])
+}
 
 export function PageHeader({eyebrow,title,description,actions}:{eyebrow?:string;title:string;description:string;actions?:ReactNode}) { return <div className="page-header"><div>{eyebrow&&<span className="eyebrow">{eyebrow}</span>}<h1>{title}</h1><p>{description}</p></div>{actions&&<div className="page-actions">{actions}</div>}</div> }
 // Kubernetes and the runtime adapters report state in English; the class name
@@ -21,7 +48,7 @@ export function Empty({icon,title,description,action}:{icon:ReactNode;title:stri
 export function Loading() { return <div className="loading-grid"><span/><span/><span/></div> }
 export function ErrorBanner({message,onClose}:{message:string;onClose?:()=>void}) { return <div className="alert error"><AlertCircle size={18}/><span>{message}</span>{onClose&&<button onClick={onClose} aria-label="닫기"><X size={16}/></button>}</div> }
 export function SuccessBanner({message}:{message:string}) { return <div className="alert success"><CheckCircle2 size={18}/><span>{message}</span></div> }
-export function Drawer({title,subtitle,close,children,footer}:{title:string;subtitle?:string;close:()=>void;children:ReactNode;footer?:ReactNode}) { return <div className="drawer-layer"><button className="drawer-scrim" onClick={close} aria-label="닫기"/><aside className="drawer" role="dialog" aria-modal="true" aria-label={title}><header><div><h2>{title}</h2>{subtitle&&<p>{subtitle}</p>}</div><button className="icon-button" onClick={close} aria-label="닫기"><X size={20}/></button></header><div className="drawer-body custom-scroll">{children}</div>{footer&&<footer>{footer}</footer>}</aside></div> }
+export function Drawer({title,subtitle,close,children,footer}:{title:string;subtitle?:string;close:()=>void;children:ReactNode;footer?:ReactNode}) { useEscape(close);return <div className="drawer-layer"><button className="drawer-scrim" onClick={close} aria-label="닫기"/><aside className="drawer" role="dialog" aria-modal="true" aria-label={title}><header><div><h2>{title}</h2>{subtitle&&<p>{subtitle}</p>}</div><button className="icon-button" onClick={close} aria-label="닫기"><X size={20}/></button></header><div className="drawer-body custom-scroll">{children}</div>{footer&&<footer>{footer}</footer>}</aside></div> }
 
 /**
  * Blocking confirmation for destructive actions. Deletes here remove Kubernetes
@@ -29,6 +56,9 @@ export function Drawer({title,subtitle,close,children,footer}:{title:string;subt
  * than firing on a single click.
  */
 export function ConfirmDialog({title,message,confirmLabel='삭제',busy=false,error,onConfirm,onCancel}:{title:string;message:ReactNode;confirmLabel?:string;busy?:boolean;error?:string;onConfirm:()=>void;onCancel:()=>void}) {
+  // Not while the action is in flight: the request is already on its way, and
+  // closing the dialog would hide whether it succeeded.
+  useEscape(() => { if (!busy) onCancel() })
   return <div className="drawer-layer">
     <button className="drawer-scrim" onClick={onCancel} aria-label="취소"/>
     <div className="confirm-dialog" role="alertdialog" aria-modal="true" aria-label={title}>

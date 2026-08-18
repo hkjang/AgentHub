@@ -3,18 +3,27 @@ package workflow
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 )
 
 // scriptedCompletion answers each step from a table, so a consensus can be set
 // up exactly — unanimous, split, tied — without a model.
+//
+// The engine runs a level's steps in parallel, and consensus puts every
+// participant in one level, so its bookkeeping is guarded: without the mutex the
+// double raced against itself under -race even though the engine was correct.
 type scriptedCompletion struct {
 	byAgent map[string]string
+
+	mu      sync.Mutex
 	prompts map[string]string
 	systems map[string]string
 }
 
 func (s *scriptedCompletion) Complete(_ context.Context, step Step, prompt string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.prompts == nil {
 		s.prompts = map[string]string{}
 		s.systems = map[string]string{}
@@ -22,6 +31,13 @@ func (s *scriptedCompletion) Complete(_ context.Context, step Step, prompt strin
 	s.prompts[step.ID] = prompt
 	s.systems[step.ID] = step.SystemPrompt
 	return s.byAgent[step.ID], nil
+}
+
+// system reads the system prompt one step was given.
+func (s *scriptedCompletion) system(id string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.systems[id]
 }
 
 func consensusSteps(ids ...string) []Step {
@@ -193,8 +209,8 @@ func TestOtherModesStillFollowTheirGraph(t *testing.T) {
 	if result.Consensus != nil {
 		t.Fatalf("only a consensus run carries a tally: %#v", result.Consensus)
 	}
-	if !strings.Contains(script.systems["a"], "당신은 검토자입니다.") || strings.Contains(script.systems["a"], voteMarker) {
-		t.Fatalf("a non-consensus run must not be told to vote: %q", script.systems["a"])
+	if !strings.Contains(script.system("a"), "당신은 검토자입니다.") || strings.Contains(script.system("a"), voteMarker) {
+		t.Fatalf("a non-consensus run must not be told to vote: %q", script.system("a"))
 	}
 	if result.Output != "second" {
 		t.Fatalf("output = %q, want the last step's answer", result.Output)

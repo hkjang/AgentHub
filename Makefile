@@ -9,7 +9,7 @@ BASE_VERSION ?= $(shell cat BASE_VERSION)
 BASE_TAG := v$(BASE_VERSION)
 
 test:
-	go test ./cmd/... ./internal/...
+	go test -race ./cmd/... ./internal/...
 	cd web && npm ci && npm run lint && npm run build
 
 build:
