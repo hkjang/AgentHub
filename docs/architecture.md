@@ -437,6 +437,41 @@ The properties that make it a gate rather than a suggestion:
 - **Nobody has to be watching.** Creating the approval notifies the owner and
   places it in 검토 · 승인 next to every other pending decision.
 
+## Tracing
+
+The platform carried a trace id from the request that started a task through to
+every step's log line, which answers "what happened in this run" for whoever is
+reading logs. It does not answer what an operator asks when a nightly agent got
+slow or expensive: where the time went, which model call cost what, whether the
+runtime acquisition or the gateway was the bottleneck.
+
+With an OTLP collector configured in Administration ▸ System Settings ▸
+Observability, the API and the worker export OpenTelemetry spans. One
+`task.execute` span per attempt carries the task, agent, attempt, priority and
+source, and closes with the run id, status, step count, resumed steps, total
+tokens and model; each reasoning step is an `agent.step` child with its own token
+counts; the completion judge is a `task.evaluate` child; acquiring a runtime is
+`runtime.acquire`; the workflow engine produces `workflow.run` with a
+`workflow.step` per node. The API records one span per request, named by chi's
+route pattern so spans group by route rather than by id.
+
+Two details make the traces usable rather than decorative. The platform's own
+trace id becomes the OpenTelemetry trace id whenever a span is recording, so the
+id shown in the console, printed in the access log and stored on the run is the
+string that finds the trace in the collector — with tracing off it falls back to
+the previous `task-<id>-<attempt>` scheme. And a caller's trace context is
+adopted: a request that arrives with a `traceparent` continues that trace instead
+of starting a second one.
+
+Tracing is off unless an endpoint is set, and off means free: no exporter is
+installed, the global tracer is the SDK's no-op, and every span call in the
+codebase becomes a couple of function calls with nothing recorded or buffered. An
+offline site with no collector pays nothing for the instrumentation being there.
+A collector that is misconfigured or unreachable is a reason to run without
+traces, never a reason for a process not to start, so `Install` logs and carries
+on. The setting is read at startup: changing it applies when the API and the
+worker restart.
+
 ## Token spend
 
 Agents in the execution plane run when nobody is watching, which is exactly when

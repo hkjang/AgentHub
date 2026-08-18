@@ -16,6 +16,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/hkjang/AgentHub/internal/telemetry"
 )
 
 // Step is one node of the graph, already resolved against an agent definition.
@@ -156,6 +160,13 @@ func (e *Engine) Run(ctx context.Context, mode string, steps []Step, guard Guard
 	for _, step := range steps {
 		byID[step.ID] = step
 	}
+	ctx, runSpan := telemetry.Start(ctx, "workflow.run",
+		attribute.String("agenthub.workflow.mode", mode),
+		attribute.Int("agenthub.workflow.steps", len(steps)))
+	defer runSpan.End()
+	if id := telemetry.TraceID(ctx); id != "" {
+		traceID = id
+	}
 	result := Result{Mode: mode, Status: "succeeded", Levels: levels, TraceID: traceID}
 	outputs := map[string]string{}
 	results := map[string]*StepResult{}
@@ -246,7 +257,12 @@ func (e *Engine) Run(ctx context.Context, mode string, steps []Step, guard Guard
 		result.Output = compose(mode, steps, results, outputs)
 	}
 	result.DurationMs = time.Since(started).Milliseconds()
-	return finish(result, results, steps, calls), nil
+	finished := finish(result, results, steps, calls)
+	runSpan.SetAttributes(
+		attribute.String("agenthub.workflow.status", finished.Status),
+		attribute.Int("agenthub.workflow.agent_calls", finished.AgentCall),
+		attribute.Int("agenthub.tokens.total", finished.TotalTokens))
+	return finished, nil
 }
 
 // supervisorStep picks the step that reviews the others, or nil when the graph
@@ -318,6 +334,11 @@ func (e *Engine) runLevel(ctx context.Context, level []Step, depth int, outputs 
 
 			started := time.Now()
 			item := &StepResult{ID: step.ID, AgentID: step.AgentID, AgentName: step.AgentName, Level: depth}
+			ctx, stepSpan := telemetry.Start(ctx, "workflow.step",
+				attribute.String("agenthub.step.id", step.ID),
+				attribute.String("agenthub.agent.id", step.AgentID),
+				attribute.Int("agenthub.step.level", depth))
+			defer stepSpan.End()
 			mu.Lock()
 			prompt := buildPrompt(step, byID, outputs, input)
 			mu.Unlock()
@@ -343,10 +364,14 @@ func (e *Engine) runLevel(ctx context.Context, level []Step, depth int, outputs 
 			if err != nil {
 				item.Status = "failed"
 				item.Error = err.Error()
+				telemetry.Fail(stepSpan, err)
 			} else {
 				item.Status = "succeeded"
 				item.Output = truncate(output, guard.MaxOutputRunes)
 			}
+			stepSpan.SetAttributes(
+				attribute.String("agenthub.step.status", item.Status),
+				attribute.Int("agenthub.tokens.total", usage.TotalTokens))
 			mu.Lock()
 			results[step.ID] = item
 			mu.Unlock()

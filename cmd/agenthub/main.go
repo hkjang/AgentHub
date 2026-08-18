@@ -11,11 +11,13 @@ import (
 	"time"
 
 	"github.com/hkjang/AgentHub/internal/api"
+	"github.com/hkjang/AgentHub/internal/buildinfo"
 	"github.com/hkjang/AgentHub/internal/config"
 	"github.com/hkjang/AgentHub/internal/cryptox"
 	appLog "github.com/hkjang/AgentHub/internal/logging"
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/store"
+	"github.com/hkjang/AgentHub/internal/telemetry"
 )
 
 func main() {
@@ -55,6 +57,11 @@ func run() error {
 	if err == nil {
 		_ = db.SeedTemplates(ctx, admin.ID)
 	}
+	// Tracing, when an administrator configured a collector. With none configured
+	// this installs the no-op tracer and costs nothing.
+	tracing := telemetry.Install(ctx, db, logger, "api", buildinfo.Version)
+	defer func() { _ = tracing.Shutdown(context.WithoutCancel(ctx)) }()
+
 	spawner := appRuntime.NewKubernetesSpawner(db)
 	apiServer := api.New(db, cipher, logger, ring, spawner, os.DirFS("web/dist"))
 	apiServer.RunBackground(ctx)

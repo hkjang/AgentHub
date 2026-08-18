@@ -21,6 +21,7 @@ import (
 	"github.com/hkjang/AgentHub/internal/runtimespec"
 	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
+	"github.com/hkjang/AgentHub/internal/telemetry"
 )
 
 func (s *Server) userRoutes(r chi.Router) {
@@ -1388,7 +1389,7 @@ func (s *Server) secretConfigured(r *http.Request, key string) bool {
 func (s *Server) putAdminSetting(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	key := chi.URLParam(r, "key")
-	allowed := map[string]bool{"general": true, "authentication": true, "kubernetes": true, "sessionGateway": true, "governance": true, "logging": true, "release": true, runtimeenv.SettingKey: true}
+	allowed := map[string]bool{"general": true, "authentication": true, "kubernetes": true, "sessionGateway": true, "governance": true, "logging": true, "release": true, runtimeenv.SettingKey: true, telemetry.SettingKey: true}
 	if !allowed[key] {
 		writeError(w, 404, "setting_not_found", "지원하지 않는 설정입니다.")
 		return
@@ -1495,6 +1496,14 @@ func (s *Server) validateSetting(r *http.Request, key string, value map[string]a
 		if boolValue("offlineMode") && boolValue("updateCheckEnabled") {
 			return errors.New("Offline Mode에서는 외부 업데이트 확인을 사용할 수 없습니다")
 		}
+	case telemetry.SettingKey:
+		// Checked here rather than at startup, where a bad endpoint would only show
+		// up as a log line in a process nobody is watching.
+		settings, err := decodeSetting[telemetry.Settings](value)
+		if err != nil {
+			return err
+		}
+		return settings.Validate()
 	case runtimeenv.SettingKey:
 		// Everything here ends up in a Pod spec, so it is checked against the same
 		// rules the operator enforces rather than stored and quietly dropped later.
@@ -1505,6 +1514,19 @@ func (s *Server) validateSetting(r *http.Request, key string, value map[string]a
 		return settings.Validate()
 	}
 	return nil
+}
+
+// decodeSetting re-reads a submitted settings document into its typed form.
+func decodeSetting[T any](value map[string]any) (T, error) {
+	var decoded T
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return decoded, err
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return decoded, errors.New("설정 형식을 확인해 주세요")
+	}
+	return decoded, nil
 }
 
 // decodeRuntimeEnvironment re-reads the submitted document into its typed form.

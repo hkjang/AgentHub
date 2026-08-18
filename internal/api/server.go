@@ -12,12 +12,17 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 
 	"github.com/hkjang/AgentHub/internal/buildinfo"
 	"github.com/hkjang/AgentHub/internal/cryptox"
 	appLog "github.com/hkjang/AgentHub/internal/logging"
 	"github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/store"
+	"github.com/hkjang/AgentHub/internal/telemetry"
 )
 
 const (
@@ -46,7 +51,7 @@ func New(db *store.Store, cipher *cryptox.Cipher, logger *slog.Logger, logs *app
 
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer, s.accessLog, s.runtimeHostGateway, s.runtimePathGateway, s.securityHeaders)
+	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer, s.tracing, s.accessLog, s.runtimeHostGateway, s.runtimePathGateway, s.securityHeaders)
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.store.Ping(r.Context()); err != nil {
@@ -122,12 +127,48 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
+// tracing records one span per request and, more importantly, adopts the trace a
+// caller already started. A task that a workflow queued and a worker ran should
+// be one trace end to end, not three unrelated ones.
+//
+// With no exporter installed this is the SDK's no-op tracer: a couple of function
+// calls per request and nothing recorded.
+func (s *Server) tracing(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+		ctx, span := telemetry.Start(ctx, r.Method+" "+r.URL.Path,
+			semconv.HTTPRequestMethodKey.String(r.Method),
+			semconv.URLPath(r.URL.Path),
+			semconv.ServerAddress(r.Host),
+		)
+		defer span.End()
+		wrapper := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		next.ServeHTTP(wrapper, r.WithContext(ctx))
+		// The route pattern is only known once chi has matched it, and it is what
+		// makes spans groupable: /api/v1/agents/{id} rather than one name per id.
+		if route := chi.RouteContext(ctx); route != nil && route.RoutePattern() != "" {
+			span.SetName(r.Method + " " + route.RoutePattern())
+			span.SetAttributes(semconv.HTTPRoute(route.RoutePattern()))
+		}
+		span.SetAttributes(semconv.HTTPResponseStatusCode(wrapper.Status()))
+		if wrapper.Status() >= 500 {
+			span.SetStatus(codes.Error, http.StatusText(wrapper.Status()))
+		}
+	})
+}
+
 func (s *Server) accessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		wrapper := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 		next.ServeHTTP(wrapper, r)
-		s.logger.Info("http request", "method", r.Method, "path", r.URL.Path, "status", wrapper.Status(), "bytes", wrapper.BytesWritten(), "duration_ms", time.Since(start).Milliseconds(), "request_id", middleware.GetReqID(r.Context()))
+		fields := []any{"method", r.Method, "path", r.URL.Path, "status", wrapper.Status(), "bytes", wrapper.BytesWritten(), "duration_ms", time.Since(start).Milliseconds(), "request_id", middleware.GetReqID(r.Context())}
+		// The trace id goes in the log line so a log and a trace can be put side by
+		// side without correlating by timestamp.
+		if traceID := telemetry.TraceID(r.Context()); traceID != "" {
+			fields = append(fields, "trace_id", traceID)
+		}
+		s.logger.Info("http request", fields...)
 	})
 }
 

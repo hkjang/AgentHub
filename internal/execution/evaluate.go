@@ -7,7 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/hkjang/AgentHub/internal/store"
+	"github.com/hkjang/AgentHub/internal/telemetry"
 	"github.com/hkjang/AgentHub/internal/workflow"
 )
 
@@ -159,7 +162,13 @@ func (o *Orchestrator) judgeVerdict(ctx context.Context, run *store.AgentRun, go
 	b.WriteString(strings.Join(transcript, "\n\n"))
 
 	startedAt := time.Now()
-	structured, err := o.completeStructured(ctx, step, b.String(), verdictSchema(goal.SuccessCriteria))
+	judgeCtx, judgeSpan := telemetry.Start(ctx, "task.evaluate",
+		attribute.String("agenthub.completion.strategy", goal.CompletionStrategy),
+		attribute.Int("agenthub.completion.criteria", len(goal.SuccessCriteria)))
+	structured, err := o.completeStructured(judgeCtx, step, b.String(), verdictSchema(goal.SuccessCriteria))
+	telemetry.Fail(judgeSpan, err)
+	judgeSpan.SetAttributes(attribute.Int("agenthub.tokens.total", structured.Usage.TotalTokens))
+	judgeSpan.End()
 	output, usage := structured.Output, structured.Usage
 	run.TotalTokens += usage.TotalTokens
 	if _, storeErr := o.store.AppendRunStep(ctx, store.AgentRunStep{

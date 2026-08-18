@@ -75,6 +75,15 @@ through a ConfigMap, so put no credentials in it, and remember that the mirror
 host must also be in the network profile's egress allow-list. A change applies
 when a runtime next starts; a running runtime picks it up on restart.
 
+## Tracing (optional)
+
+AgentHub exports OpenTelemetry traces when Administration → System Settings →
+Observability names an OTLP/HTTP collector, or when `AGENTHUB_OTLP_ENDPOINT` is
+set. Leave it unset and tracing is off: no exporter is installed and no egress is
+attempted, which is the right default for a site with no collector. The setting is
+read at startup, so the API and the worker have to be restarted to pick it up, and
+the collector has to be reachable from both.
+
 ## Runtime browser domain
 
 An origin per runtime is the recommended way to open a workspace: it keeps a

@@ -16,12 +16,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hkjang/AgentHub/internal/buildinfo"
 	"github.com/hkjang/AgentHub/internal/config"
 	"github.com/hkjang/AgentHub/internal/cryptox"
 	"github.com/hkjang/AgentHub/internal/execution"
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/runtimespec"
 	"github.com/hkjang/AgentHub/internal/store"
+	"github.com/hkjang/AgentHub/internal/telemetry"
 	"github.com/hkjang/AgentHub/internal/workflow"
 )
 
@@ -89,6 +91,11 @@ func run(logger *slog.Logger) error {
 	if err := waitForSchema(ctx, db, logger); err != nil {
 		return err
 	}
+
+	// The worker is where the interesting spans are: a task's steps, the model
+	// calls and the runtime it had to wait for.
+	tracing := telemetry.Install(ctx, db, logger, "worker", buildinfo.Version)
+	defer func() { _ = tracing.Shutdown(context.WithoutCancel(ctx)) }()
 
 	hostname, _ := os.Hostname()
 	workerID := execution.NewWorkerID(hostname)

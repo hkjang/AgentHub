@@ -20,9 +20,13 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/runtimespec"
 	"github.com/hkjang/AgentHub/internal/store"
+	"github.com/hkjang/AgentHub/internal/telemetry"
 	"github.com/hkjang/AgentHub/internal/workflow"
 )
 
@@ -64,6 +68,21 @@ type Outcome struct {
 // anything the agent itself caused, so the worker can apply the retry policy
 // without unpacking error strings.
 func (o *Orchestrator) Execute(ctx context.Context, task store.AgentTask, traceID string) (Outcome, error) {
+	// One span per attempt, with everything the run does hanging off it. The
+	// platform's own trace id becomes the span's when tracing is on, so the id in
+	// the console, in the log line and in the collector are the same string.
+	ctx, span := telemetry.Start(ctx, "task.execute",
+		attribute.String("agenthub.task.id", task.ID),
+		attribute.String("agenthub.agent.id", task.AgentID),
+		attribute.Int("agenthub.task.attempt", task.Attempts),
+		attribute.String("agenthub.task.priority", task.Priority),
+		attribute.String("agenthub.task.source", task.Source),
+	)
+	defer span.End()
+	if id := telemetry.TraceID(ctx); id != "" {
+		traceID = id
+	}
+
 	agent, err := o.store.AgentByID(ctx, task.AgentID, task.OwnerID, true)
 	if err != nil {
 		return Outcome{Status: store.TaskFailed, Failure: "Agent 정의를 찾을 수 없습니다."}, err
@@ -120,6 +139,19 @@ func (o *Orchestrator) Execute(ctx context.Context, task store.AgentTask, traceI
 	if err := o.store.FinishAgentRun(ctx, run); err != nil {
 		o.logger.Error("run could not be recorded", "run", run.ID, "error", err)
 	}
+	// The attributes an operator sorts by when a nightly agent got slow or
+	// expensive: how long, how many steps, how many tokens, and how it ended.
+	span.SetAttributes(
+		attribute.String("agenthub.run.id", run.ID),
+		attribute.String("agenthub.run.status", run.Status),
+		attribute.Int("agenthub.run.steps", run.StepCount),
+		attribute.Int("agenthub.run.resumed_steps", run.ResumedSteps),
+		attribute.Int("agenthub.run.tokens", run.TotalTokens),
+		attribute.String("agenthub.model.name", run.ModelName),
+	)
+	if run.Status == "failed" {
+		span.SetStatus(codes.Error, outcome.Failure)
+	}
 	o.event(ctx, run, "task."+outcome.Status, outcome.Failure, map[string]any{
 		"durationMs": run.DurationMs, "steps": run.StepCount, "totalTokens": run.TotalTokens,
 	})
@@ -147,7 +179,13 @@ func (o *Orchestrator) run(ctx context.Context, run *store.AgentRun, task store.
 	// live in.
 	var acquired *acquiredRuntime
 	if goal.StartOnDemand {
-		acquired, err = o.acquireRuntime(ctx, *run, agent)
+		acquireCtx, acquireSpan := telemetry.Start(ctx, "runtime.acquire", attribute.String("agenthub.agent.id", agent.ID))
+		acquired, err = o.acquireRuntime(acquireCtx, *run, agent)
+		telemetry.Fail(acquireSpan, err)
+		if acquired != nil {
+			acquireSpan.SetAttributes(attribute.String("agenthub.runtime.id", acquired.runtimeID))
+		}
+		acquireSpan.End()
 		if err != nil {
 			// Runtime trouble is infrastructure, not the agent failing its goal.
 			return Outcome{Status: store.TaskFailed, Failure: "Runtime을 확보하지 못했습니다: " + err.Error(), Retryable: true}
@@ -223,8 +261,17 @@ func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task stor
 		}
 		prompt := stepPrompt(task, goal, transcript) + preamble
 		startedAt := time.Now()
-		output, usage, err := o.complete(ctx, step, prompt)
+		stepCtx, stepSpan := telemetry.Start(ctx, "agent.step",
+			attribute.Int("agenthub.step.sequence", sequence),
+			attribute.String("agenthub.model.name", model.ModelName))
+		output, usage, err := o.complete(stepCtx, step, prompt)
 		elapsed := time.Since(startedAt).Milliseconds()
+		stepSpan.SetAttributes(
+			attribute.Int("agenthub.tokens.prompt", usage.PromptTokens),
+			attribute.Int("agenthub.tokens.completion", usage.CompletionTokens),
+			attribute.Int("agenthub.tokens.total", usage.TotalTokens))
+		telemetry.Fail(stepSpan, err)
+		stepSpan.End()
 
 		record := store.AgentRunStep{
 			RunID: run.ID, Sequence: sequence, Type: "reasoning",
