@@ -69,3 +69,42 @@ func TestPublishableEventsAreRecognised(t *testing.T) {
 		}
 	}
 }
+
+func TestEventBackoffGrowsAndIsCapped(t *testing.T) {
+	first := eventBackoff(1)
+	second := eventBackoff(2)
+	if first != 5*time.Second || second != 10*time.Second {
+		t.Fatalf("unexpected backoff: %v then %v", first, second)
+	}
+	if eventBackoff(2) <= eventBackoff(1) {
+		t.Fatal("the delay must grow with the attempt")
+	}
+	// A dependency having a bad hour must not push delivery out indefinitely.
+	if capped := eventBackoff(20); capped != 300*time.Second {
+		t.Fatalf("backoff is not capped: %v", capped)
+	}
+	// A zero or negative attempt is treated as the first one rather than
+	// collapsing the delay to nothing.
+	if eventBackoff(0) != first {
+		t.Fatalf("attempt 0 gave %v, want %v", eventBackoff(0), first)
+	}
+}
+
+func TestDispatcherDefaultsAreBounded(t *testing.T) {
+	d := NewDispatcher(nil, nil)
+	if d.MaxAttempts < 1 {
+		t.Fatal("an event with no retry budget would be dropped on the first hiccup")
+	}
+	if d.Lease <= d.Interval {
+		t.Fatalf("a lease shorter than the poll interval would let two workers deliver at once: lease %v, interval %v", d.Lease, d.Interval)
+	}
+	// The total retry window has to be long enough to outlast a restart of
+	// whatever the delivery depends on.
+	var window time.Duration
+	for attempt := 1; attempt <= d.MaxAttempts; attempt++ {
+		window += eventBackoff(attempt)
+	}
+	if window < time.Minute {
+		t.Fatalf("the retry window is only %v", window)
+	}
+}

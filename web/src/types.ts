@@ -62,6 +62,8 @@ export type MCPToolPolicy = {
 export type PlatformEvent = {
   id: string; type: string; subjectType: string; subjectId: string
   payload: Record<string, unknown>; createdAt: string; dispatchedAt?: string
+  attempts: number; lastError?: string; deadLetteredAt?: string
+  deliveries: number; deliveredTo?: string
 }
 export type AgentTask = {
   id: string; agentId: string; agentName?: string; title: string; input: string; priority: string

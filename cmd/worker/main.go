@@ -122,9 +122,9 @@ func run(logger *slog.Logger) error {
 		logger.Info("cron scheduler disabled on this worker")
 	}
 
-	// The event dispatcher claims and marks events delivered in one statement,
-	// so unlike the scheduler it is safe — and useful — to run on every worker.
-	dispatcher := execution.NewDispatcher(db, logger)
+	// The event dispatcher claims events on a lease and records each delivery, so
+	// unlike the scheduler it is safe — and useful — to run on every worker.
+	dispatcher := execution.NewDispatcher(db, logger).WithWorkerID(workerID)
 	go func() { errs <- dispatcher.Run(ctx) }()
 
 	// The runtime warm pool claims each runtime before starting it, so several

@@ -311,9 +311,30 @@ function EventFeed() {
           <span className="event-kind">{EVENT_LABELS[event.type] ?? event.type}</span>
           <span className="event-subject">{event.subjectType} {event.subjectId.slice(0, 8)}</span>
           <span className="row-time" title={new Date(event.createdAt).toLocaleString('ko-KR')}>{relativeTime(event.createdAt)}</span>
-          {!event.dispatchedAt && <span className="event-pending">전달 대기</span>}
+          <EventDeliveryState event={event} />
         </li>)}</ul>)}
   </section>
+}
+
+/**
+ * What happened to one event. The feed used to say only "전달 대기", which covered
+ * both an event still on its way and one that had been given up on — and said
+ * nothing about whether a subscriber actually received it.
+ */
+function EventDeliveryState({ event }: { event: PlatformEvent }) {
+  const subscribers = event.deliveries > 0
+    ? <span className="event-delivered" title={event.deliveredTo ? `전달된 Trigger: ${event.deliveredTo}` : undefined}>구독 {event.deliveries}건 전달</span>
+    : null
+  if (event.deadLetteredAt) {
+    return <><span className="event-failed" title={event.lastError}>전달 실패 · {event.attempts}회 시도</span>{subscribers}</>
+  }
+  if (event.dispatchedAt) {
+    return subscribers ?? <span className="event-delivered">전달 완료 · 구독자 없음</span>
+  }
+  if (event.attempts > 0) {
+    return <><span className="event-pending" title={event.lastError}>재시도 대기 · {event.attempts}회 시도</span>{subscribers}</>
+  }
+  return <span className="event-pending">전달 대기</span>
 }
 
 function CreateTaskDrawer({ agents, close, done }: { agents: Agent[]; close: () => void; done: () => void }) {

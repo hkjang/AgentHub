@@ -315,6 +315,9 @@
 .event-kind{font-weight:650;color:#1f2a3a;min-width:88px}
 .event-subject{color:#7a8699;font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px}
 .event-pending{margin-left:auto;padding:2px 7px;border-radius:5px;background:#fff5df;color:#b2720b;font-size:12px}
+.event-delivered{margin-left:auto;padding:2px 7px;border-radius:5px;background:#e9f7f0;color:#12805c;font-size:12px}
+.event-failed{margin-left:auto;padding:2px 7px;border-radius:5px;background:#fdeced;color:#b3283c;font-size:12px}
+.event-pending+.event-delivered,.event-failed+.event-delivered{margin-left:6px}
 .policy-row{display:flex;flex-direction:column;gap:7px;padding:11px 12px;border:1px solid #e6ebf3;border-radius:10px;background:#fff}
 .policy-head{display:flex;align-items:center;gap:9px}
 .policy-tag{padding:2px 8px;border-radius:6px;font-size:12px;font-weight:650}

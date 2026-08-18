@@ -235,8 +235,26 @@ failed, a runtime that crashed, an approval that was decided, an artifact that
 was produced. Events go to a durable outbox in PostgreSQL rather than an
 in-process bus: the API publishes some of them and the worker dispatches all of
 them, an offline site has no broker to lean on, and a restart must not drop what
-was in flight. The dispatcher claims a batch and marks it delivered in the same
-statement, so every worker can run one without anything being delivered twice.
+was in flight.
+
+Delivery is attempted under a lease and marked done only once it finished. The
+dispatcher used to mark a batch delivered in the same statement that claimed it,
+which made the outbox durable against a restart but not against anything going
+wrong afterwards: a worker that died, or a task insert that failed, left the event
+recorded as delivered with nothing delivered. Now a claim takes a lease and counts
+the attempt, a failure reschedules the event with a growing backoff, and an event
+nobody could deliver is dead-lettered after five attempts — kept, with the reason
+on it, and its owner told, because an event that never arrived is otherwise
+indistinguishable from one nothing subscribed to.
+
+Each subscriber's task is created together with its ledger row in one
+transaction, and the ledger's primary key is (event, subscriber). That is what
+makes redelivery safe: a worker that died between creating the task and marking
+the event delivered leaves a ledger row behind, so the next attempt skips that
+subscriber instead of queueing the same work twice. The result is one delivery per
+subscriber rather than at least one, and `deliveries`/`deliveredTo` on the event
+feed answer the question a ledger exists for — did this event actually reach that
+agent?
 
 Two things keep event triggers from becoming a feedback loop. A subscription
 carries an optional payload filter, applied as jsonb containment in SQL, so an
