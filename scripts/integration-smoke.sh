@@ -80,11 +80,16 @@ path_unauthorized=$(curl --noproxy '*' -sS -o "$test_dir/path-unauthorized.html"
 path_ticket=$(curl --noproxy '*' -sS -o "$test_dir/path-ticket.json" -w '%{http_code}' "$base_url$path_url")
 portal_intact=$(curl --noproxy '*' -sS -b "$cookie" -o "$test_dir/portal.json" -w '%{http_code}' "$base_url/api/v1/me")
 migrations=$(docker exec "$postgres_container" psql -U agenthub -d "$database" -Atc 'SELECT max(version) FROM schema_migrations')
+# What the binary should have applied, read from the tree rather than pinned to a
+# number: the literal that used to be here went stale the first time a migration
+# was added, and a stale assertion is worse than none — it fails for the wrong
+# reason and gets ignored.
+expected_migrations=$(ls "$(dirname "$0")/../internal/store/migrations"/*.sql | sed 's#.*/##; s/_.*//' | sed 's/^0*//' | sort -n | tail -1)
 
 printf 'login=%s csrf_reject=%s settings=%s workspace=%s snapshot=%s agent=%s spawn=%s\n' "$login_code" "$csrf_reject" "$settings" "$workspace" "$snapshot" "$agent" "$spawn"
 printf 'workflow=%s workflow_validate=%s cycle_reject=%s evaluation_set=%s evaluation=%s score=%s\n' "$workflow" "$workflow_validate" "$cycle_reject" "$evaluation_set" "$evaluation" "$(jq -r '.score' "$test_dir/evaluation.json")"
 printf 'secret=%s rotate=%s key_version=%s api_key=%s mcp=%s mcp_tools=%s mcp_mismatch=%s\n' "$secret" "$rotate" "$(jq -r '.version' "$test_dir/rotate.json")" "$api_key" "$mcp" "$(jq '.result.tools|length' "$test_dir/mcp.json")" "$mcp_mismatch"
-printf 'openapi=%s logs=%s notifications=%s launch=%s gateway_without_k8s=%s ticket_replay=%s migrations=%s\n' "$openapi" "$logs" "$notifications" "$launch" "$gateway_without_k8s" "$ticket_replay" "$migrations"
+printf 'openapi=%s logs=%s notifications=%s launch=%s gateway_without_k8s=%s ticket_replay=%s migrations=%s/%s\n' "$openapi" "$logs" "$notifications" "$launch" "$gateway_without_k8s" "$ticket_replay" "$migrations" "$expected_migrations"
 printf 'runtime_env=%s runtime_env_reject=%s path_mode=%s path_url=%s path_unauthorized=%s path_ticket=%s portal_intact=%s\n' "$runtime_env" "$runtime_env_reject" "$path_mode" "$path_url" "$path_unauthorized" "$path_ticket" "$portal_intact"
 
 [[ "$csrf_reject" == 403 && "$settings" == 200 && "$workspace" == 201 && "$snapshot" == 202 ]]
@@ -93,7 +98,8 @@ printf 'runtime_env=%s runtime_env_reject=%s path_mode=%s path_url=%s path_unaut
 [[ "$secret" == 201 && "$rotate" == 200 && "$api_key" == 201 ]]
 [[ "$mcp" == 200 && $(jq '.result.tools|length' "$test_dir/mcp.json") == 3 && "$mcp_mismatch" == 400 ]]
 [[ "$openapi" == 200 && "$logs" == 200 && "$notifications" == 200 ]]
-[[ "$launch" == 201 && "$gateway_without_k8s" == 503 && "$ticket_replay" == 401 && "$migrations" == 17 ]]
+[[ "$launch" == 201 && "$gateway_without_k8s" == 503 && "$ticket_replay" == 401 ]]
+[[ "$migrations" == "$expected_migrations" ]] || { echo "applied migration $migrations, expected $expected_migrations" >&2; exit 1; }
 [[ "$runtime_env" == 200 && "$runtime_env_reject" == 400 ]]
 # 503 rather than 200 because this smoke run has no cluster: the ticket was
 # accepted and the runtime endpoint is what could not be reached.

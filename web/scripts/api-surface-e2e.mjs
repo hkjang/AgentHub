@@ -80,7 +80,11 @@ try {
   // against what the server actually answers.
   const matrix = [
     ['GET', '/api/v1/agents', readKey, 200],
-    ['GET', '/api/v1/agents', writeKey, 403],
+    // Writing implies reading: a key that can create an agent but cannot list
+    // agents is not a smaller permission, it is an unusable one.
+    ['GET', '/api/v1/agents', writeKey, 200],
+    ['GET', '/api/v1/agents', manageKey, 200],
+    ['POST', '/api/v1/tasks', manageKey, 403],
     // A read whose path contains "session" is a read. The old rule demanded the
     // scope for starting runtimes because of how the word is spelled.
     ['GET', '/api/v1/sessions', readKey, 200],
@@ -123,7 +127,7 @@ try {
   check('scope를 여러 개 선택할 수 있음', (await drawer.locator('.scope-option input[type=checkbox]').count()) === 4,
     String(await drawer.locator('.scope-option input[type=checkbox]').count()))
   check('scope별 도달 범위 표시', await drawer.getByText(/REST 엔드포인트 \d+개/).first().isVisible())
-  check('쓰기는 조회를 포함하지 않는다고 안내', await drawer.getByText(/쓰기 권한은 조회를 포함하지 않습니다/).isVisible())
+  check('쓰기가 조회를 포함한다고 안내', await drawer.getByText(/쓰기·런타임 권한은 조회를 포함합니다/).isVisible())
 
   for (const key of [readKey, writeKey, manageKey]) {
     if (key.id) await call('DELETE', `/api/v1/api-keys/${key.id}`)

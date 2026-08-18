@@ -28,10 +28,12 @@ const (
 	// ScopeRead is every read. It is the default scope of a new key.
 	ScopeRead = "api:read"
 	// ScopeWrite creates and changes the things a user owns: agents, workflows,
-	// tasks, workspaces, evaluation sets.
+	// tasks, workspaces, evaluation sets. It covers reads as well, because an
+	// automation that writes almost always reads back what it wrote.
 	ScopeWrite = "agent:write"
-	// ScopeRuntime starts, stops and opens runtimes. Separate from ScopeWrite
-	// because it spends cluster resources and opens interactive sessions.
+	// ScopeRuntime starts, stops and opens runtimes, and covers reads for the same
+	// reason ScopeWrite does. Separate from ScopeWrite because it spends cluster
+	// resources and opens interactive sessions.
 	ScopeRuntime = "runtime:manage"
 	// ScopeMCP is held by keys used by the MCP endpoint. It grants nothing on the
 	// REST surface, which is why no route below carries it.
@@ -238,8 +240,12 @@ func (s *Server) apiRoutes() []Route {
 		// --- Administration ---
 		admin(http.MethodGet, "/admin/settings", "Administration", "Read platform settings", s.adminSettings),
 		admin(http.MethodPut, "/admin/settings/{key}", "Administration", "Save one platform setting", s.putAdminSetting),
+		admin(http.MethodGet, "/admin/overview", "Administration", "Platform health, spend and backlog for one window", s.adminOverview),
+		admin(http.MethodGet, "/admin/usage", "Administration", "Token spend broken down by user, agent and model", s.adminSpend),
+		admin(http.MethodGet, "/admin/usage/export", "Administration", "Download the spend breakdown as CSV", s.adminSpendExport),
 		admin(http.MethodGet, "/admin/logs", "Administration", "Read the platform log buffer", s.adminLogs),
-		admin(http.MethodGet, "/admin/audit", "Administration", "Read the audit trail", s.adminAudit),
+		admin(http.MethodGet, "/admin/audit", "Administration", "Search the audit trail", s.adminAudit),
+		admin(http.MethodGet, "/admin/audit/export", "Administration", "Download the filtered audit trail as CSV", s.adminAuditExport),
 		admin(http.MethodGet, "/admin/approvals", "Administration", "List every approval", s.adminApprovals),
 		admin(http.MethodPost, "/admin/approvals/{id}/approve", "Administration", "Approve a request as an administrator", s.decideApproval("approved")),
 		admin(http.MethodPost, "/admin/approvals/{id}/reject", "Administration", "Reject a request as an administrator", s.decideApproval("rejected")),
@@ -304,13 +310,32 @@ func (s *Server) authorize(item Route, handler http.HandlerFunc) http.HandlerFun
 				writeError(w, http.StatusForbidden, "api_key_forbidden", "이 작업은 브라우저 세션으로만 수행할 수 있습니다.")
 				return
 			}
-			if !hasScope(scopes, item.Scope) {
+			if !scopeSatisfies(scopes, item.Scope) {
 				writeError(w, http.StatusForbidden, "insufficient_scope", "API Key에 "+item.Scope+" scope가 필요합니다.")
 				return
 			}
 		}
 		handler(w, r)
 	}
+}
+
+// scopeSatisfies reports whether the scopes a key holds cover what a route
+// requires.
+//
+// Writing implies reading. A key that may create an agent but not list agents is
+// not a smaller permission, it is an unusable one: the automation that creates
+// something almost always has to read it back, and the only way to discover the
+// gap was to issue the key and watch it fail. Nothing is widened in the other
+// direction — a read key still cannot write, and neither reaches a browser-only
+// route.
+func scopeSatisfies(held []string, required string) bool {
+	if hasScope(held, required) {
+		return true
+	}
+	if required != ScopeRead {
+		return false
+	}
+	return hasScope(held, ScopeWrite) || hasScope(held, ScopeRuntime)
 }
 
 // openAPIDocument describes the whole surface, generated from the catalog so it
@@ -424,13 +449,16 @@ func (s *Server) scopeReach() []ScopeReach {
 		counts[scope] = &ScopeReach{Scope: scope, Examples: []string{}}
 	}
 	for _, item := range s.apiRoutes() {
-		reach := counts[item.Scope]
-		if reach == nil {
-			continue
-		}
-		reach.Routes++
-		if len(reach.Examples) < 4 {
-			reach.Examples = append(reach.Examples, item.Method+" "+item.Path())
+		for scope, reach := range counts {
+			if item.Scope == ScopeBrowser || !scopeSatisfies([]string{scope}, item.Scope) {
+				continue
+			}
+			reach.Routes++
+			// Examples describe what the scope is for, so they come from the routes
+			// that require it rather than the reads it also happens to cover.
+			if item.Scope == scope && len(reach.Examples) < 4 {
+				reach.Examples = append(reach.Examples, item.Method+" "+item.Path())
+			}
 		}
 	}
 	// The MCP scope reaches no REST route at all; saying so is the point.

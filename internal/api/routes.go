@@ -1216,7 +1216,20 @@ func (s *Server) adminUsers(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"items": items})
+	// The list showed a role and a last login, which answers neither "what is
+	// this account for" nor "is it still used". The activity beside each row is
+	// the same aggregate the overview screen totals.
+	from, to, windowErr := reportWindow(r, 30)
+	if windowErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_window", windowErr.Error())
+		return
+	}
+	activity, err := s.store.UserActivitySummary(r.Context(), from, to)
+	if err != nil {
+		s.logger.Warn("user activity is unreadable", "error", err)
+		activity = map[string]store.UserActivity{}
+	}
+	writeJSON(w, 200, map[string]any{"items": items, "activity": activity, "from": from, "to": to})
 }
 func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	actor, _ := userFromContext(r.Context())
@@ -1437,15 +1450,6 @@ func (s *Server) adminLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	writeJSON(w, 200, map[string]any{"items": s.logs.Entries(level, r.URL.Query().Get("q"), limit)})
-}
-func (s *Server) adminAudit(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	items, err := s.store.AuditEvents(r.Context(), limit)
-	if err != nil {
-		writeStoreError(w, err)
-		return
-	}
-	writeJSON(w, 200, map[string]any{"items": items})
 }
 func (s *Server) adminApprovals(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())

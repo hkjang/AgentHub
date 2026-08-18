@@ -194,9 +194,10 @@ func (w *Worker) execute(ctx context.Context, task store.AgentTask) {
 //
 // Most tasks never reach a gate — it is off unless the agent asked for it — but
 // the ones that do are the ones a schedule would otherwise run against a
-// definition edited hours earlier and never evaluated. The task fails rather than
-// waits: nothing about the queue promotes a version, so waiting would only hold a
-// slot until somebody noticed.
+// definition edited hours earlier and never evaluated. The task is held rather
+// than failed: promoting the version releases it, so the nightly run that arrived
+// during an unreviewed edit happens by itself instead of having to be recreated
+// by hand. It does not hold a worker slot while it waits.
 //
 // A gate that cannot be read does not stop the work, for the same reason a quota
 // that cannot be read does not: a transient query error must not become an outage.
@@ -210,12 +211,12 @@ func (w *Worker) promoted(ctx context.Context, task store.AgentTask, logger *slo
 	if reason == "" {
 		return true
 	}
-	if err := w.store.FinishAgentTask(finish, task.ID, store.TaskFailed, reason); err != nil {
-		logger.Error("task failure not recorded", "error", err)
+	if err := w.store.BlockAgentTask(finish, task.ID, reason); err != nil {
+		logger.Error("task block not recorded", "error", err)
 	}
-	w.notify(finish, task, "운영 승격이 필요해 작업을 실행하지 않았습니다", task.Title+" — "+reason)
-	w.publish(finish, task, store.EventTaskFailed, map[string]any{"title": task.Title, "agentId": task.AgentID, "reason": reason, "promotionRequired": true})
-	logger.Warn("task refused by the promotion gate", "reason", reason)
+	w.notify(finish, task, "운영 승격을 기다리는 중입니다", task.Title+" — "+reason)
+	w.publish(finish, task, store.EventTaskFailed, map[string]any{"title": task.Title, "agentId": task.AgentID, "reason": reason, "promotionRequired": true, "blocked": true})
+	logger.Warn("task held by the promotion gate", "reason", reason)
 	return false
 }
 

@@ -7,7 +7,7 @@ import { relativeTime, runtimeCode, runtimeLabel, runtimeLogoClass } from '../ru
 import type { Agent, AgentArtifact, AgentPlan, AgentRun, AgentRunEvent, AgentRunStep, AgentTask, PlatformEvent, QueueSnapshot, UsageBudget, UsageReport } from '../types'
 
 /** Statuses that are still moving, and therefore worth polling for. */
-const ACTIVE = ['queued', 'planning', 'ready', 'running', 'waiting_tool', 'waiting_approval', 'retrying']
+const ACTIVE = ['queued', 'planning', 'ready', 'running', 'waiting_tool', 'waiting_approval', 'retrying', 'blocked']
 
 const PRIORITY_LABELS: Record<string, string> = {
   critical: '긴급', high: '높음', normal: '보통', low: '낮음', background: '배경',
@@ -24,6 +24,7 @@ const STATUS_MEANINGS: Record<string, string> = {
   running: '에이전트가 수행하는 중입니다',
   waiting_tool: '도구 응답을 기다립니다',
   waiting_approval: '사람이 승인해야 이어집니다',
+  blocked: '에이전트 정의가 운영 승격되면 자동으로 실행됩니다',
   retrying: '실패 후 자동으로 다시 시도합니다',
   completed: '완료 조건을 충족하고 끝났습니다',
   failed: '실패했습니다 · 다시 실행할 수 있습니다',
@@ -125,12 +126,12 @@ export function Tasks() {
       { title: '워커가 가져갑니다', body: <>대기 중인 작업은 워커가 우선순위 순서로 가져가고, 필요하면 그 에이전트의 런타임을 자동으로 띄웁니다. 아래 <b>대기 · 실행 · 워커</b> 숫자가 지금 상태이고, 대기열이 밀리면 워커 수는 스스로 늘어납니다.</> },
       { title: '진행을 따라갑니다', body: <>상태 칩으로 걸러 보고, 각 행의 <b>실행 기록</b>에서 계획·단계별 수행 내역·산출물·토큰 사용량까지 확인합니다. 목록은 5초마다 자동 갱신됩니다.</> },
       { title: '막힌 작업을 처리합니다', body: <><b>승인 대기</b>는 <Link to="/reviews">검토 · 승인</Link>에서 승인하면 이어서 진행되고, <b>실패</b>·<b>처리 불가</b>는 원인을 고친 뒤 다시 실행할 수 있습니다.</> },
-    ]} footer={<GuideLegend items={['queued','running','waiting_approval','retrying','completed','failed','dead_letter'].map((status) => ({ label: <StatusBadge status={status} />, meaning: STATUS_MEANINGS[status] ?? '' }))} />} />
+    ]} footer={<GuideLegend items={['queued','running','waiting_approval','blocked','retrying','completed','failed','dead_letter'].map((status) => ({ label: <StatusBadge status={status} />, meaning: STATUS_MEANINGS[status] ?? '' }))} />} />
 
     {tasks.length > 0 && <div className="toolbar">
       <div className="filter-chips">
         <button className={filter === '' ? 'selected' : ''} onClick={() => setFilter('')}>전체 {tasks.length}</button>
-        {['running', 'queued', 'waiting_approval', 'retrying', 'completed', 'failed', 'dead_letter'].filter((status) => counts[status])
+        {['running', 'queued', 'waiting_approval', 'blocked', 'retrying', 'completed', 'failed', 'dead_letter'].filter((status) => counts[status])
           .map((status) => <button key={status} title={STATUS_MEANINGS[status]} className={filter === status ? 'selected' : ''} onClick={() => setFilter(status)}>
             {statusLabel(status)} {counts[status]}
           </button>)}

@@ -107,7 +107,7 @@ func (s *Server) promoteAgentVersion(w http.ResponseWriter, r *http.Request) {
 	s.store.Audit(r.Context(), &u, "agent.promote", "agent", agent.ID, "success", clientIP(r),
 		map[string]any{"version": *input.Version, "force": input.Force, "note": note})
 	s.logger.Info("agent version promoted", "agent", agent.ID, "version", *input.Version, "force", input.Force)
-	writeJSON(w, http.StatusOK, release)
+	writeJSON(w, http.StatusOK, s.withReleasedTasks(r, agent.ID, release))
 }
 
 // promotionNote decides whether an override may proceed and what it will be
@@ -154,8 +154,47 @@ func (s *Server) restoreAgentVersion(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("agent version restored", "agent", agent.ID, "from", version, "version", restored.Version)
 	// The Pod runs the previous definition until it is recreated, which is the
 	// same caveat every other edit carries.
-	writeJSON(w, http.StatusOK, map[string]any{
+	response := map[string]any{
 		"agent":   restored,
 		"warning": "이전 정의를 새 버전으로 복원했습니다. 실행 중인 Runtime은 재시작 후 적용됩니다.",
-	})
+	}
+	if released := s.releaseBlocked(r, agent.ID); released > 0 {
+		response["releasedTasks"] = released
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+// releaseBlocked puts back the tasks the gate was holding for this agent.
+//
+// A promotion is the answer to the question those tasks are waiting on, so they
+// go back on the queue on the spot rather than needing to be recreated. A failure
+// here is logged rather than surfaced: the promotion itself succeeded, and the
+// tasks are still held, which is recoverable and visible.
+func (s *Server) releaseBlocked(r *http.Request, agentID string) int {
+	released, err := s.store.ReleaseBlockedTasks(r.Context(), agentID)
+	if err != nil {
+		s.logger.Warn("blocked tasks could not be released", "agent", agentID, "error", err)
+		return 0
+	}
+	if released > 0 {
+		s.logger.Info("blocked tasks released by a promotion", "agent", agentID, "tasks", released)
+	}
+	return released
+}
+
+// withReleasedTasks reports the release alongside the new promotion state, so
+// the console can say what the promotion just started.
+func (s *Server) withReleasedTasks(r *http.Request, agentID string, release store.AgentRelease) map[string]any {
+	response := map[string]any{
+		"promotedVersion":  release.PromotedVersion,
+		"promotedAt":       release.PromotedAt,
+		"promotedBy":       release.PromotedBy,
+		"promotionNote":    release.PromotionNote,
+		"requirePromotion": release.RequirePromotion,
+		"currentVersion":   release.Current,
+	}
+	if released := s.releaseBlocked(r, agentID); released > 0 {
+		response["releasedTasks"] = released
+	}
+	return response
 }

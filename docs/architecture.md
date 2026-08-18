@@ -452,6 +452,13 @@ not list the sessions it was allowed to read. Any new write inherited
 `agent:write` whether or not that was the right authority for it, and the only
 way to find out what a key could reach was to try.
 
+Writing implies reading. A key holding `agent:write` or `runtime:manage`
+satisfies a route that requires `api:read`, because a key that can create an agent
+but cannot list agents is not a smaller permission — it is an unusable one, and
+the only way to discover the gap was to issue the key and watch it fail. Nothing
+widens in the other direction: a read key still cannot write, an MCP key reaches
+no REST route at all, and no key of any kind reaches a browser-only route.
+
 `internal/api/catalog.go` now holds one entry per endpoint: method, pattern,
 scope, role, tag and summary. The router is built from it, the API-key check is
 the scope written on the line rather than one inferred from spelling, and the
@@ -501,8 +508,15 @@ the console and in the audit log.
 The gate itself, `require_promotion`, is off by default, so an agent that never
 asked for one behaves exactly as it did before this existed. When it is on and the
 live version is not the promoted one, the execution plane refuses: the API returns
-409 at enqueue so the person who asked hears it immediately, and the worker fails
-any task already queued with a message naming both versions. It refuses rather
+409 at enqueue so the person who asked hears it immediately, and the worker holds
+any task already queued in a `blocked` state with a message naming both versions.
+
+Held is not failed. A nightly run that arrives while an unreviewed edit is live
+used to fail and have to be recreated by hand after somebody promoted, and the
+failure looked identical to an agent that could not do its job. A blocked task
+keeps its attempt budget, holds no worker slot, and is put back on the queue the
+moment the version is promoted or an older one is restored — the promotion
+response says how many tasks it just released. It refuses rather
 than quietly running the promoted definition instead, because the Pod, its tools
 and its workspace are all provisioned from the live definition — serving an older
 instruction against a newer Pod would produce a run nobody could reason about. A
@@ -514,6 +528,47 @@ the counter, so a run already recorded against v4 keeps meaning what it meant.
 Restoring the version that was promoted re-promotes it on the spot: it is the
 definition production was already approved to run, and asking for a fresh
 evaluation would leave the broken version live while somebody waited for one.
+
+## Administration
+
+Every figure an operator needs was already in the database, and none of it was
+readable as a whole: the usage report showed the caller's own agents, the queue
+depth showed the caller's own tasks, and the audit trail showed the last hundred
+rows in the order they happened. "Is this deployment healthy, who is spending
+what, and what is stuck" took five screens and mental arithmetic, which is not
+something anyone does at 2am.
+
+`GET /api/v1/admin/overview?days=N` answers it in one response, aggregated over
+the tables the execution plane already writes — no new meter to keep in sync.
+It carries accounts (total, signed in during the window, roles, never used),
+agents and runtimes (running, warm, autonomous, gated, and how many gated ones
+are sitting on an unpromoted definition), execution health (tasks by status, runs,
+retries, success rate, median and p95 run duration), the queue with the age of its
+oldest runnable task, the event outbox (pending, retrying, dead-lettered, and how
+long the oldest undelivered event has waited), and spend broken down by user, by
+agent and by model with a daily series. Totals are computed over every row rather
+than summed from the truncated breakdowns, which would understate the bill by
+exactly the tail.
+
+The console derives an attention list from those numbers rather than printing
+them and leaving the reader to spot the wrong one: tasks held by a gate, tasks out
+of retries, a queue with no worker behind it, undelivered events, failed runtimes,
+tokens spent on an endpoint with no price. Each links to the screen that acts on
+it.
+
+The audit trail is searched rather than scrolled — actor (partial,
+case-insensitive), action (by prefix, so `agent.` selects a family), resource,
+outcome and a time window, paginated with the total beside it. Every value is a
+bound parameter: the trail is the one table where an injection would be least
+likely to be noticed. Both the spend breakdown and the filtered trail download as
+CSV, with a UTF-8 BOM, because Excel on a Korean Windows install reads a BOM-less
+file as the legacy code page and shows mojibake, which reads as a broken export
+rather than a spreadsheet setting. An export is itself an administrative action
+and appears in the trail.
+
+The user list carries the same aggregates per account — agents owned, tasks and
+failures in the window, tokens spent — so "what is this account for" and "is it
+still used" are answered where the account is managed.
 
 ## Execution quotas
 

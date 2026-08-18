@@ -10,6 +10,7 @@ import { Agents } from './pages/Agents'
 import { Workspaces } from './pages/Workspaces'
 import { Developer } from './pages/Developer'
 import { AdminSettings } from './pages/AdminSettings'
+import { AdminInsights } from './pages/AdminInsights'
 import { AdminOperations } from './pages/AdminOperations'
 import { Reviews } from './pages/Reviews'
 import { AdminResources } from './pages/AdminResources'
@@ -78,6 +79,7 @@ export function App() {
         <Route path="reviews" element={<Reviews />} />
         <Route path="developer" element={<Developer />} />
         <Route path="admin/settings" element={<AdminSettings />} />
+        <Route path="admin/overview" element={<AdminInsights />} />
         <Route path="admin/operations" element={<AdminOperations />} />
         <Route path="admin/runtime-profiles" element={<AdminResources kind="profiles" />} />
         <Route path="admin/runtime-images" element={<AdminResources kind="images" />} />

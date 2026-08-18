@@ -22,6 +22,10 @@ const (
 	TaskFailed     = "failed"
 	TaskCancelled  = "cancelled"
 	TaskDeadLetter = "dead_letter"
+	// TaskBlocked is work that is ready but not allowed to run yet — today only
+	// the promotion gate holds tasks here. It is deliberately not a failure: the
+	// task resumes on its own once the block is lifted.
+	TaskBlocked = "blocked"
 )
 
 // taskPriorityRank orders the queue. Postgres has no ordering for these strings,
@@ -396,6 +400,30 @@ func (s *Store) FinishAgentTask(ctx context.Context, taskID, status, lastError s
 }
 
 // RetryAgentTask puts a failed task back on the queue after a backoff.
+// BlockAgentTask holds a task until the thing standing in its way is resolved.
+//
+// The attempt count is left alone. Waiting for a person to promote a version is
+// not a failed attempt, and spending the retry budget on it would leave the task
+// out of attempts by the time it was allowed to run.
+func (s *Store) BlockAgentTask(ctx context.Context, taskID, reason string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE agent_tasks
+		SET status='blocked', last_error=$2, claimed_by='', claimed_until=NULL, updated_at=now()
+		WHERE id=$1`, taskID, reason)
+	return err
+}
+
+// ReleaseBlockedTasks puts an agent's held tasks back on the queue and reports
+// how many moved, so the person who lifted the block is told what it started.
+func (s *Store) ReleaseBlockedTasks(ctx context.Context, agentID string) (int, error) {
+	tag, err := s.pool.Exec(ctx, `UPDATE agent_tasks
+		SET status='queued', last_error='', scheduled_at=now(), updated_at=now()
+		WHERE agent_id=$1 AND status='blocked'`, agentID)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 func (s *Store) RetryAgentTask(ctx context.Context, taskID string, delay time.Duration, lastError string) error {
 	_, err := s.pool.Exec(ctx, `UPDATE agent_tasks SET status='retrying',scheduled_at=now() + $2::interval,last_error=$3,claimed_by='',claimed_until=NULL,updated_at=now() WHERE id=$1`, taskID, delay.String(), lastError)
 	return err

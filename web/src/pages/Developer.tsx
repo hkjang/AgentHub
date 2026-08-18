@@ -400,9 +400,9 @@ function CredentialDrawer({
               );
             })}
             <p className="field-hint">
-              쓰기 권한은 조회를 포함하지 않습니다. 목록을 읽어야 하는
-              자동화라면 <code>api:read</code> 를 함께 선택하세요. 개인 시크릿,
-              API Key, 관리자 설정은 어떤 키로도 호출할 수 없습니다.
+              쓰기·런타임 권한은 조회를 포함합니다. 읽기만 필요하면{" "}
+              <code>api:read</code> 만 선택하세요. 개인 시크릿, API Key, 관리자
+              설정은 어떤 키로도 호출할 수 없습니다.
             </p>
           </fieldset>
         )}

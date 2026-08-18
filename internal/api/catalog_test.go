@@ -160,6 +160,11 @@ func TestAuthorize(t *testing.T) {
 		{name: "a key with the scope passes", route: read("/x", "T", "s", nil), role: "user", scopes: []string{ScopeRead}, status: http.StatusOK},
 		{name: "a read-only key cannot write", route: write(http.MethodPost, "/x", "T", "s", nil), role: "user", scopes: []string{ScopeRead}, status: http.StatusForbidden},
 		{name: "a write key cannot start runtimes", route: manage(http.MethodPost, "/x", "T", "s", nil), role: "user", scopes: []string{ScopeWrite}, status: http.StatusForbidden},
+		// Writing implies reading: a key that can create an agent but cannot list
+		// agents is not a smaller permission, it is an unusable one.
+		{name: "a write key may read", route: read("/x", "T", "s", nil), role: "user", scopes: []string{ScopeWrite}, status: http.StatusOK},
+		{name: "a runtime key may read", route: read("/x", "T", "s", nil), role: "user", scopes: []string{ScopeRuntime}, status: http.StatusOK},
+		{name: "an MCP key reaches no REST route", route: read("/x", "T", "s", nil), role: "user", scopes: []string{ScopeMCP}, status: http.StatusForbidden},
 		{name: "a wildcard key passes", route: manage(http.MethodPost, "/x", "T", "s", nil), role: "user", scopes: []string{"*"}, status: http.StatusOK},
 		{name: "no key reaches a browser-only route", route: browser(http.MethodGet, "/x", "T", "s", nil), role: "user", scopes: []string{"*"}, status: http.StatusForbidden},
 		{name: "a browser session reaches it", route: browser(http.MethodGet, "/x", "T", "s", nil), role: "user", status: http.StatusOK},

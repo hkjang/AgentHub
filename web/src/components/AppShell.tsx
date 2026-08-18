@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent 
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   Activity, Bell, Boxes, Bot, Braces, ChevronDown, ChevronRight, CircleUserRound, Command,
-  Database, FileCode2, Gauge, KeyRound, LayoutDashboard, Library, LogOut, Menu, Network,
+  Database, FileClock, FileCode2, Gauge, KeyRound, LayoutDashboard, Library, LogOut, Menu, Network,
   ListChecks, Search, Settings, ShieldCheck, Sparkles, UsersRound, Workflow, X
 } from 'lucide-react'
 import { useAuth } from '../App'
@@ -36,7 +36,8 @@ const groups: NavGroup[] = [
   ]},
   { label: '거버넌스', review: true, items: [{ to: '/reviews', label: '검토 · 승인', icon: ShieldCheck, keywords: 'review approval 승인 요청' }] },
   { label: '관리자', admin: true, items: [
-    { to: '/admin/operations', label: '운영 센터', icon: Gauge, keywords: 'control center operations log 로그 운영' },
+    { to: '/admin/overview', label: '운영 현황', icon: Gauge, keywords: 'overview dashboard usage statistics 통계 사용량 현황 대시보드 비용' },
+    { to: '/admin/operations', label: '로그 · 감사', icon: FileClock, keywords: 'control center operations log audit approval 로그 감사 승인 운영' },
     { to: '/admin/runtime-profiles', label: '런타임 프로파일', icon: Bot, keywords: 'runtime profile cpu memory 자원' },
     { to: '/admin/runtime-images', label: '런타임 이미지', icon: Boxes, keywords: 'runtime image registry 이미지' },
     { to: '/admin/models', label: '모델 엔드포인트', icon: Sparkles, keywords: 'model endpoint llm vllm ollama 모델' },

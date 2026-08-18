@@ -788,26 +788,3 @@ func (s *Store) Dashboard(ctx context.Context, userID, role string) (Dashboard, 
 	}
 	return d, nil
 }
-
-func (s *Store) AuditEvents(ctx context.Context, limit int) ([]map[string]any, error) {
-	if limit < 1 || limit > 500 {
-		limit = 100
-	}
-	rows, err := s.pool.Query(ctx, `SELECT id,occurred_at,actor_name,action,resource_type,resource_id,outcome,ip_address,details FROM audit_events ORDER BY occurred_at DESC LIMIT $1`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []map[string]any{}
-	for rows.Next() {
-		var id int64
-		var at time.Time
-		var actor, action, rt, rid, outcome, ip string
-		var details any
-		if err := rows.Scan(&id, &at, &actor, &action, &rt, &rid, &outcome, &ip, &details); err != nil {
-			return nil, err
-		}
-		items = append(items, map[string]any{"id": id, "occurredAt": at, "actor": actor, "action": action, "resourceType": rt, "resourceId": rid, "outcome": outcome, "ipAddress": ip, "details": details})
-	}
-	return items, rows.Err()
-}

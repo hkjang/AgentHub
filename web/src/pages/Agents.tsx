@@ -606,14 +606,17 @@ function VersionsDrawer({agent,close,done}:{agent:Agent;close:()=>void;done:()=>
     finally { setBusy(false) }
   }
   const promote=(version:number,force=false,note='')=>call(async()=>{
-    await api.post(`/api/v1/agents/${agent.id}/promote`,{version,force,note})
+    const result=await api.post<{releasedTasks?:number}>(`/api/v1/agents/${agent.id}/promote`,{version,force,note})
     setForcing(null); setReason('')
-    return `v${version}을(를) 운영 승격했습니다.`
+    // A gate holds tasks rather than failing them, so a promotion usually starts
+    // work that was already waiting. Saying so is the difference between "saved"
+    // and "the nightly run you were missing is running now".
+    return `v${version}을(를) 운영 승격했습니다.${result.releasedTasks?` 대기 중이던 작업 ${result.releasedTasks}건이 다시 실행됩니다.`:''}`
   })
   const restore=(version:number)=>call(async()=>{
-    const result=await api.post<{warning?:string}>(`/api/v1/agents/${agent.id}/versions/${version}/restore`)
+    const result=await api.post<{warning?:string;releasedTasks?:number}>(`/api/v1/agents/${agent.id}/versions/${version}/restore`)
     done()
-    return result.warning||`v${version} 정의를 복원했습니다.`
+    return `${result.warning||`v${version} 정의를 복원했습니다.`}${result.releasedTasks?` 대기 중이던 작업 ${result.releasedTasks}건이 다시 실행됩니다.`:''}`
   })
   const gate=(required:boolean)=>call(async()=>{
     await api.post(`/api/v1/agents/${agent.id}/promote`,{requirePromotion:required})
@@ -625,13 +628,13 @@ function VersionsDrawer({agent,close,done}:{agent:Agent;close:()=>void;done:()=>
       {title:'1. 저장하면 버전이 남습니다',body:'에이전트를 수정하거나 YAML을 가져올 때마다 그 시점의 정의가 버전으로 보존됩니다.'},
       {title:'2. 사전검증을 실행합니다',body:<>사전검증 결과는 실행한 시점의 버전에 붙습니다. <Link to="/evaluation">사전검증</Link>에서 실행하세요.</>},
       {title:'3. 통과한 버전을 승격합니다',body:'승격된 버전이 "운영에서 검증된 정의"입니다. 통과 결과가 없으면 관리자가 사유를 적어야만 승격할 수 있습니다.'},
-      {title:'4. 게이트를 켜면 승격본만 실행됩니다',body:'게이트를 켠 뒤 현재 정의가 승격본과 다르면 작업이 큐에 들어가지 않고 즉시 거절됩니다. 문제가 생긴 편집은 이전 버전을 복원해 되돌립니다.'},
+      {title:'4. 게이트를 켜면 승격본만 실행됩니다',body:'게이트를 켠 뒤 현재 정의가 승격본과 다르면 새 작업은 즉시 거절되고, 이미 예약돼 있던 작업은 실패가 아니라 “승격 대기”로 보류됩니다. 승격하거나 이전 버전을 복원하면 보류된 작업이 자동으로 다시 실행됩니다.'},
     ]}/>
     {error&&<ErrorBanner message={error} onClose={()=>setError('')}/>}
     {notice&&<div className="notice-banner">{notice}</div>}
     {release&&<section className="detail-section"><h4>운영 승격</h4>
       <label className="toggle-row"><span>승격된 정의만 실행</span><input type="checkbox" checked={release.requirePromotion} disabled={busy} onChange={(e)=>void gate(e.target.checked)}/><i/></label>
-      <p className="field-hint">{release.requirePromotion?'현재 정의가 승격본과 다르면 작업이 큐에 들어가지 않고 즉시 거절됩니다.':'끄면 저장한 최신 정의가 곧바로 실행됩니다.'}</p>
+      <p className="field-hint">{release.requirePromotion?'현재 정의가 승격본과 다르면 새 작업은 거절되고, 예약된 작업은 승격될 때까지 보류됩니다.':'끄면 저장한 최신 정의가 곧바로 실행됩니다.'}</p>
       <dl className="detail-list"><div><dt>운영 승격</dt><dd>{release.promotedVersion?`v${release.promotedVersion}`:'없음'}</dd></div><div><dt>승격 시각</dt><dd>{release.promotedAt?new Date(release.promotedAt).toLocaleString('ko-KR'):'—'}</dd></div><div><dt>사유</dt><dd>{release.promotionNote||'—'}</dd></div></dl>
       {release.requirePromotion&&release.promotedVersion!==release.currentVersion&&<ErrorBanner message={`현재 정의 v${release.currentVersion}는 승격되지 않아 지금은 작업이 실행되지 않습니다.`}/>}
     </section>}

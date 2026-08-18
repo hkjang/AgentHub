@@ -439,3 +439,64 @@
 .scope-option code { font-size: 12px; color: #5d3ddd; background: #f4f1ff; padding: 1px 5px; border-radius: 5px; }
 .scope-option small { font-size: 12px; color: #8a95a5; line-height: 1.5; }
 .scope-option .scope-examples { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #98a2b3; word-break: break-all; }
+
+/* A wait is not a failure. Approval and promotion holds get the same amber the
+   rest of the console uses for "needs a person", instead of the grey that reads
+   as "nothing is happening". */
+.status-badge.status-waiting-approval, .status-badge.status-blocked, .status-badge.status-waiting-tool { color: #b2720b; }
+.status-badge.status-waiting-approval span, .status-badge.status-blocked span, .status-badge.status-waiting-tool span { background: #e79b1c; box-shadow: 0 0 0 3px rgba(231,155,28,.15); }
+
+/* Operations overview. The screen is read top to bottom in a hurry: the numbers
+   that decide whether anything is wrong come first, then what to do about it. */
+.kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.kpi-row article { padding: 13px 15px; border: 1px solid #e2e7ee; border-radius: 11px; background: #fff; display: grid; gap: 3px; }
+.kpi-row span { font-size: 12px; color: #7a8699; }
+.kpi-row strong { font-size: 22px; font-weight: 700; color: #1f2a3a; line-height: 1.2; }
+.kpi-row small { font-size: 12px; color: #98a2b3; }
+.attention-list { display: grid; gap: 7px; margin-bottom: 16px; }
+.attention-item { display: flex; align-items: center; gap: 9px; padding: 10px 13px; border-radius: 9px; font-size: 13px; text-decoration: none; border: 1px solid; }
+.attention-item.warn { border-color: #f3ddb0; background: #fffaf0; color: #96610a; }
+.attention-item.danger { border-color: #f5c9cf; background: #fef4f5; color: #a5253a; }
+.attention-item:hover { filter: brightness(.98); }
+.insight-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.insight-grid article { padding: 14px 16px; border: 1px solid #e2e7ee; border-radius: 11px; background: #fff; }
+.insight-grid header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: #5d3ddd; }
+.insight-grid h3 { margin: 0; font-size: 14px; color: #1f2a3a; }
+.insight-link { display: inline-block; margin-top: 10px; font-size: 12px; font-weight: 650; color: #5d3ddd; text-decoration: none; }
+.insight-link:hover { text-decoration: underline; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.count-chip { font-size: 12px; color: #667085; background: #f4f6f9; border-radius: 999px; padding: 3px 9px; }
+.count-chip b { color: #344054; }
+.insight-spend { padding: 16px; }
+.insight-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.insight-header > div { display: flex; align-items: center; gap: 9px; color: #5d3ddd; }
+.insight-header h3 { margin: 0; font-size: 15px; color: #1f2a3a; }
+.insight-header small { color: #98a2b3; font-size: 12px; }
+.day-bars { display: flex; align-items: flex-end; gap: 5px; height: 110px; padding: 8px 2px 0; margin-bottom: 14px; overflow-x: auto; }
+.day-bars > div { flex: 0 1 34px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 4px; }
+.day-bars i { width: 100%; max-width: 26px; background: linear-gradient(180deg, #8065ec, #5d3ddd); border-radius: 4px 4px 0 0; }
+.day-bars span { font-size: 11px; color: #98a2b3; }
+.insight-tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+.insight-table h4 { margin: 0 0 8px; font-size: 13px; color: #475467; }
+.insight-table table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.insight-table th { text-align: left; font-weight: 650; color: #8a95a5; padding: 5px 6px; border-bottom: 1px solid #edf0f4; }
+.insight-table td { padding: 6px; border-bottom: 1px solid #f4f6f9; color: #344054; vertical-align: middle; }
+.insight-table td:first-child { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.token-bar { position: relative; display: flex; align-items: center; gap: 6px; }
+.token-bar i { display: block; height: 6px; min-width: 3px; border-radius: 3px; background: #cbbdf7; }
+.token-bar span { font-size: 11px; color: #667085; white-space: nowrap; }
+.muted-cell { color: #98a2b3; }
+
+/* Audit search. The filters sit above the table because the answer to "who did
+   this" is usually two fields away, not a scroll away. */
+.audit-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; padding: 13px 15px; border-bottom: 1px solid #edf0f4; background: #fbfcfd; }
+.audit-filters label { display: grid; gap: 4px; }
+.audit-filters span { font-size: 12px; font-weight: 650; color: #667085; }
+.audit-filters input, .audit-filters select { min-height: 36px; min-width: 150px; padding: 7px 10px; border: 1px solid #d7dee7; border-radius: 7px; font-size: 13px; color: #344054; background: #fff; }
+.audit-filters input:focus, .audit-filters select:focus { border-color: #8065ec; outline: 0; box-shadow: 0 0 0 3px #eeeaff; }
+.audit-filter-actions { display: flex; gap: 8px; margin-left: auto; }
+.audit-pager { display: flex; align-items: center; gap: 10px; padding: 11px 15px; border-top: 1px solid #edf0f4; font-size: 12px; color: #667085; }
+.audit-pager span { margin-right: auto; }
+.audit-pager button { display: inline-flex; align-items: center; gap: 4px; padding: 6px 11px; border: 1px solid #d7dee7; border-radius: 7px; background: #fff; color: #475467; font-size: 12px; font-weight: 600; }
+.audit-pager button:disabled { opacity: .45; }
+.audit-pager button:hover:not(:disabled) { border-color: #8065ec; color: #5d3ddd; }
