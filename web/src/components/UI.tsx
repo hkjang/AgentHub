@@ -10,7 +10,7 @@ const escapeStack: Array<() => void> = []
  * overlays — the command palette, the menus, the mobile sidebar — and a drawer
  * that ignored it was the one place in the app where the key did nothing.
  */
-function useEscape(close: () => void) {
+export function useEscape(close: () => void) {
   const latest = useRef(close)
   useEffect(() => { latest.current = close }, [close])
   useEffect(() => {

@@ -13,3 +13,5 @@ web/vite.config.js
 web/vite.config.d.ts
 *.log
 *.tar.gz
+# Scratch space for the local end-to-end scenarios.
+.tmp-e2e/

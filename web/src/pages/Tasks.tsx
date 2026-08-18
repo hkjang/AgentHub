@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { Bot, ClipboardList, Clock3, Coins, ExternalLink, ListChecks, Play, Plus, Radio, RefreshCw, RotateCcw, Square } from 'lucide-react'
 import { api } from '../api'
 import { Link } from 'react-router-dom'
-import { ConfirmDialog, Drawer, Empty, ErrorBanner, GuideLegend, GuidePanel, Loading, PageHeader, StatusBadge, statusLabel } from '../components/UI'
+import { ConfirmDialog, Drawer, Empty, ErrorBanner, GuideLegend, GuidePanel, Loading, PageHeader, StatusBadge, statusLabel, useEscape } from '../components/UI'
 import { relativeTime, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
 import type { Agent, AgentArtifact, AgentPlan, AgentRun, AgentRunEvent, AgentRunStep, AgentTask, PlatformEvent, QueueSnapshot, UsageReport } from '../types'
 
@@ -52,6 +52,7 @@ export function Tasks() {
   const [creating, setCreating] = useState(false)
   const [openRun, setOpenRun] = useState<string | null>(null)
   const [cancelling, setCancelling] = useState<AgentTask | null>(null)
+  const [retrying, setRetrying] = useState<AgentTask | null>(null)
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
@@ -99,10 +100,11 @@ export function Tasks() {
     } finally { setBusy(false) }
   }
 
-  const retry = async (task: AgentTask) => {
+  const retry = async (task: AgentTask, fresh: boolean) => {
     setError('')
+    setRetrying(null)
     try {
-      await api.post(`/api/v1/tasks/${task.id}/retry`)
+      await api.post(`/api/v1/tasks/${task.id}/retry`, { fresh })
       await load()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Task를 다시 실행하지 못했습니다.')
@@ -170,7 +172,7 @@ export function Tasks() {
               <td><div className="row-actions">
                 {task.status === 'waiting_approval' && <a className="task-approval" title="승인 화면으로" href="/reviews">승인 대기</a>}
                 {task.currentRunId && <button title="실행 기록" onClick={() => setOpenRun(task.currentRunId!)}><ExternalLink size={15} /></button>}
-                {['failed', 'dead_letter', 'cancelled'].includes(task.status) && <button title="다시 실행" onClick={() => void retry(task)}><RotateCcw size={15} /></button>}
+                {['failed', 'dead_letter', 'cancelled'].includes(task.status) && <button title="다시 실행" onClick={() => setRetrying(task)}><RotateCcw size={15} /></button>}
                 {ACTIVE.includes(task.status) && <button className="danger" title="취소" onClick={() => setCancelling(task)}><Square size={14} /></button>}
               </div></td>
             </tr>)}</tbody>
@@ -180,12 +182,56 @@ export function Tasks() {
 
     <EventFeed />
 
+    {retrying && <RetryDialog task={retrying} close={() => setRetrying(null)} retry={(fresh) => void retry(retrying, fresh)} />}
     {creating && <CreateTaskDrawer agents={agents} close={() => setCreating(false)} done={() => { setCreating(false); void load() }} />}
     {openRun && <RunDrawer runId={openRun} close={() => setOpenRun(null)} />}
     {cancelling && <ConfirmDialog title="작업을 취소할까요?"
       message={<><strong>{cancelling.title}</strong> 작업이 취소됩니다. 이미 실행 중인 단계는 마무리된 뒤 중단됩니다.</>}
       confirmLabel="취소하기" busy={busy}
       onConfirm={() => void cancel()} onCancel={() => setCancelling(null)} />}
+  </div>
+}
+
+/**
+ * Retrying asks which kind of retry: continuing from the steps already completed,
+ * or starting the task over. The count comes from the server, so the choice is
+ * made with the amount of reusable work in view rather than as a guess.
+ */
+function RetryDialog({ task, close, retry }: { task: AgentTask; close: () => void; retry: (fresh: boolean) => void }) {
+  const [checkpoint, setCheckpoint] = useState<{ steps: number; enabled: boolean }>()
+  const [error, setError] = useState('')
+  // Every other overlay closes on Escape; this one is a dialog too.
+  useEscape(close)
+  useEffect(() => {
+    void api.get<{ steps: number; enabled: boolean }>(`/api/v1/tasks/${task.id}/checkpoint`)
+      .then(setCheckpoint)
+      .catch((e) => setError(e instanceof Error ? e.message : '이어서 실행할 단계를 확인하지 못했습니다.'))
+  }, [task.id])
+  const steps = checkpoint?.steps ?? 0
+  const resumable = steps > 0 && checkpoint?.enabled !== false
+  return <div className="drawer-layer">
+    <button className="drawer-scrim" onClick={close} aria-label="닫기" />
+    <div className="confirm-dialog" role="alertdialog" aria-modal="true" aria-label="작업을 다시 실행">
+      <div className="confirm-icon"><RotateCcw size={22} /></div>
+      <h3>작업을 다시 실행할까요?</h3>
+      <div className="confirm-body">
+        <strong>{task.title}</strong>
+        {error
+          ? <p>{error}</p>
+          : !checkpoint
+            ? <p>이어서 실행할 수 있는 단계를 확인하고 있습니다…</p>
+            : resumable
+              ? <p>이미 완료한 <b>{steps}단계</b>가 있습니다. 이어서 실행하면 그 단계를 다시 수행하지 않고 다음 단계부터 진행합니다.</p>
+              : <p>{checkpoint.enabled === false
+                  ? '이 에이전트는 이어서 실행이 꺼져 있어 처음부터 다시 실행합니다.'
+                  : '완료한 단계가 없어 처음부터 실행합니다.'}</p>}
+      </div>
+      <div className="confirm-actions">
+        <button className="button ghost" onClick={close}>취소</button>
+        <button className="button ghost" onClick={() => retry(true)}>처음부터</button>
+        <button className="button primary" disabled={!resumable} onClick={() => retry(false)} autoFocus>이어서 실행</button>
+      </div>
+    </div>
   </div>
 }
 
@@ -346,7 +392,7 @@ export function RunDrawer({ runId, close }: { runId: string; close: () => void }
   return <Drawer title={`실행 기록 #${run.id.slice(0, 8)}`} subtitle={`시도 ${run.attempt} · ${run.modelName || '모델 미지정'}`} close={close}>
     <div className="detail-hero">
       <div className="runtime-logo xlarge custom"><ClipboardList size={22} /></div>
-      <div><StatusBadge status={run.status} /><h3>{run.durationMs}ms · {run.stepCount}단계</h3>
+      <div><StatusBadge status={run.status} /><h3>{run.durationMs}ms · {run.stepCount}단계{run.resumedSteps > 0 ? ` (이전 시도 ${run.resumedSteps}단계 이어받음)` : ''}</h3>
         <p>토큰 {run.totalTokens.toLocaleString('ko-KR')} · trace <code>{run.traceId || '—'}</code></p></div>
     </div>
 

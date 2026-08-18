@@ -373,6 +373,9 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
           <input type="number" min={0} max={5} value={goal.maxDelegationDepth} onChange={(e)=>update({maxDelegationDepth:Number(e.target.value)})}/>
           <small>0이면 위임하지 않습니다. 순환 위임은 자동으로 차단됩니다.</small>
         </label>
+        <label className="toggle-row"><span>재시도 시 완료한 단계에서 이어서 실행</span>
+          <input type="checkbox" checked={goal.resumeFromCheckpoint!==false} onChange={(e)=>update({resumeFromCheckpoint:e.target.checked})}/><i/></label>
+        <div className="info-note">켜 두면 재시도와 승인 후 재개가 이미 끝낸 단계를 다시 하지 않고 이어서 진행합니다. 같은 단계를 다시 실행해도 문제가 없어야 하는 에이전트만 끄세요.</div>
       </fieldset>
 
       <fieldset><legend>Runtime 예열</legend>

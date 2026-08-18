@@ -398,6 +398,43 @@ What does not travel is anything installation-specific: owner, version,
 timestamps, and every secret. A credential is referenced by the binding that
 holds it, never exported into a file someone is about to commit.
 
+## Checkpoint retry
+
+A retry used to be a restart. The task went back to step one with an empty
+transcript, so every reasoning step was paid for a second time and any step that
+had already changed something outside the platform — a deployment, a delegated
+task, a file written in the workspace — happened again. The same held for a task
+that resumed after an approval: the reasoning that led the agent to ask for
+approval was discarded before the decision was applied.
+
+An attempt now starts from what earlier attempts finished. Before the run is
+created, the orchestrator reads the task's completed reasoning and delegation
+steps, seeds the transcript with them, and continues the step numbering, so one
+task reads as one piece of work rather than several that all start at 1. The run
+records how many steps it inherited (`resumedSteps`) and the timeline says so, so
+a resumed attempt never presents inherited work as its own.
+
+Four things keep this honest:
+
+- **Scoped to one agent version.** A definition that changed since — a new system
+  prompt, a different goal — invalidates the reasoning done under the old one, so
+  the checkpoint is read for the current version only and anything older is
+  ignored rather than resumed into.
+- **Delegation results are steps.** They used to live only in the in-memory
+  transcript, which meant a resumed attempt could hand the same work to another
+  agent twice. They are recorded as steps of their own now.
+- **Bounded.** A long history would resume into a prompt that costs more than
+  redoing the work, so the newest 40 entries within a 40 000-character budget are
+  carried and the model is told how many earlier steps were left out. The newest
+  entry is always carried, however long: resuming with nothing would repeat it.
+- **A restart is still available.** `POST /tasks/{id}/retry` with
+  `{"fresh": true}` stamps the task's checkpoint horizon with the current time,
+  which retires the earlier steps without deleting the record of them and lets
+  that fresh attempt's own steps be resumed later. It is the right choice when
+  the earlier reasoning rested on something that has since been corrected. An
+  agent whose steps must always run from the beginning turns resuming off in its
+  goal.
+
 ## Runtime warm pool
 
 A scheduled task otherwise pays for a cold Pod. The image is already local, but

@@ -230,7 +230,7 @@ try {
   // word in a dropdown.
   route = '/workflows:modes'
   await page.goto(baseURL + '/workflows', { waitUntil: 'networkidle' })
-  await page.getByRole('button', { name: /워크플로 만들기/ }).click()
+  await page.getByRole('button', { name: /워크플로 만들기/ }).first().click()
   await page.locator('.drawer').waitFor({ timeout: 10000 })
   const modeCards = page.locator('.mode-cards button')
   if ((await modeCards.count()) !== 6) note(route, 'modes', `${await modeCards.count()} mode cards, expected 6`)
@@ -240,6 +240,24 @@ try {
   await page.locator('.mode-cards button', { hasText: '합의 표결' }).click()
   if ((await page.locator('.mode-cards button.selected', { hasText: '합의 표결' }).count()) !== 1) note(route, 'modes', 'choosing a mode did not select it')
   await page.keyboard.press('Escape')
+
+  // Retrying offers the choice the checkpoint makes possible, with the amount of
+  // reusable work in view. Only meaningful when a retryable task exists.
+  route = '/tasks:retry'
+  await page.goto(baseURL + '/tasks', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(600)
+  const retryButton = page.locator('.row-actions button[title="다시 실행"]').first()
+  if (await retryButton.count()) {
+    await retryButton.click()
+    const dialog = page.getByRole('alertdialog', { name: '작업을 다시 실행' })
+    await dialog.waitFor({ timeout: 10000 })
+    await page.waitForTimeout(600)
+    const text = await dialog.innerText()
+    if (!/이어서 실행|처음부터/.test(text)) note(route, 'retry', `the retry dialog offered no choice: ${text.slice(0, 120)}`)
+    if (!/단계/.test(text)) note(route, 'retry', 'the retry dialog does not say how much work would be reused')
+    await dialog.getByRole('button', { name: '취소' }).click()
+    if ((await page.getByRole('alertdialog').count()) !== 0) note(route, 'retry', 'cancel did not dismiss the retry dialog')
+  }
 
   // Escape closes a modal. The shell answered Escape for its own overlays while
   // drawers and confirmations ignored it.

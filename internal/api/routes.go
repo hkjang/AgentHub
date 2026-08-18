@@ -61,6 +61,7 @@ func (s *Server) userRoutes(r chi.Router) {
 	r.Get("/tasks/{id}", s.task)
 	r.Post("/tasks/{id}/cancel", s.cancelTask)
 	r.Post("/tasks/{id}/retry", s.retryTask)
+	r.Get("/tasks/{id}/checkpoint", s.taskCheckpoint)
 	r.Get("/runs", s.runs)
 	r.Get("/runs/{id}", s.run)
 	r.Get("/artifacts", s.artifacts)

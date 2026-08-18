@@ -57,6 +57,10 @@ type AgentGoal struct {
 	// KeepWarmSeconds holds the Runtime for this long after a task ends instead
 	// of stopping it at once, so a burst pays the start cost once.
 	KeepWarmSeconds int `json:"keepWarmSeconds"`
+	// ResumeFromCheckpoint lets a retry continue from the steps earlier attempts
+	// completed instead of starting the task over. On by default: repeating
+	// completed work costs tokens twice and performs its side effects twice.
+	ResumeFromCheckpoint bool `json:"resumeFromCheckpoint"`
 }
 
 // DefaultAgentGoal is what an agent without an explicit goal runs with, so a
@@ -68,7 +72,7 @@ func DefaultAgentGoal(agentID string) AgentGoal {
 		StartOnDemand: true, StopAfterTask: false,
 		CompletionStrategy: "agent", ConcurrencyPolicy: "queue", MaxConcurrentRuns: 1,
 		PlannerMode: "native", ApprovalRequired: false, MaxDelegationDepth: 0,
-		WarmupSeconds: 0, KeepWarmSeconds: 0,
+		WarmupSeconds: 0, KeepWarmSeconds: 0, ResumeFromCheckpoint: true,
 	}
 }
 
@@ -122,27 +126,30 @@ type AgentTask struct {
 }
 
 type AgentRun struct {
-	ID              string          `json:"id"`
-	TaskID          string          `json:"taskId"`
-	AgentID         string          `json:"agentId"`
-	OwnerID         string          `json:"ownerId"`
-	Attempt         int             `json:"attempt"`
-	Status          string          `json:"status"`
-	AgentVersion    int             `json:"agentVersion"`
-	RuntimeID       *string         `json:"runtimeId,omitempty"`
-	ModelEndpointID *string         `json:"modelEndpointId,omitempty"`
-	ModelName       string          `json:"modelName"`
-	TraceID         string          `json:"traceId"`
-	WorkerID        string          `json:"workerId"`
-	StepCount       int             `json:"stepCount"`
-	ToolCalls       int             `json:"toolCalls"`
-	TotalTokens     int             `json:"totalTokens"`
-	DurationMs      int64           `json:"durationMs"`
-	Result          string          `json:"result"`
-	FailureReason   string          `json:"failureReason"`
-	Completion      json.RawMessage `json:"completion"`
-	StartedAt       time.Time       `json:"startedAt"`
-	FinishedAt      *time.Time      `json:"finishedAt,omitempty"`
+	ID              string  `json:"id"`
+	TaskID          string  `json:"taskId"`
+	AgentID         string  `json:"agentId"`
+	OwnerID         string  `json:"ownerId"`
+	Attempt         int     `json:"attempt"`
+	Status          string  `json:"status"`
+	AgentVersion    int     `json:"agentVersion"`
+	RuntimeID       *string `json:"runtimeId,omitempty"`
+	ModelEndpointID *string `json:"modelEndpointId,omitempty"`
+	ModelName       string  `json:"modelName"`
+	TraceID         string  `json:"traceId"`
+	WorkerID        string  `json:"workerId"`
+	// ResumedSteps is how many completed steps this run inherited from the task's
+	// earlier attempts. Zero means it started from the beginning.
+	ResumedSteps  int             `json:"resumedSteps"`
+	StepCount     int             `json:"stepCount"`
+	ToolCalls     int             `json:"toolCalls"`
+	TotalTokens   int             `json:"totalTokens"`
+	DurationMs    int64           `json:"durationMs"`
+	Result        string          `json:"result"`
+	FailureReason string          `json:"failureReason"`
+	Completion    json.RawMessage `json:"completion"`
+	StartedAt     time.Time       `json:"startedAt"`
+	FinishedAt    *time.Time      `json:"finishedAt,omitempty"`
 }
 
 type AgentRunStep struct {
@@ -191,8 +198,8 @@ type AgentArtifact struct {
 func (s *Store) AgentGoalByID(ctx context.Context, agentID string) (AgentGoal, error) {
 	item := AgentGoal{AgentID: agentID}
 	var success, failure []byte
-	err := s.pool.QueryRow(ctx, `SELECT description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds FROM agent_goals WHERE agent_id=$1`, agentID).
-		Scan(&item.Description, &success, &failure, &item.Constraints, &item.MaxSteps, &item.MaxToolCalls, &item.MaxDurationSeconds, &item.MaxRetries, &item.StartOnDemand, &item.StopAfterTask, &item.CompletionStrategy, &item.ConcurrencyPolicy, &item.MaxConcurrentRuns, &item.PlannerMode, &item.ApprovalRequired, &item.MaxDelegationDepth, &item.WarmupSeconds, &item.KeepWarmSeconds)
+	err := s.pool.QueryRow(ctx, `SELECT description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint FROM agent_goals WHERE agent_id=$1`, agentID).
+		Scan(&item.Description, &success, &failure, &item.Constraints, &item.MaxSteps, &item.MaxToolCalls, &item.MaxDurationSeconds, &item.MaxRetries, &item.StartOnDemand, &item.StopAfterTask, &item.CompletionStrategy, &item.ConcurrencyPolicy, &item.MaxConcurrentRuns, &item.PlannerMode, &item.ApprovalRequired, &item.MaxDelegationDepth, &item.WarmupSeconds, &item.KeepWarmSeconds, &item.ResumeFromCheckpoint)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DefaultAgentGoal(agentID), nil
 	}
@@ -213,10 +220,10 @@ func (s *Store) AgentGoalByID(ctx context.Context, agentID string) (AgentGoal, e
 func (s *Store) PutAgentGoal(ctx context.Context, item AgentGoal) (AgentGoal, error) {
 	success, _ := json.Marshal(item.SuccessCriteria)
 	failure, _ := json.Marshal(item.FailureCriteria)
-	_, err := s.pool.Exec(ctx, `INSERT INTO agent_goals(agent_id,description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
-		ON CONFLICT(agent_id) DO UPDATE SET description=excluded.description,success_criteria=excluded.success_criteria,failure_criteria=excluded.failure_criteria,constraints=excluded.constraints,max_steps=excluded.max_steps,max_tool_calls=excluded.max_tool_calls,max_duration_seconds=excluded.max_duration_seconds,max_retries=excluded.max_retries,start_on_demand=excluded.start_on_demand,stop_after_task=excluded.stop_after_task,completion_strategy=excluded.completion_strategy,concurrency_policy=excluded.concurrency_policy,max_concurrent_runs=excluded.max_concurrent_runs,planner_mode=excluded.planner_mode,approval_required=excluded.approval_required,max_delegation_depth=excluded.max_delegation_depth,warmup_seconds=excluded.warmup_seconds,keep_warm_seconds=excluded.keep_warm_seconds,updated_at=now()`,
-		item.AgentID, item.Description, success, failure, item.Constraints, item.MaxSteps, item.MaxToolCalls, item.MaxDurationSeconds, item.MaxRetries, item.StartOnDemand, item.StopAfterTask, item.CompletionStrategy, item.ConcurrencyPolicy, item.MaxConcurrentRuns, item.PlannerMode, item.ApprovalRequired, item.MaxDelegationDepth, item.WarmupSeconds, item.KeepWarmSeconds)
+	_, err := s.pool.Exec(ctx, `INSERT INTO agent_goals(agent_id,description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+		ON CONFLICT(agent_id) DO UPDATE SET description=excluded.description,success_criteria=excluded.success_criteria,failure_criteria=excluded.failure_criteria,constraints=excluded.constraints,max_steps=excluded.max_steps,max_tool_calls=excluded.max_tool_calls,max_duration_seconds=excluded.max_duration_seconds,max_retries=excluded.max_retries,start_on_demand=excluded.start_on_demand,stop_after_task=excluded.stop_after_task,completion_strategy=excluded.completion_strategy,concurrency_policy=excluded.concurrency_policy,max_concurrent_runs=excluded.max_concurrent_runs,planner_mode=excluded.planner_mode,approval_required=excluded.approval_required,max_delegation_depth=excluded.max_delegation_depth,warmup_seconds=excluded.warmup_seconds,keep_warm_seconds=excluded.keep_warm_seconds,resume_from_checkpoint=excluded.resume_from_checkpoint,updated_at=now()`,
+		item.AgentID, item.Description, success, failure, item.Constraints, item.MaxSteps, item.MaxToolCalls, item.MaxDurationSeconds, item.MaxRetries, item.StartOnDemand, item.StopAfterTask, item.CompletionStrategy, item.ConcurrencyPolicy, item.MaxConcurrentRuns, item.PlannerMode, item.ApprovalRequired, item.MaxDelegationDepth, item.WarmupSeconds, item.KeepWarmSeconds, item.ResumeFromCheckpoint)
 	if err != nil {
 		return AgentGoal{}, err
 	}
@@ -393,8 +400,16 @@ func (s *Store) RetryAgentTask(ctx context.Context, taskID string, delay time.Du
 
 // RequeueAgentTask returns a task to the queue for a manual retry, clearing the
 // attempt counter so the operator gets a full retry budget again.
-func (s *Store) RequeueAgentTask(ctx context.Context, taskID, ownerID string) (AgentTask, error) {
-	query := `UPDATE agent_tasks SET status='queued',attempts=0,scheduled_at=now(),last_error='',claimed_by='',claimed_until=NULL,updated_at=now()
+//
+// fresh retires the steps completed so far, so the attempt starts from the
+// beginning: the right choice when the earlier reasoning was based on something
+// that has since been corrected. Otherwise the attempt resumes from them.
+func (s *Store) RequeueAgentTask(ctx context.Context, taskID, ownerID string, fresh bool) (AgentTask, error) {
+	checkpoint := `checkpoint_after=checkpoint_after`
+	if fresh {
+		checkpoint = `checkpoint_after=now()`
+	}
+	query := `UPDATE agent_tasks SET status='queued',attempts=0,scheduled_at=now(),last_error='',claimed_by='',claimed_until=NULL,` + checkpoint + `,updated_at=now()
 		WHERE id=$1 AND owner_id=$2 AND status IN ('failed','dead_letter','cancelled') RETURNING id`
 	var id string
 	if err := s.pool.QueryRow(ctx, query, taskID, ownerID).Scan(&id); err != nil {
@@ -433,11 +448,11 @@ func (s *Store) CreateAgentRun(ctx context.Context, run AgentRun) (AgentRun, err
 	if run.ID == "" {
 		run.ID = uuid.NewString()
 	}
-	err := s.pool.QueryRow(ctx, `INSERT INTO agent_runs(id,task_id,agent_id,owner_id,attempt,agent_version,runtime_id,model_endpoint_id,model_name,trace_id,worker_id)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-		RETURNING id,task_id,agent_id,owner_id,attempt,status,agent_version,runtime_id,model_endpoint_id,model_name,trace_id,worker_id,step_count,tool_calls,total_tokens,duration_ms,result,failure_reason,completion,started_at,finished_at`,
-		run.ID, run.TaskID, run.AgentID, run.OwnerID, run.Attempt, run.AgentVersion, run.RuntimeID, run.ModelEndpointID, run.ModelName, run.TraceID, run.WorkerID).
-		Scan(&run.ID, &run.TaskID, &run.AgentID, &run.OwnerID, &run.Attempt, &run.Status, &run.AgentVersion, &run.RuntimeID, &run.ModelEndpointID, &run.ModelName, &run.TraceID, &run.WorkerID, &run.StepCount, &run.ToolCalls, &run.TotalTokens, &run.DurationMs, &run.Result, &run.FailureReason, &run.Completion, &run.StartedAt, &run.FinishedAt)
+	err := s.pool.QueryRow(ctx, `INSERT INTO agent_runs(id,task_id,agent_id,owner_id,attempt,agent_version,runtime_id,model_endpoint_id,model_name,trace_id,worker_id,resumed_steps)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		RETURNING `+runColumns,
+		run.ID, run.TaskID, run.AgentID, run.OwnerID, run.Attempt, run.AgentVersion, run.RuntimeID, run.ModelEndpointID, run.ModelName, run.TraceID, run.WorkerID, run.ResumedSteps).
+		Scan(&run.ID, &run.TaskID, &run.AgentID, &run.OwnerID, &run.Attempt, &run.Status, &run.AgentVersion, &run.RuntimeID, &run.ModelEndpointID, &run.ModelName, &run.TraceID, &run.WorkerID, &run.ResumedSteps, &run.StepCount, &run.ToolCalls, &run.TotalTokens, &run.DurationMs, &run.Result, &run.FailureReason, &run.Completion, &run.StartedAt, &run.FinishedAt)
 	if err != nil {
 		return AgentRun{}, err
 	}
@@ -455,11 +470,11 @@ func (s *Store) FinishAgentRun(ctx context.Context, run AgentRun) error {
 	return err
 }
 
-const runColumns = `id,task_id,agent_id,owner_id,attempt,status,agent_version,runtime_id,model_endpoint_id,model_name,trace_id,worker_id,step_count,tool_calls,total_tokens,duration_ms,result,failure_reason,completion,started_at,finished_at`
+const runColumns = `id,task_id,agent_id,owner_id,attempt,status,agent_version,runtime_id,model_endpoint_id,model_name,trace_id,worker_id,resumed_steps,step_count,tool_calls,total_tokens,duration_ms,result,failure_reason,completion,started_at,finished_at`
 
 func scanRun(row pgx.Row) (AgentRun, error) {
 	var item AgentRun
-	err := row.Scan(&item.ID, &item.TaskID, &item.AgentID, &item.OwnerID, &item.Attempt, &item.Status, &item.AgentVersion, &item.RuntimeID, &item.ModelEndpointID, &item.ModelName, &item.TraceID, &item.WorkerID, &item.StepCount, &item.ToolCalls, &item.TotalTokens, &item.DurationMs, &item.Result, &item.FailureReason, &item.Completion, &item.StartedAt, &item.FinishedAt)
+	err := row.Scan(&item.ID, &item.TaskID, &item.AgentID, &item.OwnerID, &item.Attempt, &item.Status, &item.AgentVersion, &item.RuntimeID, &item.ModelEndpointID, &item.ModelName, &item.TraceID, &item.WorkerID, &item.ResumedSteps, &item.StepCount, &item.ToolCalls, &item.TotalTokens, &item.DurationMs, &item.Result, &item.FailureReason, &item.Completion, &item.StartedAt, &item.FinishedAt)
 	return item, err
 }
 
@@ -507,6 +522,52 @@ func (s *Store) AgentRuns(ctx context.Context, ownerID, agentID, taskID string, 
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+// Checkpoint is the work a task has already completed and paid for: the outputs
+// of the reasoning and delegation steps its earlier attempts finished.
+//
+// It is scoped to one agent version. A definition that changed since — a new
+// system prompt, a different goal — invalidates the reasoning done under the old
+// one, and resuming into it would produce an attempt that no instruction ever
+// asked for.
+type Checkpoint struct {
+	// Outputs are the completed step outputs, oldest first.
+	Outputs []string `json:"-"`
+	// Steps is how many completed steps the task has.
+	Steps int `json:"steps"`
+	// LastRunID is the run that produced the most recent of them.
+	LastRunID string `json:"lastRunId,omitempty"`
+}
+
+// TaskCheckpoint reads what a retry of this task may resume from. An empty
+// checkpoint is the normal answer for a first attempt and is not an error.
+func (s *Store) TaskCheckpoint(ctx context.Context, taskID string, agentVersion int) (Checkpoint, error) {
+	rows, err := s.pool.Query(ctx, `SELECT r.id, s.output
+		FROM agent_run_steps s
+		JOIN agent_runs r ON r.id = s.run_id
+		JOIN agent_tasks t ON t.id = r.task_id
+		WHERE r.task_id = $1
+		  AND r.agent_version = $2
+		  AND s.status = 'succeeded'
+		  AND s.type IN ('reasoning', 'delegation')
+		  AND (t.checkpoint_after IS NULL OR s.created_at > t.checkpoint_after)
+		ORDER BY r.started_at, s.sequence`, taskID, agentVersion)
+	if err != nil {
+		return Checkpoint{}, err
+	}
+	defer rows.Close()
+	var checkpoint Checkpoint
+	for rows.Next() {
+		var runID, output string
+		if err := rows.Scan(&runID, &output); err != nil {
+			return Checkpoint{}, err
+		}
+		checkpoint.Outputs = append(checkpoint.Outputs, output)
+		checkpoint.LastRunID = runID
+	}
+	checkpoint.Steps = len(checkpoint.Outputs)
+	return checkpoint, rows.Err()
 }
 
 // --- Steps, events, artifacts ---

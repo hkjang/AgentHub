@@ -55,6 +55,11 @@ func (s *Server) saveAgentGoal(w http.ResponseWriter, r *http.Request) {
 	}
 	var input struct {
 		ExecutionMode string `json:"executionMode"`
+		// Shadows the embedded field so an omitted flag can be told apart from an
+		// explicit false: a client that does not know about resuming — an older
+		// portal, a GitOps document written before it existed — must not silently
+		// turn it off.
+		ResumeFromCheckpoint *bool `json:"resumeFromCheckpoint"`
 		store.AgentGoal
 	}
 	if !decodeJSON(w, r, &input) {
@@ -69,6 +74,7 @@ func (s *Server) saveAgentGoal(w http.ResponseWriter, r *http.Request) {
 	}
 	goal := input.AgentGoal
 	goal.AgentID = agent.ID
+	goal.ResumeFromCheckpoint = input.ResumeFromCheckpoint == nil || *input.ResumeFromCheckpoint
 	if err := validateGoal(&goal); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_goal", err.Error())
 		return
@@ -293,9 +299,21 @@ func (s *Server) cancelTask(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// retryTask puts a task back on the queue. By default the attempt resumes from
+// the steps earlier attempts completed; "fresh" retires them and starts over,
+// which is the right choice when the earlier reasoning rested on something that
+// has since been corrected.
 func (s *Server) retryTask(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
-	item, err := s.store.RequeueAgentTask(r.Context(), chi.URLParam(r, "id"), u.ID)
+	var input struct {
+		Fresh bool `json:"fresh"`
+	}
+	// The body is optional: an empty request means "resume", which is what every
+	// caller written before this option existed meant.
+	if r.ContentLength > 0 && !decodeJSON(w, r, &input) {
+		return
+	}
+	item, err := s.store.RequeueAgentTask(r.Context(), chi.URLParam(r, "id"), u.ID, input.Fresh)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusConflict, "task_not_retryable", "실패했거나 취소된 Task만 다시 실행할 수 있습니다.")
@@ -304,8 +322,38 @@ func (s *Server) retryTask(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	s.store.Audit(r.Context(), &u, "task.retry", "task", item.ID, "success", clientIP(r), nil)
+	s.store.Audit(r.Context(), &u, "task.retry", "task", item.ID, "success", clientIP(r), map[string]any{"fresh": input.Fresh})
 	writeJSON(w, http.StatusAccepted, item)
+}
+
+// taskCheckpoint reports how much completed work a retry of this task would
+// resume from, so the operator chooses between continuing and starting over with
+// the number in front of them.
+func (s *Server) taskCheckpoint(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	task, err := s.store.AgentTaskByID(r.Context(), chi.URLParam(r, "id"), u.ID, u.Role == "admin")
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	agent, err := s.store.AgentByID(r.Context(), task.AgentID, task.OwnerID, true)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	goal, err := s.store.AgentGoalByID(r.Context(), agent.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	checkpoint, err := s.store.TaskCheckpoint(r.Context(), task.ID, agent.Version)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"steps": checkpoint.Steps, "lastRunId": checkpoint.LastRunID, "enabled": goal.ResumeFromCheckpoint,
+	})
 }
 
 // --- Runs ---

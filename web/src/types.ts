@@ -42,6 +42,7 @@ export type AgentGoal = {
   maxDelegationDepth: number
   warmupSeconds: number
   keepWarmSeconds: number
+  resumeFromCheckpoint: boolean
 }
 export type QueueSnapshot = { ready:number; running:number; workers:number; status:Record<string,number> }
 export type WarmRuntime = { runtimeId:string; agentId:string; agentName:string; status:string; warmUntil:string }
@@ -71,6 +72,7 @@ export type AgentTask = {
 export type AgentRun = {
   id: string; taskId: string; agentId: string; attempt: number; status: string; agentVersion: number
   runtimeId?: string; modelName: string; traceId: string; workerId: string
+  resumedSteps: number
   stepCount: number; toolCalls: number; totalTokens: number; durationMs: number
   result: string; failureReason: string
   completion: { strategy?: string; passed?: boolean; reason?: string; met?: string[]; unmet?: string[] }

@@ -73,10 +73,15 @@ func (o *Orchestrator) Execute(ctx context.Context, task store.AgentTask, traceI
 		return Outcome{Status: store.TaskFailed, Failure: err.Error()}, err
 	}
 
+	// What earlier attempts already finished. A retry — automatic, manual, or the
+	// resumption after an approval — continues from here instead of paying for the
+	// same reasoning again and repeating whatever those steps already did.
+	resume := o.checkpoint(ctx, task, agent, goal)
+
 	run := store.AgentRun{
 		TaskID: task.ID, AgentID: agent.ID, OwnerID: task.OwnerID,
 		Attempt: task.Attempts, AgentVersion: agent.Version, TraceID: traceID, WorkerID: o.workerID,
-		ModelEndpointID: agent.ModelEndpointID,
+		ModelEndpointID: agent.ModelEndpointID, ResumedSteps: resume.steps,
 	}
 	run, err = o.store.CreateAgentRun(ctx, run)
 	if err != nil {
@@ -84,6 +89,10 @@ func (o *Orchestrator) Execute(ctx context.Context, task store.AgentTask, traceI
 	}
 	started := time.Now()
 	o.event(ctx, run, "task.started", "Task 실행을 시작했습니다.", map[string]any{"attempt": task.Attempts, "priority": task.Priority})
+	if len(resume.transcript) > 0 {
+		o.event(ctx, run, "task.resumed", fmt.Sprintf("이전 시도에서 완료한 %d단계를 이어받아 계속합니다.", resume.steps),
+			map[string]any{"resumedSteps": resume.steps, "carriedSteps": len(resume.transcript), "fromRun": resume.lastRunID})
+	}
 
 	// The whole attempt is bounded by the goal's duration limit.
 	if goal.MaxDurationSeconds > 0 {
@@ -92,7 +101,7 @@ func (o *Orchestrator) Execute(ctx context.Context, task store.AgentTask, traceI
 		defer cancel()
 	}
 
-	outcome := o.run(ctx, &run, task, agent, goal)
+	outcome := o.run(ctx, &run, task, agent, goal, resume)
 	run.DurationMs = time.Since(started).Milliseconds()
 	switch {
 	case errors.Is(outcome.parked, ErrAwaitingApproval):
@@ -118,7 +127,7 @@ func (o *Orchestrator) Execute(ctx context.Context, task store.AgentTask, traceI
 }
 
 // run is the body of one attempt, separated so Execute always finalises the run.
-func (o *Orchestrator) run(ctx context.Context, run *store.AgentRun, task store.AgentTask, agent store.Agent, goal store.AgentGoal) Outcome {
+func (o *Orchestrator) run(ctx context.Context, run *store.AgentRun, task store.AgentTask, agent store.Agent, goal store.AgentGoal, resume checkpoint) Outcome {
 	// Concurrency policy is enforced here rather than at enqueue time, because a
 	// task can sit in the queue long enough for the situation to change.
 	if goal.ConcurrencyPolicy == "reject" {
@@ -149,9 +158,12 @@ func (o *Orchestrator) run(ctx context.Context, run *store.AgentRun, task store.
 		}
 	}
 
-	plan := o.plan(ctx, run, task, goal, model)
+	plan := ""
+	if len(resume.transcript) == 0 {
+		plan = o.plan(ctx, run, task, goal, model)
+	}
 
-	transcript, outcome := o.think(ctx, run, task, agent, goal, model, plan)
+	transcript, outcome := o.think(ctx, run, task, agent, goal, model, plan, resume)
 	if errors.Is(outcome.parked, ErrAwaitingApproval) {
 		return outcome
 	}
@@ -183,7 +195,7 @@ func (o *Orchestrator) resolveModel(ctx context.Context, agent store.Agent) (res
 
 // think drives the agent toward its goal, one reasoning step at a time, until it
 // reports completion or a guardrail stops it.
-func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task store.AgentTask, agent store.Agent, goal store.AgentGoal, model resolvedModel, plan string) ([]string, Outcome) {
+func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task store.AgentTask, agent store.Agent, goal store.AgentGoal, model resolvedModel, plan string, resume checkpoint) ([]string, Outcome) {
 	// Everything the agent knows before it starts: its goal, what it remembers
 	// from previous runs, the plan it just made, and any approval decision that
 	// resumed this task.
@@ -198,8 +210,14 @@ func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task stor
 		preamble += "\n# 실행 계획\n" + plan + "\n"
 	}
 	preamble += o.approvalContext(ctx, task)
-	transcript := []string{}
-	for sequence := 1; sequence <= goal.MaxSteps; sequence++ {
+	// The resumed work leads the transcript, so the model continues from it
+	// instead of starting the task over.
+	transcript := append([]string{}, resume.transcript...)
+	// Step numbering continues across attempts, so the run record reads as one
+	// piece of work rather than several that all start at 1.
+	sequence := resume.steps
+	for attemptStep := 1; attemptStep <= goal.MaxSteps; attemptStep++ {
+		sequence++
 		if err := ctx.Err(); err != nil {
 			return transcript, Outcome{Status: store.TaskFailed, Failure: "최대 실행 시간을 초과했습니다.", Retryable: true}
 		}
@@ -219,7 +237,9 @@ func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task stor
 		if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
 			o.logger.Error("run step could not be recorded", "run", run.ID, "error", storeErr)
 		}
-		run.StepCount = sequence
+		// The count is this attempt's own work; what it inherited is recorded
+		// separately, so a resumed run does not claim steps it never ran.
+		run.StepCount = attemptStep
 		run.TotalTokens += usage.TotalTokens
 
 		if err != nil {
@@ -248,7 +268,17 @@ func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task stor
 			for _, directive := range delegations {
 				notes = append(notes, o.delegate(ctx, *run, task, goal, directive))
 			}
-			transcript = append(transcript, "# 위임 결과\n"+strings.Join(notes, "\n"))
+			note := "# 위임 결과\n" + strings.Join(notes, "\n")
+			transcript = append(transcript, note)
+			// Recorded as a step of its own, so a resumed attempt inherits what was
+			// delegated instead of handing the same work over a second time.
+			sequence++
+			if _, storeErr := o.store.AppendRunStep(ctx, store.AgentRunStep{
+				RunID: run.ID, Sequence: sequence, Type: "delegation",
+				Title: fmt.Sprintf("위임 %d건", len(delegations)), Output: note, Status: "succeeded",
+			}); storeErr != nil {
+				o.logger.Error("delegation step could not be recorded", "run", run.ID, "error", storeErr)
+			}
 			continue
 		}
 
