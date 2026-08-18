@@ -69,32 +69,6 @@ func (s *Server) authentication(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) apiKeyAuthorization(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		scopes, isAPIKey := r.Context().Value(apiScopesContextKey).([]string)
-		if !isAPIKey {
-			next.ServeHTTP(w, r)
-			return
-		}
-		path := r.URL.Path
-		if strings.Contains(path, "/admin/") || strings.Contains(path, "/secrets") || strings.Contains(path, "/api-keys") || strings.Contains(path, "/keys/rotate") || strings.HasSuffix(path, "/auth/logout") {
-			writeError(w, http.StatusForbidden, "api_key_forbidden", "이 작업은 브라우저 세션으로만 수행할 수 있습니다.")
-			return
-		}
-		required := "api:read"
-		if strings.Contains(path, "/session") || strings.Contains(path, "/spawn") || strings.Contains(path, "/runtimes/") && r.Method != http.MethodGet {
-			required = "runtime:manage"
-		} else if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			required = "agent:write"
-		}
-		if !slices.Contains(scopes, required) && !slices.Contains(scopes, "*") {
-			writeError(w, http.StatusForbidden, "insufficient_scope", "API Key에 "+required+" scope가 필요합니다.")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
 func (s *Server) csrfProtection(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
@@ -108,28 +82,6 @@ func (s *Server) csrfProtection(next http.Handler) http.Handler {
 		cookie, err := r.Cookie(sessionCookie)
 		if err != nil || !s.store.ValidateCSRF(r.Context(), cookie.Value, r.Header.Get("X-CSRF-Token")) {
 			writeError(w, http.StatusForbidden, "csrf_failed", "요청 보안 토큰이 만료되었습니다. 페이지를 새로고침해 주세요.")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func adminOnly(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		u, ok := userFromContext(r.Context())
-		if !ok || u.Role != "admin" {
-			writeError(w, http.StatusForbidden, "forbidden", "관리자 권한이 필요합니다.")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func managerOnly(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		u, ok := userFromContext(r.Context())
-		if !ok || (u.Role != "manager" && u.Role != "admin") {
-			writeError(w, http.StatusForbidden, "forbidden", "팀장 또는 관리자 권한이 필요합니다.")
 			return
 		}
 		next.ServeHTTP(w, r)

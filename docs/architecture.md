@@ -437,6 +437,42 @@ The properties that make it a gate rather than a suggestion:
 - **Nobody has to be watching.** Creating the approval notifies the owner and
   places it in 검토 · 승인 next to every other pending decision.
 
+## Route catalog
+
+An endpoint used to be described in three places that had no way of knowing about
+each other. chi registered the path. A middleware decided which API-key scope it
+needed by looking for substrings in the URL. A hand-written list produced the
+published OpenAPI description, and had drifted to about a fifth of the real
+surface.
+
+The middleware's guess was the worst of the three, because it was wrong in ways
+nobody could see. `GET /api/v1/sessions` demanded `runtime:manage` — the scope for
+starting runtimes — because its path contains "session", so a read-only key could
+not list the sessions it was allowed to read. Any new write inherited
+`agent:write` whether or not that was the right authority for it, and the only
+way to find out what a key could reach was to try.
+
+`internal/api/catalog.go` now holds one entry per endpoint: method, pattern,
+scope, role, tag and summary. The router is built from it, the API-key check is
+the scope written on the line rather than one inferred from spelling, and the
+OpenAPI document is generated from the same entries — 118 operations, tagged, with
+path parameters, describing exactly what is served. Authorisation is applied per
+route rather than as middleware over a group, because a middleware only sees the
+URL, which is what produced the sessions bug.
+
+Three tests hold it together. One walks the real router and fails on any route
+that is not in the catalog, except a short list of unauthenticated endpoints —
+login, the OIDC redirect, the trigger webhook, the in-Pod approval gateway — each
+carrying its reason in the test. One fails on a catalog entry that reaches
+nothing. One fails on a GET that requires a write scope, an /admin route that is
+not administrator-only, or a credential route an API key could reach. Adding an
+endpoint without deciding its permission is no longer possible; it does not
+compile into a served route, and if it is registered elsewhere the walk fails.
+
+Under `/api/v1` an unknown path now answers a JSON 404 instead of falling through
+to the single-page app, which used to reply 200 with a document that a client
+could only report as "the response was not JSON".
+
 ## Agent versions and promotion
 
 A definition's version counter went up on every save and nothing kept the

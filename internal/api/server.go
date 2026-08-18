@@ -62,6 +62,15 @@ func (s *Server) Handler() http.Handler {
 	})
 	r.Get("/api/openapi.json", s.openAPI)
 	r.Route("/api/v1", func(r chi.Router) {
+		// Under /api/v1 an unknown path is a client's mistake, not a page. Falling
+		// through to the single-page app answered it with 200 and a document,
+		// which a client can only report as "the response was not JSON".
+		r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
+			writeError(w, http.StatusNotFound, "not_found", "요청한 API 경로를 찾을 수 없습니다.")
+		})
+		r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "이 경로에서 지원하지 않는 메서드입니다.")
+		})
 		r.Get("/version", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, s.version) })
 		r.Get("/auth/methods", s.authMethods)
 		r.Post("/auth/login", s.login)
@@ -82,9 +91,11 @@ func (s *Server) Handler() http.Handler {
 			r.Use(s.authentication)
 			r.Get("/me", s.me)
 			r.Group(func(r chi.Router) {
-				r.Use(s.apiKeyAuthorization, s.csrfProtection)
-				r.Post("/auth/logout", s.logout)
-				s.userRoutes(r)
+				r.Use(s.csrfProtection)
+				// Every route below comes from the catalog, which is also what the
+				// published OpenAPI description and the API-key scope check are built
+				// from. Nothing is served that is not declared there.
+				s.register(r, s.apiRoutes())
 			})
 		})
 	})

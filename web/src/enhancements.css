@@ -426,3 +426,16 @@
 .confirm-field span { font-size: 13px; font-weight: 650; color: #475467; }
 .confirm-field input { width: 100%; min-height: 40px; padding: 9px 11px; border: 1px solid #d7dee7; border-radius: 7px; font-size: 13px; color: #344054; outline: 0; }
 .confirm-field input:focus { border-color: #8065ec; box-shadow: 0 0 0 3px #eeeaff; }
+
+/* Issuing an API key is a permission decision, so the choices are shown with
+   what each one reaches rather than as four names in a dropdown. */
+.scope-picker { display: grid; gap: 8px; border: 0; padding: 0; margin: 0; }
+.scope-picker legend { font-size: 13px; font-weight: 650; color: #475467; padding: 0 0 6px; }
+.scope-option { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid #e2e7ee; border-radius: 9px; background: #fff; cursor: pointer; }
+.scope-option:hover { border-color: #cbbdf7; }
+.scope-option input { margin-top: 2px; width: 16px; height: 16px; flex: none; }
+.scope-option span { display: grid; gap: 3px; }
+.scope-option strong { font-size: 13px; font-weight: 650; color: #344054; }
+.scope-option code { font-size: 12px; color: #5d3ddd; background: #f4f1ff; padding: 1px 5px; border-radius: 5px; }
+.scope-option small { font-size: 12px; color: #8a95a5; line-height: 1.5; }
+.scope-option .scope-examples { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #98a2b3; word-break: break-all; }

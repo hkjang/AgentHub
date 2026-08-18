@@ -24,100 +24,6 @@ import (
 	"github.com/hkjang/AgentHub/internal/telemetry"
 )
 
-func (s *Server) userRoutes(r chi.Router) {
-	r.Get("/dashboard", s.dashboard)
-	r.Get("/capabilities", s.capabilities)
-	r.Get("/templates", s.templates)
-	r.Get("/runtime-profiles", s.runtimeProfiles)
-	r.Get("/models", s.models)
-	r.Get("/mcp-servers", s.mcpServers)
-	r.Put("/mcp-servers/{id}/credential", s.putMCPCredential(false))
-	r.Delete("/mcp-servers/{id}/credential", s.deleteMCPCredential(false))
-	r.Get("/mcp-bundles", s.mcpBundles)
-	r.Get("/agents", s.agents)
-	r.Post("/agents", s.createAgent)
-	r.Put("/agents/{id}", s.updateAgent)
-	r.Get("/agents/{id}/export", s.exportAgent)
-	r.Post("/agents/import", s.importAgent)
-	r.Delete("/agents/{id}", s.deleteAgent)
-	r.Post("/agents/{id}/spawn", s.spawnAgent)
-	// Execution plane: goals, triggers and the shortcut from an agent to a task.
-	r.Get("/agents/{id}/goal", s.agentGoal)
-	r.Put("/agents/{id}/goal", s.saveAgentGoal)
-	r.Get("/agents/{id}/versions", s.agentVersions)
-	r.Post("/agents/{id}/promote", s.promoteAgentVersion)
-	r.Post("/agents/{id}/versions/{version}/restore", s.restoreAgentVersion)
-	r.Get("/agents/{id}/triggers", s.agentTriggers)
-	r.Post("/agents/{id}/triggers", s.saveAgentTrigger)
-	r.Post("/agents/{id}/run", s.runAgent)
-	r.Delete("/triggers/{id}", s.deleteAgentTrigger)
-	r.Get("/events", s.events)
-	r.Get("/usage", s.usage)
-	r.Get("/runtime-pool", s.warmRuntimes)
-	r.Get("/queue", s.queue)
-	r.Get("/agents/{id}/mcp-policies", s.agentMCPPolicies)
-	r.Put("/agents/{id}/mcp-policies", s.saveAgentMCPPolicy)
-	r.Delete("/mcp-policies/{id}", s.deleteAgentMCPPolicy)
-	r.Get("/agents/{id}/memories", s.agentMemories)
-	r.Delete("/memories/{id}", s.deleteMemory)
-	r.Get("/tasks", s.tasks)
-	r.Post("/tasks", s.createTask)
-	r.Get("/tasks/{id}", s.task)
-	r.Post("/tasks/{id}/cancel", s.cancelTask)
-	r.Post("/tasks/{id}/retry", s.retryTask)
-	r.Get("/tasks/{id}/checkpoint", s.taskCheckpoint)
-	r.Get("/runs", s.runs)
-	r.Get("/runs/{id}", s.run)
-	r.Get("/artifacts", s.artifacts)
-	r.Get("/artifacts/{id}/content", s.artifactContent)
-	r.Get("/runtimes", s.runtimes)
-	r.Post("/runtimes/{id}/start", s.runtimeAction("running"))
-	r.Post("/runtimes/{id}/stop", s.runtimeAction("stopped"))
-	r.Post("/runtimes/{id}/restart", s.restartRuntime)
-	r.Post("/runtimes/{id}/launch", s.launchRuntime)
-	r.Get("/runtimes/{id}/logs", s.runtimeLogs)
-	r.Handle("/runtimes/{id}/session", http.HandlerFunc(s.runtimeSession))
-	r.Handle("/runtimes/{id}/session/*", http.HandlerFunc(s.runtimeSession))
-	r.Get("/workspaces", s.workspaces)
-	r.Post("/workspaces", s.createWorkspace)
-	r.Put("/workspaces/{id}", s.updateWorkspace)
-	r.Delete("/workspaces/{id}", s.deleteWorkspace)
-	r.Get("/workspace-snapshots", s.workspaceSnapshots)
-	r.Post("/workspaces/{id}/snapshots", s.createWorkspaceSnapshot)
-	r.Post("/workspace-snapshots/{id}/restore", s.restoreWorkspaceSnapshot)
-	r.Delete("/workspace-snapshots/{id}", s.deleteWorkspaceSnapshot)
-	r.Get("/sessions", s.runtimeSessions)
-	r.Post("/runtimes/{id}/sessions", s.createRuntimeSession)
-	r.Post("/sessions/{id}/close", s.closeRuntimeSession)
-	r.Get("/workflows", s.workflows)
-	r.Post("/workflows", s.saveWorkflow)
-	r.Post("/workflows/{id}/validate", s.validateWorkflowDefinition)
-	r.Delete("/workflows/{id}", s.deleteWorkflow)
-	r.Post("/workflows/{id}/run", s.runWorkflow)
-	r.Get("/workflow-runs", s.workflowRuns)
-	r.Get("/evaluation/test-sets", s.evaluationTestSets)
-	r.Post("/evaluation/test-sets", s.saveEvaluationTestSet)
-	r.Delete("/evaluation/test-sets/{id}", s.deleteEvaluationTestSet)
-	r.Get("/evaluations", s.agentEvaluations)
-	r.Post("/agents/{id}/evaluate", s.evaluateAgent)
-	r.Get("/notifications", s.notifications)
-	r.Post("/notifications/{id}/read", s.readNotification)
-	r.Get("/secrets", s.personalSecrets)
-	r.Post("/secrets", s.createPersonalSecret)
-	r.Delete("/secrets/{id}", s.deletePersonalSecret)
-	r.Post("/keys/rotate", s.rotatePersonalKey)
-	r.Get("/api-keys", s.apiKeys)
-	r.Post("/api-keys", s.createAPIKey)
-	r.Delete("/api-keys/{id}", s.revokeAPIKey)
-	r.Group(func(r chi.Router) {
-		r.Use(managerOnly)
-		r.Get("/approvals", s.reviewerApprovals)
-		r.Post("/approvals/{id}/approve", s.decideApproval("approved"))
-		r.Post("/approvals/{id}/reject", s.decideApproval("rejected"))
-	})
-	r.Route("/admin", func(r chi.Router) { r.Use(adminOnly); s.adminRoutes(r) })
-}
-
 func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 	items, err := s.store.EnabledModelEndpoints(r.Context())
 	if err != nil {
@@ -1049,11 +955,10 @@ func (s *Server) createAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(input.Scopes) == 0 {
-		input.Scopes = []string{"api:read"}
+		input.Scopes = []string{ScopeRead}
 	}
-	allowedScopes := []string{"api:read", "mcp:read", "runtime:manage", "agent:write"}
 	for _, scope := range input.Scopes {
-		if !slices.Contains(allowedScopes, scope) {
+		if !slices.Contains(APIKeyScopes, scope) {
 			writeError(w, http.StatusBadRequest, "invalid_scope", "지원하지 않는 API Key scope입니다: "+scope)
 			return
 		}
@@ -1075,41 +980,6 @@ func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.Audit(r.Context(), &u, "api_key.revoke", "api-key", id, "success", clientIP(r), nil)
 	w.WriteHeader(204)
-}
-
-func (s *Server) adminRoutes(r chi.Router) {
-	r.Get("/settings", s.adminSettings)
-	r.Put("/settings/{key}", s.putAdminSetting)
-	r.Get("/logs", s.adminLogs)
-	r.Get("/audit", s.adminAudit)
-	r.Get("/approvals", s.adminApprovals)
-	r.Post("/approvals/{id}/approve", s.decideApproval("approved"))
-	r.Post("/approvals/{id}/reject", s.decideApproval("rejected"))
-	r.Get("/runtime-profiles", s.adminRuntimeProfiles)
-	r.Post("/runtime-profiles", s.saveRuntimeProfile)
-	r.Delete("/runtime-profiles/{id}", s.deleteAdminResource("runtime-profiles"))
-	r.Get("/runtime-images", s.adminRuntimeImages)
-	r.Post("/runtime-images", s.saveRuntimeImage)
-	r.Delete("/runtime-images/{id}", s.deleteAdminResource("runtime-images"))
-	r.Get("/models", s.adminModels)
-	r.Post("/models", s.saveModel)
-	r.Delete("/models/{id}", s.deleteAdminResource("models"))
-	r.Get("/mcp-servers", s.adminMCPServers)
-	r.Post("/mcp-servers", s.saveMCPServer)
-	r.Delete("/mcp-servers/{id}", s.deleteAdminResource("mcp-servers"))
-	r.Put("/mcp-servers/{id}/credential", s.putMCPCredential(true))
-	r.Delete("/mcp-servers/{id}/credential", s.deleteMCPCredential(true))
-	r.Get("/mcp-bundles", s.adminMCPBundles)
-	r.Post("/mcp-bundles", s.saveMCPBundle)
-	r.Delete("/mcp-bundles/{id}", s.deleteAdminResource("mcp-bundles"))
-	r.Get("/security-profiles", s.adminPolicyProfiles("security"))
-	r.Post("/security-profiles", s.savePolicyProfile("security"))
-	r.Delete("/security-profiles/{id}", s.deleteAdminResource("security-profiles"))
-	r.Get("/network-profiles", s.adminPolicyProfiles("network"))
-	r.Post("/network-profiles", s.savePolicyProfile("network"))
-	r.Delete("/network-profiles/{id}", s.deleteAdminResource("network-profiles"))
-	r.Get("/users", s.adminUsers)
-	r.Put("/users/{id}", s.updateUser)
 }
 
 func (s *Server) adminRuntimeProfiles(w http.ResponseWriter, r *http.Request) {

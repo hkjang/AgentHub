@@ -20,7 +20,8 @@
     "test:pool": "node scripts/pool-e2e.mjs",
     "test:scale": "node scripts/scale-e2e.mjs",
     "test:supervisor": "node scripts/supervisor-e2e.mjs",
-    "test:release": "node scripts/release-e2e.mjs"
+    "test:release": "node scripts/release-e2e.mjs",
+    "test:api-surface": "node scripts/api-surface-e2e.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",

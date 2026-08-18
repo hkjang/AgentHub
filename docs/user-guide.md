@@ -221,6 +221,16 @@ Model Context Protocol(MCP)을 엔터프라이즈 환경에 맞게 중앙 집중
 ### 9.2 Scoped API Keys
 Cursor, Claude Desktop, Antigravity CLI 등 외부 AI 도구와 연동할 수 있는 최소 권한 API 토큰을 발급합니다.
 
+발급 화면에서 권한 범위를 **여러 개 선택** 할 수 있고, 각 범위가 실제로 호출할 수 있는 REST 엔드포인트 수와 예시가 함께 표시됩니다. 이 숫자는 서버가 실제로 강제하는 경로 목록에서 그대로 계산되므로 화면 설명과 실제 권한이 어긋나지 않습니다.
+
+- `api:read` — 모든 읽기. 새 키의 기본값입니다.
+- `agent:write` — Agent·워크플로·작업·작업공간 생성과 수정. **조회는 포함하지 않습니다.** 목록을 읽어야 하는 자동화라면 `api:read` 를 함께 선택하세요.
+- `runtime:manage` — Runtime 시작·중지·재시작과 브라우저 세션 열기.
+- `mcp:read` — MCP 엔드포인트(`/mcp`) 전용입니다. REST 경로는 하나도 열리지 않습니다.
+- 개인 시크릿, API Key 관리, 개인 키 회전, `/admin/**` 관리자 설정은 **어떤 키로도 호출할 수 없습니다**(`api_key_forbidden`). 스스로 새 키를 만들 수 있는 키는 권한 범위를 무의미하게 만들기 때문입니다.
+
+권한이 모자라면 `insufficient_scope`, 키로는 아예 열 수 없는 경로면 `api_key_forbidden` 으로 구분해 응답합니다. 전체 엔드포인트 목록과 각 경로에 필요한 권한은 `GET /api/openapi.json` 에서 확인할 수 있습니다(태그별로 묶여 있고, 서버가 실제로 등록한 경로에서 생성됩니다).
+
 ![API 키 목록](screenshots/22_developer_api_keys.png)
 
 ![새 API Key 발급 드로어](screenshots/23_developer_new_token_drawer.png)

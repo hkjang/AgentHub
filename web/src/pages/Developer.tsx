@@ -11,6 +11,28 @@ import {
   Trash2,
 } from "lucide-react";
 import { api } from "../api";
+
+// The scopes a key may hold. The wording is the console's; how far each one
+// reaches is read from the server so the two cannot disagree.
+type ScopeReach = { scope: string; routes: number; examples: string[] };
+const SCOPES = [
+  { scope: "api:read", label: "조회", hint: "모든 읽기 요청" },
+  {
+    scope: "agent:write",
+    label: "변경",
+    hint: "Agent·워크플로·작업·작업공간 생성과 수정",
+  },
+  {
+    scope: "runtime:manage",
+    label: "런타임",
+    hint: "Runtime 시작·중지와 세션 열기",
+  },
+  {
+    scope: "mcp:read",
+    label: "MCP",
+    hint: "MCP 엔드포인트 전용 (REST 호출 불가)",
+  },
+];
 import {
   Drawer,
   Empty,
@@ -244,10 +266,30 @@ function CredentialDrawer({
   const [name, setName] = useState(""),
     [kind, setKind] = useState("api_key"),
     [value, setValue] = useState(""),
-    [scope, setScope] = useState("api:read"),
+    [scopes, setScopes] = useState<string[]>(["api:read"]),
+    [reach, setReach] = useState<ScopeReach[]>([]),
     [busy, setBusy] = useState(false);
+  // What each scope reaches comes from the server's own route catalog, so the
+  // choice is made against what the key will actually be able to call.
+  useEffect(() => {
+    if (type !== "api") return;
+    api
+      .get<{ items: ScopeReach[] }>("/api/v1/api-scopes")
+      .then((v) => setReach(v.items))
+      .catch(() => setReach([]));
+  }, [type]);
+  const toggleScope = (name: string) =>
+    setScopes((current) =>
+      current.includes(name)
+        ? current.filter((v) => v !== name)
+        : [...current, name],
+    );
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (type === "api" && scopes.length === 0) {
+      setError("권한 범위를 하나 이상 선택하세요.");
+      return;
+    }
     setBusy(true);
     try {
       if (type === "secrets") {
@@ -256,7 +298,7 @@ function CredentialDrawer({
       } else {
         const result = await api.post<{ token: string }>("/api/v1/api-keys", {
           name,
-          scopes: [scope],
+          scopes,
         });
         done(result.token);
       }
@@ -329,17 +371,40 @@ function CredentialDrawer({
             </label>
           </>
         ) : (
-          <label>
-            <span>권한 범위</span>
-            <select value={scope} onChange={(e) => setScope(e.target.value)}>
-              <option value="api:read">api:read · REST 조회</option>
-              <option value="mcp:read">mcp:read · MCP 조회</option>
-              <option value="runtime:manage">
-                runtime:manage · Runtime 시작/중지
-              </option>
-              <option value="agent:write">agent:write · Agent 변경</option>
-            </select>
-          </label>
+          <fieldset className="scope-picker">
+            <legend>권한 범위</legend>
+            {SCOPES.map((item) => {
+              const detail = reach.find((v) => v.scope === item.scope);
+              return (
+                <label key={item.scope} className="scope-option">
+                  <input
+                    type="checkbox"
+                    checked={scopes.includes(item.scope)}
+                    onChange={() => toggleScope(item.scope)}
+                  />
+                  <span>
+                    <strong>
+                      <code>{item.scope}</code> {item.label}
+                    </strong>
+                    <small>
+                      {item.hint}
+                      {detail ? ` · REST 엔드포인트 ${detail.routes}개` : ""}
+                    </small>
+                    {detail && detail.examples.length > 0 && (
+                      <small className="scope-examples">
+                        {detail.examples.join(" · ")}
+                      </small>
+                    )}
+                  </span>
+                </label>
+              );
+            })}
+            <p className="field-hint">
+              쓰기 권한은 조회를 포함하지 않습니다. 목록을 읽어야 하는
+              자동화라면 <code>api:read</code> 를 함께 선택하세요. 개인 시크릿,
+              API Key, 관리자 설정은 어떤 키로도 호출할 수 없습니다.
+            </p>
+          </fieldset>
         )}
         <div className="info-box">
           <ShieldCheck size={17} />
