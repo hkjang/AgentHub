@@ -1480,7 +1480,8 @@ func (s *Server) validateSetting(r *http.Request, key string, value map[string]a
 			}
 		}
 	case "governance":
-		for _, name := range []string{"maxRuntimesPerUser", "maxCpuMillisPerUser", "maxMemoryMbPerUser", "maxStorageGbPerUser", "defaultIdleTimeoutSeconds"} {
+		for _, name := range []string{"maxRuntimesPerUser", "maxCpuMillisPerUser", "maxMemoryMbPerUser", "maxStorageGbPerUser", "defaultIdleTimeoutSeconds",
+			"maxRunningTasksPerUser", "tokenBudgetPerUser", "costBudgetPerUser"} {
 			if number(name) < 0 {
 				return errors.New("Quota와 Timeout은 0 이상이어야 합니다")
 			}

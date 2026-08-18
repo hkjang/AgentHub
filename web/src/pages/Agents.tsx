@@ -391,6 +391,10 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
       </fieldset>
 
       <fieldset><legend>실행 한도</legend>
+        <label><span>토큰 예산 (최근 30일)</span>
+          <input type="number" min={0} step={1000} value={goal.tokenBudget??0} onChange={(e)=>update({tokenBudget:Number(e.target.value)})}/>
+          <small>0이면 사용자 예산만 적용됩니다. 이 값을 넘기면 이 에이전트의 새 작업은 실행되지 않고 실패로 기록됩니다.</small>
+        </label>
         <div className="form-grid">
           <label><span>최대 단계</span><input type="number" min={1} max={100} value={goal.maxSteps} onChange={(e)=>update({maxSteps:Number(e.target.value)})}/></label>
           <label><span>최대 실행 시간(초)</span><input type="number" min={30} max={86400} value={goal.maxDurationSeconds} onChange={(e)=>update({maxDurationSeconds:Number(e.target.value)})}/></label>

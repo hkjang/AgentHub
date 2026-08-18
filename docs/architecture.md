@@ -437,6 +437,43 @@ The properties that make it a gate rather than a suggestion:
 - **Nobody has to be watching.** Creating the approval notifies the owner and
   places it in 검토 · 승인 next to every other pending decision.
 
+## Execution quotas
+
+Runtimes, CPU, memory and storage were bounded per user. What a user could *run*
+was not: one person could hold every worker slot, and an agent that never
+converges could spend a month of tokens overnight, because the only spend signal
+was a report somebody had to open.
+
+Two limits now apply to the execution plane, both configured in Administration ▸
+System Settings ▸ Governance and both off when zero. `maxRunningTasksPerUser`
+bounds how many of one user's tasks execute at once across every agent they own.
+`tokenBudgetPerUser` and `costBudgetPerUser` bound spend over the same 30-day
+window the usage report shows, and an agent can carry its own `tokenBudget` so one
+runaway agent stops without stopping everything else its owner runs.
+
+The two kinds of limit end differently, because they clear differently. A
+concurrency limit clears when somebody else's task finishes, so the task goes back
+on the queue and does not spend a retry attempt — waiting is not a failed attempt,
+and counting it would let a busy hour exhaust a task's budget before it ever ran.
+A spent token or cost budget does not clear for days, so the task fails with the
+numbers in the message and its owner is notified, rather than holding a worker
+slot until the window rolls over. A budget that is already spent is also refused
+at enqueue time with 429, so the person who asked hears it while they are still
+looking; concurrency is never refused there, because queueing is what a queue is
+for.
+
+The decision is made after the claim and under a per-owner advisory lock, and a
+task that stands down does so in the same transaction it was counted in. Counting
+alone is not enough: two tasks claimed in the same instant each see the other
+running, so with a limit of one both would step aside and neither would run —
+which is exactly what happened the first time this was tried against a live
+worker. Serialising the decision per owner makes as many tasks run as the limit
+allows, no more and no fewer.
+
+A quota check that cannot be run does not stop the work. The task already survived
+a claim against the same database, and turning a transient query error into a
+platform-wide stop would make a spend limit an outage.
+
 ## Tracing
 
 The platform carried a trace id from the request that started a task through to

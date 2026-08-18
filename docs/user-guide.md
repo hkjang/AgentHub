@@ -291,7 +291,15 @@ OpenCode·Hermes·Qwen Paw 외에 사내에서 직접 만든 에이전트를 올
 
 Runtime 이미지에는 `python`·`pip`(`/opt/agenthub/venv`)과 `conda`·`mamba`(`/opt/conda`)가 기본 포함되어 있고, ruff·pytest·httpx·pandas·openai 같은 코딩 에이전트가 바로 찾는 라이브러리와 typescript·tsx·prettier·pnpm이 함께 설치되어 있습니다. conda 환경과 pip/npm 캐시는 `/home/agent` 볼륨에 생성되므로 Pod가 재시작되어도 유지됩니다. 읽기 전용 루트 파일시스템 프로파일에서는 `python -m venv ~/.venvs/작업이름` 이나 `conda create -n 작업이름` 처럼 홈 또는 작업공간 안에 환경을 만들어 사용하세요.
 
-### 10.4 분산 추적 (Observability)
+### 10.4 실행 Quota (동시 실행 · 비용)
+*System Settings ▸ Governance ▸ 실행 Quota* 에서 자율 실행이 쓰는 자원과 비용을 제한합니다. 모두 **0이면 제한 없음** 입니다.
+
+- **사용자당 동시 실행 작업**: 한 사용자의 작업이 동시에 몇 개까지 실행될지 정합니다. 한도에 걸린 작업은 **대기**하며, 재시도 횟수를 쓰지 않고 앞선 작업이 끝나면 실행됩니다.
+- **사용자당 토큰·비용 예산 (최근 30일)**: 예산을 모두 쓰면 새 작업은 **실패**로 기록되고 소유자에게 알림이 갑니다. 며칠 뒤에야 풀리는 한도를 기다리며 워커 자리를 잡고 있지 않기 위해서입니다. 이미 예산을 초과한 상태에서 작업을 만들면 API가 429로 즉시 거절합니다.
+- **에이전트별 토큰 예산**: 에이전트 상세의 *목표 ▸ 실행 한도* 에서 지정합니다. 수렴하지 못하는 에이전트 하나 때문에 사용자의 다른 작업까지 멈추지 않게 합니다.
+- 사용량과 남은 예산은 `작업 대기열` 화면의 *최근 30일 토큰 사용량* 패널 상단에 함께 표시됩니다. 단가가 없는 모델의 토큰은 비용에 잡히지 않으므로 토큰 예산을 함께 설정하는 편이 안전합니다.
+
+### 10.5 분산 추적 (Observability)
 *System Settings ▸ Observability* 에서 OTLP Collector 주소를 넣으면 API와 워커가 OpenTelemetry Trace를 내보냅니다.
 
 - **무엇이 보이나**: 작업 시도 하나가 `task.execute` 스팬 하나이고, 그 아래에 추론 단계(`agent.step`, 단계별 토큰), 완료 판정(`task.evaluate`), 런타임 확보(`runtime.acquire`)가 붙습니다. 워크플로는 `workflow.run` 과 단계별 `workflow.step` 으로 남고, API는 요청당 한 스팬을 라우트 패턴 이름으로 남깁니다.
@@ -300,7 +308,7 @@ Runtime 이미지에는 `python`·`pip`(`/opt/agenthub/venv`)과 `conda`·`mamba
 - **적용 시점**: 설정은 시작할 때 읽으므로 API와 워커를 재시작해야 반영됩니다. 수집기 주소가 잘못돼도 서비스는 그대로 뜨고 추적만 꺼진 채 로그에 이유가 남습니다.
 - 환경변수 `AGENTHUB_OTLP_ENDPOINT` 로도 설정할 수 있으며, 화면에서 켠 설정이 우선합니다.
 
-### 10.5 보안 및 전역 설정
+### 10.6 보안 및 전역 설정
 - **Users & Teams**: RBAC 역할(Admin, Manager, User) 및 팀별 접근 제어
 - **Security & Network**: Pod Security Standards, NetworkPolicy, 마스터 키 회전
 - **System Settings**: OIDC SSO, 승인 거버넌스, 클러스터 및 Runtime 공통 환경 설정

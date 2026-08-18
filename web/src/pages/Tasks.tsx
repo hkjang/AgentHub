@@ -4,7 +4,7 @@ import { api } from '../api'
 import { Link } from 'react-router-dom'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, GuideLegend, GuidePanel, Loading, PageHeader, StatusBadge, statusLabel, useEscape } from '../components/UI'
 import { relativeTime, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
-import type { Agent, AgentArtifact, AgentPlan, AgentRun, AgentRunEvent, AgentRunStep, AgentTask, PlatformEvent, QueueSnapshot, UsageReport } from '../types'
+import type { Agent, AgentArtifact, AgentPlan, AgentRun, AgentRunEvent, AgentRunStep, AgentTask, PlatformEvent, QueueSnapshot, UsageBudget, UsageReport } from '../types'
 
 /** Statuses that are still moving, and therefore worth polling for. */
 const ACTIVE = ['queued', 'planning', 'ready', 'running', 'waiting_tool', 'waiting_approval', 'retrying']
@@ -241,12 +241,13 @@ function RetryDialog({ task, close, retry }: { task: AgentTask; close: () => voi
  *  admin screen. */
 function UsagePanel() {
   const [report, setReport] = useState<UsageReport>()
+  const [budget, setBudget] = useState<UsageBudget | null>(null)
   const [open, setOpen] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
     if (!open || report) return
-    void api.get<UsageReport>('/api/v1/usage')
-      .then(setReport)
+    void api.get<UsageReport & { budget?: UsageBudget }>('/api/v1/usage')
+      .then((result) => { setReport(result); setBudget(result.budget ?? null) })
       .catch((e) => setError(e instanceof Error ? e.message : '사용량을 불러오지 못했습니다.'))
   }, [open, report])
 
@@ -265,6 +266,12 @@ function UsagePanel() {
         : report.agents.length === 0
           ? <div className="empty-compact">기록된 실행이 없습니다.</div>
           : <>
+              {budget && <div className="usage-budget">
+                {budget.tokenBudget > 0 && <span>토큰 예산 <b>{tokens(budget.tokensUsed)} / {tokens(budget.tokenBudget)}</b> (최근 {budget.windowDays}일)</span>}
+                {budget.costBudget > 0 && <span>비용 예산 <b>{money(budget.costUsed, budget.currency)} / {money(budget.costBudget, budget.currency)}</b></span>}
+                {budget.maxRunning > 0 && <span>동시 실행 <b>{budget.runningNow} / {budget.maxRunning}</b></span>}
+                <small>예산을 모두 쓰면 새 작업은 대기가 아니라 실패로 처리되고 알림이 갑니다.</small>
+              </div>}
               <div className="usage-summary">
                 <div><span>입력</span><strong>{tokens(report.inputTokens)}</strong></div>
                 <div><span>출력</span><strong>{tokens(report.outputTokens)}</strong></div>

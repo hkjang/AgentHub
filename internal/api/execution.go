@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/hkjang/AgentHub/internal/execution"
+	"github.com/hkjang/AgentHub/internal/quota"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -186,6 +187,38 @@ func contains(values []string, value string) bool {
 
 // --- Tasks ---
 
+// budgetRefusal reports the reason a task must not even be queued.
+//
+// A concurrency limit is not a refusal — queueing is what a queue is for — but a
+// budget that is already spent would only be discovered by the worker minutes
+// later, so the person who asked is told now.
+func (s *Server) budgetRefusal(r *http.Request, ownerID, agentID string) string {
+	policy, err := s.store.ExecutionPolicy(r.Context())
+	if err != nil {
+		s.logger.Warn("execution quota policy is unreadable; accepting the task", "error", err)
+		return ""
+	}
+	goal, goalErr := s.store.AgentGoalByID(r.Context(), agentID)
+	if goalErr != nil {
+		goal = store.DefaultAgentGoal(agentID)
+	}
+	if policy.TokenBudgetPerUser == 0 && policy.CostBudgetPerUser == 0 && goal.TokenBudget == 0 {
+		return ""
+	}
+	usage, err := s.store.ExecutionUsage(r.Context(), ownerID, agentID, "")
+	if err != nil {
+		s.logger.Warn("execution usage is unreadable; accepting the task", "error", err)
+		return ""
+	}
+	// Only the budget rules are applied here: the running-task count is left to
+	// the worker, which is where waiting for a slot belongs.
+	usage.RunningTasks = 0
+	if decision := quota.Evaluate(quota.Policy{TokenBudgetPerUser: policy.TokenBudgetPerUser, CostBudgetPerUser: policy.CostBudgetPerUser}, goal.TokenBudget, usage); !decision.Allowed && !decision.Wait {
+		return decision.Reason
+	}
+	return ""
+}
+
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	var input struct {
@@ -248,6 +281,12 @@ func (s *Server) enqueueTask(w http.ResponseWriter, r *http.Request, u store.Use
 	if agent.ModelEndpointID == nil || *agent.ModelEndpointID == "" {
 		writeError(w, http.StatusConflict, "model_not_bound", "이 Agent에는 Model Endpoint가 연결되어 있지 않아 자동 실행할 수 없습니다.")
 		return store.AgentTask{}, errors.New("model not bound")
+	}
+	// A budget that is already spent is refused here rather than minutes later by
+	// a worker, so the person who asked hears it while they are still looking.
+	if reason := s.budgetRefusal(r, agent.OwnerID, agent.ID); reason != "" {
+		writeError(w, http.StatusTooManyRequests, "quota_exceeded", reason)
+		return store.AgentTask{}, errors.New("quota exceeded")
 	}
 	task, err := s.store.CreateAgentTask(r.Context(), store.CreateTaskInput{
 		AgentID: agent.ID, OwnerID: agent.OwnerID, Title: title, Input: taskInput,
@@ -705,7 +744,39 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, report)
+	// Spend without the limit beside it is a number nobody can act on, so the
+	// budget travels with the report — embedded, so every existing field stays
+	// exactly where its readers expect it.
+	writeJSON(w, http.StatusOK, struct {
+		store.UsageReport
+		Budget map[string]any `json:"budget,omitempty"`
+	}{UsageReport: report, Budget: s.budgetStatus(r, u.ID)})
+}
+
+// budgetStatus is one user's standing against the configured limits. It is best
+// effort: a report that cannot show a budget is still a useful report.
+func (s *Server) budgetStatus(r *http.Request, ownerID string) map[string]any {
+	policy, err := s.store.ExecutionPolicy(r.Context())
+	if err != nil {
+		return nil
+	}
+	if policy.TokenBudgetPerUser == 0 && policy.CostBudgetPerUser == 0 && policy.MaxRunningTasksPerUser == 0 {
+		return nil
+	}
+	usage, err := s.store.ExecutionUsage(r.Context(), ownerID, "", "")
+	if err != nil {
+		return nil
+	}
+	return map[string]any{
+		"windowDays":  int(store.QuotaWindow.Hours() / 24),
+		"tokenBudget": policy.TokenBudgetPerUser,
+		"tokensUsed":  usage.Tokens,
+		"costBudget":  policy.CostBudgetPerUser,
+		"costUsed":    usage.Cost,
+		"currency":    usage.Currency,
+		"maxRunning":  policy.MaxRunningTasksPerUser,
+		"runningNow":  usage.RunningTasks,
+	}
 }
 
 // warmRuntimes reports what the runtime warm pool is currently holding, so the

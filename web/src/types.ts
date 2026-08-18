@@ -44,7 +44,9 @@ export type AgentGoal = {
   warmupSeconds: number
   keepWarmSeconds: number
   resumeFromCheckpoint: boolean
+  tokenBudget: number
 }
+export type UsageBudget = { windowDays:number; tokenBudget:number; tokensUsed:number; costBudget:number; costUsed:number; currency:string; maxRunning:number; runningNow:number }
 export type QueueSnapshot = { ready:number; running:number; workers:number; status:Record<string,number> }
 export type WarmRuntime = { runtimeId:string; agentId:string; agentName:string; status:string; warmUntil:string }
 export type AgentMemory = { id: string; scope: string; key: string; value: string; updatedAt: string }
