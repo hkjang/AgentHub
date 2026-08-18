@@ -3,19 +3,29 @@ package workflow
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 )
 
 // scriptedRounds answers differently on each call to a step, so a review loop
 // can be set up: a specialist that improves, a supervisor that changes its mind.
+//
+// Its bookkeeping is guarded because the engine runs a level's steps in parallel:
+// the two specialists in supervisedSteps() are one level and call this at the same
+// time. The assertions read the maps directly, which is safe — they run after Run
+// has joined every goroutine.
 type scriptedRounds struct {
-	byStep  map[string][]string
+	byStep map[string][]string
+
+	mu      sync.Mutex
 	calls   map[string]int
 	prompts map[string][]string
 	systems map[string]string
 }
 
 func (s *scriptedRounds) Complete(_ context.Context, step Step, prompt string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.calls == nil {
 		s.calls = map[string]int{}
 		s.prompts = map[string][]string{}
