@@ -100,18 +100,27 @@ func (k *KubernetesSpawner) object(spec Spec) *unstructured.Unstructured {
 			port = 8000
 		}
 		binding := map[string]any{"name": m.Name, "mode": m.Mode, "endpoint": m.Endpoint, "image": m.Image, "port": int64(port)}
-		if m.ToolPolicyMode != "" || m.ApprovalAll || len(m.ApprovalTools) > 0 {
-			tools := make([]any, 0, len(m.ToolPolicyTools))
-			for _, tool := range m.ToolPolicyTools {
-				tools = append(tools, tool)
+		if m.ToolPolicyMode != "" || m.ApprovalAll || m.PolicyDenyAll || len(m.ApprovalTools) > 0 || len(m.PolicyDenied) > 0 || len(m.PolicyGated) > 0 {
+			policy := map[string]any{
+				"tools":            stringList(m.ToolPolicyTools),
+				"approvalTools":    stringList(m.ApprovalTools),
+				"approvalRequired": m.ApprovalAll,
 			}
-			approval := make([]any, 0, len(m.ApprovalTools))
-			for _, tool := range m.ApprovalTools {
-				approval = append(approval, tool)
-			}
-			policy := map[string]any{"tools": tools, "approvalTools": approval, "approvalRequired": m.ApprovalAll}
 			if m.ToolPolicyMode != "" {
 				policy["mode"] = m.ToolPolicyMode
+			}
+			// The central policy travels beside the per-agent list rather than
+			// merged into it: they are different statements, and merging would make
+			// "the platform forbids this" indistinguishable from "this agent was not
+			// given it" in every screen that reads them back.
+			if len(m.PolicyDenied) > 0 {
+				policy["policyDenied"] = stringList(m.PolicyDenied)
+			}
+			if len(m.PolicyGated) > 0 {
+				policy["policyGated"] = stringList(m.PolicyGated)
+			}
+			if m.PolicyDenyAll {
+				policy["policyDenyAll"] = true
 			}
 			binding["toolPolicy"] = policy
 		}
@@ -170,6 +179,15 @@ func provisioningObject(spec Spec) map[string]any {
 		variables = append(variables, map[string]any{"name": variable.Name, "value": variable.Value})
 	}
 	return map[string]any{"files": files, "env": variables}
+}
+
+// stringList renders a []string as the []any an unstructured object needs.
+func stringList(values []string) []any {
+	rendered := make([]any, 0, len(values))
+	for _, value := range values {
+		rendered = append(rendered, value)
+	}
+	return rendered
 }
 
 // runtimeObject renders the runtime section of the CRD. A custom runtime carries

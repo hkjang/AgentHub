@@ -524,3 +524,24 @@
 /* A pause is neither an error nor good news: it is a state somebody chose, and
    the people waiting on it need the reason more than the colour. */
 .alert.warning { background: #fffaf0; border: 1px solid #f3ddb0; color: #96610a; }
+
+/* The policy list is read top to bottom, because the order is the policy. */
+.rule-order { display: flex; align-items: center; gap: 4px; }
+.rule-order button { display: inline-flex; padding: 2px; border: 1px solid #e2e7ee; border-radius: 5px; background: #fff; color: #667085; }
+.rule-order button:disabled { opacity: .35; }
+.rule-order span { min-width: 18px; text-align: center; font-size: 12px; color: #667085; }
+.rule-scope { font-size: 12px; color: #667085; }
+tr.rule-off { opacity: .55; }
+.effect-badge { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 650; }
+.effect-badge.allow { background: #e7f7ee; color: #067647; }
+.effect-badge.deny { background: #fdecee; color: #b42318; }
+.effect-badge.require_approval { background: #fff6e6; color: #96610a; }
+.policy-json { width: 100%; min-height: 420px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.5; padding: 12px; border: 1px solid #d7dee7; border-radius: 8px; color: #344054; }
+.simulation { display: grid; gap: 4px; margin-top: 14px; padding: 12px 14px; border-radius: 9px; border: 1px solid #e2e7ee; background: #fbfcfd; }
+.simulation strong { font-size: 15px; }
+.simulation.allow strong { color: #067647; }
+.simulation.deny strong { color: #b42318; }
+.simulation.require_approval strong { color: #96610a; }
+.simulation span { font-size: 13px; color: #475467; }
+.simulation small { font-size: 12px; color: #8a95a5; }
+.ops-panel h3 { display: flex; align-items: center; gap: 7px; }

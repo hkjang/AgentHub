@@ -12,6 +12,7 @@ import { Developer } from './pages/Developer'
 import { AdminSettings } from './pages/AdminSettings'
 import { AdminExecution } from './pages/AdminExecution'
 import { AdminInsights } from './pages/AdminInsights'
+import { AdminPolicy } from './pages/AdminPolicy'
 import { AdminOperations } from './pages/AdminOperations'
 import { Reviews } from './pages/Reviews'
 import { AdminResources } from './pages/AdminResources'
@@ -82,6 +83,7 @@ export function App() {
         <Route path="admin/settings" element={<AdminSettings />} />
         <Route path="admin/overview" element={<AdminInsights />} />
         <Route path="admin/execution" element={<AdminExecution />} />
+        <Route path="admin/policy" element={<AdminPolicy />} />
         <Route path="admin/operations" element={<AdminOperations />} />
         <Route path="admin/runtime-profiles" element={<AdminResources kind="profiles" />} />
         <Route path="admin/runtime-images" element={<AdminResources kind="images" />} />

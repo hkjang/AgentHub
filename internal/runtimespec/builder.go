@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/hkjang/AgentHub/internal/policy"
 	"github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/runtimeenv"
 	"github.com/hkjang/AgentHub/internal/store"
@@ -137,6 +138,14 @@ func (b *Builder) Build(ctx context.Context, rt store.Runtime, agent store.Agent
 	}
 	bindings := []runtime.MCPBinding{}
 	highRiskApproval := b.highRiskApprovalEnabled(ctx)
+	// The policy and the agent's owner are read once for the whole binding set: a
+	// rule can name a role or a user, and neither is on the agent row.
+	document := b.policyDocument(ctx)
+	owner, ownerErr := b.store.UserByID(ctx, agent.OwnerID)
+	if ownerErr != nil {
+		b.logger.Warn("agent owner is unreadable; policy rules naming a user or role will not match",
+			"agent", agent.ID, "error", ownerErr)
+	}
 	if agent.MCPBundleID != nil {
 		servers, bundleErr := b.store.MCPServersForBundle(ctx, *agent.MCPBundleID)
 		if bundleErr != nil {
@@ -165,9 +174,20 @@ func (b *Builder) Build(ctx context.Context, rt store.Runtime, agent store.Agent
 					return runtime.Spec{}, credentialErr
 				}
 			}
-			if policy, ok := policyByServer[server.ID]; ok {
-				binding.ToolPolicyMode, binding.ToolPolicyTools = policy.Mode, policy.Tools
-				binding.ApprovalTools = policy.ApprovalTools
+			if bound, ok := policyByServer[server.ID]; ok {
+				binding.ToolPolicyMode, binding.ToolPolicyTools = bound.Mode, bound.Tools
+				binding.ApprovalTools = bound.ApprovalTools
+			}
+			// The platform-wide policy is compiled in beside the agent's own list.
+			// It is compiled rather than consulted per call because the gateway is a
+			// separate process in the Pod with no database, and a rule that has to
+			// ask the control plane on every tool call would be a rule nobody could
+			// afford to write.
+			if rules := policy.CompileServer(document, policy.Request{
+				Agent: agent.Name, AgentID: agent.ID, Server: server.Name,
+				User: owner.Username, UserID: agent.OwnerID, Role: owner.Role,
+			}); !rules.Empty() {
+				binding.PolicyDenied, binding.PolicyGated, binding.PolicyDenyAll = rules.Denied, rules.Gated, rules.DenyAll
 			}
 			// The catalogue's own switches finally mean something: a server marked
 			// "approval required", or a high-risk server while the governance switch
@@ -214,6 +234,24 @@ func (b *Builder) Build(ctx context.Context, rt store.Runtime, agent store.Agent
 	customCommand, customPort := agent.CustomRuntime()
 	return runtime.Spec{ProvisionedFiles: provisionedFiles, ProvisionedVariables: provisionedVariables, Runtime: rt, Agent: agent, SidecarImage: runtime.SidecarImage(),
 		CustomCommand: customCommand, CustomPort: int32(customPort), Profile: profile, Image: image, WorkspacePVC: pvc, WorkspaceType: workspaceType, WorkspaceRepositoryURL: repositoryURL, WorkspaceBranch: branch, WorkspaceSnapshot: snapshotName, WorkspaceSizeGB: workspaceSize, WorkspaceGitCredentialKind: gitCredentialKind, WorkspaceGitCredentialUsername: gitCredentialUsername, WorkspaceGitCredential: gitCredential, ModelBaseURL: modelBaseURL, ModelName: modelName, ModelAPIKey: modelAPIKey, MCPServers: bindings, Security: security, Network: network}, nil
+}
+
+// policyDocument reads the platform-wide policy.
+//
+// A site that never wrote one has no setting row, which is not a failure. A
+// stored document that no longer parses is logged and skipped rather than
+// blocking every spawn: the API validates it on the way in, so only a hand-edited
+// row can get here, and refusing to start anything would be a worse outcome than
+// running without a restriction nobody could read anyway.
+func (b *Builder) policyDocument(ctx context.Context) policy.Document {
+	var document policy.Document
+	switch err := b.store.Setting(ctx, policy.SettingKey, &document); {
+	case err == nil:
+	case errors.Is(err, store.ErrNotFound):
+	default:
+		b.logger.Error("policy document is unusable; runtimes are provisioned without it", "error", err)
+	}
+	return document
 }
 
 // runtimeEnvironment resolves the platform-wide files and variables every

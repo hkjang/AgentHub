@@ -37,6 +37,7 @@ const groups: NavGroup[] = [
   { label: '거버넌스', review: true, items: [{ to: '/reviews', label: '검토 · 승인', icon: ShieldCheck, keywords: 'review approval 승인 요청' }] },
   { label: '관리자', admin: true, items: [
     { to: '/admin/overview', label: '운영 현황', icon: Gauge, keywords: 'overview dashboard usage statistics 통계 사용량 현황 대시보드 비용' },
+    { to: '/admin/policy', label: '정책', icon: ShieldCheck, keywords: 'policy rule guardrail 정책 규칙 차단 허용 승인 거버넌스' },
     { to: '/admin/execution', label: '실행 제어', icon: Gauge, keywords: 'execution control pause worker retention cleanup 워커 중지 재개 회수 보관 정리' },
     { to: '/admin/operations', label: '로그 · 감사', icon: FileClock, keywords: 'control center operations log audit approval 로그 감사 승인 운영' },
     { to: '/admin/runtime-profiles', label: '런타임 프로파일', icon: Bot, keywords: 'runtime profile cpu memory 자원' },

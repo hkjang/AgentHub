@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/hkjang/AgentHub/internal/policy"
 )
 
 // The MCP egress gateway.
@@ -41,24 +43,53 @@ type mcpUpstream struct {
 	// route around.
 	ApprovalTools    []string `json:"approvalTools"`
 	ApprovalRequired bool     `json:"approvalRequired"`
+	// PolicyDenied and PolicyGated are patterns compiled from the platform-wide
+	// policy — the rules an agent's owner cannot change. They are patterns rather
+	// than names because the tool list is not known when a runtime is provisioned,
+	// and they are matched with the control plane's own matcher so both ends
+	// decide the same way.
+	PolicyDenied  []string `json:"policyDenied,omitempty"`
+	PolicyGated   []string `json:"policyGated,omitempty"`
+	PolicyDenyAll bool     `json:"policyDenyAll,omitempty"`
 }
 
 // needsApproval reports whether a call has to wait for a person.
 func (u mcpUpstream) needsApproval(tool string) bool {
-	return u.ApprovalRequired || contains(u.ApprovalTools, tool)
+	return u.ApprovalRequired || contains(u.ApprovalTools, tool) || policy.MatchTool(u.PolicyGated, u.Name, tool)
 }
 
 // permits reports whether a tool may be called.
+//
+// The platform's policy is checked first and separately: an agent's own allow
+// list is its owner's statement about what the agent needs, and it cannot widen
+// what the platform forbids.
 func (u mcpUpstream) permits(tool string) bool {
+	if u.PolicyDenyAll || policy.MatchTool(u.PolicyDenied, u.Name, tool) {
+		return false
+	}
 	switch u.Mode {
 	case "allow":
 		return contains(u.Tools, tool)
 	case "deny":
 		return !contains(u.Tools, tool)
 	default:
-		// No policy configured: the bundle binding is the only restriction.
+		// No per-agent policy configured: the bundle binding and the platform
+		// policy above are the only restrictions.
 		return true
 	}
+}
+
+// restricts reports whether anything at all limits what this agent may call, and
+// therefore whether the advertised tool list has to be filtered.
+func (u mcpUpstream) restricts() bool {
+	return u.Mode != "" || u.PolicyDenyAll || len(u.PolicyDenied) > 0
+}
+
+// deniedByPlatform separates the two refusals in the audit trail and in what the
+// agent is told: "your owner did not give you this" and "the platform forbids
+// this" need different follow-ups.
+func (u mcpUpstream) deniedByPlatform(tool string) bool {
+	return u.PolicyDenyAll || policy.MatchTool(u.PolicyDenied, u.Name, tool)
 }
 
 func contains(values []string, want string) bool {
@@ -130,8 +161,13 @@ func mcpGatewayWithApprover(upstreams []mcpUpstream, auditor func(entry map[stri
 		var request rpcRequest
 		_ = json.Unmarshal(body, &request)
 		if request.Method == "tools/call" && !upstream.permits(request.Params.Name) {
-			auditor(map[string]any{"server": name, "tool": request.Params.Name, "decision": "denied", "mode": upstream.Mode})
-			writeRPCError(w, request.ID, -32601, fmt.Sprintf("도구 %q 는 이 Agent의 MCP 도구 정책에 의해 차단되었습니다.", request.Params.Name))
+			platform := upstream.deniedByPlatform(request.Params.Name)
+			auditor(map[string]any{"server": name, "tool": request.Params.Name, "decision": "denied", "mode": upstream.Mode, "policy": platform})
+			message := fmt.Sprintf("도구 %q 는 이 Agent의 MCP 도구 정책에 의해 차단되었습니다.", request.Params.Name)
+			if platform {
+				message = fmt.Sprintf("도구 %q 는 플랫폼 정책에 의해 차단되었습니다. 관리자에게 문의하세요.", request.Params.Name)
+			}
+			writeRPCError(w, request.ID, -32601, message)
 			return
 		}
 		if request.Method == "tools/call" && upstream.needsApproval(request.Params.Name) {
@@ -194,7 +230,10 @@ func mcpGatewayWithApprover(upstreams []mcpUpstream, auditor func(entry map[stri
 		// tools/list is the only response the gateway rewrites: a tool the agent
 		// may not call must not be advertised to it either, or the model will
 		// keep planning around something that always fails.
-		if request.Method == "tools/list" && upstream.Mode != "" {
+		// A tool the agent may not call must not be advertised to it either, and
+		// that is as true of a platform denial as of the agent's own list — the
+		// model would otherwise keep planning around something that always fails.
+		if request.Method == "tools/list" && upstream.restricts() {
 			filterToolList(w, response, upstream)
 			return
 		}

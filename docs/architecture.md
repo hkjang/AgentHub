@@ -387,6 +387,50 @@ Directives are parsed from fenced blocks (`<<<KIND arg … >>>`). An unterminate
 block, an unknown kind, or prose that merely describes the protocol yields
 nothing, so an agent explaining how approvals work cannot request one.
 
+## Policy as code
+
+The controls were all real and all separate. An agent's MCP tools were an
+allow/deny list on that agent, owned by whoever owned the agent. High-risk
+approval was a global switch. Who could run what was ownership plus a role. Spend
+was a quota. Every one of them was configured on a different screen, and none of
+them could express the sentence a security review actually asks for — "this team
+may not call anything that writes" — because there was nowhere to write it down,
+and nowhere to check afterwards that it had been applied.
+
+`internal/policy` is one document: an ordered list of rules, each with an effect
+(allow, deny, require approval), the actions it decides, and selectors for who is
+acting (role, user), what is being acted on (agent, MCP server, tool) and what the
+request carries (data classes, which the content scanner fills in). Every selector
+left empty matches everything; a rule matches when all of its non-empty selectors
+match. Matching is exact and case-insensitive with one wildcard, a trailing `*`,
+because a policy language nobody can predict is a policy nobody trusts.
+
+Rules are evaluated in order and the first match decides, like a firewall. That is
+not the most expressive arrangement — deny-overrides would be safer to reason
+about in the abstract — but it is the one an operator can read top to bottom and
+predict, and it makes a narrow exception above a broad denial the obvious thing it
+looks like. The decision carries the rule that made it and every rule that would
+have matched, so "why did my new rule do nothing" is answerable without bisecting
+the document, and the console's simulator answers it against unsaved edits.
+
+Enforcement happens at three kinds of point. Task creation and runtime start are
+decided in the API, where the refusal carries the rule's own reason — a denial
+nobody can act on is a support ticket. Tool calls are decided in the Pod: the
+in-Pod egress gateway is the only place an agent cannot route around, so the
+rules for one agent and one server are compiled into its configuration when the
+runtime is provisioned. They compile to patterns rather than tool names, because
+the tool list is not known at provisioning time and a policy that covers only the
+tools we had heard of is not a policy. Both ends match with the same function
+from the same package, so they cannot drift. A tool the platform forbids is also
+stripped from the advertised list, and the refusal says the platform refused
+rather than the agent's own settings — different sentences with different
+follow-ups.
+
+Saving the policy pushes it to running runtimes the same way the runtime
+environment does, and every refusal is audited with the rule that caused it: a
+policy nobody can prove was applied is one that gets argued about after an
+incident rather than before one.
+
 ## MCP tool policy
 
 Binding a bundle decides which MCP servers an agent reaches, but a server is not

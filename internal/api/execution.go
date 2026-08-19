@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/hkjang/AgentHub/internal/execution"
+	"github.com/hkjang/AgentHub/internal/policy"
 	"github.com/hkjang/AgentHub/internal/quota"
 	"github.com/hkjang/AgentHub/internal/store"
 )
@@ -280,6 +281,15 @@ func (s *Server) enqueueTask(w http.ResponseWriter, r *http.Request, u store.Use
 	if agent.ModelEndpointID == nil || *agent.ModelEndpointID == "" {
 		writeError(w, http.StatusConflict, "model_not_bound", "이 Agent에는 Model Endpoint가 연결되어 있지 않아 자동 실행할 수 없습니다.")
 		return store.AgentTask{}, errors.New("model not bound")
+	}
+	// The platform policy decides before anything else does: a rule that says a
+	// role may not run an agent is not something an agent's own settings can
+	// answer for.
+	if refusal := policyRefusal(s.decide(r, u, policy.Request{
+		Action: policy.ActionTaskCreate, Agent: agent.Name, AgentID: agent.ID,
+	})); refusal != "" {
+		writeError(w, http.StatusForbidden, "policy_denied", refusal)
+		return store.AgentTask{}, errors.New("policy denied")
 	}
 	// An agent behind a promotion gate is refused here for the same reason: the
 	// answer will not change by waiting in the queue.

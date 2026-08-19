@@ -113,6 +113,14 @@ type MCPBinding struct {
 	// waits, so an agent that never asks for approval is gated anyway.
 	ApprovalTools []string
 	ApprovalAll   bool
+	// PolicyDenied and PolicyGated are patterns compiled from the platform-wide
+	// policy for this agent and this server. They are patterns rather than tool
+	// names because the tool list is not known until the server runs, and a rule
+	// has to cover the tools nobody has seen yet. PolicyDenyAll is a rule that
+	// named no tool at all.
+	PolicyDenied  []string
+	PolicyGated   []string
+	PolicyDenyAll bool
 }
 
 type SecurityProfile struct {

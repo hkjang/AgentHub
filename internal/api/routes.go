@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/hkjang/AgentHub/internal/policy"
 	"github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/runtimeenv"
 	"github.com/hkjang/AgentHub/internal/runtimespec"
@@ -165,6 +166,12 @@ func (s *Server) spawnAgent(w http.ResponseWriter, r *http.Request) {
 	agent, err := s.store.AgentByID(r.Context(), chi.URLParam(r, "id"), u.ID, u.Role == "admin")
 	if err != nil {
 		writeStoreError(w, err)
+		return
+	}
+	if refusal := policyRefusal(s.decide(r, u, policy.Request{
+		Action: policy.ActionRuntimeStart, Agent: agent.Name, AgentID: agent.ID,
+	})); refusal != "" {
+		writeError(w, http.StatusForbidden, "policy_denied", refusal)
 		return
 	}
 	var governance struct {

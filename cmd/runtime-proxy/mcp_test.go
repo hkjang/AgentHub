@@ -177,3 +177,76 @@ func TestLoadUpstreamsRejectsIncompleteEntries(t *testing.T) {
 		t.Fatalf("an empty config is not an error: %v %v", got, err)
 	}
 }
+
+// The platform's policy and the agent's own list are different statements. The
+// gateway is where both are enforced, and the one an agent's owner controls must
+// not be able to widen the one they do not.
+func TestPlatformPolicyOverridesTheAgentsOwnList(t *testing.T) {
+	var audited []map[string]any
+	upstream := mcpUpstream{
+		Name: "github", Upstream: "http://127.0.0.1:1/mcp",
+		// The owner allowed the tool explicitly...
+		Mode: "allow", Tools: []string{"delete_branch", "read_file"},
+		// ...and the platform forbids it.
+		PolicyDenied: []string{"github/delete_*"},
+	}
+	handler := mcpGatewayWithApprover([]mcpUpstream{upstream}, func(entry map[string]any) { audited = append(audited, entry) }, nil)
+
+	recorder := httptest.NewRecorder()
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_branch"}}`
+	handler.ServeHTTP(recorder, httptest.NewRequest("POST", "/mcp/github", strings.NewReader(body)))
+	if !strings.Contains(recorder.Body.String(), "플랫폼 정책") {
+		t.Fatalf("the refusal must name the platform: %s", recorder.Body.String())
+	}
+	if len(audited) != 1 || audited[0]["policy"] != true {
+		t.Fatalf("the audit entry must distinguish a platform denial: %#v", audited)
+	}
+
+	// What the owner allowed and the platform did not forbid still works.
+	audited = nil
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest("POST", "/mcp/github",
+		strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read_file"}}`))) //nolint:bodyclose
+	if strings.Contains(recorder.Body.String(), "차단") {
+		t.Fatalf("an unrestricted tool must not be refused: %s", recorder.Body.String())
+	}
+}
+
+// A rule that named no tool covers the tools nobody has seen yet, which is the
+// whole reason it is not compiled into a list of names.
+func TestPlatformPolicyCanCoverAnEntireServer(t *testing.T) {
+	handler := mcpGatewayWithApprover([]mcpUpstream{{
+		Name: "github", Upstream: "http://127.0.0.1:1/mcp", PolicyDenyAll: true,
+	}}, func(map[string]any) {}, nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest("POST", "/mcp/github",
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"a_tool_nobody_declared"}}`)))
+	if !strings.Contains(recorder.Body.String(), "플랫폼 정책") {
+		t.Fatalf("a server-wide denial must cover an unknown tool: %s", recorder.Body.String())
+	}
+}
+
+// A tool the agent may not call must not be advertised to it, or the model keeps
+// planning around something that always fails.
+func TestPlatformDeniedToolsAreNotAdvertised(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"read_file"},{"name":"delete_branch"}]}}`))
+	}))
+	defer server.Close()
+	// No per-agent policy at all: the platform's is the only restriction, and it
+	// still has to filter the list.
+	handler := mcpGatewayWithApprover([]mcpUpstream{{
+		Name: "github", Upstream: server.URL, PolicyDenied: []string{"delete_*"},
+	}}, func(map[string]any) {}, nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest("POST", "/mcp/github",
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)))
+	body := recorder.Body.String()
+	if strings.Contains(body, "delete_branch") {
+		t.Fatalf("a forbidden tool was advertised: %s", body)
+	}
+	if !strings.Contains(body, "read_file") {
+		t.Fatalf("the permitted tool disappeared: %s", body)
+	}
+}

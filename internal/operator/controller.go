@@ -159,11 +159,18 @@ type mcpToolPolicy struct {
 	// route around.
 	ApprovalTools    []string `json:"approvalTools"`
 	ApprovalRequired bool     `json:"approvalRequired"`
+	// PolicyDenied and PolicyGated are patterns compiled from the platform-wide
+	// policy. They travel beside the per-agent list rather than merged into it:
+	// "the platform forbids this" and "this agent was not given it" are different
+	// statements, and only one of them is the agent owner's to change.
+	PolicyDenied  []string `json:"policyDenied,omitempty"`
+	PolicyGated   []string `json:"policyGated,omitempty"`
+	PolicyDenyAll bool     `json:"policyDenyAll,omitempty"`
 }
 
 // gated reports whether this policy needs a decision for at least one tool.
 func (p *mcpToolPolicy) gated() bool {
-	return p != nil && (p.ApprovalRequired || len(p.ApprovalTools) > 0)
+	return p != nil && (p.ApprovalRequired || len(p.ApprovalTools) > 0 || len(p.PolicyGated) > 0)
 }
 
 type spec struct {
@@ -382,6 +389,9 @@ func mcpGatewayContainer(image, runtimeName, runtimeRef string, bindings []map[s
 		// server does.
 		ApprovalTools    []string `json:"approvalTools,omitempty"`
 		ApprovalRequired bool     `json:"approvalRequired,omitempty"`
+		PolicyDenied     []string `json:"policyDenied,omitempty"`
+		PolicyGated      []string `json:"policyGated,omitempty"`
+		PolicyDenyAll    bool     `json:"policyDenyAll,omitempty"`
 	}
 	configs := []upstreamConfig{}
 	env := []corev1.EnvVar{}
@@ -394,6 +404,7 @@ func mcpGatewayContainer(image, runtimeName, runtimeRef string, bindings []map[s
 			Name: safeLabel(fmt.Sprint(binding["name"])), Upstream: fmt.Sprint(binding["upstream"]),
 			Mode: policy.Mode, Tools: policy.Tools,
 			ApprovalTools: policy.ApprovalTools, ApprovalRequired: policy.ApprovalRequired,
+			PolicyDenied: policy.PolicyDenied, PolicyGated: policy.PolicyGated, PolicyDenyAll: policy.PolicyDenyAll,
 		}
 		if entry.Tools == nil {
 			entry.Tools = []string{}
