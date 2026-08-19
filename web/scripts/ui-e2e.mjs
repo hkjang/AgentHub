@@ -30,6 +30,7 @@ const ROUTES = [
   ['/developer', /(시크릿|API)/],
   ['/admin/settings', /시스템 설정/],
   ['/admin/overview', /운영 현황/],
+  ['/admin/execution', /실행 제어/],
   ['/admin/operations', /로그 · 감사/],
   ['/admin/runtime-profiles', /런타임 프로파일/],
   ['/admin/runtime-images', /런타임 이미지/],

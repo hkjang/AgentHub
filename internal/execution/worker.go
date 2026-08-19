@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,6 +28,22 @@ type Worker struct {
 	orchestrator *Orchestrator
 	logger       *slog.Logger
 	id           string
+
+	// Hostname and Version describe this process in the worker list, so an
+	// operator can tell which node and which build is holding the queue.
+	Hostname string
+	Version  string
+
+	// pauseState caches the operational switch. It is read once per poll, and a
+	// short cache keeps a three-second poll from becoming a three-second query.
+	pauseMu    sync.Mutex
+	pausedUnil time.Time
+	pausedNow  bool
+
+	// running counts tasks actually executing. The slot channel cannot answer
+	// this: a slot is held while the worker asks the queue for work, so an idle
+	// worker would report itself busy.
+	running atomic.Int64
 
 	// Concurrency is the floor: the worker always offers at least this many
 	// slots. MaxConcurrency is the ceiling it may scale up to when the queue
@@ -67,6 +85,25 @@ func (w *Worker) Run(ctx context.Context) error {
 	scale := newScaler(slots, w.Concurrency, w.MaxConcurrency)
 	w.logger.Info("execution worker started", "worker", w.id,
 		"concurrency", w.Concurrency, "maxConcurrency", w.MaxConcurrency)
+	// Registering is best effort: a worker that cannot write its own row still
+	// drains the queue, and refusing to start over a bookkeeping table would turn
+	// a reporting feature into an outage.
+	if err := w.store.RegisterWorker(ctx, store.ExecutionWorker{
+		ID: w.id, Hostname: w.Hostname, Version: w.Version,
+		Concurrency: w.Concurrency, MaxConcurrency: w.MaxConcurrency,
+	}); err != nil {
+		w.logger.Warn("worker could not be registered", "worker", w.id, "error", err)
+	}
+	go w.heartbeat(ctx)
+	defer func() {
+		// Recorded on the way out so the list distinguishes a deployment from a
+		// crash. Its own context: the one that stopped us is already cancelled.
+		stop, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := w.store.StopWorker(stop, w.id); err != nil {
+			w.logger.Warn("worker stop could not be recorded", "worker", w.id, "error", err)
+		}
+	}()
 	if w.MaxConcurrency > w.Concurrency {
 		go w.autoscale(ctx, scale)
 	}
@@ -76,6 +113,16 @@ func (w *Worker) Run(ctx context.Context) error {
 			w.logger.Info("execution worker stopping", "worker", w.id)
 			return ctx.Err()
 		case slots <- struct{}{}:
+		}
+
+		// A paused plane finishes what it is running and claims nothing new, which
+		// is what makes an upgrade possible without stopping the deployment.
+		if w.paused(ctx) {
+			<-slots
+			if !sleep(ctx, w.PollInterval) {
+				return ctx.Err()
+			}
+			continue
 		}
 
 		task, err := w.store.ClaimAgentTask(ctx, w.id, w.Lease)
@@ -98,7 +145,8 @@ func (w *Worker) Run(ctx context.Context) error {
 		}
 
 		go func(task store.AgentTask) {
-			defer func() { <-slots }()
+			w.running.Add(1)
+			defer func() { w.running.Add(-1); <-slots }()
 			// A panic in one task must not take the worker down with it.
 			defer func() {
 				if recovered := recover(); recovered != nil {
@@ -188,6 +236,58 @@ func (w *Worker) execute(ctx context.Context, task store.AgentTask) {
 	}
 	w.publish(finish, task, eventType, map[string]any{"title": task.Title, "agentId": task.AgentID, "reason": outcome.Failure})
 	logger.Warn("task finished unsuccessfully", "status", status, "reason", outcome.Failure)
+}
+
+// heartbeat keeps this worker's row fresh.
+//
+// The row is what turns "no task is running" into "no worker is running": those
+// look identical from the queue alone, and only one of them is an incident.
+func (w *Worker) heartbeat(ctx context.Context) {
+	ticker := time.NewTicker(store.WorkerHeartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			status := store.WorkerRunning
+			if w.paused(ctx) {
+				status = store.WorkerPaused
+			}
+			if err := w.store.WorkerHeartbeat(ctx, w.id, int(w.running.Load()), status); err != nil && ctx.Err() == nil {
+				w.logger.Debug("worker heartbeat failed", "worker", w.id, "error", err)
+			}
+		}
+	}
+}
+
+// paused reports whether an administrator has stopped the execution plane.
+//
+// A failure to read the switch means the plane keeps running. Pausing is a
+// deliberate operator action, and inferring one from a query error would stop
+// every deployment whose database hiccuped.
+func (w *Worker) paused(ctx context.Context) bool {
+	w.pauseMu.Lock()
+	defer w.pauseMu.Unlock()
+	if time.Now().Before(w.pausedUnil) {
+		return w.pausedNow
+	}
+	var settings store.OperationsSettings
+	if err := w.store.Setting(ctx, store.OperationsSettingKey, &settings); err != nil {
+		w.pausedUnil = time.Now().Add(5 * time.Second)
+		w.pausedNow = false
+		return false
+	}
+	if settings.Paused != w.pausedNow {
+		if settings.Paused {
+			w.logger.Warn("execution is paused; no new tasks will be claimed", "worker", w.id, "reason", settings.Reason)
+		} else {
+			w.logger.Info("execution resumed", "worker", w.id)
+		}
+	}
+	w.pausedNow = settings.Paused
+	w.pausedUnil = time.Now().Add(5 * time.Second)
+	return w.pausedNow
 }
 
 // promoted enforces the agent's promotion gate.

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -37,9 +38,28 @@ type kubernetesSettings struct {
 	CRDEnabled bool   `json:"crdEnabled"`
 }
 
-type KubernetesSpawner struct{ store *store.Store }
+type KubernetesSpawner struct {
+	store *store.Store
+	// log is where cluster-level surprises are reported. It is optional so the
+	// spawner can be constructed in tests without one.
+	log *slog.Logger
+}
 
 func NewKubernetesSpawner(db *store.Store) *KubernetesSpawner { return &KubernetesSpawner{store: db} }
+
+// WithLogger attaches a logger, so a cluster that silently drops part of what the
+// platform writes says so in the process log rather than nowhere.
+func (k *KubernetesSpawner) WithLogger(logger *slog.Logger) *KubernetesSpawner {
+	k.log = logger
+	return k
+}
+
+func (k *KubernetesSpawner) logger() *slog.Logger {
+	if k.log != nil {
+		return k.log
+	}
+	return slog.Default()
+}
 
 func (k *KubernetesSpawner) clients(ctx context.Context) (dynamic.Interface, kubernetes.Interface, kubernetesSettings, error) {
 	var settings kubernetesSettings
@@ -124,6 +144,15 @@ func (k *KubernetesSpawner) object(spec Spec) *unstructured.Unstructured {
 	}
 	return &unstructured.Unstructured{Object: object}
 }
+
+// Object renders the AgentRuntime object a spec produces.
+//
+// It is exported so the operator's tests can take what this package writes and
+// parse it with what the operator reads. That seam is where a break in the
+// platform-wide runtime environment would be invisible: the setting saves, the
+// object is written, the operator silently sees no files, and the feature looks
+// like it does not exist.
+func Object(spec Spec) *unstructured.Unstructured { return (&KubernetesSpawner{}).object(spec) }
 
 // provisioningObject renders the platform-wide runtime environment. It is left
 // off the object entirely when nothing is configured, so a site that never
@@ -258,7 +287,8 @@ func (k *KubernetesSpawner) Spawn(ctx context.Context, spec Spec) error {
 	} else {
 		secretCreated = true
 	}
-	if _, err = client.Resource(runtimeGVR).Namespace(namespace).Create(ctx, k.object(spec), metav1.CreateOptions{}); err != nil {
+	stored, err := client.Resource(runtimeGVR).Namespace(namespace).Create(ctx, k.object(spec), metav1.CreateOptions{})
+	if err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			return k.setDesired(ctx, spec, "Running")
 		}
@@ -266,6 +296,13 @@ func (k *KubernetesSpawner) Spawn(ctx context.Context, spec Spec) error {
 			_ = coreClient.CoreV1().Secrets(namespace).Delete(ctx, spec.Runtime.CRDName, metav1.DeleteOptions{})
 		}
 		return err
+	}
+	// A pruned environment is worth saying out loud, but not worth refusing to
+	// start a runtime over: the agent runs, it just runs without the files an
+	// administrator declared.
+	if provisioningPruned(spec, stored) {
+		k.logger().Warn("the AgentRuntime CRD dropped the runtime environment; apply deploy/kubernetes/crd.yaml",
+			"runtime", spec.Runtime.CRDName)
 	}
 	return nil
 }
@@ -349,6 +386,77 @@ func (k *KubernetesSpawner) Restart(ctx context.Context, spec Spec) error {
 	_, err = client.Resource(runtimeGVR).Namespace(namespace).Update(ctx, object, metav1.UpdateOptions{})
 	return err
 }
+
+// Sync rewrites an existing runtime's object from the spec, leaving its desired
+// state alone.
+//
+// This is how a change to the platform-wide runtime environment reaches Pods that
+// are already running: the object carries a copy of the files and variables, so
+// nothing an administrator saves takes effect until it is written again. A
+// runtime that does not exist yet needs nothing — it will be created from the
+// current settings whenever it is started.
+func (k *KubernetesSpawner) Sync(ctx context.Context, spec Spec) error {
+	ensureCRDName(&spec)
+	if spec.Runtime.CRDName == "" {
+		return nil
+	}
+	client, _, settings, err := k.clients(ctx)
+	if err != nil {
+		return err
+	}
+	namespace := settings.Namespace
+	if namespace == "" {
+		namespace = "agent-runtime-dev"
+	}
+	object, err := client.Resource(runtimeGVR).Namespace(namespace).Get(ctx, spec.Runtime.CRDName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := syncSpec(object, k.object(spec)); err != nil {
+		return err
+	}
+	stored, err := client.Resource(runtimeGVR).Namespace(namespace).Update(ctx, object, metav1.UpdateOptions{})
+	if err != nil {
+		return err
+	}
+	// The API server prunes fields a CRD's schema does not declare, without
+	// saying so. Checking what came back costs nothing — Update already returns
+	// the stored object — and it is the difference between "the cluster is a
+	// version behind" and "this feature does not work".
+	if provisioningPruned(spec, stored) {
+		return ErrProvisioningUnsupported
+	}
+	return nil
+}
+
+// provisioningPruned reports whether the environment this spec carries survived
+// being written.
+func provisioningPruned(spec Spec, stored *unstructured.Unstructured) bool {
+	if provisioningObject(spec) == nil || stored == nil {
+		return false
+	}
+	_, found, err := unstructured.NestedMap(stored.Object, "spec", "provisioning")
+	return err == nil && !found
+}
+
+// syncSpec replaces an object's spec with a freshly rendered one while keeping
+// the desired state that is already on it.
+//
+// The distinction is the whole safety of a sync: pushing a setting to every
+// runtime must not start the ones somebody stopped, and must not stop the ones
+// that are running.
+func syncSpec(existing, fresh *unstructured.Unstructured) error {
+	desired, _, _ := unstructured.NestedString(existing.Object, "spec", "lifecycle", "desiredState")
+	existing.Object["spec"] = fresh.Object["spec"]
+	if desired == "" {
+		return nil
+	}
+	return unstructured.SetNestedField(existing.Object, desired, "spec", "lifecycle", "desiredState")
+}
+
 func (k *KubernetesSpawner) Delete(ctx context.Context, spec Spec) error {
 	ensureCRDName(&spec)
 	if spec.Runtime.CRDName == "" {

@@ -55,7 +55,11 @@ try {
     }, path)
   const get = (path) => call('GET', path)
   const post = (path, body) => call('POST', path, body)
+  const put = (path, body) => call('PUT', path, body)
 
+  // Labels carry a run marker so a pause reason or a task title from this run is
+  // distinguishable from one left by a previous run against the same deployment.
+  const stamp = Date.now().toString(36)
   const overview = (await get('/api/v1/admin/overview?days=7')).body
   check('운영 현황 응답', Boolean(overview?.execution && overview?.spend && overview?.users), Object.keys(overview ?? {}).join(','))
 
@@ -133,6 +137,88 @@ try {
   check('내려받기도 감사에 남음', (afterExport?.items ?? []).some((item) => item.action === 'admin.audit.export' || item.action === 'admin.usage.export'),
     (afterExport?.items ?? []).map((i) => i.action).join(','))
 
+  // --- Operating the plane ---
+  //
+  // The overview can say a queue has no worker behind it and that events were
+  // not delivered; these are the actions those findings ask for.
+  const execution = (await get('/api/v1/admin/execution')).body
+  check('실행 상태 응답', typeof execution?.paused === 'boolean' && Array.isArray(execution?.workers),
+    `paused=${execution?.paused} workers=${(execution?.workers ?? []).length}`)
+  check('워커 하트비트 주기 공개', execution.heartbeatSeconds > 0 && execution.staleAfterSeconds > execution.heartbeatSeconds,
+    `${execution.heartbeatSeconds}/${execution.staleAfterSeconds}`)
+
+  const paused = await post('/api/v1/admin/execution/pause', { paused: true, reason: `점검 ${stamp}` })
+  check('실행 중지', paused.status === 200 && paused.body?.paused === true, `HTTP ${paused.status}`)
+  // The people whose work stopped moving are not administrators, so the pause
+  // reaches every signed-in user.
+  const capabilities = (await get('/api/v1/capabilities')).body
+  check('중지 상태가 사용자에게 보임', capabilities?.executionPaused === true && capabilities.executionPausedReason === `점검 ${stamp}`,
+    `${capabilities?.executionPaused} ${capabilities?.executionPausedReason}`)
+  // Queueing continues while paused: losing the work that arrived during an
+  // upgrade would be worse than running it late.
+  const duringPause = await post('/api/v1/tasks', { agentId: agents[0].id, title: `중지 중 ${stamp}`, input: '확인' })
+  check('중지 중에도 작업 등록은 가능', duringPause.status === 202 || duringPause.status === 201 || duringPause.status === 409,
+    `HTTP ${duringPause.status}`)
+  const resumed = await post('/api/v1/admin/execution/pause', { paused: false })
+  check('실행 재개', resumed.status === 200 && resumed.body?.paused === false)
+  check('재개하면 사용자 화면에서도 사라짐', (await get('/api/v1/capabilities')).body?.executionPaused === false)
+
+  const reclaimed = await post('/api/v1/admin/execution/reclaim', {})
+  check('멈춘 작업 회수 호출', reclaimed.status === 200 && typeof reclaimed.body?.reclaimed === 'number', `HTTP ${reclaimed.status}`)
+
+  // Only the two terminal failures may be recovered in bulk.
+  check('완료된 작업은 일괄 재실행 불가', (await post('/api/v1/admin/execution/requeue', { status: 'completed' })).status === 400)
+  check('취소된 작업도 불가', (await post('/api/v1/admin/execution/requeue', { status: 'cancelled' })).status === 400)
+  const requeued = await post('/api/v1/admin/execution/requeue', { status: 'dead_letter', sinceHours: 24 })
+  check('처리 불가 작업 일괄 재실행', requeued.status === 200 && typeof requeued.body?.requeued === 'number', `HTTP ${requeued.status}`)
+
+  const redelivered = await post('/api/v1/admin/execution/events/redeliver', {})
+  check('이벤트 재배달 호출', redelivered.status === 200 && typeof redelivered.body?.redelivered === 'number')
+
+  // Retention deletes history that cannot be reconstructed, so the floors matter
+  // more than the feature.
+  check('감사 보관 하한 거절', (await post('/api/v1/admin/execution/cleanup', { auditDays: 3 })).status === 400)
+  check('실행 기록 보관 하한 거절', (await post('/api/v1/admin/execution/cleanup', { runDays: 1 })).status === 400)
+  const dryRun = await post('/api/v1/admin/execution/cleanup', { taskDays: 7, runDays: 7, eventDays: 3, auditDays: 30 })
+  check('정리 미리보기는 삭제하지 않음', dryRun.status === 200 && dryRun.body?.dryRun === true, `HTTP ${dryRun.status}`)
+  const auditBefore = (await get('/api/v1/admin/audit?limit=1')).body?.total
+  await post('/api/v1/admin/execution/cleanup', { auditDays: 3650 })
+  check('미리보기 후에도 감사 로그가 그대로', (await get('/api/v1/admin/audit?limit=1')).body?.total >= auditBefore,
+    `${auditBefore}`)
+  const retention = await put('/api/v1/admin/execution/retention', { taskDays: 30, runDays: 30, eventDays: 7, auditDays: 365 })
+  check('보관 기간 저장', retention.status === 200 && retention.body?.auditDays === 365, `HTTP ${retention.status}`)
+  check('보관 기간이 상태에 반영', (await get('/api/v1/admin/execution')).body?.retention?.auditDays === 365)
+  await put('/api/v1/admin/execution/retention', { taskDays: 0, runDays: 0, eventDays: 0, auditDays: 0 })
+
+  // The platform-wide runtime environment is copied into each runtime's object,
+  // so saving it has to push the change out — otherwise "저장했습니다" means
+  // nothing changes until somebody restarts every runtime by hand.
+  const environment = await put('/api/v1/admin/settings/runtimeEnvironment', {
+    value: {
+      files: [{ path: '/etc/pip.conf', content: `[global]\nindex-url = https://nexus.local/simple\n`, mode: '0644', description: `e2e ${stamp}` }],
+      variables: [{ name: 'PIP_INDEX_URL', value: 'https://nexus.local/simple' }],
+    },
+  })
+  check('런타임 환경 저장', environment.status === 200 && environment.body?.saved === true, `HTTP ${environment.status}`)
+  const push = environment.body?.runtimeEnvironment
+  check('저장이 기존 런타임에 적용을 시도함', push && typeof push.applied === 'number' && typeof push.message === 'string',
+    JSON.stringify(push))
+  check('적용 결과를 사람이 읽을 수 있게 설명함', /적용|재시작|Kubernetes|CRD/.test(push?.message ?? ''), push?.message)
+  const storedEnvironment = (await get('/api/v1/admin/settings')).body?.runtimeEnvironment
+  check('설정이 그대로 저장됨', storedEnvironment?.files?.[0]?.path === '/etc/pip.conf' && /nexus\.local/.test(storedEnvironment.files[0].content),
+    JSON.stringify(storedEnvironment?.files?.[0] ?? {}))
+  // Paths the platform owns are refused, because a file dropped by the operator
+  // would look exactly like one that was applied.
+  const refused = await put('/api/v1/admin/settings/runtimeEnvironment', {
+    value: { files: [{ path: '/etc/agenthub/runtime.json', content: 'x' }], variables: [] },
+  })
+  check('플랫폼 경로는 거절', refused.status === 400, `HTTP ${refused.status}`)
+  await put('/api/v1/admin/settings/runtimeEnvironment', { value: storedEnvironment ?? { files: [], variables: [] } })
+
+  const workers = (await get('/api/v1/admin/workers')).body
+  check('워커 목록과 용량', Array.isArray(workers?.items) && typeof workers?.capacity === 'number',
+    `${(workers?.items ?? []).length} workers, capacity ${workers?.capacity}`)
+
   // The console has to render all of it, since that is where it is read.
   await page.goto(`${baseURL}/admin/overview`, { waitUntil: 'networkidle' })
   await page.getByRole('heading', { name: '운영 현황' }).waitFor({ timeout: 15000 })
@@ -153,6 +239,14 @@ try {
   const rowsAfter = await page.locator('.table-panel tbody tr').count()
   check('필터가 표를 좁힘', rowsAfter <= rowsBefore && rowsAfter === Math.min(promoteOnly.total, 50), `${rowsBefore} → ${rowsAfter}`)
   check('페이지 요약 표시', /건 중/.test(await page.locator('.audit-pager span').innerText()))
+
+  await page.goto(`${baseURL}/admin/execution`, { waitUntil: 'networkidle' })
+  await page.getByRole('heading', { name: '실행 제어' }).waitFor({ timeout: 15000 })
+  check('실행 스위치 표시', await page.locator('.switch-panel').isVisible())
+  check('워커 표 표시', (await page.locator('.panel table').count()) >= 1)
+  check('보관 기간 입력 4개', (await page.locator('.retention-panel input[type=number]').count()) === 4,
+    String(await page.locator('.retention-panel input[type=number]').count()))
+  check('사용법 안내 제공', await page.getByText('이 화면은 이럴 때 씁니다').isVisible())
 
   await page.goto(`${baseURL}/admin/users`, { waitUntil: 'networkidle' })
   await page.getByRole('heading', { name: '사용자 · 팀' }).waitFor({ timeout: 10000 })

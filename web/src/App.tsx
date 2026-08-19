@@ -10,6 +10,7 @@ import { Agents } from './pages/Agents'
 import { Workspaces } from './pages/Workspaces'
 import { Developer } from './pages/Developer'
 import { AdminSettings } from './pages/AdminSettings'
+import { AdminExecution } from './pages/AdminExecution'
 import { AdminInsights } from './pages/AdminInsights'
 import { AdminOperations } from './pages/AdminOperations'
 import { Reviews } from './pages/Reviews'
@@ -23,7 +24,7 @@ import { Tasks } from './pages/Tasks'
 import { Workflows } from './pages/Workflows'
 import { Evaluation } from './pages/Evaluation'
 
-export type Capabilities = { teamApprovalEnabled: boolean; highRiskToolApproval: boolean; kubernetesEnabled: boolean; mcpProtocolVersion: string }
+export type Capabilities = { teamApprovalEnabled: boolean; highRiskToolApproval: boolean; kubernetesEnabled: boolean; mcpProtocolVersion: string; executionPaused?: boolean; executionPausedReason?: string }
 type AuthContextValue = { user: User; version: Version; capabilities: Capabilities; refresh: () => Promise<void>; logout: () => Promise<void> }
 const AuthContext = createContext<AuthContextValue | null>(null)
 export function useAuth() { const value = useContext(AuthContext); if (!value) throw new Error('AuthContext missing'); return value }
@@ -80,6 +81,7 @@ export function App() {
         <Route path="developer" element={<Developer />} />
         <Route path="admin/settings" element={<AdminSettings />} />
         <Route path="admin/overview" element={<AdminInsights />} />
+        <Route path="admin/execution" element={<AdminExecution />} />
         <Route path="admin/operations" element={<AdminOperations />} />
         <Route path="admin/runtime-profiles" element={<AdminResources kind="profiles" />} />
         <Route path="admin/runtime-images" element={<AdminResources kind="images" />} />

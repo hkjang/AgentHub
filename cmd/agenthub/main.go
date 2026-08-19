@@ -62,7 +62,7 @@ func run() error {
 	tracing := telemetry.Install(ctx, db, logger, "api", buildinfo.Version)
 	defer func() { _ = tracing.Shutdown(context.WithoutCancel(ctx)) }()
 
-	spawner := appRuntime.NewKubernetesSpawner(db)
+	spawner := appRuntime.NewKubernetesSpawner(db).WithLogger(logger)
 	apiServer := api.New(db, cipher, logger, ring, spawner, os.DirFS("web/dist"))
 	apiServer.RunBackground(ctx)
 	handler := apiServer.Handler()

@@ -114,6 +114,22 @@ type PlatformOverview struct {
 	// A queue depth alone does not distinguish a busy minute from a stopped
 	// worker; this does.
 	OldestQueuedSeconds int64 `json:"oldestQueuedSeconds"`
+	// Workers is what the execution plane is made of, from the registry rather
+	// than from whoever happens to hold a task: a worker sitting idle is running,
+	// and the queue cannot tell the difference.
+	Workers PlatformWorkers `json:"workers"`
+}
+
+// PlatformWorkers is the shape of the worker fleet.
+type PlatformWorkers struct {
+	// Live are heartbeating and able to claim; Stale stopped reporting without
+	// shutting down, which is the signature of a crash.
+	Live    int `json:"live"`
+	Stale   int `json:"stale"`
+	Paused  int `json:"paused"`
+	Stopped int `json:"stopped"`
+	// Capacity is the concurrency the live workers add up to.
+	Capacity int `json:"capacity"`
 }
 
 // PlatformOverview aggregates the deployment over one window.
@@ -175,6 +191,25 @@ func (s *Store) PlatformOverview(ctx context.Context, from, to time.Time) (Platf
 		FROM platform_events`, from).Scan(&overview.Events.Pending, &overview.Events.Retrying,
 		&overview.Events.DeadLetter, &overview.Events.Delivered, &overview.Events.OldestPendingSeconds); err != nil {
 		return PlatformOverview{}, err
+	}
+
+	workers, err := s.Workers(ctx)
+	if err != nil {
+		return PlatformOverview{}, err
+	}
+	for _, worker := range workers {
+		switch {
+		case worker.Status == WorkerStopped:
+			overview.Workers.Stopped++
+		case worker.Stale:
+			overview.Workers.Stale++
+		case worker.Status == WorkerPaused:
+			overview.Workers.Paused++
+			overview.Workers.Capacity += worker.MaxConcurrency
+		default:
+			overview.Workers.Live++
+			overview.Workers.Capacity += worker.MaxConcurrency
+		}
 	}
 
 	spend, err := s.PlatformSpend(ctx, from, to, 8)

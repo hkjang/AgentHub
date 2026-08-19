@@ -25,6 +25,8 @@ type Overview = {
   spend: { currency: string; inputTokens: number; outputTokens: number; cost: number; unpricedTokens: number; users: SpendRow[]; agents: SpendRow[]; models: SpendRow[]; daily: UsagePoint[] }
   oldestQueuedSeconds: number
   quota: { windowDays: number; maxRunning: number; tokenBudget: number; costBudget: number }
+  paused: { paused: boolean; reason: string; by: string; at?: string }
+  workers: { live: number; stale: number; paused: number; stopped: number; capacity: number }
 }
 
 const WINDOWS = [{ days: 1, label: '24시간' }, { days: 7, label: '7일' }, { days: 30, label: '30일' }]
@@ -58,12 +60,15 @@ function attention(overview: Overview) {
   const items: { text: string; to: string; level: 'warn' | 'danger' }[] = []
   const { execution, events, agents, queue } = overview
   if (execution.blocked > 0) items.push({ level: 'warn', to: '/tasks', text: `작업 ${execution.blocked}건이 운영 승격을 기다리고 있습니다. 정의를 승격하면 자동으로 실행됩니다.` })
-  if (execution.deadLetter > 0) items.push({ level: 'danger', to: '/tasks', text: `작업 ${execution.deadLetter}건이 재시도를 모두 소진했습니다.` })
+  if (execution.deadLetter > 0) items.push({ level: 'danger', to: '/admin/execution', text: `작업 ${execution.deadLetter}건이 재시도를 모두 소진했습니다. 원인을 고친 뒤 일괄 재실행할 수 있습니다.` })
+  if (overview.workers.stale > 0) items.push({ level: 'danger', to: '/admin/execution', text: `워커 ${overview.workers.stale}개가 응답하지 않습니다. 들고 있던 작업은 회수 대상입니다.` })
   if (agents.unpromoted > 0) items.push({ level: 'warn', to: '/agents', text: `승격 게이트가 켜진 에이전트 ${agents.unpromoted}개의 현재 정의가 승격되지 않았습니다.` })
-  if (events.deadLetter > 0) items.push({ level: 'danger', to: '/admin/operations', text: `이벤트 ${events.deadLetter}건을 배달하지 못했습니다.` })
+  if (events.deadLetter > 0) items.push({ level: 'danger', to: '/admin/execution', text: `이벤트 ${events.deadLetter}건을 배달하지 못했습니다. 재배달할 수 있습니다.` })
   if (events.pending + events.retrying > 20) items.push({ level: 'warn', to: '/admin/operations', text: `배달 대기 이벤트가 ${number(events.pending + events.retrying)}건 쌓였습니다.` })
   // A queue with no worker is the failure that looks like nothing happening.
-  if (queue.ready > 0 && queue.workers === 0) items.push({ level: 'danger', to: '/tasks', text: `실행 대기 작업 ${queue.ready}건이 있지만 동작 중인 워커가 없습니다.` })
+  // The registry answers this, not the queue: a worker sitting idle is running,
+  // and "nobody holds a task" cannot tell the difference.
+  if (queue.ready > 0 && overview.workers.live === 0 && !overview.paused.paused) items.push({ level: 'danger', to: '/admin/execution', text: `실행 대기 작업 ${queue.ready}건이 있지만 동작 중인 워커가 없습니다.` })
   else if (overview.oldestQueuedSeconds > 900) items.push({ level: 'warn', to: '/tasks', text: `가장 오래된 대기 작업이 ${waited(overview.oldestQueuedSeconds)}째 기다리고 있습니다.` })
   if (agents.failed > 0) items.push({ level: 'danger', to: '/runtime', text: `런타임 ${agents.failed}개가 실패 상태입니다.` })
   if (overview.spend.unpricedTokens > 0) items.push({ level: 'warn', to: '/admin/models', text: `단가가 없는 모델에서 ${number(overview.spend.unpricedTokens)} 토큰을 사용해 금액에 반영되지 않았습니다.` })
@@ -117,11 +122,14 @@ export function AdminInsights() {
         <button className="button ghost" disabled={loading} onClick={() => void load()}><RefreshCw size={16} />새로고침</button>
       </>} />
     {error && <ErrorBanner message={error} onClose={() => setError('')} />}
+    {overview.paused.paused && <Link to="/admin/execution" className="attention-item danger" style={{ marginBottom: 14 }}>
+      <ShieldAlert size={16} /><span>실행이 중지되어 있습니다{overview.paused.reason ? ` — ${overview.paused.reason}` : ''}{overview.paused.by ? ` (${overview.paused.by})` : ''}. 대기 중인 작업은 재개할 때까지 실행되지 않습니다.</span>
+    </Link>}
 
     <section className="kpi-row">
       <article><span>실행 성공률</span><strong>{execution.completed + execution.failed + execution.deadLetter > 0 ? `${execution.successRate.toFixed(1)}%` : '—'}</strong><small>완료 {number(execution.completed)} · 실패 {number(execution.failed + execution.deadLetter)}</small></article>
       <article><span>실행 소요</span><strong>{duration(execution.medianDurationMs)}</strong><small>중앙값 · p95 {duration(execution.p95DurationMs)}</small></article>
-      <article><span>대기열</span><strong>{number(queue.ready)}</strong><small>실행 중 {number(queue.running)} · 워커 {number(queue.workers)}</small></article>
+      <article><span>대기열</span><strong>{number(queue.ready)}</strong><small>실행 중 {number(queue.running)} · 워커 {number(overview.workers.live)}{overview.workers.stale > 0 ? ` (응답 없음 ${number(overview.workers.stale)})` : ''}</small></article>
       <article><span>대기 시간</span><strong>{waited(overview.oldestQueuedSeconds)}</strong><small>가장 오래 기다린 작업</small></article>
       <article><span>토큰</span><strong>{number(spend.inputTokens + spend.outputTokens)}</strong><small>입력 {number(spend.inputTokens)} · 출력 {number(spend.outputTokens)}</small></article>
       <article><span>비용</span><strong>{money(spend.cost, spend.currency)}</strong><small>{spend.unpricedTokens > 0 ? `미산정 ${number(spend.unpricedTokens)} 토큰` : '전 구간 단가 적용'}</small></article>
@@ -174,7 +182,7 @@ export function AdminInsights() {
           <div><dt>배달 실패</dt><dd>{number(events.deadLetter)}</dd></div>
           <div><dt>가장 오래 대기</dt><dd>{waited(events.oldestPendingSeconds)}</dd></div>
         </dl>
-        <Link className="insight-link" to="/admin/operations">감사 · 로그 열기</Link>
+        <Link className="insight-link" to="/admin/execution">재배달 · 실행 제어 열기</Link>
       </article>
     </section>
 

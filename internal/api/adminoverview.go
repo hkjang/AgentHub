@@ -79,14 +79,19 @@ func (s *Server) adminOverview(w http.ResponseWriter, r *http.Request) {
 	if policyErr != nil {
 		s.logger.Warn("execution quota policy is unreadable", "error", policyErr)
 	}
+	operations := s.operationsSettings(r)
 	writeJSON(w, http.StatusOK, struct {
 		store.PlatformOverview
-		Quota any `json:"quota"`
+		Quota  any `json:"quota"`
+		Paused any `json:"paused"`
 	}{PlatformOverview: overview, Quota: map[string]any{
 		"windowDays":  int(store.QuotaWindow.Hours() / 24),
 		"maxRunning":  policy.MaxRunningTasksPerUser,
 		"tokenBudget": policy.TokenBudgetPerUser,
 		"costBudget":  policy.CostBudgetPerUser,
+	}, Paused: map[string]any{
+		"paused": operations.Paused, "reason": operations.Reason,
+		"by": operations.PausedBy, "at": operations.PausedAt,
 	}})
 }
 

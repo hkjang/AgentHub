@@ -71,9 +71,18 @@ func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 	var kubernetes struct {
 		Enabled bool `json:"enabled"`
 	}
+	// The pause is here rather than only in the admin API because the people whose
+	// work has stopped moving are not administrators: a queue that goes quiet with
+	// no explanation is indistinguishable from a broken one.
+	var operations store.OperationsSettings
 	_ = s.store.Setting(r.Context(), "governance", &governance)
 	_ = s.store.Setting(r.Context(), "kubernetes", &kubernetes)
-	writeJSON(w, http.StatusOK, map[string]any{"teamApprovalEnabled": governance.TeamApprovalEnabled, "highRiskToolApproval": governance.HighRiskToolApproval, "kubernetesEnabled": kubernetes.Enabled, "mcpProtocolVersion": currentMCPVersion})
+	_ = s.store.Setting(r.Context(), store.OperationsSettingKey, &operations)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"teamApprovalEnabled": governance.TeamApprovalEnabled, "highRiskToolApproval": governance.HighRiskToolApproval,
+		"kubernetesEnabled": kubernetes.Enabled, "mcpProtocolVersion": currentMCPVersion,
+		"executionPaused": operations.Paused, "executionPausedReason": operations.Reason,
+	})
 }
 
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
@@ -1301,8 +1310,20 @@ func (s *Server) putAdminSetting(w http.ResponseWriter, r *http.Request) {
 	if key == "sessionGateway" {
 		s.invalidateSessionGatewaySettings()
 	}
+	response := map[string]any{"saved": true}
+	if key == runtimeenv.SettingKey {
+		// Each runtime object carries a copy of these files and variables, so the
+		// setting alone changes nothing that is already running. Pushing it here is
+		// what makes "저장" mean what an administrator reads it to mean.
+		sync, cancel := context.WithTimeout(r.Context(), runtimeEnvironmentSync)
+		pushed := s.syncRuntimeEnvironment(sync)
+		cancel()
+		response["runtimeEnvironment"] = runtimeEnvironmentApplied(pushed)
+		s.logger.Info("runtime environment pushed to existing runtimes",
+			"applied", pushed.applied, "skipped", pushed.skipped, "failed", pushed.failed, "crdOutdated", pushed.pruned)
+	}
 	s.store.Audit(r.Context(), &u, "settings.update", "setting", key, "success", clientIP(r), map[string]any{"keys": mapKeys(input.Value)})
-	writeJSON(w, 200, map[string]any{"saved": true})
+	writeJSON(w, 200, response)
 }
 func (s *Server) validateSetting(r *http.Request, key string, value map[string]any, secret *string) error {
 	stringValue := func(name string) string { v, _ := value[name].(string); return strings.TrimSpace(v) }

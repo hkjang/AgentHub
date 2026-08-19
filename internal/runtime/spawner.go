@@ -152,6 +152,12 @@ type SnapshotSpec struct {
 
 type Spawner interface {
 	Spawn(context.Context, Spec) error
+	// Sync re-renders a runtime's object from the spec without changing whether
+	// it is meant to be running. It exists because the platform-wide runtime
+	// environment is copied into every runtime's object when it is written: an
+	// administrator who adds /etc/pip.conf changes the setting, and until the
+	// object is written again the Pods carry the old one.
+	Sync(context.Context, Spec) error
 	Start(context.Context, Spec) error
 	Stop(context.Context, Spec) error
 	Restart(context.Context, Spec) error
@@ -163,9 +169,20 @@ type Spawner interface {
 	SnapshotStatus(context.Context, SnapshotSpec) (string, int64, error)
 }
 
+// ErrProvisioningUnsupported means the cluster's AgentRuntime definition is
+// older than this control plane: the API server accepted the object and silently
+// dropped the platform-wide runtime environment from it, because a CRD prunes
+// fields its schema does not declare.
+//
+// It has its own error because the symptom is otherwise indistinguishable from
+// the feature not working — the setting saves, the object is written, and no file
+// ever reaches a Pod.
+var ErrProvisioningUnsupported = errors.New("cluster의 AgentRuntime CRD가 오래되어 런타임 환경 설정이 저장되지 않습니다. deploy/kubernetes/crd.yaml을 다시 적용해 주세요")
+
 type DisabledSpawner struct{}
 
 func (DisabledSpawner) Spawn(context.Context, Spec) error   { return ErrNotConfigured }
+func (DisabledSpawner) Sync(context.Context, Spec) error    { return ErrNotConfigured }
 func (DisabledSpawner) Start(context.Context, Spec) error   { return ErrNotConfigured }
 func (DisabledSpawner) Stop(context.Context, Spec) error    { return ErrNotConfigured }
 func (DisabledSpawner) Restart(context.Context, Spec) error { return ErrNotConfigured }

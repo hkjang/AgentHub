@@ -13,8 +13,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 
+	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/runtimeenv"
 	"github.com/hkjang/AgentHub/internal/runtimetype"
+	"github.com/hkjang/AgentHub/internal/store"
 )
 
 func TestRuntimeConfigsCompileModelAndMCPBindings(t *testing.T) {
@@ -965,5 +967,77 @@ func TestProvisioningDropsWhatThePlatformOwns(t *testing.T) {
 	}
 	if seen["HTTPS_PROXY"] != "http://proxy.local:3128" {
 		t.Fatal("a legitimate variable was dropped alongside the reserved ones")
+	}
+}
+
+// The control plane writes the AgentRuntime object and the operator reads it.
+// Nothing checks that they agree, and a mismatch in that seam is invisible: an
+// administrator saves /etc/pip.conf, the object is written, the operator sees no
+// files, and every agent keeps failing to install anything. This test takes what
+// one side writes and hands it to the other.
+func TestProvisionedEnvironmentSurvivesTheControlPlaneToOperatorSeam(t *testing.T) {
+	written := appRuntime.Object(appRuntime.Spec{
+		Runtime: store.Runtime{CRDName: "seam-runtime"},
+		Agent:   store.Agent{ID: "agent-1", OwnerID: "user-1", RuntimeType: runtimetype.OpenCode},
+		ProvisionedFiles: []runtimeenv.File{{
+			Path: "/etc/pip.conf", Content: "[global]\nindex-url = https://nexus.local/simple\n", Mode: "0644",
+		}},
+		ProvisionedVariables: []runtimeenv.Variable{{Name: "PIP_INDEX_URL", Value: "https://nexus.local/simple"}},
+	})
+	raw, err := json.Marshal(written.Object["spec"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value spec
+	if err := json.Unmarshal(raw, &value); err != nil {
+		t.Fatalf("the operator cannot read what the control plane wrote: %v", err)
+	}
+	if len(value.Provisioning.Files) != 1 || value.Provisioning.Files[0].Path != "/etc/pip.conf" {
+		t.Fatalf("the provisioned files did not survive the seam: %#v", value.Provisioning)
+	}
+	if len(value.Provisioning.Env) != 1 || value.Provisioning.Env[0].Name != "PIP_INDEX_URL" {
+		t.Fatalf("the provisioned variables did not survive the seam: %#v", value.Provisioning)
+	}
+	// The declared mode has to survive too, or the file arrives unreadable to the
+	// agent that needs it.
+	if mode, err := value.Provisioning.Files[0].FileMode(); err != nil || mode != 0o644 {
+		t.Fatalf("mode did not survive: %v %v", mode, err)
+	}
+
+	// And the whole way through to the Pod.
+	client := fake.NewSimpleClientset()
+	controller := &Controller{client: client}
+	owner := &unstructured.Unstructured{}
+	owner.SetAPIVersion("agenthub.io/v1alpha1")
+	owner.SetKind("AgentRuntime")
+	owner.SetName("seam-runtime")
+	owner.SetNamespace("agent-runtime-dev")
+	owner.SetUID(types.UID("seam-owner"))
+	if err := controller.ensureProvisionedConfigMap(context.Background(), "agent-runtime-dev", "seam-runtime", value, owner); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.ensureStatefulSet(context.Background(), "agent-runtime-dev", "seam-runtime", "seam-workspace", value, owner); err != nil {
+		t.Fatal(err)
+	}
+	statefulSet, err := client.AppsV1().StatefulSets("agent-runtime-dev").Get(context.Background(), "seam-runtime", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configMap, err := client.CoreV1().ConfigMaps("agent-runtime-dev").Get(context.Background(), "seam-runtime-files", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("the file never reached a ConfigMap: %v", err)
+	}
+	if !strings.Contains(configMap.Data[runtimeenv.ConfigKey("/etc/pip.conf")], "nexus.local") {
+		t.Fatalf("the ConfigMap does not carry the content: %#v", configMap.Data)
+	}
+	agent := statefulSet.Spec.Template.Spec.Containers[0]
+	mounted := false
+	for _, mount := range agent.VolumeMounts {
+		if mount.MountPath == "/etc/pip.conf" && mount.ReadOnly {
+			mounted = true
+		}
+	}
+	if !mounted {
+		t.Fatalf("the agent container does not mount /etc/pip.conf: %#v", agent.VolumeMounts)
 	}
 }

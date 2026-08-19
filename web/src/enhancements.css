@@ -500,3 +500,27 @@
 .audit-pager button { display: inline-flex; align-items: center; gap: 4px; padding: 6px 11px; border: 1px solid #d7dee7; border-radius: 7px; background: #fff; color: #475467; font-size: 12px; font-weight: 600; }
 .audit-pager button:disabled { opacity: .45; }
 .audit-pager button:hover:not(:disabled) { border-color: #8065ec; color: #5d3ddd; }
+
+/* Execution control. The switch is the first thing on the page and has to read
+   as a state, not as a button somebody might have already pressed. */
+.switch-panel { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 18px; margin-bottom: 14px; }
+.switch-panel h3 { margin: 0 0 4px; font-size: 16px; color: #1f2a3a; }
+.switch-panel p { margin: 0; font-size: 13px; color: #667085; }
+.switch-panel.paused { border-color: #f5c9cf; background: #fef4f5; }
+.switch-panel.paused h3 { color: #a5253a; }
+.switch-form { display: flex; gap: 8px; align-items: center; }
+.switch-form input { min-width: 280px; min-height: 40px; padding: 9px 11px; border: 1px solid #d7dee7; border-radius: 7px; font-size: 13px; color: #344054; }
+.switch-form input:focus { border-color: #8065ec; outline: 0; box-shadow: 0 0 0 3px #eeeaff; }
+.ops-panel { padding: 16px 18px; margin-bottom: 14px; }
+.ops-panel h3 { margin: 0 0 4px; font-size: 15px; color: #1f2a3a; }
+.ops-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin-top: 12px; }
+.ops-form label { display: grid; gap: 4px; }
+.ops-form span { font-size: 12px; font-weight: 650; color: #667085; }
+.ops-form small { font-size: 11px; color: #98a2b3; }
+.ops-form input, .ops-form select { min-height: 38px; min-width: 150px; padding: 8px 10px; border: 1px solid #d7dee7; border-radius: 7px; font-size: 13px; color: #344054; background: #fff; }
+.ops-form input:focus, .ops-form select:focus { border-color: #8065ec; outline: 0; box-shadow: 0 0 0 3px #eeeaff; }
+.ops-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+
+/* A pause is neither an error nor good news: it is a state somebody chose, and
+   the people waiting on it need the reason more than the colour. */
+.alert.warning { background: #fffaf0; border: 1px solid #f3ddb0; color: #96610a; }

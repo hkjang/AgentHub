@@ -788,3 +788,32 @@ func (s *Store) Dashboard(ctx context.Context, userID, role string) (Dashboard, 
 	}
 	return d, nil
 }
+
+// ProvisionedRuntimes lists the runtimes whose objects carry a copy of the
+// platform-wide runtime environment, so a change to it can be pushed to them.
+//
+// Stopped runtimes are skipped: their object is written from the current
+// settings the next time they start, and syncing them would be work with no
+// effect. Everything else — running, starting, failed, pending — has an object
+// in the cluster holding a copy that is now out of date.
+func (s *Store) ProvisionedRuntimes(ctx context.Context) ([]Runtime, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id,agent_id,owner_id,status,desired_state,crd_name,pod_name,node_name,endpoint,restart_count,failure_reason,last_activity_at,started_at,stopped_at,warm_until,created_at,updated_at
+		FROM agent_runtimes
+		WHERE crd_name <> '' AND NOT (status = 'stopped' AND desired_state = 'stopped')
+		ORDER BY updated_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Runtime{}
+	for rows.Next() {
+		var r Runtime
+		if err := rows.Scan(&r.ID, &r.AgentID, &r.OwnerID, &r.Status, &r.DesiredState, &r.CRDName, &r.PodName,
+			&r.NodeName, &r.Endpoint, &r.RestartCount, &r.FailureReason, &r.LastActivityAt, &r.StartedAt,
+			&r.StoppedAt, &r.WarmUntil, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, r)
+	}
+	return items, rows.Err()
+}

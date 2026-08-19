@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
-import { Bot, ClipboardList, Clock3, Coins, ExternalLink, ListChecks, Play, Plus, Radio, RefreshCw, RotateCcw, Square } from 'lucide-react'
+import { AlertTriangle, Bot, ClipboardList, Clock3, Coins, ExternalLink, ListChecks, Play, Plus, Radio, RefreshCw, RotateCcw, Square } from 'lucide-react'
 import { api } from '../api'
+import { useAuth } from '../App'
 import { Link } from 'react-router-dom'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, GuideLegend, GuidePanel, Loading, PageHeader, StatusBadge, statusLabel, useEscape } from '../components/UI'
 import { relativeTime, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
@@ -45,6 +46,7 @@ const EVENT_LABELS: Record<string, string> = {
 }
 
 export function Tasks() {
+  const { capabilities } = useAuth()
   const [tasks, setTasks] = useState<AgentTask[]>()
   const [agents, setAgents] = useState<Agent[]>([])
   const [queue, setQueue] = useState<QueueSnapshot>()
@@ -120,6 +122,12 @@ export function Tasks() {
         <button className="button primary" disabled={agents.length === 0} onClick={() => setCreating(true)}><Plus size={16} />새 작업</button>
       </>} />
     {error && <ErrorBanner message={error} onClose={() => setError('')} />}
+    {/* A queue that stops moving with no explanation is indistinguishable from a
+        broken one, and the people waiting are not administrators. */}
+    {capabilities.executionPaused && <div className="alert warning">
+      <AlertTriangle size={18} />
+      <span>관리자가 실행을 일시 중지했습니다{capabilities.executionPausedReason ? ` — ${capabilities.executionPausedReason}` : ''}. 새 작업은 등록되지만 재개될 때까지 실행되지 않습니다.</span>
+    </div>}
 
     <GuidePanel id="tasks" title="작업 대기열은 이렇게 사용합니다" steps={[
       { title: '작업을 맡깁니다', body: <><b>새 작업</b>에서 에이전트와 할 일을 적어 대기열에 넣습니다. 사람이 지켜보지 않아도 진행되며, 예약·Webhook·플랫폼 이벤트로 자동 등록되게 하려면 <Link to="/agents">내 에이전트</Link> 상세의 <b>목표·Trigger</b>에서 설정합니다.</> },

@@ -152,6 +152,24 @@ Three properties are worth knowing:
   the provisioned set is part of the Pod template's configuration hash. Changing
   a file therefore replaces the Pod rather than silently doing nothing.
 
+Saving the setting used to change nothing that was already running. Each runtime's
+AgentRuntime object carries a copy of the files and variables — that copy is what
+the operator reads — so an administrator who added `/etc/pip.conf` on an offline
+site watched their agents keep failing to install anything, with no way to tell
+that the setting had simply not reached them. Saving now rewrites the object of
+every runtime that has one, keeping each runtime's desired state exactly as it was
+(a push must not start what somebody stopped), and the response says how many
+runtimes it reached. The operator folds the files into the Pod template hash, so a
+Pod whose content actually changed rolls and one whose content did not is left
+alone.
+
+One failure mode deserved its own error. A CRD prunes fields its schema does not
+declare, silently: a cluster still running an older `AgentRuntime` definition
+accepts the write and drops the whole provisioning section, which looks exactly
+like the feature not working. The write reads back what the API server stored — no
+extra request, since an update returns the object — and reports it as what it is,
+naming the manifest to re-apply.
+
 ## Agent toolchain in the base image
 
 The runtime image carries a toolchain, because an agent asked to write code has
@@ -569,6 +587,48 @@ and appears in the trail.
 The user list carries the same aggregates per account — agents owned, tasks and
 failures in the window, tokens spent — so "what is this account for" and "is it
 still used" are answered where the account is managed.
+
+## Operating the execution plane
+
+Three things had no answer outside the database. A queue with no worker behind it
+looked exactly like a quiet queue, because "how many workers are there" was
+inferred from whoever happened to be holding a task. A task claimed by a worker
+that then died stayed at `running` forever — the claim carried a lease, and
+nothing ever reaped one, so the row sat where the claim query (which looks only at
+`queued` and `retrying`) would never see it again. And nothing ever removed
+finished history, so the largest tables grew until somebody noticed the disk.
+
+Workers now register themselves in `execution_workers` and heartbeat every ten
+seconds; forty-five seconds of silence marks one stale. A clean shutdown records
+itself as stopped, which is what separates a deployment from a crash in the list
+an operator reads. `LiveWorkers` is what the overview counts, so "nothing is
+happening" and "nothing can happen" are finally different sentences.
+
+A caretaker runs on every worker. Every half minute it returns tasks whose lease
+expired more than a minute ago to the queue — with the attempt already counted,
+because the attempt did happen, and pretending otherwise would let a task that
+reliably kills its worker loop forever — and closes the run that was in flight so
+the history has no run that never ended. Every hour it trims history past the
+configured retention. All of it is idempotent SQL, so several caretakers doing the
+same sweep need no coordination.
+
+Execution can be paused. Workers finish what they are running and claim nothing
+new; queueing continues, because a pause is for an upgrade or an incident and
+losing the work that arrived during one would be the worse outcome. The switch is
+read once per poll with a five-second cache, and a switch that cannot be read
+means "running": inferring a pause from a query error would stop every deployment
+whose database hiccuped. The pause reaches `/capabilities`, so the people whose
+work stopped moving — who are not administrators — see the reason rather than a
+queue that went quiet.
+
+The rest is recovery an operator can reach: reclaim now rather than waiting for
+the caretaker, requeue dead-lettered or failed tasks in bulk (bounded, and only
+those two states — a completed task would run twice and a cancelled one was
+stopped on purpose), redeliver events the outbox gave up on (the delivery ledger
+means subscribers that already received them do not get them twice), and sweep
+history with a dry run first. Retention has floors — thirty days for the audit
+trail, seven for runs and tasks, three for events — because a mistyped number
+deletes what cannot be reconstructed.
 
 ## Execution quotas
 

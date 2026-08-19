@@ -99,10 +99,11 @@ func run(logger *slog.Logger) error {
 
 	hostname, _ := os.Hostname()
 	workerID := execution.NewWorkerID(hostname)
-	spawner := appRuntime.NewKubernetesSpawner(db)
+	spawner := appRuntime.NewKubernetesSpawner(db).WithLogger(logger)
 	orchestrator := execution.New(db, spawner, workflow.NewModelCompletion(), logger, workerID)
 
 	worker := execution.NewWorker(db, orchestrator, logger, workerID)
+	worker.Hostname, worker.Version = hostname, buildinfo.Version
 	if value := os.Getenv(envConcurrency); value != "" {
 		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 && parsed <= 32 {
 			worker.Concurrency = parsed
@@ -119,7 +120,7 @@ func run(logger *slog.Logger) error {
 		}
 	}
 
-	errs := make(chan error, 4)
+	errs := make(chan error, 5)
 	go func() { errs <- worker.Run(ctx) }()
 
 	if os.Getenv(envDisableScheduler) != "true" {
@@ -133,6 +134,12 @@ func run(logger *slog.Logger) error {
 	// unlike the scheduler it is safe — and useful — to run on every worker.
 	dispatcher := execution.NewDispatcher(db, logger).WithWorkerID(workerID)
 	go func() { errs <- dispatcher.Run(ctx) }()
+
+	// The caretaker reclaims tasks stranded by a worker that died and trims
+	// history past its retention. Every sweep is idempotent, so running it on
+	// each worker needs no coordination.
+	caretaker := execution.NewCaretaker(db, logger)
+	go func() { errs <- caretaker.Run(ctx) }()
 
 	// The runtime warm pool claims each runtime before starting it, so several
 	// workers running it cannot start the same Pod twice.

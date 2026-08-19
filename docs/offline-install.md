@@ -125,6 +125,14 @@ of the shared origin.
 4. Configure OIDC and Runtime settings in AgentHub. In-cluster mode requires no
    Kubernetes token in the database.
 
+When upgrading, apply the manifests again rather than only replacing the image.
+`deploy/kubernetes/crd.yaml` is part of the kustomization, and a CRD silently
+prunes fields its schema does not declare: a cluster left on an older
+`AgentRuntime` definition accepts what the control plane writes and drops the
+newer sections from it. The most visible symptom is the platform-wide runtime
+environment — `/etc/pip.conf` and friends — never reaching any Pod. Saving that
+setting detects it and names this step.
+
 The runtime namespace enforces the Kubernetes `restricted` Pod Security level.
 Review storage classes, default-deny egress rules, ingress TLS, PostgreSQL TLS,
 backup/restore, and image registry trust before production use.
