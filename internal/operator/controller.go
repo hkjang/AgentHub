@@ -33,6 +33,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/hkjang/AgentHub/internal/dlp"
+	"github.com/hkjang/AgentHub/internal/runtimecfg"
 	"github.com/hkjang/AgentHub/internal/runtimeenv"
 	"github.com/hkjang/AgentHub/internal/runtimetype"
 )
@@ -228,6 +229,15 @@ type spec struct {
 		Files []runtimeenv.File     `json:"files"`
 		Env   []runtimeenv.Variable `json:"env"`
 	} `json:"provisioning"`
+	// RuntimeSettings is the administrator's overlay for this runtime type.
+	RuntimeSettings struct {
+		Fingerprint string         `json:"fingerprint"`
+		Config      map[string]any `json:"config"`
+		Env         []struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		} `json:"env"`
+	} `json:"runtimeSettings"`
 	// DLP is what the in-Pod gateway inspects on tool calls.
 	DLP struct {
 		Enabled       bool `json:"enabled"`
@@ -558,6 +568,17 @@ func runtimeConfigs(ns, runtimeName string, value spec) (string, string, string)
 		}
 		hermes["model"] = map[string]any{"provider": "custom", "default": value.Model.Name, "base_url": value.Model.BaseURL, "api_key": "${OPENAI_API_KEY}"}
 	}
+	// The administrator's overlay lands here, on the configuration the platform
+	// just generated, so the runtime still reads one file and the platform's own
+	// keys survive.
+	if overlay := value.RuntimeSettings.Config; len(overlay) > 0 {
+		switch value.Runtime.Type {
+		case runtimetype.OpenCode:
+			opencode, _ = runtimecfg.Merge(runtimetype.OpenCode, opencode, overlay)
+		case runtimetype.Hermes:
+			hermes, _ = runtimecfg.Merge(runtimetype.Hermes, hermes, overlay)
+		}
+	}
 	openMCP := opencode["mcp"].(map[string]any)
 	hermesMCP := hermes["mcp_servers"].(map[string]any)
 	for _, item := range bindings {
@@ -688,7 +709,16 @@ func (c *Controller) ensureServiceAccount(ctx context.Context, ns, name string, 
 }
 func (c *Controller) ensureConfigMap(ctx context.Context, ns, name string, value spec, owner *unstructured.Unstructured) error {
 	runtimeConfig, opencodeConfig, hermesConfig := runtimeConfigs(ns, name, value)
-	desired := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels(name, nil), OwnerReferences: ownerRef(owner)}, Data: map[string]string{"runtime.json": runtimeConfig, "opencode.json": opencodeConfig, "hermes-config.yaml": hermesConfig}}
+	data := map[string]string{"runtime.json": runtimeConfig, "opencode.json": opencodeConfig, "hermes-config.yaml": hermesConfig}
+	// Qwen Paw writes its own configuration during initialisation, so its overlay
+	// cannot be merged here — it is delivered as a patch the initialiser applies
+	// after `qwenpaw init` has created the file.
+	if value.Runtime.Type == runtimetype.QwenPaw && len(value.RuntimeSettings.Config) > 0 {
+		if patch, err := json.MarshalIndent(value.RuntimeSettings.Config, "", "  "); err == nil {
+			data["qwenpaw-overlay.json"] = string(patch)
+		}
+	}
+	desired := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels(name, nil), OwnerReferences: ownerRef(owner)}, Data: data}
 	existing, err := c.client.CoreV1().ConfigMaps(ns).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		_, err = c.client.CoreV1().ConfigMaps(ns).Create(ctx, desired, metav1.CreateOptions{})
@@ -1230,6 +1260,26 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 	limits := corev1.ResourceList{corev1.ResourceCPU: *apiresource.NewMilliQuantity(cpu, apiresource.DecimalSI), corev1.ResourceMemory: *apiresource.NewQuantity(memory*1024*1024, apiresource.BinarySI)}
 	env := []corev1.EnvVar{{Name: "AGENTHUB_RUNTIME_TYPE", Value: value.Runtime.Type}, {Name: "AGENTHUB_MODEL_BASE_URL", Value: value.Model.BaseURL}, {Name: "AGENTHUB_RUNTIME_CONFIG", Value: "/etc/agenthub/runtime.json"}, {Name: "OPENCODE_CONFIG", Value: "/etc/agenthub/opencode.json"}, {Name: "HERMES_CONFIG", Value: "/etc/agenthub/hermes-config.yaml"}, {Name: "HOME", Value: "/home/agent"}, {Name: "QWENPAW_HOME", Value: "/home/agent/.qwenpaw"}, {Name: "AGENTHUB_RUNTIME_TOKEN", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "runtime-token"}}}}
 	env = append(env, corev1.EnvVar{Name: "AGENTHUB_MODEL_NAME", Value: value.Model.Name}, corev1.EnvVar{Name: "OPENAI_BASE_URL", Value: value.Model.BaseURL}, corev1.EnvVar{Name: "OPENAI_API_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "model-api-key"}}})
+	// The administrator's overlay for this runtime type. It goes in before the
+	// per-server credentials and after the platform's own variables, so a value the
+	// platform sets keeps winning — those are refused at the edge anyway, and a
+	// second line of defence here costs nothing.
+	for _, variable := range value.RuntimeSettings.Env {
+		if variable.Name == "" {
+			continue
+		}
+		env = append(env, corev1.EnvVar{Name: variable.Name, Value: variable.Value})
+	}
+	if fingerprint := value.RuntimeSettings.Fingerprint; fingerprint != "" {
+		// The Pod reports this back after applying the overlay, which is what turns
+		// "I saved the setting" into "the fleet is running it".
+		env = append(env, corev1.EnvVar{Name: "AGENTHUB_RUNTIME_SETTINGS_FINGERPRINT", Value: fingerprint})
+	}
+	// Every initialiser reports the configuration it wrote, so it needs to know
+	// where to report and who it is. The token is already in the shared set above.
+	env = append(env,
+		corev1.EnvVar{Name: "AGENTHUB_CONTROL_PLANE_URL", Value: controlPlaneURL()},
+		corev1.EnvVar{Name: "AGENTHUB_RUNTIME_ID", Value: value.RuntimeRef.ID})
 	// Each authenticated MCP server contributes one optional Secret key; optional
 	// so a server whose credential is not configured yet does not block start-up.
 	for _, item := range effectiveMCP(ns, name, value) {
@@ -1321,7 +1371,12 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 // files and variables produces a new Pod template.
 func configHash(ns, name string, value spec) string {
 	runtimeRaw, openRaw, hermesRaw := runtimeConfigs(ns, name, value)
-	sum := sha256.Sum256([]byte(runtimeRaw + "\x00" + openRaw + "\x00" + hermesRaw + "\x00" + provisioningHash(value)))
+	// The overlay's fingerprint is folded in so that changing a setting rolls the
+	// Pod. Qwen Paw's overlay never reaches the generated configs above, and an
+	// environment variable is not part of them either, so without this a saved
+	// setting would sit in the ConfigMap while the running Pod kept its old one.
+	sum := sha256.Sum256([]byte(runtimeRaw + "\x00" + openRaw + "\x00" + hermesRaw + "\x00" +
+		provisioningHash(value) + "\x00" + value.RuntimeSettings.Fingerprint))
 	return hex.EncodeToString(sum[:])
 }
 

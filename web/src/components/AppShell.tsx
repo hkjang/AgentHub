@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent 
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   Activity, Bell, Boxes, Bot, Braces, ChevronDown, ChevronRight, CircleUserRound, Command,
-  Database, FileClock, FileCode2, Gauge, KeyRound, LayoutDashboard, Library, LogOut, Menu, Network,
+  Database, FileClock, FileCode2, FileCog, Gauge, KeyRound, LayoutDashboard, Library, LogOut, Menu, Network,
   ListChecks, Search, Settings, ShieldAlert, ShieldCheck, Sparkles, UsersRound, Workflow, X
 } from 'lucide-react'
 import { useAuth } from '../App'
@@ -41,6 +41,7 @@ const groups: NavGroup[] = [
     { to: '/admin/dlp', label: '내용 검사', icon: ShieldAlert, keywords: 'dlp 개인정보 민감정보 마스킹 유출 방지 주민등록번호 카드 검사' },
     { to: '/admin/execution', label: '실행 제어', icon: Gauge, keywords: 'execution control pause worker retention cleanup 워커 중지 재개 회수 보관 정리' },
     { to: '/admin/operations', label: '로그 · 감사', icon: FileClock, keywords: 'control center operations log audit approval 로그 감사 승인 운영' },
+    { to: '/admin/runtime-settings', label: '런타임 설정 주입', icon: FileCog, keywords: 'runtime settings inject locale language timezone yolo skill 언어 시간대 로케일 주입 설정' },
     { to: '/admin/runtime-profiles', label: '런타임 프로파일', icon: Bot, keywords: 'runtime profile cpu memory 자원' },
     { to: '/admin/runtime-images', label: '런타임 이미지', icon: Boxes, keywords: 'runtime image registry 이미지' },
     { to: '/admin/models', label: '모델 엔드포인트', icon: Sparkles, keywords: 'model endpoint llm vllm ollama 모델' },

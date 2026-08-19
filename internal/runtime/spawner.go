@@ -8,6 +8,7 @@ import (
 
 	"github.com/hkjang/AgentHub/internal/buildinfo"
 	"github.com/hkjang/AgentHub/internal/dlp"
+	"github.com/hkjang/AgentHub/internal/runtimecfg"
 	"github.com/hkjang/AgentHub/internal/runtimeenv"
 	"github.com/hkjang/AgentHub/internal/store"
 )
@@ -93,6 +94,11 @@ type Spec struct {
 	// inspected inside the Pod for the same reason tool policy is enforced there:
 	// it is the one place the agent process cannot route around.
 	DLP dlp.Settings
+	// RuntimeSettings is the administrator's overlay for this runtime type — its
+	// locale, its own product options, whatever knob that adapter exposes. It is
+	// merged into the configuration the platform generates rather than delivered
+	// beside it, because the runtime reads exactly one file.
+	RuntimeSettings runtimecfg.Profile
 }
 
 type MCPBinding struct {

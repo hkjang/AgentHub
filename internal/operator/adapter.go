@@ -72,7 +72,10 @@ const (
 		"cp /etc/agenthub/opencode.json /home/agent/.opencode.json\n" +
 		"if [ -n \"$OPENAI_BASE_URL\" ]; then\n" +
 		"  printf 'OPENAI_BASE_URL=%s\\nOPENAI_API_KEY=%s\\nOLLAMA_HOST=%s\\nMODEL=%s\\nOPENAI_MODEL=%s\\n' \"$OPENAI_BASE_URL\" \"$OPENAI_API_KEY\" \"$OPENAI_BASE_URL\" \"$AGENTHUB_MODEL_NAME\" \"$AGENTHUB_MODEL_NAME\" > /home/agent/.config/opencode/.env\n" +
-		"fi"
+		"fi\n" +
+		// The report reads the file that was just written, so what the platform
+		// records is what the runtime will read rather than what it intended.
+		"/usr/local/bin/agenthub-report-config /home/agent/.config/opencode/opencode.json || true"
 
 	hermesConfigInit = "mkdir -p /home/agent/.hermes\n" +
 		"cp /etc/agenthub/hermes-config.yaml /home/agent/.hermes/config.yaml\n" +
@@ -82,7 +85,8 @@ const (
 		"  /opt/hermes/.venv/bin/hermes config set model.base_url \"$OPENAI_BASE_URL\" || true\n" +
 		"  /opt/hermes/.venv/bin/hermes config set model.api_key \"$OPENAI_API_KEY\" || true\n" +
 		"  printf 'OPENAI_BASE_URL=%s\\nOPENAI_API_KEY=%s\\nCUSTOM_BASE_URL=%s\\nCUSTOM_API_KEY=%s\\nHERMES_MODEL=%s\\nMODEL=%s\\n' \"$OPENAI_BASE_URL\" \"$OPENAI_API_KEY\" \"$OPENAI_BASE_URL\" \"$OPENAI_API_KEY\" \"$AGENTHUB_MODEL_NAME\" \"$AGENTHUB_MODEL_NAME\" > /home/agent/.hermes/.env\n" +
-		"fi"
+		"fi\n" +
+		"/usr/local/bin/agenthub-report-config /home/agent/.hermes/config.yaml || true"
 
 	hermesStart = "mkdir -p /home/agent/.hermes\n" +
 		"if [ -f /etc/agenthub/hermes-config.yaml ]; then cp /etc/agenthub/hermes-config.yaml /home/agent/.hermes/config.yaml; fi\n" +

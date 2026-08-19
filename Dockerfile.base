@@ -68,9 +68,10 @@ RUN set -eu; \
 
 COPY deploy/runtime/entrypoint.sh /usr/local/bin/agenthub-runtime
 COPY deploy/runtime/qwenpaw-configure.sh /usr/local/bin/agenthub-qwenpaw-configure
+COPY deploy/runtime/agenthub-report-config.sh /usr/local/bin/agenthub-report-config
 COPY deploy/runtime/agenthub-toolchain.sh /etc/profile.d/agenthub-toolchain.sh
 COPY --from=proxy-build /out/agenthub-runtime-proxy /usr/local/bin/agenthub-runtime-proxy
-RUN chmod 0755 /usr/local/bin/agenthub-runtime /usr/local/bin/agenthub-qwenpaw-configure /usr/local/bin/agenthub-runtime-proxy \
+RUN chmod 0755 /usr/local/bin/agenthub-runtime /usr/local/bin/agenthub-qwenpaw-configure /usr/local/bin/agenthub-report-config /usr/local/bin/agenthub-runtime-proxy \
  && chmod 0644 /etc/profile.d/agenthub-toolchain.sh
 USER 10000:10000
 WORKDIR /workspace

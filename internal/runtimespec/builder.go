@@ -13,6 +13,7 @@ import (
 	"github.com/hkjang/AgentHub/internal/dlp"
 	"github.com/hkjang/AgentHub/internal/policy"
 	"github.com/hkjang/AgentHub/internal/runtime"
+	"github.com/hkjang/AgentHub/internal/runtimecfg"
 	"github.com/hkjang/AgentHub/internal/runtimeenv"
 	"github.com/hkjang/AgentHub/internal/store"
 )
@@ -233,9 +234,27 @@ func (b *Builder) Build(ctx context.Context, rt store.Runtime, agent store.Agent
 	}
 	provisionedFiles, provisionedVariables := b.runtimeEnvironment(ctx)
 	scanner := b.contentScanner(ctx)
+	settings := b.runtimeSettings(ctx, agent.RuntimeType)
 	customCommand, customPort := agent.CustomRuntime()
-	return runtime.Spec{DLP: scanner, ProvisionedFiles: provisionedFiles, ProvisionedVariables: provisionedVariables, Runtime: rt, Agent: agent, SidecarImage: runtime.SidecarImage(),
+	return runtime.Spec{DLP: scanner, RuntimeSettings: settings, ProvisionedFiles: provisionedFiles, ProvisionedVariables: provisionedVariables, Runtime: rt, Agent: agent, SidecarImage: runtime.SidecarImage(),
 		CustomCommand: customCommand, CustomPort: int32(customPort), Profile: profile, Image: image, WorkspacePVC: pvc, WorkspaceType: workspaceType, WorkspaceRepositoryURL: repositoryURL, WorkspaceBranch: branch, WorkspaceSnapshot: snapshotName, WorkspaceSizeGB: workspaceSize, WorkspaceGitCredentialKind: gitCredentialKind, WorkspaceGitCredentialUsername: gitCredentialUsername, WorkspaceGitCredential: gitCredential, ModelBaseURL: modelBaseURL, ModelName: modelName, ModelAPIKey: modelAPIKey, MCPServers: bindings, Security: security, Network: network}, nil
+}
+
+// runtimeSettings resolves the administrator's overlay for this runtime type. As
+// with the policy and the scanner, an unreadable setting is logged and skipped:
+// starting a runtime without an overlay is recoverable, and refusing to start
+// anything because one setting row no longer parses is not.
+func (b *Builder) runtimeSettings(ctx context.Context, runtimeType string) runtimecfg.Profile {
+	var settings runtimecfg.Settings
+	switch err := b.store.Setting(ctx, runtimecfg.SettingKey, &settings); {
+	case err == nil:
+	case errors.Is(err, store.ErrNotFound):
+		return runtimecfg.Profile{}
+	default:
+		b.logger.Error("runtime settings are unusable; runtimes are provisioned without them", "error", err)
+		return runtimecfg.Profile{}
+	}
+	return settings.For(runtimeType)
 }
 
 // contentScanner reads what the in-Pod gateway should inspect on tool calls. As

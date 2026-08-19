@@ -118,6 +118,63 @@ already begun to drift. A test pins the described ports and proxy flags to the o
 the operator opens, because a description that disagrees with the deployment sends
 somebody to a port nothing listens on.
 
+## Runtime settings, injected and verified
+
+The platform generates each runtime's own configuration: the model provider block,
+the MCP servers, the terminal's working directory. Everything else a site needed —
+its locale, its time zone, whatever option that product exposes — had nowhere to
+go. Mounting a second copy of the same file fights the generated one, and a
+platform-wide file cannot be per-runtime-type: `LANG` for one adapter's terminal
+is not necessarily right for another's.
+
+`internal/runtimecfg` holds one overlay per runtime type: a JSON object merged into
+the generated configuration and a set of environment variables exported to every
+container. Objects merge key by key so that setting one field leaves the rest of
+its section alone; anything else replaces, because a site that writes a list means
+that list. The keys the platform owns — `model`, `mcp`, `provider`, `mcp_servers`,
+the Qwen Paw provider binding — are refused at the edge and skipped again at merge
+time: an overlay that broke them would look like a platform fault, and the two
+things a site is most likely to believe it configured correctly are exactly those.
+
+Injection happens where each runtime's configuration is written, which is not the
+same place for all three. OpenCode and Hermes read a file the operator renders, so
+the merge is done there. Qwen Paw writes its own configuration during
+initialisation, so its overlay is delivered as a patch its initialiser applies
+after `qwenpaw init` has created the file — merging earlier would be overwritten by
+the initialiser itself. Environment variables go to every container, and the
+overlay's fingerprint is folded into the Pod template hash so that changing a
+setting rolls the Pod: without that, a saved overlay would sit in a ConfigMap while
+the running Pod kept its old one.
+
+The part that makes it usable is the report. Every initialiser ends by reading back
+the file it just wrote and posting to the control plane — authenticated with the
+runtime's own token, the same way the in-Pod gateway asks for tool approvals —
+which keys are in it, the fingerprint it applied, and whether the file was written
+at all. Keys only: an overlay may carry an internal endpoint or a licence string,
+and neither belongs in a status record. The delivery is best effort, because a
+report that cannot be sent must not stop a runtime from starting; the missing
+report is itself the signal.
+
+That produces four states an operator can act on, and the distinctions are the
+point. `applied` means a running Pod reported this exact settings version.
+`stale` means it started before the change, so a restart will fix it. `unverified`
+means nothing has been reported yet — not a failure, and calling it one would send
+somebody debugging a Pod that is working as designed. `failed` means the Pod said
+it could not write or read the file, with its own message.
+
+The console offers a catalogue of settings sites usually want, and it is honest
+about two different kinds of entry. A verified one names a key this platform
+already writes or a variable the operating system defines — `LANG`, `TZ`,
+`HTTPS_PROXY`, OpenCode's `autoupdate`, Hermes' `terminal.cwd`. An unverified one
+describes a setting people ask for — an auto-approve mode, a theme, a skills path —
+without naming a key, because those belong to the runtime's own version. The
+platform will inject whatever key an administrator supplies and report whether it
+landed in the file; it will not guess the key on their behalf. Guessing would
+produce a configuration that looks applied and does nothing, which is the exact
+failure this whole feature exists to remove. What the report proves is that the key
+is in the file the runtime reads — whether that product honours it is the product's
+business, and the console says so.
+
 ## Autonomous execution and the runtime
 
 There are two ways an agent does work here and they are not the same thing. A

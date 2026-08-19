@@ -28,6 +28,7 @@ var uncatalogued = map[string]string{
 	"POST /api/v1/runtime-gateway/tool-approvals":     "the in-Pod MCP gateway authenticates with its runtime token",
 	"GET /api/v1/runtime-gateway/tool-approvals/{id}": "the same gateway polling for the decision",
 	"POST /api/v1/runtime-gateway/dlp-events":         "the same gateway reporting what its content scanner found",
+	"POST /api/v1/runtime-gateway/config-report":      "a runtime initialiser reporting the configuration it wrote, authenticated by the runtime token",
 	"GET /api/v1/me":                                  "identifies the caller, session or key, and grants nothing",
 }
 

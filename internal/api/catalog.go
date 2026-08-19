@@ -168,6 +168,7 @@ func (s *Server) apiRoutes() []Route {
 		// --- Runtimes ---
 		read("/runtimes", "Runtimes", "List Runtime instances", s.runtimes),
 		read("/runtimes/{id}/logs", "Runtimes", "Read Runtime logs", s.runtimeLogs),
+		read("/runtimes/{id}/config-report", "Runtimes", "What this runtime reported applying at start", s.runtimeConfigReport),
 		manage(http.MethodPost, "/agents/{id}/spawn", "Runtimes", "Create the AgentRuntime for an Agent", s.spawnAgent),
 		manage(http.MethodPost, "/runtimes/{id}/start", "Runtimes", "Start a Runtime", s.runtimeAction("running")),
 		manage(http.MethodPost, "/runtimes/{id}/stop", "Runtimes", "Stop a Runtime", s.runtimeAction("stopped")),
@@ -248,6 +249,9 @@ func (s *Server) apiRoutes() []Route {
 		admin(http.MethodGet, "/admin/policy", "Administration", "Read the platform policy", s.adminPolicy),
 		admin(http.MethodPut, "/admin/policy", "Administration", "Replace the platform policy", s.putPolicy),
 		admin(http.MethodPost, "/admin/policy/simulate", "Administration", "Evaluate one request against the policy without changing anything", s.simulatePolicy),
+		admin(http.MethodGet, "/admin/runtime-settings", "Administration", "Read the per-runtime settings overlays", s.runtimeSettings),
+		admin(http.MethodPut, "/admin/runtime-settings", "Administration", "Replace the per-runtime settings overlays", s.putRuntimeSettings),
+		admin(http.MethodGet, "/admin/runtime-settings/status", "Administration", "Which runtimes are running the current settings", s.runtimeConfigStatus),
 		admin(http.MethodGet, "/admin/dlp", "Administration", "Read the content scanner settings", s.adminDLP),
 		admin(http.MethodPut, "/admin/dlp", "Administration", "Configure what is scanned and what happens when it is found", s.putDLP),
 		admin(http.MethodPost, "/admin/dlp/scan", "Administration", "Scan a pasted sample without storing it", s.scanSample),

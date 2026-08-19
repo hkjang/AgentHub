@@ -155,6 +155,9 @@ func (k *KubernetesSpawner) object(spec Spec) *unstructured.Unstructured {
 	if scanner := dlpObject(spec); scanner != nil {
 		object["spec"].(map[string]any)["dlp"] = scanner
 	}
+	if settings := runtimeSettingsObject(spec); settings != nil {
+		object["spec"].(map[string]any)["runtimeSettings"] = settings
+	}
 	return &unstructured.Unstructured{Object: object}
 }
 
@@ -208,6 +211,43 @@ func dlpObject(spec Spec) map[string]any {
 func sortedClasses(classes map[string]string) []string {
 	names := make([]string, 0, len(classes))
 	for name := range classes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// runtimeSettingsObject renders the administrator's overlay for the Pod. It is
+// left off entirely when nothing is configured, so a deployment that never sets
+// one keeps producing exactly the objects it did before.
+//
+// The fingerprint travels with it: the Pod reports it back after applying the
+// overlay, which is how "did my change reach the fleet" gets an answer that is not
+// somebody's memory of clicking save.
+func runtimeSettingsObject(spec Spec) map[string]any {
+	profile := spec.RuntimeSettings
+	if profile.Empty() {
+		return nil
+	}
+	settings := map[string]any{"fingerprint": profile.Fingerprint()}
+	if len(profile.Config) > 0 {
+		settings["config"] = profile.Config
+	}
+	if len(profile.Env) > 0 {
+		env := make([]any, 0, len(profile.Env))
+		for _, name := range sortedEnvNames(profile.Env) {
+			env = append(env, map[string]any{"name": name, "value": profile.Env[name]})
+		}
+		settings["env"] = env
+	}
+	return settings
+}
+
+// sortedEnvNames keeps the rendered object stable so an unchanged overlay does not
+// produce a new Pod template hash on every reconcile.
+func sortedEnvNames(env map[string]string) []string {
+	names := make([]string, 0, len(env))
+	for name := range env {
 		names = append(names, name)
 	}
 	sort.Strings(names)

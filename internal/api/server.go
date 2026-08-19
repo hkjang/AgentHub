@@ -91,6 +91,10 @@ func (s *Server) Handler() http.Handler {
 		// pass through the control plane, so without this the scanning that happens
 		// in the Pod would only ever appear in that Pod's log.
 		r.Post("/runtime-gateway/dlp-events", s.reportDLPEvent)
+		// And the initialisers report what configuration they actually wrote. The Pod
+		// is the only thing that can answer that honestly, and the runtime token is
+		// the only credential it has.
+		r.Post("/runtime-gateway/config-report", s.reportRuntimeConfig)
 		r.Group(func(r chi.Router) {
 			r.Use(s.authentication)
 			r.Get("/me", s.me)

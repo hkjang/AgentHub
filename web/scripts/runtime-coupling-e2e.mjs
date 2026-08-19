@@ -41,6 +41,8 @@ try {
     }, [method, path, body ?? null])
   const get = (path) => call('GET', path)
   const post = (path, body) => call('POST', path, body)
+  const put = (path, body) => call('PUT', path, body)
+  const stamp = Date.now().toString(36)
 
   // The platform describes its own adapters, so the console cannot advertise a
   // runtime this build does not have — or describe one it does have wrongly.
@@ -71,6 +73,75 @@ try {
   }
   const badStatus = tasks[0] && await post(`/api/v1/tasks/${tasks[0].id}/resolve`, { status: 'running' })
   if (badStatus) check('완료·취소 외의 상태로는 마무리할 수 없음', badStatus.status === 400, `HTTP ${badStatus.status}`)
+
+  // Settings injection: what every runtime of one type starts with, and proof.
+  const loaded = (await get('/api/v1/admin/runtime-settings')).body
+  check('설정 제안 목록 제공', (loaded?.suggestions ?? []).length >= 6, `${(loaded?.suggestions ?? []).length} suggestions`)
+  // The catalogue is honest: a verified suggestion names its key, an unverified one
+  // does not pretend to know it. Inventing a vendor key would produce a setting that
+  // looks applied and does nothing.
+  for (const item of loaded?.suggestions ?? []) {
+    check(`제안 "${item.label}" 표기가 정직함`,
+      (item.verified && Boolean(item.key)) || (!item.verified && !item.key),
+      `verified=${item.verified} key=${item.key ?? '(none)'}`)
+  }
+
+  const restore = loaded?.settings ?? { profiles: [] }
+  try {
+    const saved = await put('/api/v1/admin/runtime-settings', {
+      profiles: [{
+        runtimeType: 'opencode', description: `e2e ${stamp}`,
+        config: { autoupdate: false, theme: 'dark' },
+        env: { LANG: 'ko_KR.UTF-8', TZ: 'Asia/Seoul' },
+      }],
+    })
+    check('런타임 설정 저장', saved.status === 200 && saved.body?.profiles === 1, `HTTP ${saved.status}`)
+    check('적용 시점을 설명함', /런타임|시작/.test(saved.body?.message ?? ''), saved.body?.message)
+
+    // The platform's own keys are what a runtime needs to reach its model and its
+    // tools; an overlay that broke them would look like a platform fault.
+    for (const [document, mentions] of [
+      [{ profiles: [{ runtimeType: 'opencode', config: { provider: {} } }] }, '덮어쓸 수 없습니다'],
+      [{ profiles: [{ runtimeType: 'hermes', config: { model: {} } }] }, '덮어쓸 수 없습니다'],
+      [{ profiles: [{ runtimeType: 'hermes', env: { OPENAI_API_KEY: 'x' } }] }, '덮어쓸 수 없습니다'],
+      [{ profiles: [{ runtimeType: 'hermes', env: { AGENTHUB_MODEL_NAME: 'x' } }] }, '덮어쓸 수 없습니다'],
+      [{ profiles: [{ runtimeType: 'hermes', env: { lang: 'ko' } }] }, '대문자'],
+      [{ profiles: [{ runtimeType: 'codex', env: {} }] }, '지원하지 않는'],
+    ]) {
+      const refused = await put('/api/v1/admin/runtime-settings', document)
+      check(`잘못된 오버레이 거절 (${mentions})`, refused.status === 400 && (refused.body?.error?.message ?? '').includes(mentions),
+        `HTTP ${refused.status} ${refused.body?.error?.message ?? ''}`)
+    }
+
+    // Status is per runtime, and says whether what is running matches what would be
+    // sent now. A runtime that has not restarted is "unverified", never "failed".
+    const status = (await get('/api/v1/admin/runtime-settings/status')).body?.items ?? []
+    check('주입 상태를 런타임별로 보고', Array.isArray(status), `${status.length} runtimes`)
+    for (const item of status.filter((entry) => entry.runtimeType === 'opencode')) {
+      check(`${item.agentName} 기대 지문 있음`, Boolean(item.expectedFingerprint), item.expectedFingerprint)
+      check(`${item.agentName} 상태 표기`, ['applied', 'stale', 'unverified', 'pending_start', 'failed'].includes(item.state), item.state)
+    }
+
+    // The report endpoint belongs to the Pod, and to that Pod only.
+    const anonymous = await page.evaluate(async (base) => {
+      const response = await fetch(`${base}/api/v1/runtime-gateway/config-report`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      })
+      return response.status
+    }, baseURL)
+    check('토큰 없는 보고는 거절', anonymous === 401, String(anonymous))
+
+    // The console is where this is operated.
+    await page.goto(`${baseURL}/admin/runtime-settings`, { waitUntil: 'networkidle' })
+    await page.getByRole('heading', { name: '런타임 설정 주입' }).waitFor({ timeout: 15000 })
+    check('런타임 유형별 탭 제공', (await page.locator('.tabs button').count()) >= 4)
+    check('환경변수 표에 저장한 값이 보임', (await page.locator('.settings-table').innerText()).includes('LANG'))
+    check('설정 JSON 편집기 표시', (await page.locator('.policy-json').inputValue()).includes('autoupdate'))
+    check('제안 카드에 확인 여부 표시', (await page.locator('.suggestion-grid .version-tag').count()) >= 6)
+    check('주입 상태 안내 제공', await page.getByText('어떻게 주입되고, 어떻게 확인하나요').isVisible())
+  } finally {
+    await put('/api/v1/admin/runtime-settings', restore)
+  }
 
   // The catalog compares the runtimes where the choice is made.
   await page.goto(`${baseURL}/catalog`, { waitUntil: 'networkidle' })

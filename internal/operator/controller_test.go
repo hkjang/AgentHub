@@ -1090,3 +1090,123 @@ func TestContentScannerConfigurationReachesTheGateway(t *testing.T) {
 		}
 	}
 }
+
+// The administrator's overlay has to land in the file the runtime actually reads,
+// beside the platform's own keys rather than instead of them.
+func TestRuntimeSettingsOverlayMergesIntoTheGeneratedConfig(t *testing.T) {
+	var value spec
+	value.Runtime.Type = runtimetype.Hermes
+	value.Model.BaseURL = "http://gateway.svc:8000/v1"
+	value.Model.Name = "qwen"
+	value.RuntimeSettings.Fingerprint = "abc123"
+	value.RuntimeSettings.Config = map[string]any{
+		"terminal": map[string]any{"shell": "/bin/bash"},
+		"theme":    "dark",
+	}
+	_, _, hermes := runtimeConfigs("ns", "rt-1", value)
+	// The file is written as JSON, which is valid YAML and what Hermes reads.
+	for _, expected := range []string{`"shell": "/bin/bash"`, `"theme": "dark"`, `"cwd": "/workspace"`, `"default": "qwen"`} {
+		if !strings.Contains(hermes, expected) {
+			t.Fatalf("the Hermes configuration is missing %q:\n%s", expected, hermes)
+		}
+	}
+
+	// The same for OpenCode, and the platform's provider block must survive.
+	var open spec
+	open.Runtime.Type = runtimetype.OpenCode
+	open.Model.BaseURL = "http://gateway.svc:8000/v1"
+	open.Model.Name = "qwen"
+	open.RuntimeSettings.Config = map[string]any{"autoupdate": true, "theme": "dark"}
+	_, opencode, _ := runtimeConfigs("ns", "rt-1", open)
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(opencode), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["autoupdate"] != true || decoded["theme"] != "dark" {
+		t.Fatalf("the overlay did not apply: %#v", decoded)
+	}
+	if _, ok := decoded["provider"].(map[string]any); !ok {
+		t.Fatalf("the platform's model binding was lost: %#v", decoded)
+	}
+}
+
+// Changing a setting has to roll the Pod, or a saved overlay sits in a ConfigMap
+// while the running Pod keeps its old one — which is exactly the failure the
+// reports exist to make visible, and better prevented than reported.
+func TestChangingRuntimeSettingsRollsThePod(t *testing.T) {
+	var before spec
+	before.Runtime.Type = runtimetype.QwenPaw
+	before.RuntimeSettings.Fingerprint = "one"
+	after := before
+	after.RuntimeSettings.Fingerprint = "two"
+	if configHash("ns", "rt-1", before) == configHash("ns", "rt-1", after) {
+		t.Fatal("a new settings fingerprint must produce a new Pod template hash")
+	}
+	// Qwen Paw's overlay never reaches the generated configuration files, so it is
+	// delivered as a patch its initialiser applies.
+	client := fake.NewSimpleClientset()
+	controller := &Controller{client: client}
+	owner := &unstructured.Unstructured{}
+	owner.SetName("rt-1")
+	owner.SetNamespace("agent-runtime-dev")
+	owner.SetUID(types.UID("owner"))
+	value := after
+	value.RuntimeSettings.Config = map[string]any{"language": "ko"}
+	if err := controller.ensureConfigMap(context.Background(), "agent-runtime-dev", "rt-1", value, owner); err != nil {
+		t.Fatal(err)
+	}
+	configMap, err := client.CoreV1().ConfigMaps("agent-runtime-dev").Get(context.Background(), "rt-1", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(configMap.Data["qwenpaw-overlay.json"], `"language": "ko"`) {
+		t.Fatalf("the Qwen Paw overlay was not delivered: %#v", configMap.Data)
+	}
+}
+
+// The initialisers report what they wrote, so they need somewhere to report and an
+// identity to report as.
+func TestInitialisersCanReportTheirConfiguration(t *testing.T) {
+	var value spec
+	value.Runtime.Type = runtimetype.OpenCode
+	value.RuntimeRef.ID = "runtime-1"
+	value.RuntimeSettings.Fingerprint = "abc123"
+	value.RuntimeSettings.Env = append(value.RuntimeSettings.Env, struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+	}{Name: "LANG", Value: "ko_KR.UTF-8"})
+
+	client := fake.NewSimpleClientset()
+	controller := &Controller{client: client}
+	owner := &unstructured.Unstructured{}
+	owner.SetName("rt-1")
+	owner.SetNamespace("agent-runtime-dev")
+	owner.SetUID(types.UID("owner"))
+	if err := controller.ensureStatefulSet(context.Background(), "agent-runtime-dev", "rt-1", "ws", value, owner); err != nil {
+		t.Fatal(err)
+	}
+	statefulSet, err := client.AppsV1().StatefulSets("agent-runtime-dev").Get(context.Background(), "rt-1", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	init := statefulSet.Spec.Template.Spec.InitContainers
+	if len(init) == 0 {
+		t.Fatal("the runtime has no initialiser")
+	}
+	if !strings.Contains(strings.Join(init[0].Args, " "), "agenthub-report-config") {
+		t.Fatalf("the initialiser does not report its configuration: %#v", init[0].Args)
+	}
+	found := map[string]string{}
+	for _, variable := range init[0].Env {
+		found[variable.Name] = variable.Value
+	}
+	for _, name := range []string{"AGENTHUB_CONTROL_PLANE_URL", "AGENTHUB_RUNTIME_ID", "AGENTHUB_RUNTIME_SETTINGS_FINGERPRINT"} {
+		if found[name] == "" {
+			t.Errorf("the initialiser cannot report: %s is missing", name)
+		}
+	}
+	// And the overlay's own variables reach the containers that need them.
+	if found["LANG"] != "ko_KR.UTF-8" {
+		t.Errorf("the overlay environment did not reach the initialiser: %#v", found)
+	}
+}

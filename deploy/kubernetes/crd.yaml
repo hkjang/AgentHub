@@ -219,6 +219,27 @@ spec:
                         properties:
                           class: {type: string, maxLength: 40}
                           action: {type: string, enum: [off, audit, redact, block]}
+                # The administrator's overlay for this runtime type: its locale and
+                # whatever options the product itself exposes. The config object is
+                # the runtime vendor's schema, not ours, so its fields are preserved
+                # rather than pruned — the alternative is silently dropping settings
+                # an operator can see in their own screen.
+                runtimeSettings:
+                  type: object
+                  properties:
+                    fingerprint: {type: string, maxLength: 64}
+                    config:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    env:
+                      type: array
+                      maxItems: 32
+                      items:
+                        type: object
+                        required: [name]
+                        properties:
+                          name: {type: string, pattern: '^[A-Z_][A-Z0-9_]*$'}
+                          value: {type: string, maxLength: 2048}
                 lifecycle:
                   type: object
                   required: [desiredState]

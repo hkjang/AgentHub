@@ -16,6 +16,40 @@ if [ ! -f "$QWENPAW_HOME/config.json" ]; then
   "$QWENPAW_BIN" init --defaults --accept-security || true
 fi
 
+# The administrator's overlay, applied after `qwenpaw init` has created the file:
+# merging before it exists would be overwritten by the initialiser itself.
+OVERLAY_FILE="${AGENTHUB_QWENPAW_OVERLAY:-/etc/agenthub/qwenpaw-overlay.json}"
+if [ -f "$OVERLAY_FILE" ] && [ -f "$QWENPAW_HOME/config.json" ]; then
+  CONFIG_FILE="$QWENPAW_HOME/config.json" OVERLAY_FILE="$OVERLAY_FILE" \
+  "$QWENPAW_PYTHON" - <<'OVERLAY' || echo "qwenpaw: overlay could not be applied" >&2
+import json, os, pathlib
+
+config_path = pathlib.Path(os.environ["CONFIG_FILE"])
+overlay = json.loads(pathlib.Path(os.environ["OVERLAY_FILE"]).read_text(encoding="utf-8"))
+config = json.loads(config_path.read_text(encoding="utf-8"))
+
+def merge(base, patch):
+    # Objects merge key by key so setting one field leaves the rest of its section
+    # alone; anything else replaces, because a site that writes a list means it.
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            merge(base[key], value)
+        else:
+            base[key] = value
+
+# The platform owns the provider binding; an overlay must not break the model.
+for reserved in ("providers", "active_model"):
+    overlay.pop(reserved, None)
+merge(config, overlay)
+config_path.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
+print(f"qwenpaw: applied {len(overlay)} setting(s) from the overlay", file=__import__("sys").stderr)
+OVERLAY
+fi
+
+# Report what is on disk before the model is bound, so a Pod that cannot reach its
+# model endpoint still tells the platform which settings were applied.
+/usr/local/bin/agenthub-report-config "$QWENPAW_HOME/config.json" || true
+
 if [ -z "${OPENAI_BASE_URL:-}" ] || [ -z "${AGENTHUB_MODEL_NAME:-}" ]; then
   echo "qwenpaw: no model endpoint bound, skipping provider configuration" >&2
   exit 0

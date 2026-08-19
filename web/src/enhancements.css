@@ -574,3 +574,24 @@ tr.rule-off { opacity: .55; }
    queue reader has to spot both for the same reason. */
 .status-badge.status-handoff { color: #b2720b; }
 .status-badge.status-handoff span { background: #e79b1c; box-shadow: 0 0 0 3px rgba(231,155,28,.15); }
+
+/* Runtime settings: the overlay, the suggestions, and whether a Pod is running it. */
+.settings-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+.settings-table th { text-align: left; font-size: 12px; font-weight: 650; color: #8a95a5; padding: 6px; border-bottom: 1px solid #edf0f4; }
+.settings-table td { padding: 6px; border-bottom: 1px solid #f4f6f9; vertical-align: middle; }
+.settings-table input { width: 100%; min-height: 34px; padding: 6px 9px; border: 1px solid #d7dee7; border-radius: 6px; font-size: 13px; color: #344054; }
+.settings-table input:focus { border-color: #8065ec; outline: 0; box-shadow: 0 0 0 3px #eeeaff; }
+.settings-table code { font-size: 12px; color: #5d3ddd; background: #f4f1ff; padding: 2px 6px; border-radius: 5px; }
+.suggestion-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; margin-top: 10px; }
+.suggestion-grid article { padding: 12px 14px; border: 1px solid #e2e7ee; border-radius: 10px; background: #fff; display: grid; gap: 6px; align-content: start; }
+.suggestion-grid article.verified { border-color: #cbbdf7; background: #fbfaff; }
+.suggestion-grid header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.suggestion-grid strong { font-size: 13px; color: #1f2a3a; }
+.suggestion-grid code { font-size: 11px; color: #475467; background: #f4f6f9; padding: 3px 6px; border-radius: 5px; word-break: break-all; }
+.suggestion-grid p { margin: 0; font-size: 12px; color: #667085; line-height: 1.55; }
+.suggestion-grid .button { justify-self: start; padding: 5px 10px; font-size: 12px; }
+.inject-badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 650; }
+.inject-badge.applied { background: #e7f7ee; color: #067647; }
+.inject-badge.failed { background: #fdecee; color: #b42318; }
+.inject-badge.stale { background: #fff6e6; color: #96610a; }
+.inject-badge.unverified, .inject-badge.pending_start, .inject-badge.none { background: #f1f4f8; color: #667085; }
