@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/hkjang/AgentHub/internal/dlp"
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/runtimeenv"
 	"github.com/hkjang/AgentHub/internal/runtimetype"
@@ -664,7 +665,7 @@ func TestPoliciedMCPBindingIsRoutedThroughTheGateway(t *testing.T) {
 		}
 	}
 
-	gateway, ok := mcpGatewayContainer(value.Runtime.Image, "rt-1", "runtime-1", bindings, value.MCP)
+	gateway, ok := mcpGatewayContainer(value.Runtime.Image, "rt-1", "runtime-1", bindings, value.MCP, value)
 	if !ok {
 		t.Fatal("a policied binding must produce a gateway container")
 	}
@@ -709,7 +710,7 @@ func TestNoGatewayContainerWithoutAPolicy(t *testing.T) {
 	var value spec
 	value.Runtime.Type = "opencode"
 	value.MCP = append(value.MCP, mcpBinding{Name: "jira", Mode: "shared", Endpoint: "https://mcp.jira.test/mcp"})
-	if _, ok := mcpGatewayContainer("image", "rt-1", "runtime-1", effectiveMCP("ns", "rt-1", value), value.MCP); ok {
+	if _, ok := mcpGatewayContainer("image", "rt-1", "runtime-1", effectiveMCP("ns", "rt-1", value), value.MCP, value); ok {
 		t.Fatal("a runtime with no tool policy must not carry the gateway sidecar")
 	}
 }
@@ -725,7 +726,7 @@ func TestPlatformSidecarsRunTheControlPlaneImage(t *testing.T) {
 	value.MCP = append(value.MCP, mcpBinding{Name: "context7", Mode: "shared", Endpoint: "https://mcp.context7.test/mcp",
 		ToolPolicy: &mcpToolPolicy{Mode: "allow", Tools: []string{"resolve-library-id"}}})
 
-	gateway, ok := mcpGatewayContainer(value.sidecarImage(), "rt-1", "runtime-1", effectiveMCP("ns", "rt-1", value), value.MCP)
+	gateway, ok := mcpGatewayContainer(value.sidecarImage(), "rt-1", "runtime-1", effectiveMCP("ns", "rt-1", value), value.MCP, value)
 	if !ok || gateway.Image != "agenthub:v0.7.0" {
 		t.Fatalf("gateway image = %q, want the control plane image", gateway.Image)
 	}
@@ -1039,5 +1040,53 @@ func TestProvisionedEnvironmentSurvivesTheControlPlaneToOperatorSeam(t *testing.
 	}
 	if !mounted {
 		t.Fatalf("the agent container does not mount /etc/pip.conf: %#v", agent.VolumeMounts)
+	}
+}
+
+// Tool calls never pass through the control plane, so the scanner has to run in
+// the Pod — which means its configuration has to reach the Pod.
+func TestContentScannerConfigurationReachesTheGateway(t *testing.T) {
+	var value spec
+	value.Runtime.Type = "opencode"
+	value.Runtime.SidecarImage = "agenthub:test"
+	value.MCP = append(value.MCP, mcpBinding{Name: "jira", Mode: "shared", Endpoint: "https://mcp.jira.test/mcp",
+		ToolPolicy: &mcpToolPolicy{Mode: "allow", Tools: []string{"create_issue"}}})
+	value.DLP.Enabled = true
+	value.DLP.ScanResponses = true
+	value.DLP.Classes = append(value.DLP.Classes, struct {
+		Class  string `json:"class"`
+		Action string `json:"action"`
+	}{Class: "rrn", Action: "block"})
+
+	gateway, ok := mcpGatewayContainer(value.sidecarImage(), "rt-1", "runtime-1", effectiveMCP("ns", "rt-1", value), value.MCP, value)
+	if !ok {
+		t.Fatal("a policied binding must produce a gateway container")
+	}
+	var config string
+	for _, variable := range gateway.Env {
+		if variable.Name == "AGENTHUB_DLP" {
+			config = variable.Value
+		}
+	}
+	if config == "" {
+		t.Fatalf("the scanner configuration is missing from the gateway: %#v", gateway.Env)
+	}
+	// The gateway parses this with the same package the control plane configures,
+	// so what it receives has to load there without adjustment.
+	scanner, err := dlp.Settings{}, error(nil)
+	if err = json.Unmarshal([]byte(config), &scanner); err != nil {
+		t.Fatalf("the gateway cannot read what the operator wrote: %v", err)
+	}
+	if !scanner.Enabled || scanner.Classes["rrn"] != "block" || !scanner.ScanResponses {
+		t.Fatalf("the configuration did not survive: %#v", scanner)
+	}
+
+	// A deployment that never turned scanning on must not gain the variable.
+	value.DLP.Enabled = false
+	plain, _ := mcpGatewayContainer(value.sidecarImage(), "rt-1", "runtime-1", effectiveMCP("ns", "rt-1", value), value.MCP, value)
+	for _, variable := range plain.Env {
+		if variable.Name == "AGENTHUB_DLP" {
+			t.Fatal("scanning is off but the gateway was configured for it")
+		}
 	}
 }

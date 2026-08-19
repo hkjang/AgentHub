@@ -1,0 +1,179 @@
+package dlp
+
+import (
+	"strings"
+	"testing"
+)
+
+// all turns the scanner on for one class, which is how every test here starts.
+func all(class, action string) Settings {
+	return Settings{Enabled: true, Classes: map[string]string{class: action}}
+}
+
+// A scanner that cries wolf is switched off within a week, so the checksums are
+// the feature: these are the numbers that look like the thing and are not.
+func TestDetectorsRejectLookalikes(t *testing.T) {
+	cases := []struct {
+		class string
+		real  string
+		fake  string
+	}{
+		// A valid RRN and thirteen digits that fail the check digit.
+		{class: "rrn", real: "900101-1234568", fake: "900101-1234567"},
+		// A Luhn-valid test card and one digit off.
+		{class: "card", real: "4111 1111 1111 1111", fake: "4111 1111 1111 1112"},
+		// A valid business number and a broken one.
+		{class: "business", real: "220-81-62517", fake: "220-81-62518"},
+	}
+	for _, test := range cases {
+		t.Run(test.class, func(t *testing.T) {
+			settings := all(test.class, Audit)
+			if got := Scan(settings, "값: "+test.real).Findings; len(got) != 1 || got[0].Count != 1 {
+				t.Fatalf("the real value was not found: %#v", got)
+			}
+			if got := Scan(settings, "값: "+test.fake).Findings; len(got) != 0 {
+				t.Fatalf("a lookalike was reported as %s: %#v", test.class, got)
+			}
+		})
+	}
+}
+
+func TestDetectorsFindWhatTheyShould(t *testing.T) {
+	cases := []struct{ class, text string }{
+		{"rrn", "주민번호는 900101-1234568 입니다"},
+		{"rrn", "9001011234568"},
+		{"card", "카드 4111-1111-1111-1111 로 결제"},
+		{"phone", "연락처 010-1234-5678"},
+		{"phone", "01012345678"},
+		{"email", "메일 hong@example.co.kr 로 보내주세요"},
+		{"passport", "여권 M12345678"},
+		{"secret", "export OPENAI_API_KEY=sk-abcdefghijklmnop1234"},
+		{"secret", "-----BEGIN RSA PRIVATE KEY-----"},
+		{"account", "국민 123456-01-123456 으로 입금"},
+	}
+	for _, test := range cases {
+		t.Run(test.class+"/"+test.text[:min(12, len(test.text))], func(t *testing.T) {
+			result := Scan(all(test.class, Audit), test.text)
+			if len(result.Findings) == 0 {
+				t.Fatalf("%s was not found in %q", test.class, test.text)
+			}
+			if result.Findings[0].Class != test.class {
+				t.Fatalf("found %s, want %s", result.Findings[0].Class, test.class)
+			}
+		})
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// Redaction has to leave the text usable: the agent still needs its context, and
+// the marker has to say what was removed.
+func TestRedactionKeepsTheRestOfTheText(t *testing.T) {
+	settings := Settings{Enabled: true, Classes: map[string]string{"rrn": Redact, "phone": Redact}}
+	result := Scan(settings, "고객 홍길동(900101-1234568), 연락처 010-1234-5678, 주문번호 A-1234")
+	if result.Blocked {
+		t.Fatal("redaction must not block")
+	}
+	if strings.Contains(result.Text, "900101-1234568") || strings.Contains(result.Text, "010-1234-5678") {
+		t.Fatalf("the values survived redaction: %s", result.Text)
+	}
+	for _, keep := range []string{"고객 홍길동", "주문번호 A-1234", "주민등록번호 삭제됨", "휴대전화번호 삭제됨"} {
+		if !strings.Contains(result.Text, keep) {
+			t.Fatalf("%q is missing from %s", keep, result.Text)
+		}
+	}
+}
+
+// Nothing that was found may appear in what the platform records about it.
+func TestFindingsNeverCarryTheValue(t *testing.T) {
+	result := Scan(all("rrn", Audit), "주민번호 900101-1234568")
+	finding := result.Findings[0]
+	if strings.Contains(finding.Sample, "1234568") {
+		t.Fatalf("the sample discloses the value: %q", finding.Sample)
+	}
+	if !strings.HasPrefix(finding.Sample, "900101") || !strings.Contains(finding.Sample, "*") {
+		t.Fatalf("the sample must be recognisable but masked: %q", finding.Sample)
+	}
+	if strings.Contains(result.Summary(), "1234568") {
+		t.Fatalf("the summary discloses the value: %q", result.Summary())
+	}
+}
+
+func TestBlockRefusesAndNamesTheClassOnly(t *testing.T) {
+	result := Scan(all("rrn", Block), "주민번호 900101-1234568 입니다")
+	if !result.Blocked {
+		t.Fatal("a blocking class must block")
+	}
+	if !strings.Contains(result.Reason, "주민등록번호") {
+		t.Fatalf("the reason must name the class: %q", result.Reason)
+	}
+	if strings.Contains(result.Reason, "900101") {
+		t.Fatalf("the reason discloses the value: %q", result.Reason)
+	}
+	// A blocked payload is not partly sent: the text is left alone and the caller
+	// refuses the whole call.
+	if result.Text != "주민번호 900101-1234568 입니다" {
+		t.Fatalf("a blocked scan must not rewrite the text: %q", result.Text)
+	}
+}
+
+// A class nobody configured is not scanned, so adding a detector to the platform
+// never starts blocking somebody's traffic without them choosing it.
+func TestOnlyConfiguredClassesAreScanned(t *testing.T) {
+	text := "주민번호 900101-1234568, 메일 a@b.co"
+	if findings := Scan(all("email", Audit), text).Findings; len(findings) != 1 || findings[0].Class != "email" {
+		t.Fatalf("an unconfigured class was scanned: %#v", findings)
+	}
+	if findings := Scan(Settings{Enabled: false, Classes: map[string]string{"rrn": Block}}, text).Findings; len(findings) != 0 {
+		t.Fatal("a disabled scanner must not scan")
+	}
+	if result := Scan(Settings{Enabled: true}, text); len(result.Findings) != 0 || result.Text != text {
+		t.Fatal("no configured classes means no scanning")
+	}
+}
+
+// A large payload must not turn one call into a CPU incident, and a partial scan
+// must not read as a clean one.
+func TestScanIsBounded(t *testing.T) {
+	settings := Settings{Enabled: true, Classes: map[string]string{"rrn": Redact}, MaxBytes: 64}
+	tail := strings.Repeat("x", 200) + " 900101-1234568"
+	result := Scan(settings, tail)
+	if !result.Truncated {
+		t.Fatal("a payload past the limit must be reported as truncated")
+	}
+	// What was beyond the limit is carried through unchanged rather than dropped:
+	// silently truncating the payload would be a worse failure than not scanning.
+	if !strings.HasSuffix(result.Text, "900101-1234568") {
+		t.Fatalf("the tail was dropped: %q", result.Text)
+	}
+}
+
+func TestSettingsValidate(t *testing.T) {
+	if err := (Settings{Enabled: true, Classes: map[string]string{"rrn": Block}}).Validate(); err != nil {
+		t.Fatalf("a normal configuration must be accepted: %v", err)
+	}
+	if err := (Settings{Classes: map[string]string{"passport-number": Block}}).Validate(); err == nil {
+		t.Fatal("an unknown class must be refused; it would silently never scan")
+	}
+	if err := (Settings{Classes: map[string]string{"rrn": "quarantine"}}).Validate(); err == nil {
+		t.Fatal("an unknown action must be refused")
+	}
+	if err := (Settings{MaxBytes: 64 << 20}).Validate(); err == nil {
+		t.Fatal("an unbounded scan limit must be refused")
+	}
+}
+
+// One value must not be reported as two classes, or every count an operator
+// reads is inflated.
+func TestPhoneNumbersAreNotAlsoAccounts(t *testing.T) {
+	settings := Settings{Enabled: true, Classes: map[string]string{"phone": Audit, "account": Audit}}
+	result := Scan(settings, "연락처 010-1234-5678")
+	if len(result.Findings) != 1 || result.Findings[0].Class != "phone" {
+		t.Fatalf("a phone number was double-counted: %#v", result.Findings)
+	}
+}

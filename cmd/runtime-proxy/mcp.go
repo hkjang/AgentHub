@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -137,6 +138,12 @@ func mcpGateway(upstreams []mcpUpstream, auditor func(entry map[string]any)) htt
 // mcpGatewayWithApprover is the constructor the tests drive, so the gate can be
 // exercised against a stand-in control plane.
 func mcpGatewayWithApprover(upstreams []mcpUpstream, auditor func(entry map[string]any), gate *approver) http.Handler {
+	return mcpGatewayWith(upstreams, auditor, gate, nil)
+}
+
+// mcpGatewayWith is the full constructor: the approval gate and the content
+// scanner are both stand-ins the tests can supply.
+func mcpGatewayWith(upstreams []mcpUpstream, auditor func(entry map[string]any), gate *approver, inspect *scanner) http.Handler {
 	byName := make(map[string]mcpUpstream, len(upstreams))
 	for _, upstream := range upstreams {
 		byName[upstream.Name] = upstream
@@ -198,6 +205,32 @@ func mcpGatewayWithApprover(upstreams []mcpUpstream, auditor func(entry map[stri
 				return
 			}
 		}
+		// The arguments are scanned before the call leaves the Pod. A tool call
+		// never passes through the control plane, so this is the only place a
+		// customer record on its way into a ticket can be caught.
+		if request.Method == "tools/call" && len(request.Params.Arguments) > 0 {
+			replacement, found := inspect.inspect(r.Context(), name, request.Params.Name, "요청", string(request.Params.Arguments))
+			if found != nil {
+				auditor(map[string]any{"server": name, "tool": request.Params.Name,
+					"decision": map[bool]string{true: "denied", false: "redacted"}[found.Blocked],
+					"dlp":      found.Summary()})
+				if found.Blocked {
+					writeRPCError(w, request.ID, -32006, found.Reason+" (도구 "+request.Params.Name+")")
+					return
+				}
+				// The whole body is rewritten rather than just the arguments: the
+				// upstream reads the body, not our parsed copy of it.
+				rewritten, err := replaceArguments(body, replacement)
+				if err == nil {
+					body = rewritten
+				} else {
+					// A body we cannot rewrite is a body we cannot redact, and sending
+					// it unchanged would be the one outcome the setting forbids.
+					writeRPCError(w, request.ID, -32006, "민감정보를 제거할 수 없어 호출을 차단했습니다.")
+					return
+				}
+			}
+		}
 		if request.Method == "tools/call" {
 			auditor(map[string]any{"server": name, "tool": request.Params.Name, "decision": "allowed", "mode": upstream.Mode})
 		}
@@ -237,10 +270,53 @@ func mcpGatewayWithApprover(upstreams []mcpUpstream, auditor func(entry map[stri
 			filterToolList(w, response, upstream)
 			return
 		}
+		// What comes back is scanned too, when configured: a tool that returns a
+		// customer record hands it straight to the model, and from there into a run
+		// transcript that far more people can read.
+		if inspect != nil && inspect.settings.ScanResponses && request.Method == "tools/call" {
+			raw, readErr := io.ReadAll(io.LimitReader(response.Body, 16<<20))
+			if readErr != nil {
+				http.Error(w, "MCP response could not be read", http.StatusBadGateway)
+				return
+			}
+			replacement, found := inspect.inspect(r.Context(), name, request.Params.Name, "응답", string(raw))
+			if found != nil && found.Blocked {
+				auditor(map[string]any{"server": name, "tool": request.Params.Name, "decision": "denied", "dlp": found.Summary(), "direction": "response"})
+				writeRPCError(w, request.ID, -32006, found.Reason+" (도구 "+request.Params.Name+" 응답)")
+				return
+			}
+			copyHeaders(w.Header(), response.Header)
+			w.Header().Set("Content-Length", fmt.Sprint(len(replacement)))
+			w.WriteHeader(response.StatusCode)
+			_, _ = w.Write([]byte(replacement))
+			return
+		}
 		copyHeaders(w.Header(), response.Header)
 		w.WriteHeader(response.StatusCode)
 		_, _ = io.Copy(w, response.Body)
 	})
+}
+
+// replaceArguments puts redacted arguments back into the JSON-RPC body.
+//
+// The body is rewritten rather than re-marshalled from a parsed struct so that
+// everything the gateway does not understand — fields a newer MCP version added,
+// the caller's own metadata — survives the trip unchanged.
+func replaceArguments(body []byte, arguments string) ([]byte, error) {
+	var envelope map[string]any
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, err
+	}
+	params, ok := envelope["params"].(map[string]any)
+	if !ok {
+		return nil, errors.New("no params to rewrite")
+	}
+	var decoded any
+	if err := json.Unmarshal([]byte(arguments), &decoded); err != nil {
+		return nil, err
+	}
+	params["arguments"] = decoded
+	return json.Marshal(envelope)
 }
 
 // filterToolList rewrites a tools/list result. Streamable HTTP may answer with

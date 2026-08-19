@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   Activity, Bell, Boxes, Bot, Braces, ChevronDown, ChevronRight, CircleUserRound, Command,
   Database, FileClock, FileCode2, Gauge, KeyRound, LayoutDashboard, Library, LogOut, Menu, Network,
-  ListChecks, Search, Settings, ShieldCheck, Sparkles, UsersRound, Workflow, X
+  ListChecks, Search, Settings, ShieldAlert, ShieldCheck, Sparkles, UsersRound, Workflow, X
 } from 'lucide-react'
 import { useAuth } from '../App'
 import { api } from '../api'
@@ -38,6 +38,7 @@ const groups: NavGroup[] = [
   { label: '관리자', admin: true, items: [
     { to: '/admin/overview', label: '운영 현황', icon: Gauge, keywords: 'overview dashboard usage statistics 통계 사용량 현황 대시보드 비용' },
     { to: '/admin/policy', label: '정책', icon: ShieldCheck, keywords: 'policy rule guardrail 정책 규칙 차단 허용 승인 거버넌스' },
+    { to: '/admin/dlp', label: '내용 검사', icon: ShieldAlert, keywords: 'dlp 개인정보 민감정보 마스킹 유출 방지 주민등록번호 카드 검사' },
     { to: '/admin/execution', label: '실행 제어', icon: Gauge, keywords: 'execution control pause worker retention cleanup 워커 중지 재개 회수 보관 정리' },
     { to: '/admin/operations', label: '로그 · 감사', icon: FileClock, keywords: 'control center operations log audit approval 로그 감사 승인 운영' },
     { to: '/admin/runtime-profiles', label: '런타임 프로파일', icon: Bot, keywords: 'runtime profile cpu memory 자원' },

@@ -27,6 +27,7 @@ var uncatalogued = map[string]string{
 	"POST /api/v1/triggers/{id}/webhook":              "external systems have no session; the handler verifies an HMAC over the raw body",
 	"POST /api/v1/runtime-gateway/tool-approvals":     "the in-Pod MCP gateway authenticates with its runtime token",
 	"GET /api/v1/runtime-gateway/tool-approvals/{id}": "the same gateway polling for the decision",
+	"POST /api/v1/runtime-gateway/dlp-events":         "the same gateway reporting what its content scanner found",
 	"GET /api/v1/me":                                  "identifies the caller, session or key, and grants nothing",
 }
 

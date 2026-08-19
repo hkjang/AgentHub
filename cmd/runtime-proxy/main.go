@@ -77,7 +77,17 @@ func runMCPGateway(config string) {
 	listen := envOr("AGENTHUB_MCP_GATEWAY_LISTEN", "127.0.0.1:9129")
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /livez", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	mux.Handle("/mcp/", mcpGateway(upstreams, auditToLog))
+	// The content scanner is optional and fails loud: a configuration the gateway
+	// cannot read means the operator asked for scanning and would otherwise get
+	// none, silently.
+	inspect, scannerErr := loadScanner(os.Getenv(envDLP))
+	if scannerErr != nil {
+		log.Fatalf("read %s: %v", envDLP, scannerErr)
+	}
+	if inspect != nil {
+		log.Printf("content scanning enabled for tool calls (classes=%d responses=%v)", len(inspect.settings.Classes), inspect.settings.ScanResponses)
+	}
+	mux.Handle("/mcp/", mcpGatewayWith(upstreams, auditToLog, newApprover(), inspect))
 	server := &http.Server{Addr: listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
 	log.Printf("MCP tool policy gateway listening on %s for %d server(s)", listen, len(upstreams))
 	log.Fatal(server.ListenAndServe())

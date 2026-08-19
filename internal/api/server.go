@@ -87,6 +87,10 @@ func (s *Server) Handler() http.Handler {
 		// valid runtime token these answer 401.
 		r.Post("/runtime-gateway/tool-approvals", s.requestToolApproval)
 		r.Get("/runtime-gateway/tool-approvals/{id}", s.toolApprovalStatus)
+		// The same gateway reports what its content scanner found. Tool calls never
+		// pass through the control plane, so without this the scanning that happens
+		// in the Pod would only ever appear in that Pod's log.
+		r.Post("/runtime-gateway/dlp-events", s.reportDLPEvent)
 		r.Group(func(r chi.Router) {
 			r.Use(s.authentication)
 			r.Get("/me", s.me)

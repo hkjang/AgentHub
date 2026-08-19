@@ -387,6 +387,52 @@ Directives are parsed from fenced blocks (`<<<KIND arg … >>>`). An unterminate
 block, an unknown kind, or prose that merely describes the protocol yields
 nothing, so an agent explaining how approvals work cannot request one.
 
+## Content scanning
+
+An agent is a program that reads whatever it is pointed at and then sends it
+somewhere else: to a model gateway, to an MCP server, to a tool that writes a
+ticket. On an offline site that is exactly the risk — the data never had to leave
+the building until an agent helpfully summarised it into a prompt.
+
+`internal/dlp` holds the detectors and nothing else: no database, no HTTP, no
+settings loader, so the in-Pod sidecar can use the same code without linking a
+PostgreSQL driver into a sidecar. They are deliberately conservative. Anything
+with a check digit is checked against it — a resident registration number that
+fails its checksum is not one, a card number that fails Luhn is not one, and
+thirteen digits in a log line should not stop a production run. A scanner that
+cries wolf is switched off within a week, which is the failure mode that matters
+more than a missed pattern.
+
+Each class carries an action: off, audit, redact, block. Redact is the useful
+default for model calls — the agent keeps its context and the number never leaves
+— and block is for tools that write to another system, where a partial send is
+worse than no send. A class nobody configured is not scanned, so adding a detector
+to the platform never starts blocking somebody's traffic without them choosing it.
+
+There are two enforcement points and they are different for a reason. Model calls
+all pass through one client, so the check hangs off that: an inspector on
+`ModelCompletion` sees every prompt and, optionally, every answer. Tool calls
+never pass through the control plane at all — the agent talks to the in-Pod
+gateway and the gateway talks to the MCP server — so scanning there is the only
+place a customer record on its way into a ticket can be caught, and the settings
+travel to the Pod the same way the tool policy does. When the gateway redacts, it
+rewrites the JSON-RPC body rather than re-marshalling a parsed copy, so fields the
+gateway does not understand survive the trip; when it cannot rewrite the body, it
+refuses rather than sending it unchanged.
+
+The scanner says what is there and the policy says what this deployment does about
+it: findings become the `dataClasses` of a policy request, so a rule can be
+narrower than the global action — one agent, one role, one server. A refusal is
+wrapped in a sentinel error so the execution plane fails the task instead of
+retrying it, because the same prompt carries the same data and retrying would
+spend the whole budget arriving at the same answer.
+
+What is recorded is the class, the count and a masked sample — never the value.
+A DLP trail that quotes what it found has moved the problem rather than solved it.
+The in-Pod gateway reports its findings to the control plane over the same
+authenticated channel it uses to ask for approvals, because scanning whose results
+stay in a Pod log is scanning nobody can be shown.
+
 ## Policy as code
 
 The controls were all real and all separate. An agent's MCP tools were an

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/hkjang/AgentHub/internal/buildinfo"
+	"github.com/hkjang/AgentHub/internal/dlp"
 	"github.com/hkjang/AgentHub/internal/runtimeenv"
 	"github.com/hkjang/AgentHub/internal/store"
 )
@@ -88,6 +89,10 @@ type Spec struct {
 	// offline site's /etc/pip.conf should not have to be repeated per agent.
 	ProvisionedFiles     []runtimeenv.File
 	ProvisionedVariables []runtimeenv.Variable
+	// DLP is the content scanner's configuration for tool calls, which are
+	// inspected inside the Pod for the same reason tool policy is enforced there:
+	// it is the one place the agent process cannot route around.
+	DLP dlp.Settings
 }
 
 type MCPBinding struct {

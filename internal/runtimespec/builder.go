@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/hkjang/AgentHub/internal/dlp"
 	"github.com/hkjang/AgentHub/internal/policy"
 	"github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/runtimeenv"
@@ -231,9 +232,25 @@ func (b *Builder) Build(ctx context.Context, rt store.Runtime, agent store.Agent
 		}
 	}
 	provisionedFiles, provisionedVariables := b.runtimeEnvironment(ctx)
+	scanner := b.contentScanner(ctx)
 	customCommand, customPort := agent.CustomRuntime()
-	return runtime.Spec{ProvisionedFiles: provisionedFiles, ProvisionedVariables: provisionedVariables, Runtime: rt, Agent: agent, SidecarImage: runtime.SidecarImage(),
+	return runtime.Spec{DLP: scanner, ProvisionedFiles: provisionedFiles, ProvisionedVariables: provisionedVariables, Runtime: rt, Agent: agent, SidecarImage: runtime.SidecarImage(),
 		CustomCommand: customCommand, CustomPort: int32(customPort), Profile: profile, Image: image, WorkspacePVC: pvc, WorkspaceType: workspaceType, WorkspaceRepositoryURL: repositoryURL, WorkspaceBranch: branch, WorkspaceSnapshot: snapshotName, WorkspaceSizeGB: workspaceSize, WorkspaceGitCredentialKind: gitCredentialKind, WorkspaceGitCredentialUsername: gitCredentialUsername, WorkspaceGitCredential: gitCredential, ModelBaseURL: modelBaseURL, ModelName: modelName, ModelAPIKey: modelAPIKey, MCPServers: bindings, Security: security, Network: network}, nil
+}
+
+// contentScanner reads what the in-Pod gateway should inspect on tool calls. As
+// with the policy, an unreadable setting is logged and skipped rather than
+// blocking every spawn on the cluster.
+func (b *Builder) contentScanner(ctx context.Context) dlp.Settings {
+	var settings dlp.Settings
+	switch err := b.store.Setting(ctx, dlp.SettingKey, &settings); {
+	case err == nil:
+	case errors.Is(err, store.ErrNotFound):
+	default:
+		b.logger.Error("DLP settings are unusable; runtimes are provisioned without content scanning", "error", err)
+		return dlp.Settings{}
+	}
+	return settings
 }
 
 // policyDocument reads the platform-wide policy.

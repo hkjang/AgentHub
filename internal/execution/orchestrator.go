@@ -291,8 +291,13 @@ func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task stor
 
 		if err != nil {
 			o.event(ctx, *run, "step.failed", err.Error(), map[string]any{"sequence": sequence})
-			// A model error is transient far more often than not.
-			return transcript, Outcome{Status: store.TaskFailed, Failure: err.Error(), Retryable: true}
+			// A model error is transient far more often than not — but a refusal by
+			// the content scanner is not: the same prompt carries the same data, and
+			// retrying would spend the whole budget arriving at the same answer.
+			return transcript, Outcome{
+				Status: store.TaskFailed, Failure: err.Error(),
+				Retryable: !errors.Is(err, workflow.ErrBlocked),
+			}
 		}
 		o.event(ctx, *run, "step.completed", record.Title, map[string]any{"sequence": sequence, "durationMs": elapsed, "tokens": usage.TotalTokens})
 		transcript = append(transcript, output)

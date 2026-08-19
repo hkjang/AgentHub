@@ -10,6 +10,7 @@ import { Agents } from './pages/Agents'
 import { Workspaces } from './pages/Workspaces'
 import { Developer } from './pages/Developer'
 import { AdminSettings } from './pages/AdminSettings'
+import { AdminDLP } from './pages/AdminDLP'
 import { AdminExecution } from './pages/AdminExecution'
 import { AdminInsights } from './pages/AdminInsights'
 import { AdminPolicy } from './pages/AdminPolicy'
@@ -84,6 +85,7 @@ export function App() {
         <Route path="admin/overview" element={<AdminInsights />} />
         <Route path="admin/execution" element={<AdminExecution />} />
         <Route path="admin/policy" element={<AdminPolicy />} />
+        <Route path="admin/dlp" element={<AdminDLP />} />
         <Route path="admin/operations" element={<AdminOperations />} />
         <Route path="admin/runtime-profiles" element={<AdminResources kind="profiles" />} />
         <Route path="admin/runtime-images" element={<AdminResources kind="images" />} />

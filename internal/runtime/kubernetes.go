@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -151,6 +152,9 @@ func (k *KubernetesSpawner) object(spec Spec) *unstructured.Unstructured {
 	if provisioning := provisioningObject(spec); provisioning != nil {
 		object["spec"].(map[string]any)["provisioning"] = provisioning
 	}
+	if scanner := dlpObject(spec); scanner != nil {
+		object["spec"].(map[string]any)["dlp"] = scanner
+	}
 	return &unstructured.Unstructured{Object: object}
 }
 
@@ -179,6 +183,35 @@ func provisioningObject(spec Spec) map[string]any {
 		variables = append(variables, map[string]any{"name": variable.Name, "value": variable.Value})
 	}
 	return map[string]any{"files": files, "env": variables}
+}
+
+// dlpObject renders the content scanner's configuration for the Pod. It is left
+// off entirely when scanning is not configured, so a deployment that never turns
+// it on keeps producing exactly the objects it did before.
+func dlpObject(spec Spec) map[string]any {
+	if !spec.DLP.Enabled || len(spec.DLP.Classes) == 0 {
+		return nil
+	}
+	classes := make([]any, 0, len(spec.DLP.Classes))
+	for _, name := range sortedClasses(spec.DLP.Classes) {
+		classes = append(classes, map[string]any{"class": name, "action": spec.DLP.Classes[name]})
+	}
+	scanner := map[string]any{"enabled": true, "classes": classes, "scanResponses": spec.DLP.ScanResponses}
+	if spec.DLP.MaxBytes > 0 {
+		scanner["maxBytes"] = int64(spec.DLP.MaxBytes)
+	}
+	return scanner
+}
+
+// sortedClasses keeps the rendered object stable, so an unchanged configuration
+// does not produce a new Pod template hash on every reconcile.
+func sortedClasses(classes map[string]string) []string {
+	names := make([]string, 0, len(classes))
+	for name := range classes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // stringList renders a []string as the []any an unstructured object needs.

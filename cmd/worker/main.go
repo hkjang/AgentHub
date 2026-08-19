@@ -20,6 +20,7 @@ import (
 	"github.com/hkjang/AgentHub/internal/config"
 	"github.com/hkjang/AgentHub/internal/cryptox"
 	"github.com/hkjang/AgentHub/internal/execution"
+	"github.com/hkjang/AgentHub/internal/guard"
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/runtimespec"
 	"github.com/hkjang/AgentHub/internal/store"
@@ -100,7 +101,10 @@ func run(logger *slog.Logger) error {
 	hostname, _ := os.Hostname()
 	workerID := execution.NewWorkerID(hostname)
 	spawner := appRuntime.NewKubernetesSpawner(db).WithLogger(logger)
-	orchestrator := execution.New(db, spawner, workflow.NewModelCompletion(), logger, workerID)
+	// Every model call the execution plane makes goes through this client, which
+	// is why the data-loss check is attached here rather than in each caller.
+	completion := workflow.NewModelCompletion().WithInspector(guard.NewModel(db, logger))
+	orchestrator := execution.New(db, spawner, completion, logger, workerID)
 
 	worker := execution.NewWorker(db, orchestrator, logger, workerID)
 	worker.Hostname, worker.Version = hostname, buildinfo.Version

@@ -32,6 +32,7 @@ const ROUTES = [
   ['/admin/overview', /운영 현황/],
   ['/admin/execution', /실행 제어/],
   ['/admin/policy', /정책/],
+  ['/admin/dlp', /내용 검사/],
   ['/admin/operations', /로그 · 감사/],
   ['/admin/runtime-profiles', /런타임 프로파일/],
   ['/admin/runtime-images', /런타임 이미지/],

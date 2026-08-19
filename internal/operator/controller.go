@@ -32,6 +32,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
+	"github.com/hkjang/AgentHub/internal/dlp"
 	"github.com/hkjang/AgentHub/internal/runtimeenv"
 	"github.com/hkjang/AgentHub/internal/runtimetype"
 )
@@ -227,6 +228,16 @@ type spec struct {
 		Files []runtimeenv.File     `json:"files"`
 		Env   []runtimeenv.Variable `json:"env"`
 	} `json:"provisioning"`
+	// DLP is what the in-Pod gateway inspects on tool calls.
+	DLP struct {
+		Enabled       bool `json:"enabled"`
+		ScanResponses bool `json:"scanResponses"`
+		MaxBytes      int  `json:"maxBytes"`
+		Classes       []struct {
+			Class  string `json:"class"`
+			Action string `json:"action"`
+		} `json:"classes"`
+	} `json:"dlp"`
 	Security struct {
 		RunAsNonRoot                 bool   `json:"runAsNonRoot"`
 		ReadOnlyRootFilesystem       bool   `json:"readOnlyRootFilesystem"`
@@ -352,6 +363,23 @@ func controlPlaneURL() string {
 	return defaultControlPlaneURL
 }
 
+// dlpConfig renders the scanner settings for the gateway, in the same shape the
+// control plane's own scanner reads, so both ends are configured by one document.
+func dlpConfig(value spec) (string, bool) {
+	if !value.DLP.Enabled || len(value.DLP.Classes) == 0 {
+		return "", false
+	}
+	settings := dlp.Settings{Enabled: true, ScanResponses: value.DLP.ScanResponses, MaxBytes: value.DLP.MaxBytes, Classes: map[string]string{}}
+	for _, class := range value.DLP.Classes {
+		settings.Classes[class.Class] = class.Action
+	}
+	encoded, err := json.Marshal(settings)
+	if err != nil {
+		return "", false
+	}
+	return string(encoded), true
+}
+
 // gatesApproval reports whether any binding needs a decision before a call.
 func gatesApproval(policies []mcpBinding) bool {
 	for _, item := range policies {
@@ -370,7 +398,7 @@ const mcpGatewayPort int32 = 9129
 //
 // It holds the credentials rather than the agent container, so a tool the agent
 // may not call is one it cannot authenticate to either.
-func mcpGatewayContainer(image, runtimeName, runtimeRef string, bindings []map[string]any, policies []mcpBinding) (corev1.Container, bool) {
+func mcpGatewayContainer(image, runtimeName, runtimeRef string, bindings []map[string]any, policies []mcpBinding, value spec) (corev1.Container, bool) {
 	byName := make(map[string]*mcpToolPolicy, len(policies))
 	for _, item := range policies {
 		if item.ToolPolicy != nil {
@@ -431,6 +459,11 @@ func mcpGatewayContainer(image, runtimeName, runtimeRef string, bindings []map[s
 	env = append(env,
 		corev1.EnvVar{Name: "AGENTHUB_MCP_GATEWAY", Value: string(encoded)},
 		corev1.EnvVar{Name: "AGENTHUB_MCP_GATEWAY_LISTEN", Value: fmt.Sprintf("127.0.0.1:%d", mcpGatewayPort)})
+	// The content scanner runs in the gateway for the same reason the tool policy
+	// does: it is the only place the agent process cannot route around.
+	if scanner, ok := dlpConfig(value); ok {
+		env = append(env, corev1.EnvVar{Name: "AGENTHUB_DLP", Value: scanner})
+	}
 	// A gated tool needs a decision from the control plane, so the gateway is told
 	// where to ask, who it is, and how to authenticate — the runtime's own token,
 	// read from the Pod's Secret, whose hash the control plane holds.
@@ -1237,7 +1270,7 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 		containers = append(containers, adapter.Sidecars(build)...)
 	}
 	containers = append(containers, sidecarContainers(value)...)
-	if gateway, ok := mcpGatewayContainer(value.sidecarImage(), name, value.RuntimeRef.ID, effectiveMCP(ns, name, value), value.MCP); ok {
+	if gateway, ok := mcpGatewayContainer(value.sidecarImage(), name, value.RuntimeRef.ID, effectiveMCP(ns, name, value), value.MCP, value); ok {
 		containers = append(containers, gateway)
 	}
 	initContainers := []corev1.Container{}

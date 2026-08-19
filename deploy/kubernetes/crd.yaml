@@ -201,6 +201,24 @@ spec:
                         properties:
                           name: {type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]*$'}
                           value: {type: string, maxLength: 4096}
+                # What the in-Pod gateway inspects on the way out. Scanning is
+                # done there because it is the one place the agent process cannot
+                # route around.
+                dlp:
+                  type: object
+                  properties:
+                    enabled: {type: boolean, default: false}
+                    scanResponses: {type: boolean, default: false}
+                    maxBytes: {type: integer, minimum: 0, maximum: 4194304}
+                    classes:
+                      type: array
+                      maxItems: 32
+                      items:
+                        type: object
+                        required: [class, action]
+                        properties:
+                          class: {type: string, maxLength: 40}
+                          action: {type: string, enum: [off, audit, redact, block]}
                 lifecycle:
                   type: object
                   required: [desiredState]

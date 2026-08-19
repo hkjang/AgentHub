@@ -2,11 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/hkjang/AgentHub/internal/dlp"
 )
 
 func gatewayFor(t *testing.T, upstreamHandler http.HandlerFunc, policy mcpUpstream) (*httptest.Server, *[]map[string]any) {
@@ -248,5 +251,141 @@ func TestPlatformDeniedToolsAreNotAdvertised(t *testing.T) {
 	}
 	if !strings.Contains(body, "read_file") {
 		t.Fatalf("the permitted tool disappeared: %s", body)
+	}
+}
+
+// scannerFor builds a gateway whose content scanner is configured for one class.
+func scannerFor(class, action string) *scanner {
+	return &scanner{settings: dlp.Settings{Enabled: true, Classes: map[string]string{class: action}}}
+}
+
+// A tool call never passes through the control plane, so this gateway is the only
+// place a customer record on its way into a ticket can be caught.
+func TestToolArgumentsAreScannedBeforeTheyLeaveThePod(t *testing.T) {
+	var received string
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		received = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[]}}`))
+	}))
+	defer origin.Close()
+
+	var audited []map[string]any
+	handler := mcpGatewayWith([]mcpUpstream{{Name: "jira", Upstream: origin.URL}},
+		func(entry map[string]any) { audited = append(audited, entry) }, nil, scannerFor("rrn", "redact"))
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_issue","arguments":{"summary":"고객 900101-1234568 문의","extra":"keep me"}}}`
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest("POST", "/mcp/jira", strings.NewReader(body)))
+
+	if strings.Contains(received, "900101-1234568") {
+		t.Fatalf("the value reached the MCP server: %s", received)
+	}
+	if !strings.Contains(received, "주민등록번호 삭제됨") {
+		t.Fatalf("the redaction marker is missing: %s", received)
+	}
+	// Everything the gateway does not understand has to survive the rewrite.
+	if !strings.Contains(received, "keep me") || !strings.Contains(received, `"id":1`) {
+		t.Fatalf("the rewrite lost part of the request: %s", received)
+	}
+	if len(audited) == 0 || audited[0]["dlp"] == nil {
+		t.Fatalf("the finding was not audited: %#v", audited)
+	}
+	if strings.Contains(fmt.Sprint(audited), "1234568") {
+		t.Fatalf("the audit entry discloses the value: %#v", audited)
+	}
+}
+
+func TestBlockingClassRefusesTheToolCall(t *testing.T) {
+	reached := false
+	origin := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
+	defer origin.Close()
+	handler := mcpGatewayWith([]mcpUpstream{{Name: "jira", Upstream: origin.URL}},
+		func(map[string]any) {}, nil, scannerFor("rrn", "block"))
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest("POST", "/mcp/jira", strings.NewReader(
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_issue","arguments":{"summary":"900101-1234568"}}}`)))
+	if reached {
+		t.Fatal("a blocked call must not reach the MCP server")
+	}
+	if !strings.Contains(recorder.Body.String(), "주민등록번호") {
+		t.Fatalf("the refusal must name the class: %s", recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "1234568") {
+		t.Fatalf("the refusal discloses the value: %s", recorder.Body.String())
+	}
+}
+
+// A tool that returns a customer record hands it straight to the model, and from
+// there into a transcript far more people can read.
+func TestToolResponsesAreScannedWhenConfigured(t *testing.T) {
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"홍길동 900101-1234568"}]}}`))
+	}))
+	defer origin.Close()
+	inspect := scannerFor("rrn", "redact")
+	inspect.settings.ScanResponses = true
+	handler := mcpGatewayWith([]mcpUpstream{{Name: "jira", Upstream: origin.URL}}, func(map[string]any) {}, nil, inspect)
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest("POST", "/mcp/jira", strings.NewReader(
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_issue","arguments":{}}}`)))
+	answer := recorder.Body.String()
+	if strings.Contains(answer, "900101-1234568") {
+		t.Fatalf("the value reached the agent: %s", answer)
+	}
+	if !strings.Contains(answer, "홍길동") {
+		t.Fatalf("the rest of the answer was lost: %s", answer)
+	}
+
+	// Responses are not scanned unless asked for: it is the expensive half.
+	quiet := scannerFor("rrn", "redact")
+	handler = mcpGatewayWith([]mcpUpstream{{Name: "jira", Upstream: origin.URL}}, func(map[string]any) {}, nil, quiet)
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest("POST", "/mcp/jira", strings.NewReader(
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_issue","arguments":{}}}`)))
+	if !strings.Contains(recorder.Body.String(), "900101-1234568") {
+		t.Fatal("response scanning must be opt-in")
+	}
+}
+
+// A deployment that has not configured scanning must behave exactly as before.
+func TestNoScannerMeansNoChange(t *testing.T) {
+	var received string
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		received = string(body)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+	}))
+	defer origin.Close()
+	handler := mcpGatewayWith([]mcpUpstream{{Name: "jira", Upstream: origin.URL}}, func(map[string]any) {}, nil, nil)
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_issue","arguments":{"summary":"900101-1234568"}}}`
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/mcp/jira", strings.NewReader(body)))
+	if received != body {
+		t.Fatalf("the request was altered without a scanner:\n got %s\nwant %s", received, body)
+	}
+}
+
+func TestLoadScanner(t *testing.T) {
+	if got, err := loadScanner(""); got != nil || err != nil {
+		t.Fatalf("no configuration means no scanner: %#v %v", got, err)
+	}
+	if got, err := loadScanner(`{"enabled":false,"classes":{"rrn":"block"}}`); got != nil || err != nil {
+		t.Fatalf("a disabled scanner is no scanner: %#v %v", got, err)
+	}
+	// A configuration the gateway cannot use must fail loudly at startup rather
+	// than leave an operator believing traffic is being scanned.
+	if _, err := loadScanner(`{"enabled":true,"classes":{"rrn":"quarantine"}}`); err == nil {
+		t.Fatal("an invalid action must be refused")
+	}
+	if _, err := loadScanner(`{`); err == nil {
+		t.Fatal("malformed configuration must be refused")
+	}
+	got, err := loadScanner(`{"enabled":true,"classes":{"rrn":"redact"},"scanResponses":true}`)
+	if err != nil || got == nil || !got.settings.ScanResponses {
+		t.Fatalf("a valid configuration must load: %#v %v", got, err)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	dlpguard "github.com/hkjang/AgentHub/internal/guard"
 	"github.com/hkjang/AgentHub/internal/store"
 	"github.com/hkjang/AgentHub/internal/workflow"
 )
@@ -69,7 +70,8 @@ func (s *Server) runWorkflow(w http.ResponseWriter, r *http.Request) {
 
 	traceID := middleware.GetReqID(r.Context())
 	runCtx := workflow.WithTraceID(r.Context(), traceID)
-	result, runErr := workflow.New(workflow.NewModelCompletion()).Run(runCtx, item.Mode, steps, guard, input.Input)
+	completion := workflow.NewModelCompletion().WithInspector(dlpguard.NewModel(s.store, s.logger))
+	result, runErr := workflow.New(completion).Run(runCtx, item.Mode, steps, guard, input.Input)
 	status := result.Status
 	if runErr != nil {
 		status = "failed"

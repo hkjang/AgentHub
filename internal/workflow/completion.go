@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -15,6 +16,35 @@ import (
 // platform supports — vLLM, Ollama and anything else registered as an endpoint.
 type ModelCompletion struct {
 	Client *http.Client
+	// Inspector sees every prompt on its way out and every answer on its way
+	// back. It is an interface rather than a concrete scanner because this
+	// package has no business knowing what a resident registration number is —
+	// it only has to know that this is the one place every model call passes
+	// through, which is why the check belongs here and not in each caller.
+	Inspector Inspector
+}
+
+// ErrBlocked is what an inspector returns when the text may not cross. It is a
+// sentinel because the answer is deterministic: retrying the same prompt cannot
+// produce a different decision, and treating it as a transient model error would
+// cycle the task through its whole retry budget to reach the same refusal.
+var ErrBlocked = errors.New("전송이 차단되었습니다")
+
+// Inspector inspects, and may rewrite or refuse, text crossing the boundary
+// between the platform and a model.
+type Inspector interface {
+	// Outbound returns the text to send, or an error to refuse the call.
+	Outbound(ctx context.Context, step Step, text string) (string, error)
+	// Inbound is the same for what came back. Refusing here means the answer is
+	// not handed to the agent.
+	Inbound(ctx context.Context, step Step, text string) (string, error)
+}
+
+// WithInspector attaches one, and returns the completion so a constructor reads
+// as one expression.
+func (m *ModelCompletion) WithInspector(inspector Inspector) *ModelCompletion {
+	m.Inspector = inspector
+	return m
 }
 
 func NewModelCompletion() *ModelCompletion {
@@ -120,9 +150,16 @@ func (m *ModelCompletion) complete(ctx context.Context, step Step, prompt string
 	if strings.TrimSpace(step.ModelBaseURL) == "" || strings.TrimSpace(step.ModelName) == "" {
 		return "", Usage{}, fmt.Errorf("agent %q has no model endpoint bound", step.AgentName)
 	}
+	// Both halves are inspected: the instruction is written by a person and the
+	// prompt is assembled from task input and tool output, and a credential can
+	// arrive through either.
+	systemPrompt, prompt, err := m.inspectOutbound(ctx, step, step.SystemPrompt, prompt)
+	if err != nil {
+		return "", Usage{}, err
+	}
 	messages := []chatMessage{}
-	if strings.TrimSpace(step.SystemPrompt) != "" {
-		messages = append(messages, chatMessage{Role: "system", Content: step.SystemPrompt})
+	if strings.TrimSpace(systemPrompt) != "" {
+		messages = append(messages, chatMessage{Role: "system", Content: systemPrompt})
 	}
 	messages = append(messages, chatMessage{Role: "user", Content: prompt})
 
@@ -135,22 +172,22 @@ func (m *ModelCompletion) complete(ctx context.Context, step Step, prompt string
 			},
 		}
 	}
-	payload, err := json.Marshal(request)
-	if err != nil {
-		return "", Usage{}, err
+	payload, marshalErr := json.Marshal(request)
+	if marshalErr != nil {
+		return "", Usage{}, marshalErr
 	}
 	endpoint := strings.TrimRight(step.ModelBaseURL, "/") + "/chat/completions"
-	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
-	if err != nil {
-		return "", Usage{}, err
+	httpRequest, requestErr := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if requestErr != nil {
+		return "", Usage{}, requestErr
 	}
 	httpRequest.Header.Set("Content-Type", "application/json")
 	if strings.TrimSpace(step.ModelAPIKey) != "" {
 		httpRequest.Header.Set("Authorization", "Bearer "+step.ModelAPIKey)
 	}
-	response, err := m.Client.Do(httpRequest)
-	if err != nil {
-		return "", Usage{}, err
+	response, callErr := m.Client.Do(httpRequest)
+	if callErr != nil {
+		return "", Usage{}, callErr
 	}
 	defer func() { _ = response.Body.Close() }()
 
@@ -176,5 +213,31 @@ func (m *ModelCompletion) complete(ctx context.Context, step Step, prompt string
 	if len(decoded.Choices) == 0 {
 		return "", Usage{}, fmt.Errorf("model gateway returned no completion")
 	}
-	return strings.TrimSpace(decoded.Choices[0].Message.Content), decoded.Usage, nil
+	answer := strings.TrimSpace(decoded.Choices[0].Message.Content)
+	if m.Inspector != nil {
+		inspected, err := m.Inspector.Inbound(ctx, step, answer)
+		if err != nil {
+			// The tokens were spent, so they are still reported: refusing the answer
+			// must not also hide what it cost.
+			return "", decoded.Usage, err
+		}
+		answer = inspected
+	}
+	return answer, decoded.Usage, nil
+}
+
+// inspectOutbound runs the inspector over both halves of the request.
+func (m *ModelCompletion) inspectOutbound(ctx context.Context, step Step, systemPrompt, prompt string) (string, string, error) {
+	if m.Inspector == nil {
+		return systemPrompt, prompt, nil
+	}
+	inspectedSystem, err := m.Inspector.Outbound(ctx, step, systemPrompt)
+	if err != nil {
+		return "", "", err
+	}
+	inspectedPrompt, err := m.Inspector.Outbound(ctx, step, prompt)
+	if err != nil {
+		return "", "", err
+	}
+	return inspectedSystem, inspectedPrompt, nil
 }
