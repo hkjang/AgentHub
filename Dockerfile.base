@@ -6,6 +6,12 @@ FROM golang:1.25-bookworm AS proxy-build
 WORKDIR /src
 COPY go.mod go.sum ./
 COPY cmd/runtime-proxy ./cmd/runtime-proxy
+# The whole internal tree, not the packages the proxy imports today. The gateway
+# deliberately shares the control plane's own code — the tool-pattern matcher and
+# the content detectors — so that both ends decide the same way, and enumerating
+# those imports here is a trap: it compiles until somebody adds one, and then it
+# fails in a release build rather than in CI, which is exactly how it failed once.
+COPY internal ./internal
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/agenthub-runtime-proxy ./cmd/runtime-proxy
 
 FROM nousresearch/hermes-agent:${HERMES_VERSION}
