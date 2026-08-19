@@ -107,6 +107,46 @@ Hermes receives a generated `config.yaml` under its isolated `HERMES_HOME`;
 QwenPaw is initialised with `qwenpaw init --defaults` and receives the model
 binding as an `.env` file under `QWENPAW_HOME`.
 
+Each adapter is also described for the people choosing one — what it is good at,
+whether it has a terminal, where its files live, whether MCP servers reach it
+through its own configuration, and whether its surface is published directly or
+through the platform's proxy. `internal/runtimetype.Describe` is the one place
+that says so, served at `GET /api/v1/runtime-types` and rendered by the console.
+The console used to carry its own copy of the labels and one-line summaries, which
+meant the comparison a person actually needs lived nowhere and the two copies had
+already begun to drift. A test pins the described ports and proxy flags to the ones
+the operator opens, because a description that disagrees with the deployment sends
+somebody to a port nothing listens on.
+
+## Autonomous execution and the runtime
+
+There are two ways an agent does work here and they are not the same thing. A
+person opening the runtime gets the real product — opencode editing files, Hermes
+running its own tool loop, a terminal. Autonomous execution is a prose loop
+against the model gateway: the platform acquires the Pod so the workspace exists
+and somebody can watch, but the loop itself cannot edit a file, run a command or
+call a tool.
+
+Nothing used to say so. The prompt described an autonomous agent and left its
+limits unstated, and models filled the gap the way models do — reporting commits
+they never made. The instruction now states the environment plainly: which runtime
+this agent is bound to and what that runtime is, the workspace by name and whether
+it survives the Pod, the MCP servers bound to the agent, and then the limit in one
+sentence with no hedging.
+
+The way out is a handover. `<<<HANDOFF summary ... detail ... >>>` parks the task
+as `handoff` rather than failing it: the transcript stands, the attempt is not
+counted as a failure, the owner is notified, and a person opens the same workspace
+from the task row — the console starts the runtime if it is not running. They
+finish the work and close the task with a note, which becomes its final word.
+Only a handed-off task can be closed that way, and only as completed or cancelled:
+letting anybody mark anything completed would make the status meaningless, and
+leaving no way to close this one would keep every handover open forever.
+
+A handover is offered only when it can happen — the agent has a persistent
+workspace for the work to live in and the runtime has a surface a person can use.
+Whether the task started the Pod is beside the point: a person can start it.
+
 ## Workspace and home persistence
 
 Two volumes back every runtime. The workspace PVC holds the user's project files

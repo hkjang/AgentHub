@@ -92,3 +92,31 @@ func TestArtifactExtractionStillWorksThroughTheSharedParser(t *testing.T) {
 		t.Fatalf("an unnamed artifact must be skipped, got %#v", got)
 	}
 }
+
+// Every kind the platform offers a model has to be a kind the parser accepts.
+// The first HANDOFF request was dropped exactly here: the prompt asked for it and
+// the parser did not know it, so the model kept asking and nothing happened.
+func TestEveryOfferedDirectiveIsParsed(t *testing.T) {
+	offered := []string{directiveArtifact, directiveMemory, directiveApproval, directiveDelegate, directiveHandoff}
+	for _, kind := range offered {
+		output := "설명 문장\n" + directiveOpen + kind + " 인자\n본문 내용" + directiveClose + "\n"
+		directives := directivesOfKind(output, kind)
+		if len(directives) != 1 {
+			t.Fatalf("%s was not parsed from %q", kind, output)
+		}
+		if directives[0].Arg != "인자" || directives[0].Body != "본문 내용" {
+			t.Fatalf("%s parsed as %#v", kind, directives[0])
+		}
+	}
+	// And the prompt must not offer one the parser rejects.
+	for _, kind := range offered {
+		if !knownDirectives[kind] {
+			t.Errorf("%s is offered to the model but the parser does not accept it", kind)
+		}
+	}
+	// Anything else is still ignored: prose that happens to look fenced must not
+	// become an approval request.
+	if got := parseDirectives(directiveOpen + "SHUTDOWN now\n지금 종료" + directiveClose); len(got) != 0 {
+		t.Fatalf("an unknown directive was accepted: %#v", got)
+	}
+}

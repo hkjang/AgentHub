@@ -25,6 +25,7 @@ import (
 
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/runtimespec"
+	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
 	"github.com/hkjang/AgentHub/internal/telemetry"
 	"github.com/hkjang/AgentHub/internal/workflow"
@@ -57,8 +58,11 @@ type Outcome struct {
 	Result  string
 	Failure string
 	// parked is set when the task stopped for a reason that is neither success
-	// nor failure — today only a pending approval.
+	// nor failure: a pending approval, or a handover to a person in the runtime.
 	parked error
+	// Note carries what a parked task is waiting for, so the worker can tell the
+	// owner without re-reading the row it was just written to.
+	Note string
 	// Retryable distinguishes an infrastructure hiccup, which is worth another
 	// attempt, from the agent genuinely failing to meet its goal.
 	Retryable bool
@@ -201,14 +205,54 @@ func (o *Orchestrator) run(ctx context.Context, run *store.AgentRun, task store.
 		plan = o.plan(ctx, run, task, goal, model)
 	}
 
-	transcript, outcome := o.think(ctx, run, task, agent, goal, model, plan, resume)
-	if errors.Is(outcome.parked, ErrAwaitingApproval) {
+	transcript, outcome := o.think(ctx, run, task, agent, goal, model, plan, resume, o.environment(ctx, agent, goal, acquired != nil))
+	if errors.Is(outcome.parked, ErrAwaitingApproval) || errors.Is(outcome.parked, ErrHandedOff) {
 		return outcome
 	}
 	if outcome.Status != "" {
 		return outcome
 	}
 	return o.evaluate(ctx, run, task, agent, goal, model, transcript)
+}
+
+// ErrHandedOff parks a task that needs a person in the runtime. It is a sentinel
+// for the same reason ErrAwaitingApproval is: the worker must not treat a parked
+// task as a failure and must not touch its status on the way out.
+var ErrHandedOff = errors.New("런타임 인계를 기다립니다")
+
+// environment resolves what this run can actually reach, for the prompt.
+//
+// Everything here is read from what the platform already knows, and a lookup that
+// fails degrades to "less is claimed" rather than to a failed task: an agent told
+// nothing about its tools is worse off than one told nothing at all, but a task
+// that dies because a workspace name could not be read is worse than both.
+func (o *Orchestrator) environment(ctx context.Context, agent store.Agent, goal store.AgentGoal, runtimeReady bool) environment {
+	env := environment{
+		Runtime:      runtimetype.Describe(agent.RuntimeType),
+		RuntimeReady: runtimeReady,
+		// Handing over is only meaningful when somebody can open the runtime and
+		// find the work where the agent left it: a persistent workspace for the work
+		// to live in, and a runtime with a surface a person can actually use. Whether
+		// this task started the Pod is beside the point — a person can start it.
+		HandoffAllowed: agent.WorkspaceID != nil && *agent.WorkspaceID != "" && runtimetype.Describe(agent.RuntimeType).BrowserUI,
+	}
+	if agent.WorkspaceID != nil && *agent.WorkspaceID != "" {
+		if workspace, err := o.store.WorkspaceByID(ctx, *agent.WorkspaceID, agent.OwnerID, true); err == nil {
+			env.WorkspaceName = workspace.Name
+		} else {
+			o.logger.Debug("workspace name is unreadable for the prompt", "agent", agent.ID, "error", err)
+		}
+	}
+	if agent.MCPBundleID != nil && *agent.MCPBundleID != "" {
+		if servers, err := o.store.MCPServersForBundle(ctx, *agent.MCPBundleID); err == nil {
+			for _, server := range servers {
+				env.Tools = append(env.Tools, server.Name)
+			}
+		} else {
+			o.logger.Debug("MCP bundle is unreadable for the prompt", "agent", agent.ID, "error", err)
+		}
+	}
+	return env
 }
 
 type resolvedModel struct {
@@ -233,11 +277,11 @@ func (o *Orchestrator) resolveModel(ctx context.Context, agent store.Agent) (res
 
 // think drives the agent toward its goal, one reasoning step at a time, until it
 // reports completion or a guardrail stops it.
-func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task store.AgentTask, agent store.Agent, goal store.AgentGoal, model resolvedModel, plan string, resume checkpoint) ([]string, Outcome) {
-	// Everything the agent knows before it starts: its goal, what it remembers
-	// from previous runs, the plan it just made, and any approval decision that
-	// resumed this task.
-	prelude := systemPrompt(agent, goal) + o.loadMemory(ctx, agent.ID)
+func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task store.AgentTask, agent store.Agent, goal store.AgentGoal, model resolvedModel, plan string, resume checkpoint, env environment) ([]string, Outcome) {
+	// Everything the agent knows before it starts: its goal, what it can and
+	// cannot reach from this loop, what it remembers from previous runs, the plan
+	// it just made, and any approval decision that resumed this task.
+	prelude := systemPromptWithEnvironment(agent, goal, env) + o.loadMemory(ctx, agent.ID)
 	step := workflow.Step{
 		ID: "task", AgentID: agent.ID, AgentName: agent.Name,
 		SystemPrompt: prelude,
@@ -311,6 +355,27 @@ func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task stor
 				return transcript, Outcome{Status: store.TaskFailed, Failure: "승인 요청을 생성하지 못했습니다: " + err.Error(), Retryable: true}
 			}
 			return transcript, Outcome{Status: "waiting_approval", parked: ErrAwaitingApproval, Result: strings.Join(transcript, "\n\n")}
+		}
+
+		// A handoff stops the run the same way an approval does, and for the same
+		// reason: the work is not finished and not failed, it is waiting for a
+		// person. The difference is where they pick it up — the runtime's own
+		// workspace rather than a review queue.
+		if handoffs := directivesOfKind(output, directiveHandoff); env.HandoffAllowed && len(handoffs) > 0 {
+			note := handoffNote(handoffs[0])
+			if err := o.store.HandOffTask(ctx, task.ID, note); err != nil {
+				return transcript, Outcome{Status: store.TaskFailed, Failure: "런타임 인계를 기록하지 못했습니다: " + err.Error(), Retryable: true}
+			}
+			sequence++
+			if _, storeErr := o.store.AppendRunStep(ctx, store.AgentRunStep{
+				RunID: run.ID, Sequence: sequence, Type: "completion",
+				Title: "런타임 인계 요청", Output: note, Status: "succeeded",
+			}); storeErr != nil {
+				o.logger.Error("handoff step could not be recorded", "run", run.ID, "error", storeErr)
+			}
+			o.event(ctx, *run, "task.handoff", note, map[string]any{"agentId": agent.ID})
+			transcript = append(transcript, note)
+			return transcript, Outcome{Status: store.TaskHandoff, parked: ErrHandedOff, Note: note, Result: strings.Join(transcript, "\n\n")}
 		}
 
 		// Delegation results are fed back so the agent can carry on knowing what

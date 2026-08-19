@@ -26,6 +26,10 @@ const (
 	// the promotion gate holds tasks here. It is deliberately not a failure: the
 	// task resumes on its own once the block is lifted.
 	TaskBlocked = "blocked"
+	// TaskHandoff is work the agent could not finish in a prose loop and handed to
+	// a person in the runtime. Also not a failure: the transcript stands, the
+	// workspace is where the agent left it, and a person decides how it ends.
+	TaskHandoff = "handoff"
 )
 
 // taskPriorityRank orders the queue. Postgres has no ordering for these strings,
@@ -410,6 +414,45 @@ func (s *Store) BlockAgentTask(ctx context.Context, taskID, reason string) error
 		SET status='blocked', last_error=$2, claimed_by='', claimed_until=NULL, updated_at=now()
 		WHERE id=$1`, taskID, reason)
 	return err
+}
+
+// HandOffTask parks a task for a person to finish in the runtime.
+//
+// The note is stored where every other "why is this waiting" message lives, so
+// the task list can explain the state without a second lookup. The attempt count
+// is untouched: the agent did its attempt, and it ended in a handover rather than
+// a failure.
+func (s *Store) HandOffTask(ctx context.Context, taskID, note string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE agent_tasks
+		SET status='handoff', last_error=$2, claimed_by='', claimed_until=NULL, updated_at=now()
+		WHERE id=$1`, taskID, note)
+	return err
+}
+
+// ResolveHandoffTask records how a person finished — or gave up on — a task they
+// took over.
+//
+// Only a handed-off task can be resolved this way. Letting anyone mark any task
+// completed would make the status meaningless; letting nobody close this one
+// would leave every handover open forever.
+func (s *Store) ResolveHandoffTask(ctx context.Context, taskID, ownerID, status, note string, admin bool) (AgentTask, error) {
+	if status != TaskCompleted && status != TaskCancelled {
+		return AgentTask{}, errors.New("인계된 작업은 완료 또는 취소로만 마무리할 수 있습니다")
+	}
+	// Aliased as t because the shared column list is written for the claim query,
+	// which needs the alias.
+	query := `UPDATE agent_tasks t SET status=$3, last_error=$4, updated_at=now()
+		WHERE t.id=$1 AND t.status='handoff' AND ($2 = '' OR t.owner_id=$2)
+		RETURNING ` + taskCoreColumns + `, (SELECT name FROM agent_definitions WHERE id=t.agent_id)`
+	owner := ownerID
+	if admin {
+		owner = ""
+	}
+	item, err := scanTask(s.pool.QueryRow(ctx, query, taskID, owner, status, note))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AgentTask{}, ErrNotFound
+	}
+	return item, err
 }
 
 // ReleaseBlockedTasks puts an agent's held tasks back on the queue and reports

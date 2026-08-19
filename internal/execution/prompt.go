@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -16,7 +17,34 @@ const completionMarker = "TASK_COMPLETE"
 // systemPrompt turns an agent definition and its goal into the instruction the
 // model runs under. The agent's own system prompt still leads, so an agent that
 // was written for interactive use keeps its character when driven autonomously.
+// environment describes what this run can actually reach, which the prompt has to
+// state plainly. The model is bound to a runtime whose files and terminal it
+// cannot touch from this loop, and a prompt that leaves that unsaid produces an
+// agent that reports edits it never made.
+type environment struct {
+	// Runtime is the adapter this agent is bound to, described for a reader.
+	Runtime runtimetype.Descriptor
+	// RuntimeReady reports whether a Pod is actually up while this task runs, and
+	// therefore whether a person can be handed the workspace right now.
+	RuntimeReady bool
+	// WorkspaceName is the persistent volume behind the runtime, empty when the
+	// agent has none and its files vanish with the Pod.
+	WorkspaceName string
+	// Tools are the MCP servers bound to the agent. They are reachable when a
+	// person drives the runtime, not from this loop — which is exactly why they
+	// are worth naming here.
+	Tools []string
+	// HandoffAllowed reports whether this agent may hand the task to a person.
+	HandoffAllowed bool
+}
+
 func systemPrompt(agent store.Agent, goal store.AgentGoal) string {
+	return systemPromptWithEnvironment(agent, goal, environment{Runtime: runtimetype.Describe(agent.RuntimeType)})
+}
+
+// systemPromptWithEnvironment is the full instruction, including what the run can
+// and cannot do.
+func systemPromptWithEnvironment(agent store.Agent, goal store.AgentGoal, env environment) string {
 	var b strings.Builder
 	if prompt := agentSystemPrompt(agent); prompt != "" {
 		b.WriteString(prompt)
@@ -49,6 +77,7 @@ func systemPrompt(agent store.Agent, goal store.AgentGoal) string {
 		b.WriteString(goal.Constraints)
 		b.WriteString("\n")
 	}
+	b.WriteString(environmentSection(env))
 	b.WriteString("\n# 진행 방식\n")
 	b.WriteString("- 한 번에 한 단계씩 진행하고, 그 단계에서 무엇을 했는지 서술하세요.\n")
 	b.WriteString("- 아직 끝나지 않았다면 다음에 무엇을 할지 적고 응답을 마치세요.\n")
@@ -61,7 +90,61 @@ func systemPrompt(agent store.Agent, goal store.AgentGoal) string {
 	if goal.MaxDelegationDepth > 0 {
 		b.WriteString(fmt.Sprintf("- 다른 에이전트가 처리해야 할 일은 %s%s 에이전트이름 ... 작업내용 ... %s 로 위임하세요.\n", directiveOpen, directiveDelegate, directiveClose))
 	}
+	if env.HandoffAllowed {
+		b.WriteString(fmt.Sprintf("- 파일 편집·명령 실행·브라우저 조작처럼 이 루프에서 할 수 없는 일이 남았다면, 했다고 쓰지 말고 %s%s 남은 작업 요약 ... 사람이 이어서 할 내용 ... %s 로 런타임 인계를 요청하세요. 작업은 실패가 아니라 '런타임 인계' 상태로 대기하고, 담당자가 같은 작업공간에서 이어받습니다.\n", directiveOpen, directiveHandoff, directiveClose))
+	}
 	return b.String()
+}
+
+// environmentSection tells the model where it is running and what that means.
+//
+// Everything here is stated rather than implied, including the limits: the loop
+// is prose in and prose out, the runtime's editor and terminal belong to whoever
+// opens it, and the tools are named so the agent can ask for them by name instead
+// of inventing an API for them.
+func environmentSection(env environment) string {
+	var b strings.Builder
+	b.WriteString("\n# 실행 환경\n")
+	if env.Runtime.Label != "" {
+		b.WriteString(fmt.Sprintf("- 이 에이전트는 %s 런타임에 연결되어 있습니다. %s\n", env.Runtime.Label, env.Runtime.Summary))
+	}
+	if env.WorkspaceName != "" {
+		b.WriteString(fmt.Sprintf("- 작업공간 %s 가 %s 에 연결되어 있고, Pod가 재시작되어도 내용이 유지됩니다.\n", env.WorkspaceName, env.Runtime.Workspace))
+	} else {
+		b.WriteString("- 영속 작업공간이 연결되어 있지 않습니다. 런타임 안에 남긴 파일은 Pod와 함께 사라집니다.\n")
+	}
+	if len(env.Tools) > 0 {
+		b.WriteString(fmt.Sprintf("- 이 에이전트에 연결된 MCP 도구: %s. 사람이 런타임을 직접 열었을 때 사용할 수 있습니다.\n", strings.Join(env.Tools, ", ")))
+	}
+	// The limit, stated once and without hedging. This is the sentence that stops
+	// a model from reporting a commit it never made.
+	b.WriteString("- 지금 이 실행은 모델과 글로만 주고받는 루프입니다. 파일을 직접 편집하거나 명령을 실행하거나 도구를 호출할 수 없습니다. 하지 않은 일을 했다고 쓰지 마세요.\n")
+	if env.HandoffAllowed {
+		if env.RuntimeReady {
+			b.WriteString("- 런타임 Pod는 지금 실행 중입니다. 담당자가 브라우저로 같은 작업공간을 열어 곧바로 이어받을 수 있습니다.\n")
+		} else {
+			b.WriteString("- 런타임 Pod는 지금 실행 중이 아니지만, 담당자가 시작해 같은 작업공간에서 이어받을 수 있습니다.\n")
+		}
+	}
+	return b.String()
+}
+
+// handoffNote turns a HANDOFF directive into the sentence the person picking the
+// task up reads. The argument is the summary and the body is the detail, so both
+// survive rather than only the one that happened to be filled in.
+func handoffNote(directive Directive) string {
+	summary := strings.TrimSpace(directive.Arg)
+	body := strings.TrimSpace(directive.Body)
+	switch {
+	case summary != "" && body != "":
+		return summary + "\n\n" + body
+	case summary != "":
+		return summary
+	case body != "":
+		return body
+	default:
+		return "에이전트가 런타임에서 직접 수행해야 하는 작업이라고 판단했습니다."
+	}
 }
 
 // stepPrompt gives the model the task and everything it has already said, so a

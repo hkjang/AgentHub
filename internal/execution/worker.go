@@ -189,10 +189,16 @@ func (w *Worker) execute(ctx context.Context, task store.AgentTask) {
 		logger.Error("task execution failed", "error", err)
 	}
 
-	// A task parked for approval has already been moved to waiting_approval by the
-	// orchestrator; touching its status here would drag it back out of the gate.
+	// A parked task has already been moved to its waiting state by the
+	// orchestrator; touching its status here would drag it back out.
 	if errors.Is(outcome.parked, ErrAwaitingApproval) {
 		logger.Info("task is waiting for approval")
+		return
+	}
+	if errors.Is(outcome.parked, ErrHandedOff) {
+		w.notify(finish, task, "런타임에서 이어받아야 하는 작업입니다", task.Title+" — "+outcome.Note)
+		w.publish(finish, task, store.EventTaskHandoff, map[string]any{"title": task.Title, "agentId": task.AgentID, "note": outcome.Note})
+		logger.Info("task handed off to a person in the runtime", "note", outcome.Note)
 		return
 	}
 

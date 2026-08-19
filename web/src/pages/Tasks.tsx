@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Bot, ClipboardList, Clock3, Coins, ExternalLink, ListChecks, Play, Plus, Radio, RefreshCw, RotateCcw, Square } from 'lucide-react'
+import { AlertTriangle, Bot, Check, ClipboardList, Clock3, Coins, ExternalLink, ListChecks, Play, Plus, Radio, RefreshCw, RotateCcw, Square, Terminal } from 'lucide-react'
 import { api } from '../api'
 import { useAuth } from '../App'
 import { Link } from 'react-router-dom'
@@ -8,7 +8,7 @@ import { relativeTime, runtimeCode, runtimeLabel, runtimeLogoClass } from '../ru
 import type { Agent, AgentArtifact, AgentPlan, AgentRun, AgentRunEvent, AgentRunStep, AgentTask, PlatformEvent, QueueSnapshot, UsageBudget, UsageReport } from '../types'
 
 /** Statuses that are still moving, and therefore worth polling for. */
-const ACTIVE = ['queued', 'planning', 'ready', 'running', 'waiting_tool', 'waiting_approval', 'retrying', 'blocked']
+const ACTIVE = ['queued', 'planning', 'ready', 'running', 'waiting_tool', 'waiting_approval', 'retrying', 'blocked', 'handoff']
 
 const PRIORITY_LABELS: Record<string, string> = {
   critical: '긴급', high: '높음', normal: '보통', low: '낮음', background: '배경',
@@ -26,6 +26,7 @@ const STATUS_MEANINGS: Record<string, string> = {
   waiting_tool: '도구 응답을 기다립니다',
   waiting_approval: '사람이 승인해야 이어집니다',
   blocked: '에이전트 정의가 운영 승격되면 자동으로 실행됩니다',
+  handoff: '에이전트가 할 수 없는 일이 남아 사람에게 넘겼습니다 · 런타임에서 이어받으세요',
   retrying: '실패 후 자동으로 다시 시도합니다',
   completed: '완료 조건을 충족하고 끝났습니다',
   failed: '실패했습니다 · 다시 실행할 수 있습니다',
@@ -56,6 +57,7 @@ export function Tasks() {
   const [openRun, setOpenRun] = useState<string | null>(null)
   const [cancelling, setCancelling] = useState<AgentTask | null>(null)
   const [retrying, setRetrying] = useState<AgentTask | null>(null)
+  const [resolving, setResolving] = useState<AgentTask | null>(null)
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
@@ -114,6 +116,40 @@ export function Tasks() {
     }
   }
 
+  /**
+   * Opens the runtime for a handed-off task, in the same workspace the agent left
+   * its work in. It starts the runtime when it is not running: somebody told to
+   * take over should not have to find the runtime screen first.
+   */
+  const openRuntime = async (task: AgentTask) => {
+    setError('')
+    try {
+      const agent = agents.find((item) => item.id === task.agentId)
+      const runtimeId = agent?.runtime?.id
+      if (!runtimeId || ['stopped', 'failed', 'crashed'].includes(agent?.runtime?.status ?? '')) {
+        await api.post(`/api/v1/agents/${task.agentId}/${runtimeId ? 'start' : 'spawn'}`, {})
+        setError('런타임을 시작했습니다. 준비되면 다시 눌러 작업공간을 여세요.')
+        await load()
+        return
+      }
+      const session = await api.post<{ url: string }>(`/api/v1/runtimes/${runtimeId}/launch`, {})
+      window.open(session.url, '_blank', 'noopener,noreferrer')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '런타임을 열지 못했습니다.')
+    }
+  }
+
+  const resolve = async (task: AgentTask, status: 'completed' | 'cancelled', note: string) => {
+    setError('')
+    setResolving(null)
+    try {
+      await api.post(`/api/v1/tasks/${task.id}/resolve`, { status, note })
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '작업을 마무리하지 못했습니다.')
+    }
+  }
+
   return <div className="page">
     <PageHeader eyebrow="실행 플레인" title="작업 대기열"
       description="에이전트에게 맡긴 일이 대기열에 쌓이고, 워커가 가져가 스스로 수행한 결과가 여기에 남습니다."
@@ -134,12 +170,13 @@ export function Tasks() {
       { title: '워커가 가져갑니다', body: <>대기 중인 작업은 워커가 우선순위 순서로 가져가고, 필요하면 그 에이전트의 런타임을 자동으로 띄웁니다. 아래 <b>대기 · 실행 · 워커</b> 숫자가 지금 상태이고, 대기열이 밀리면 워커 수는 스스로 늘어납니다.</> },
       { title: '진행을 따라갑니다', body: <>상태 칩으로 걸러 보고, 각 행의 <b>실행 기록</b>에서 계획·단계별 수행 내역·산출물·토큰 사용량까지 확인합니다. 목록은 5초마다 자동 갱신됩니다.</> },
       { title: '막힌 작업을 처리합니다', body: <><b>승인 대기</b>는 <Link to="/reviews">검토 · 승인</Link>에서 승인하면 이어서 진행되고, <b>실패</b>·<b>처리 불가</b>는 원인을 고친 뒤 다시 실행할 수 있습니다.</> },
-    ]} footer={<GuideLegend items={['queued','running','waiting_approval','blocked','retrying','completed','failed','dead_letter'].map((status) => ({ label: <StatusBadge status={status} />, meaning: STATUS_MEANINGS[status] ?? '' }))} />} />
+      { title: '런타임에서 이어받습니다', body: <>자동 실행은 모델과 글로만 주고받는 루프여서 파일 편집·명령 실행을 하지 못합니다. 그런 일이 남으면 에이전트가 <b>런타임 인계</b> 상태로 넘기고, 각 행의 <b>런타임 열기</b>로 같은 작업공간을 열어 직접 마무리한 뒤 <b>완료 처리</b>를 누르면 됩니다.</> },
+    ]} footer={<GuideLegend items={['queued','running','waiting_approval','handoff','blocked','retrying','completed','failed','dead_letter'].map((status) => ({ label: <StatusBadge status={status} />, meaning: STATUS_MEANINGS[status] ?? '' }))} />} />
 
     {tasks.length > 0 && <div className="toolbar">
       <div className="filter-chips">
         <button className={filter === '' ? 'selected' : ''} onClick={() => setFilter('')}>전체 {tasks.length}</button>
-        {['running', 'queued', 'waiting_approval', 'blocked', 'retrying', 'completed', 'failed', 'dead_letter'].filter((status) => counts[status])
+        {['running', 'queued', 'waiting_approval', 'handoff', 'blocked', 'retrying', 'completed', 'failed', 'dead_letter'].filter((status) => counts[status])
           .map((status) => <button key={status} title={STATUS_MEANINGS[status]} className={filter === status ? 'selected' : ''} onClick={() => setFilter(status)}>
             {statusLabel(status)} {counts[status]}
           </button>)}
@@ -180,6 +217,10 @@ export function Tasks() {
               <td><span title={new Date(task.updatedAt).toLocaleString('ko-KR')}>{relativeTime(task.updatedAt)}</span></td>
               <td><div className="row-actions">
                 {task.status === 'waiting_approval' && <a className="task-approval" title="승인 화면으로" href="/reviews">승인 대기</a>}
+                {task.status === 'handoff' && <>
+                  <button title="런타임 열기 — 같은 작업공간에서 이어서 작업합니다" onClick={() => void openRuntime(task)}><Terminal size={15} /></button>
+                  <button title="완료 처리 — 사람이 마무리했음을 기록합니다" onClick={() => setResolving(task)}><Check size={15} /></button>
+                </>}
                 {task.currentRunId && <button title="실행 기록" onClick={() => setOpenRun(task.currentRunId!)}><ExternalLink size={15} /></button>}
                 {['failed', 'dead_letter', 'cancelled'].includes(task.status) && <button title="다시 실행" onClick={() => setRetrying(task)}><RotateCcw size={15} /></button>}
                 {ACTIVE.includes(task.status) && <button className="danger" title="취소" onClick={() => setCancelling(task)}><Square size={14} /></button>}
@@ -192,6 +233,7 @@ export function Tasks() {
     <EventFeed />
 
     {retrying && <RetryDialog task={retrying} close={() => setRetrying(null)} retry={(fresh) => void retry(retrying, fresh)} />}
+    {resolving && <ResolveDialog task={resolving} busy={busy} close={() => setResolving(null)} resolve={(task, status, note) => void resolve(task, status, note)} />}
     {creating && <CreateTaskDrawer agents={agents} close={() => setCreating(false)} done={() => { setCreating(false); void load() }} />}
     {openRun && <RunDrawer runId={openRun} close={() => setOpenRun(null)} />}
     {cancelling && <ConfirmDialog title="작업을 취소할까요?"
@@ -470,4 +512,43 @@ export function RunDrawer({ runId, close }: { runId: string; close: () => void }
       </article>)}</div>
     </section>
   </Drawer>
+}
+
+/**
+ * Closing a task a person took over in the runtime.
+ *
+ * The note replaces the agent's last message as the task's final word, so "what
+ * did we actually do about this" survives the handover instead of ending at
+ * "somebody was asked to look at it".
+ */
+function ResolveDialog({ task, busy, close, resolve }: {
+  task: AgentTask; busy: boolean; close: () => void
+  resolve: (task: AgentTask, status: 'completed' | 'cancelled', note: string) => void
+}) {
+  const [note, setNote] = useState('')
+  const [status, setStatus] = useState<'completed' | 'cancelled'>('completed')
+  useEscape(close)
+  return <div className="drawer-layer">
+    <button className="drawer-scrim" onClick={close} aria-label="취소" />
+    <div className="confirm-dialog" role="alertdialog" aria-modal="true" aria-label="인계 작업 마무리">
+      <div className="confirm-icon"><Check size={22} /></div>
+      <h3>런타임에서 이어받은 작업을 마무리할까요?</h3>
+      <div className="confirm-body">
+        <strong>{task.title}</strong> — 에이전트가 남긴 요청: {task.lastError || '내용 없음'}
+        <label className="confirm-field"><span>처리 결과</span>
+          <select value={status} onChange={(e) => setStatus(e.target.value as 'completed' | 'cancelled')}>
+            <option value="completed">완료 — 사람이 마무리했습니다</option>
+            <option value="cancelled">취소 — 하지 않기로 했습니다</option>
+          </select>
+        </label>
+        <label className="confirm-field"><span>기록</span>
+          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="무엇을 했는지 한 줄로 남기세요" />
+        </label>
+      </div>
+      <div className="confirm-actions">
+        <button className="button ghost" onClick={close} disabled={busy}>취소</button>
+        <button className="button primary" disabled={busy} onClick={() => resolve(task, status, note)}>{busy ? '처리 중…' : '마무리'}</button>
+      </div>
+    </div>
+  </div>
 }

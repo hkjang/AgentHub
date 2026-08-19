@@ -16,14 +16,18 @@ const (
 	EventTaskCompleted    = "task.completed"
 	EventTaskFailed       = "task.failed"
 	EventTaskDeadLettered = "task.dead_lettered"
-	EventApprovalDecided  = "approval.decided"
-	EventRuntimeFailed    = "runtime.failed"
-	EventArtifactCreated  = "artifact.created"
+	// EventTaskHandoff fires when an agent hands a task to a person in the
+	// runtime. It is subscribable because "somebody has to finish this by hand" is
+	// exactly the kind of thing a team wants routed somewhere.
+	EventTaskHandoff     = "task.handoff"
+	EventApprovalDecided = "approval.decided"
+	EventRuntimeFailed   = "runtime.failed"
+	EventArtifactCreated = "artifact.created"
 )
 
 // PublishableEvents is the list an operator may subscribe a trigger to.
 var PublishableEvents = []string{
-	EventTaskCompleted, EventTaskFailed, EventTaskDeadLettered,
+	EventTaskCompleted, EventTaskFailed, EventTaskDeadLettered, EventTaskHandoff,
 	EventApprovalDecided, EventRuntimeFailed, EventArtifactCreated,
 }
 
