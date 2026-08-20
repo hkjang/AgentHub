@@ -163,6 +163,7 @@ func (s *Server) apiRoutes() []Route {
 		write(http.MethodPut, "/agents/{id}/mcp-policies", "Agents", "Save an Agent's MCP tool policy", s.saveAgentMCPPolicy),
 		write(http.MethodDelete, "/mcp-policies/{id}", "Agents", "Delete an MCP tool policy", s.deleteAgentMCPPolicy),
 		read("/agents/{id}/memories", "Agents", "Read an Agent's stored memories", s.agentMemories),
+		read("/agents/{id}/flows", "Agents", "List the flows the Agent's runtime holds", s.agentFlows),
 		write(http.MethodDelete, "/memories/{id}", "Agents", "Delete a stored memory", s.deleteMemory),
 
 		// --- Runtimes ---

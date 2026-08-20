@@ -48,7 +48,11 @@ export type AgentGoal = {
   keepWarmSeconds: number
   resumeFromCheckpoint: boolean
   tokenBudget: number
+  runner: 'prose' | 'flow'
+  flowId: string
+  flowOutputComponent: string
 }
+export type RuntimeFlow = { id:string; name:string; description?:string; endpointName?:string; mcpEnabled?:boolean }
 export type UsageBudget = { windowDays:number; tokenBudget:number; tokensUsed:number; costBudget:number; costUsed:number; currency:string; maxRunning:number; runningNow:number }
 export type QueueSnapshot = { ready:number; running:number; workers:number; status:Record<string,number> }
 export type WarmRuntime = { runtimeId:string; agentId:string; agentName:string; status:string; warmUntil:string }

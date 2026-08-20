@@ -47,7 +47,7 @@ func (b *Builder) resolveRuntimeImage(ctx context.Context, agent store.Agent) st
 			return reference
 		}
 	}
-	return runtime.DefaultBaseImage()
+	return runtime.DefaultRuntimeImage(agent.RuntimeType)
 }
 
 // runtimeImageReference builds a pullable reference, preferring the digest so the

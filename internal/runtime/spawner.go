@@ -10,6 +10,7 @@ import (
 	"github.com/hkjang/AgentHub/internal/dlp"
 	"github.com/hkjang/AgentHub/internal/runtimecfg"
 	"github.com/hkjang/AgentHub/internal/runtimeenv"
+	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -35,6 +36,27 @@ func DefaultBaseImage() string {
 		return override
 	}
 	return "agenthub-base:v" + strings.TrimSuffix(buildinfo.BaseVersion, "-dev")
+}
+
+// EnvDefaultLangflowImage overrides the Langflow runtime image the same way
+// EnvDefaultRuntimeImage overrides the shared one.
+const EnvDefaultLangflowImage = "AGENTHUB_DEFAULT_LANGFLOW_IMAGE"
+
+// DefaultRuntimeImage is the image a runtime of this type starts from when no
+// administrator has approved one.
+//
+// Langflow does not boot from the shared base image: it is published as its own
+// archive with its own version, because it carries a Python tree and a built
+// frontend no other adapter needs. Sending a Langflow agent to agenthub-base
+// would leave it looking for a binary that image has never contained.
+func DefaultRuntimeImage(runtimeType string) string {
+	if runtimeType != runtimetype.Langflow {
+		return DefaultBaseImage()
+	}
+	if override := strings.TrimSpace(os.Getenv(EnvDefaultLangflowImage)); override != "" {
+		return override
+	}
+	return "agenthub-langflow:v" + strings.TrimSuffix(buildinfo.LangflowVersion, "-dev")
 }
 
 // EnvSidecarImage names the image AgentHub's own sidecars run. Deployments that

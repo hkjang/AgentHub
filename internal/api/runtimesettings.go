@@ -145,6 +145,10 @@ func reportOrNil(report store.RuntimeConfigReport, reported bool) any {
 // a failure either — a Pod that has not restarted since the setting changed has
 // simply not applied it yet, and saying "failed" would send somebody debugging
 // something that is working as designed.
+//
+// A partial report is its own state. A Pod that wrote the file but is missing a
+// declared variable is neither applied nor failed, and the difference is exactly
+// what the person fixing it needs to know.
 func injectionState(expected string, report store.RuntimeConfigReport, reported bool, runtimeStatus string) string {
 	switch {
 	case expected == "":
@@ -154,6 +158,11 @@ func injectionState(expected string, report store.RuntimeConfigReport, reported 
 			return "pending_start"
 		}
 		return "unverified"
+	case report.Status == "incomplete":
+		if report.Fingerprint != expected {
+			return "stale"
+		}
+		return "partial"
 	case report.Status != "applied":
 		return "failed"
 	case report.Fingerprint != expected:
@@ -192,7 +201,10 @@ func (s *Server) reportRuntimeConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status := strings.TrimSpace(input.Status)
-	if status != "applied" && status != "missing" && status != "unreadable" {
+	// "incomplete" is the report a Pod sends when the overlay's file landed but a
+	// declared environment variable did not reach the container. It is a partial
+	// application, and rounding it to "unreadable" would hide which half failed.
+	if status != "applied" && status != "missing" && status != "unreadable" && status != "incomplete" {
 		status = "unreadable"
 	}
 	keys := input.Keys

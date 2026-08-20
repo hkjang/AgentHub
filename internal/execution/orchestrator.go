@@ -46,6 +46,8 @@ type Orchestrator struct {
 	completion Completion
 	logger     *slog.Logger
 	workerID   string
+	// flowInspector scans text entering and leaving a runtime's own flow engine.
+	flowInspector FlowInspector
 }
 
 func New(db *store.Store, spawner appRuntime.Spawner, completion Completion, logger *slog.Logger, workerID string) *Orchestrator {
@@ -198,6 +200,17 @@ func (o *Orchestrator) run(ctx context.Context, run *store.AgentRun, task store.
 			run.RuntimeID = &acquired.runtimeID
 			defer o.releaseRuntime(context.WithoutCancel(ctx), *run, agent, goal, acquired)
 		}
+	}
+
+	// A flow-backed Goal does not reason step by step: the flow is the program.
+	// It still goes through the same evaluator afterwards, so completion is judged
+	// by the same criteria as any other agent's.
+	if goal.Runner == store.RunnerFlow {
+		transcript, outcome := o.runFlow(ctx, run, task, agent, goal, acquired)
+		if outcome.Status != "" {
+			return outcome
+		}
+		return o.evaluate(ctx, run, task, agent, goal, model, transcript)
 	}
 
 	plan := ""

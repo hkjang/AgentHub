@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -398,6 +399,22 @@ func gatesApproval(policies []mcpBinding) bool {
 		}
 	}
 	return false
+}
+
+// declaredEnvNames is the comma-separated list of overlay variable names, sorted
+// so the value is stable across reconciles and does not roll Pods on its own.
+func declaredEnvNames(variables []struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}) string {
+	names := make([]string, 0, len(variables))
+	for _, variable := range variables {
+		if strings.TrimSpace(variable.Name) != "" {
+			names = append(names, variable.Name)
+		}
+	}
+	sort.Strings(names)
+	return strings.Join(names, ",")
 }
 
 // mcpGatewayPort is where the in-Pod MCP tool policy gateway listens. It binds
@@ -1270,6 +1287,12 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 		}
 		env = append(env, corev1.EnvVar{Name: variable.Name, Value: variable.Value})
 	}
+	// The names — never the values — of what the overlay declared, so the report
+	// each Pod sends can say which of them actually reached the container. For a
+	// runtime with no configuration file this is the only evidence there is.
+	if names := declaredEnvNames(value.RuntimeSettings.Env); names != "" {
+		env = append(env, corev1.EnvVar{Name: "AGENTHUB_REPORT_ENV_KEYS", Value: names})
+	}
 	if fingerprint := value.RuntimeSettings.Fingerprint; fingerprint != "" {
 		// The Pod reports this back after applying the overlay, which is what turns
 		// "I saved the setting" into "the fleet is running it".
@@ -1314,6 +1337,14 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 		VolumeMounts:    []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "home", MountPath: "/home/agent"}, {Name: "tmp", MountPath: "/tmp"}, {Name: "config", MountPath: "/etc/agenthub", ReadOnly: true}},
 		ReadinessProbe:  &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)}}, InitialDelaySeconds: 5, PeriodSeconds: 5, TimeoutSeconds: 2, FailureThreshold: 12},
 		LivenessProbe:   &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)}}, InitialDelaySeconds: 20, PeriodSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 4},
+	}
+	// An adapter that binds to loopback says how to check it instead, because a
+	// TCP probe from the kubelet can never reach 127.0.0.1 inside the container.
+	if adapter.Readiness != nil {
+		agentContainer.ReadinessProbe = adapter.Readiness
+	}
+	if adapter.Liveness != nil {
+		agentContainer.LivenessProbe = adapter.Liveness
 	}
 	containers := []corev1.Container{agentContainer}
 	if adapter.Sidecars != nil {

@@ -22,8 +22,11 @@ jobs:
           base="$(tr -d '\r\n' < BASE_VERSION)"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
+          langflow="$(tr -d '\r\n' < LANGFLOW_VERSION)"
           echo "baseVersion=${base}" >> "$GITHUB_OUTPUT"
           echo "baseTag=v${base}" >> "$GITHUB_OUTPUT"
+          echo "langflowVersion=${langflow}" >> "$GITHUB_OUTPUT"
+          echo "langflowTag=v${langflow}" >> "$GITHUB_OUTPUT"
       - name: Decide whether the runtime base image must be rebuilt
         id: base
         shell: bash
@@ -90,6 +93,49 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Decide whether the Langflow runtime image must be rebuilt
+        id: langflow
+        shell: bash
+        env:
+          LANGFLOW_VERSION: ${{ steps.version.outputs.langflowVersion }}
+        run: |
+          set -euo pipefail
+          # Same rule as the base image, and for the same reason: this one is
+          # about a gigabyte, only sites that run Langflow agents need it, and a
+          # control plane pointing at a tag that was never published is worse
+          # than one pointing at an older tag that exists.
+          #
+          # Its inputs are only its Dockerfile and the reporter script it copies.
+          # It compiles nothing, so no Go module can move it.
+          sources=(Dockerfile.langflow deploy/runtime/agenthub-report-config.sh)
+          previous="$(git tag --list 'v*.*.*' --sort=-v:refname | grep -v "^${GITHUB_REF_NAME}$" | head -1 || true)"
+          if [ -z "${previous}" ]; then
+            echo "no previous release tag; building the Langflow image"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "previous=${previous}" >> "$GITHUB_OUTPUT"
+          previous_version="$(git show "${previous}:LANGFLOW_VERSION" 2>/dev/null | tr -d '\r\n' || true)"
+          inputs_changed=false
+          if [ -z "${previous_version}" ]; then
+            # The previous release did not ship this image at all.
+            inputs_changed=true
+          elif ! git diff --quiet "${previous}" "${GITHUB_REF_NAME}" -- "${sources[@]}"; then
+            git diff --name-only "${previous}" "${GITHUB_REF_NAME}" -- "${sources[@]}"
+            inputs_changed=true
+          fi
+          if [ "${inputs_changed}" = true ] && [ "${LANGFLOW_VERSION}" = "${previous_version}" ]; then
+            echo "::error::Langflow image sources changed since ${previous} but LANGFLOW_VERSION is still ${LANGFLOW_VERSION}; bump LANGFLOW_VERSION so the new image gets its own tag" >&2
+            exit 1
+          fi
+          if [ "${LANGFLOW_VERSION}" = "${previous_version}" ]; then
+            echo "Langflow image v${LANGFLOW_VERSION} is unchanged since ${previous}"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Langflow image moves from v${previous_version:-none} to v${LANGFLOW_VERSION}"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Reclaim runner disk
         shell: bash
         run: |
@@ -107,12 +153,21 @@ jobs:
           BASE_TAG: ${{ steps.version.outputs.baseTag }}
           BASE_CHANGED: ${{ steps.base.outputs.changed }}
           BASE_PREVIOUS: ${{ steps.base.outputs.previous }}
+          LANGFLOW_VERSION: ${{ steps.version.outputs.langflowVersion }}
+          LANGFLOW_TAG: ${{ steps.version.outputs.langflowTag }}
+          LANGFLOW_CHANGED: ${{ steps.langflow.outputs.changed }}
+          LANGFLOW_PREVIOUS: ${{ steps.langflow.outputs.previous }}
         run: |
-          docker build --build-arg VERSION="${RELEASE_VERSION}" --build-arg BASE_VERSION="${BASE_VERSION}" --build-arg COMMIT="${GITHUB_SHA}" --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -t "agenthub:${RELEASE_TAG}" .
+          docker build --build-arg VERSION="${RELEASE_VERSION}" --build-arg BASE_VERSION="${BASE_VERSION}" --build-arg LANGFLOW_VERSION="${LANGFLOW_VERSION}" --build-arg COMMIT="${GITHUB_SHA}" --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -t "agenthub:${RELEASE_TAG}" .
           if [ "${BASE_CHANGED}" = "true" ]; then
             docker build -f Dockerfile.base -t "agenthub-base:${BASE_TAG}" .
           else
             echo "skipping the runtime base image build; ${BASE_TAG} from ${BASE_PREVIOUS} still applies"
+          fi
+          if [ "${LANGFLOW_CHANGED}" = "true" ]; then
+            docker build -f Dockerfile.langflow -t "agenthub-langflow:${LANGFLOW_TAG}" .
+          else
+            echo "skipping the Langflow runtime image build; ${LANGFLOW_TAG} from ${LANGFLOW_PREVIOUS} still applies"
           fi
       - name: Package archives
         shell: bash
@@ -120,6 +175,8 @@ jobs:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
           BASE_TAG: ${{ steps.version.outputs.baseTag }}
           BASE_CHANGED: ${{ steps.base.outputs.changed }}
+          LANGFLOW_TAG: ${{ steps.version.outputs.langflowTag }}
+          LANGFLOW_CHANGED: ${{ steps.langflow.outputs.changed }}
         run: |
           set -euo pipefail
           mkdir -p release
@@ -144,6 +201,9 @@ jobs:
           if [ "${BASE_CHANGED}" = "true" ]; then
             package "agenthub-base:${BASE_TAG}" "agenthub-base-${BASE_TAG}.tar.gz"
           fi
+          if [ "${LANGFLOW_CHANGED}" = "true" ]; then
+            package "agenthub-langflow:${LANGFLOW_TAG}" "agenthub-langflow-${LANGFLOW_TAG}.tar.gz"
+          fi
           # Glob only the archives: including SHA256SUMS in its own listing is
           # both meaningless and racy with the redirect.
           ( cd release && sha256sum -- agenthub-* > SHA256SUMS )
@@ -154,12 +214,13 @@ jobs:
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
           BASE_TAG: ${{ steps.version.outputs.baseTag }}
+          LANGFLOW_TAG: ${{ steps.version.outputs.langflowTag }}
         run: |
           set -euo pipefail
           ( cd release && sha256sum -c SHA256SUMS )
           # Reassemble through a pipe: this proves the parts concatenate back
           # into a valid archive without needing room for a second copy.
-          for name in "agenthub-${RELEASE_TAG}.tar.gz" "agenthub-base-${BASE_TAG}.tar.gz"; do
+          for name in "agenthub-${RELEASE_TAG}.tar.gz" "agenthub-base-${BASE_TAG}.tar.gz" "agenthub-langflow-${LANGFLOW_TAG}.tar.gz"; do
             if [ -z "$(ls -d release/"${name}"* 2>/dev/null)" ]; then
               echo "skipped ${name}"
               continue
@@ -186,6 +247,9 @@ jobs:
           BASE_PREVIOUS: ${{ steps.base.outputs.previous }}
           BASE_TAG: ${{ steps.version.outputs.baseTag }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          LANGFLOW_TAG: ${{ steps.version.outputs.langflowTag }}
+          LANGFLOW_CHANGED: ${{ steps.langflow.outputs.changed }}
+          LANGFLOW_PREVIOUS: ${{ steps.langflow.outputs.previous }}
         run: |
           {
             echo 'body<<RELEASE_NOTE'
@@ -197,6 +261,13 @@ jobs:
               echo "base 이미지는 **변경 없음**입니다. 이미 설치된 \`agenthub-base:${BASE_TAG}\`를 그대로 사용하세요. 새로 받아야 한다면 ${BASE_PREVIOUS} 이전 릴리즈의 \`agenthub-base-${BASE_TAG}.tar.gz\` 자산을 내려받으면 됩니다."
               echo ""
               echo "base 이미지는 용량이 커서 \`BASE_VERSION\`이 올라간 릴리즈에서만 다시 게시합니다."
+            fi
+            echo ""
+            echo "Langflow Runtime 이미지: \`agenthub-langflow:${LANGFLOW_TAG}\` — Langflow Agent를 쓰는 사이트만 필요합니다."
+            if [ "${LANGFLOW_CHANGED}" = "true" ]; then
+              echo "이번 릴리즈에 \`agenthub-langflow-${LANGFLOW_TAG}.tar.gz\`로 함께 게시됩니다."
+            else
+              echo "변경 없음입니다. 이미 설치된 \`agenthub-langflow:${LANGFLOW_TAG}\`를 그대로 사용하세요(직전 게시는 ${LANGFLOW_PREVIOUS} 이전 릴리즈의 같은 이름 자산입니다)."
             fi
             echo 'RELEASE_NOTE'
           } >> "$GITHUB_OUTPUT"

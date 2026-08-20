@@ -85,6 +85,25 @@ var reservedEnv = []string{
 	"AGENTHUB_", "OPENAI_API_KEY", "OPENAI_BASE_URL", "API_SERVER_KEY", "API_SERVER_PORT",
 	"API_SERVER_HOST", "API_SERVER_ENABLED", "OPENCODE_SERVER_PASSWORD", "OPENCODE_CONFIG_DIR",
 	"HERMES_HOME", "QWENPAW_HOME", "PATH", "HOME",
+	// Langflow is configured entirely through the environment, so the platform's
+	// share of that environment has to be named rather than prefixed: an
+	// administrator may well want LANGFLOW_LOG_LEVEL or LANGFLOW_WORKERS. These
+	// particular ones decide where Langflow listens, whether its API asks for a
+	// credential, where its database lives and whether it reports usage outside —
+	// all of which the platform answers for.
+	"LANGFLOW_HOST", "LANGFLOW_PORT", "LANGFLOW_AUTO_LOGIN", "LANGFLOW_API_KEY",
+	"LANGFLOW_API_KEY_SOURCE", "LANGFLOW_SKIP_AUTH_AUTO_LOGIN", "LANGFLOW_CONFIG_DIR",
+	"LANGFLOW_SAVE_DB_IN_CONFIG_DIR", "LANGFLOW_VARIABLES_TO_GET_FROM_ENVIRONMENT",
+	"DO_NOT_TRACK",
+}
+
+// configless are the runtimes the platform does not generate a configuration
+// file for. An overlay's config block has nowhere to land in them, so it is
+// refused at the edge; dropping it silently is the failure this package exists
+// to prevent.
+var configless = map[string]string{
+	runtimetype.Langflow: "Langflow는 설정 파일이 아니라 환경변수로 설정하는 런타임입니다. config 대신 env 항목을 사용해 주세요",
+	runtimetype.Custom:   "Custom 런타임의 설정 파일은 플랫폼이 만들지 않습니다. config 대신 env 항목을 사용해 주세요",
 }
 
 // reservedConfig are the keys the platform owns in each runtime's configuration.
@@ -162,6 +181,9 @@ func validEnvName(name string) bool {
 func validateConfig(runtimeType string, config map[string]any) error {
 	if len(config) == 0 {
 		return nil
+	}
+	if reason, found := configless[runtimeType]; found {
+		return errors.New(reason)
 	}
 	encoded, err := json.Marshal(config)
 	if err != nil {

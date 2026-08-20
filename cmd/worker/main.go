@@ -104,7 +104,9 @@ func run(logger *slog.Logger) error {
 	// Every model call the execution plane makes goes through this client, which
 	// is why the data-loss check is attached here rather than in each caller.
 	completion := workflow.NewModelCompletion().WithInspector(guard.NewModel(db, logger))
-	orchestrator := execution.New(db, spawner, completion, logger, workerID)
+	// A flow runs inside the runtime, so its input and its answer are the only
+	// two places the platform can inspect. Same detectors, same policy.
+	orchestrator := execution.New(db, spawner, completion, logger, workerID).WithFlowInspector(guard.NewFlow(db, logger))
 
 	worker := execution.NewWorker(db, orchestrator, logger, workerID)
 	worker.Hostname, worker.Version = hostname, buildinfo.Version

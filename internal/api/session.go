@@ -92,6 +92,18 @@ func (s *Server) launchRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	settings := s.cachedSessionGatewaySettings(r.Context())
+	hostname, hostPort, hostMode := settings.hostMode()
+	// Some runtimes address their assets and their API from the root of whatever
+	// origin they were loaded from and have no base-path setting — Langflow is
+	// one. Serving those from the Portal under /{runtimeId}/ produces a blank
+	// page, so the session is refused with the reason instead.
+	if !hostMode {
+		if agent, agentErr := s.store.AgentByID(r.Context(), instance.AgentID, user.ID, user.Role == "admin"); agentErr == nil && runtimetype.HostSessionOnly(agent.RuntimeType) {
+			writeError(w, http.StatusConflict, "runtime_base_domain_required",
+				runtimetype.Describe(agent.RuntimeType).Label+" 런타임은 하위 경로로 서비스할 수 없어 Runtime 전용 도메인이 필요합니다. Admin ▸ 설정 ▸ Runtime 세션에서 Runtime Base Domain을 설정한 뒤 다시 열어 주세요.")
+			return
+		}
+	}
 	ticket, expires, err := s.store.CreateRuntimeLaunchTicket(r.Context(), runtimeID, instance.OwnerID)
 	if err != nil {
 		writeStoreError(w, err)
@@ -103,10 +115,10 @@ func (s *Server) launchRuntime(w http.ResponseWriter, r *http.Request) {
 	// is served from the Portal itself under /{runtimeId}/ — a relative URL, so it
 	// works on whatever hostname the user already reached the Portal on.
 	mode, launch := "path", "/"+runtimeID+"/?"+query
-	if hostname, port, ok := settings.hostMode(); ok {
+	if hostMode {
 		host := runtimeID + "." + hostname
-		if port != "" {
-			host = net.JoinHostPort(host, port)
+		if hostPort != "" {
+			host = net.JoinHostPort(host, hostPort)
 		}
 		mode = "host"
 		launch = (&url.URL{Scheme: settings.Scheme, Host: host, Path: "/", RawQuery: query}).String()
@@ -178,6 +190,21 @@ func (s *Server) runtimeHostGateway(next http.Handler) http.Handler {
 	})
 }
 
+// forwardCookies rewrites the Cookie header to drop only AgentHub's own cookies.
+func forwardCookies(request *http.Request) {
+	cookies := request.Cookies()
+	request.Header.Del("Cookie")
+	for _, cookie := range cookies {
+		// Prefix, not equality: the path gateway names its cookie per runtime
+		// (agenthub_runtime_access_<id>), and a leak of that one hands over a
+		// whole workspace session.
+		if strings.HasPrefix(cookie.Name, agentHubCookiePrefix) {
+			continue
+		}
+		request.AddCookie(cookie)
+	}
+}
+
 func (s *Server) runtimeConnection(r *http.Request, runtimeID, userID string, admin bool) (appRuntime.Connection, error) {
 	instance, err := s.store.RuntimeByID(r.Context(), runtimeID, userID, admin)
 	if err != nil {
@@ -204,8 +231,15 @@ func (s *Server) serveRuntimeProxy(w http.ResponseWriter, r *http.Request, runti
 		request.URL.RawPath = ""
 		request.Host = target.Host
 		request.Header.Del("Authorization")
-		request.Header.Del("Cookie")
 		request.Header.Del("Origin")
+		// AgentHub's own cookies must not reach the runtime — the Portal session
+		// and the runtime access ticket are credentials for this platform, not for
+		// the application behind the proxy. Everything else is forwarded, because
+		// a runtime UI may keep its own session: Langflow signs the browser in
+		// automatically and then authenticates every one of its own API calls with
+		// the cookie it just set, so stripping the whole header left the editor
+		// loading forever.
+		forwardCookies(request)
 		if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 			request.Header.Set("Upgrade", "websocket")
 			request.Header.Set("Connection", "Upgrade")

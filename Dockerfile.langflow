@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1.7
+#
+# The Langflow runtime image.
+#
+# It is a separate image rather than another layer on agenthub-base for two
+# reasons. Langflow brings its own Python 3.14 tree and a built frontend — about
+# a gigabyte — and a site that only runs OpenCode agents should not have to carry
+# it. And it moves on its own schedule: upgrading Langflow must not force a
+# rebuild of the image every other runtime boots from.
+#
+# What AgentHub adds here is deliberately almost nothing. The token-enforcing
+# proxy and the MCP gateway run the control plane's own image as sidecars, so the
+# only platform binary this image needs is the configuration reporter every
+# runtime ends its start with.
+ARG LANGFLOW_IMAGE=1.11.0
+FROM langflowai/langflow:${LANGFLOW_IMAGE}
+
+# Root only long enough to place the reporter and to own the two directories the
+# platform mounts volumes over; the runtime itself runs as 10000 like every other
+# adapter, which is the uid the restricted Pod security context pins.
+USER 0
+COPY deploy/runtime/agenthub-report-config.sh /usr/local/bin/agenthub-report-config
+RUN chmod 0755 /usr/local/bin/agenthub-report-config \
+ && mkdir -p /workspace /home/agent/.langflow \
+ && chown -R 10000:10000 /workspace /home/agent
+
+USER 10000
+ENV HOME=/home/agent \
+    AGENTHUB_RUNTIME_TYPE=langflow \
+    LANGFLOW_CONFIG_DIR=/home/agent/.langflow \
+    LANGFLOW_SAVE_DB_IN_CONFIG_DIR=true \
+    LANGFLOW_OPEN_BROWSER=false \
+    DO_NOT_TRACK=true
+WORKDIR /workspace
+EXPOSE 7860
+CMD ["/app/.venv/bin/langflow", "run"]

@@ -28,7 +28,11 @@ import (
 const (
 	sessionCookie = "agenthub_session"
 	csrfCookie    = "agenthub_csrf"
-	oidcCookie    = "agenthub_oidc"
+	// agentHubCookiePrefix is what marks a cookie as this platform's own. The
+	// runtime proxy drops cookies by this prefix rather than by name because the
+	// path gateway names its access cookie per runtime.
+	agentHubCookiePrefix = "agenthub_"
+	oidcCookie           = "agenthub_oidc"
 )
 
 type Server struct {

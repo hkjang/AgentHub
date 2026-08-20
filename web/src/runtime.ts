@@ -5,13 +5,14 @@
 // are facts about the adapter the operator runs, not about this console. They
 // were duplicated here and had already started to drift. The palette stays local:
 // which colour a tile is is genuinely a console decision.
-export type RuntimeType = 'opencode' | 'hermes' | 'qwenpaw' | 'custom'
+export type RuntimeType = 'opencode' | 'hermes' | 'qwenpaw' | 'langflow' | 'custom'
 
 export type RuntimeDescriptor = {
   type: string; code: string; label: string; summary: string
   strengths?: string[]; watchouts?: string[]
   workspace?: string; port?: number
   browserUi?: boolean; terminal?: boolean; toolLoop?: boolean; mcpConfigured?: boolean; proxiedUi?: boolean
+  hostSessionOnly?: boolean; flowExecution?: boolean
   bestFor?: string
 }
 
@@ -20,6 +21,7 @@ const SEED: Record<RuntimeType, RuntimeDescriptor> = {
   opencode: {type: 'opencode', code: 'OC', label: 'OpenCode', summary: '브라우저 기반 코딩 IDE와 터미널 워크스페이스'},
   hermes: {type: 'hermes', code: 'H', label: 'Hermes', summary: '장기 기억과 도구 실행을 갖춘 자율 에이전트'},
   qwenpaw: {type: 'qwenpaw', code: 'QP', label: 'Qwen Paw', summary: 'AgentScope 개인 에이전트 워크스테이션'},
+  langflow: {type: 'langflow', code: 'LF', label: 'Langflow', summary: '흐름을 그려서 만드는 시각적 에이전트 빌더'},
   custom: {type: 'custom', code: 'A', label: 'Custom', summary: '직접 정의한 컨테이너 실행 명령'},
 }
 

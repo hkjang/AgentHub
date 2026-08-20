@@ -33,6 +33,13 @@ type runtimeAdapter struct {
 	// Sidecars run alongside the agent, typically a UI and the token-enforcing
 	// proxy in front of it.
 	Sidecars func(build adapterBuild) []corev1.Container
+
+	// Readiness and Liveness replace the default TCP probes. A runtime that binds
+	// to loopback needs them: the kubelet probes the Pod IP, so nothing outside
+	// the container can connect, and the default probe would fail forever on a
+	// runtime that is working perfectly.
+	Readiness *corev1.Probe
+	Liveness  *corev1.Probe
 }
 
 // adapterBuild is the context handed to every adapter hook.
@@ -98,7 +105,27 @@ const (
 
 	qwenPawStart = "/usr/local/bin/agenthub-qwenpaw-configure || true\n" +
 		"exec /opt/qwenpaw/.venv/bin/qwenpaw app --host 0.0.0.0 --port 8642"
+
+	// Langflow keeps everything it owns — the flows, the encryption key it
+	// generates on first start, its database — under LANGFLOW_CONFIG_DIR, so that
+	// directory has to be the persistent home rather than the image's /app. The
+	// initialiser only has to create it and report; there is no configuration file
+	// to merge because Langflow is configured entirely through the environment.
+	langflowConfigInit = "mkdir -p " + langflowConfigDir + "\n" +
+		"/usr/local/bin/agenthub-report-config || true"
+
+	langflowStart = "mkdir -p " + langflowConfigDir + "\n" +
+		"exec /app/.venv/bin/langflow run"
 )
+
+// langflowHealthCommand is Langflow's own health endpoint, asked from inside the
+// container. It answers `{"status":"ok"}` once the server is up.
+var langflowHealthCommand = []string{"/bin/sh", "-c", "curl -fsS -m 3 http://127.0.0.1:7860/health >/dev/null"}
+
+// langflowConfigDir is where Langflow's database, flows and generated secret key
+// live. It is under /home/agent because that is the volume that survives a
+// restart: on an emptyDir every flow a person drew would be gone with the Pod.
+const langflowConfigDir = "/home/agent/.langflow"
 
 var homeAndConfigMounts = []corev1.VolumeMount{
 	{Name: "home", MountPath: "/home/agent"},
@@ -167,6 +194,65 @@ var runtimeAdapters = map[string]runtimeAdapter{
 				VolumeMounts:    homeAndConfigMounts,
 			}
 			return []corev1.Container{dashboard, runtimeProxyContainer("hermes-dashboard-proxy", build.Name, build.sidecarImage(), "http://127.0.0.1:9120")}
+		},
+	},
+	runtimetype.Langflow: {
+		Type:    runtimetype.Langflow,
+		Command: []string{"/bin/sh", "-ec"},
+		Args:    []string{langflowStart},
+		Env: func(build adapterBuild) []corev1.EnvVar {
+			return []corev1.EnvVar{
+				// Loopback only. Langflow starts with automatic login so that a
+				// person arriving through the platform proxy is not asked for a
+				// second password; that also means its port must not be reachable
+				// any other way.
+				{Name: "LANGFLOW_HOST", Value: "127.0.0.1"},
+				{Name: "LANGFLOW_PORT", Value: "7860"},
+				{Name: "LANGFLOW_AUTO_LOGIN", Value: "true"},
+				{Name: "LANGFLOW_CONFIG_DIR", Value: langflowConfigDir},
+				{Name: "LANGFLOW_SAVE_DB_IN_CONFIG_DIR", Value: "true"},
+				{Name: "LANGFLOW_OPEN_BROWSER", Value: "false"},
+				// The Langflow API stays authenticated even with automatic login
+				// on, and the key it checks is the runtime's own token — the same
+				// one the proxy in front of it checks. That is what lets the
+				// execution plane run a saved flow without a second credential.
+				{Name: "LANGFLOW_API_KEY_SOURCE", Value: "env"},
+				build.secretEnv("LANGFLOW_API_KEY", "runtime-token"),
+				// An offline site must not phone home, and Langflow's telemetry is
+				// on unless this is set.
+				{Name: "DO_NOT_TRACK", Value: "true"},
+				// The platform's model binding, offered to flows as global
+				// variables. Without this a person would have to retype the model
+				// endpoint and its key into every flow they draw.
+				{Name: "LANGFLOW_VARIABLES_TO_GET_FROM_ENVIRONMENT", Value: "OPENAI_API_KEY,OPENAI_BASE_URL,AGENTHUB_MODEL_NAME"},
+				{Name: "LANGFLOW_FALLBACK_TO_ENV_VAR", Value: "true"},
+			}
+		},
+		InitContainers: func(build adapterBuild) []corev1.Container {
+			return []corev1.Container{{
+				Name: "langflow-config-init", Image: build.image(), ImagePullPolicy: corev1.PullIfNotPresent,
+				Command: []string{"/bin/sh", "-ec"}, Args: []string{langflowConfigInit}, Env: build.Env,
+				Resources:       initResources("200m", "256Mi"),
+				SecurityContext: restrictedContainerSecurityContext(build.Value.Security.ReadOnlyRootFilesystem),
+				VolumeMounts:    homeAndConfigMounts,
+			}}
+		},
+		Sidecars: func(build adapterBuild) []corev1.Container {
+			// Langflow has no base-path setting, so the proxy publishes it from the
+			// root of the runtime's own origin rather than under a prefix.
+			return []corev1.Container{runtimeProxyContainer("langflow-proxy", build.Name, build.sidecarImage(), "http://127.0.0.1:7860")}
+		},
+		// Checked from inside the container, because that is the only place
+		// 127.0.0.1:7860 exists. The grace is generous on purpose: Langflow builds
+		// its component index and migrates its database on first start, which on a
+		// cold volume takes far longer than the second start does.
+		Readiness: &corev1.Probe{
+			ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: langflowHealthCommand}},
+			InitialDelaySeconds: 15, PeriodSeconds: 10, TimeoutSeconds: 5, FailureThreshold: 30,
+		},
+		Liveness: &corev1.Probe{
+			ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: langflowHealthCommand}},
+			InitialDelaySeconds: 300, PeriodSeconds: 30, TimeoutSeconds: 5, FailureThreshold: 4,
 		},
 	},
 	runtimetype.QwenPaw: {

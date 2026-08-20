@@ -10,16 +10,21 @@ var (
 	// is only rebuilt when something it is built from changes, so a control
 	// plane release usually keeps running on an older base tag.
 	BaseVersion = "0.1.0-dev"
+	// LangflowVersion is the Langflow runtime image this control plane expects.
+	// Langflow ships its own Python tree and frontend, so it is built and
+	// published apart from the shared base image and moves on its own schedule.
+	LangflowVersion = "0.1.0-dev"
 )
 
 type Info struct {
-	Name        string `json:"name"`
-	Version     string `json:"version"`
-	Commit      string `json:"commit"`
-	BuildTime   string `json:"buildTime"`
-	BaseVersion string `json:"baseVersion"`
+	Name            string `json:"name"`
+	Version         string `json:"version"`
+	Commit          string `json:"commit"`
+	BuildTime       string `json:"buildTime"`
+	BaseVersion     string `json:"baseVersion"`
+	LangflowVersion string `json:"langflowVersion"`
 }
 
 func Current() Info {
-	return Info{Name: "AgentHub", Version: Version, Commit: Commit, BuildTime: BuildTime, BaseVersion: BaseVersion}
+	return Info{Name: "AgentHub", Version: Version, Commit: Commit, BuildTime: BuildTime, BaseVersion: BaseVersion, LangflowVersion: LangflowVersion}
 }

@@ -25,7 +25,7 @@ type Status = {
 
 const STATE_LABELS: Record<string, string> = {
   none: '설정 없음', pending_start: '시작 대기', unverified: '확인 안 됨',
-  stale: '이전 설정으로 실행 중', failed: '적용 실패', applied: '적용됨',
+  stale: '이전 설정으로 실행 중', failed: '적용 실패', partial: '일부만 적용', applied: '적용됨',
 }
 const STATE_HINTS: Record<string, string> = {
   none: '이 런타임 유형에는 설정이 없습니다.',
@@ -33,6 +33,7 @@ const STATE_HINTS: Record<string, string> = {
   unverified: '아직 보고가 없습니다. 설정을 저장한 뒤 재시작되지 않았거나, 컨트롤 플레인에 보고가 도달하지 못했습니다.',
   stale: '실행 중인 Pod는 이전 설정으로 시작했습니다. 재시작하면 최신 설정이 적용됩니다.',
   failed: '런타임이 설정 파일을 읽거나 쓰지 못했다고 보고했습니다. 상세를 확인하세요.',
+  partial: '선언한 환경변수 중 일부가 컨테이너에 도달하지 않았습니다. 보고된 키의 env-missing 항목을 확인하세요.',
   applied: '실행 중인 Pod가 현재 설정으로 시작했다고 보고했습니다.',
 }
 
@@ -188,7 +189,7 @@ export function AdminRuntimeSettings() {
               <td>{item.runtimeStatus || '—'}</td>
               <td>
                 <span className={`inject-badge ${item.state}`} title={STATE_HINTS[item.state]}>
-                  {item.state === 'applied' ? <Check size={13} /> : item.state === 'failed' ? <CircleAlert size={13} /> : <Clock3 size={13} />}
+                  {item.state === 'applied' ? <Check size={13} /> : item.state === 'failed' || item.state === 'partial' ? <CircleAlert size={13} /> : <Clock3 size={13} />}
                   {STATE_LABELS[item.state] ?? item.state}
                 </span>
                 {item.report?.detail && <small className="field-hint">{item.report.detail}</small>}

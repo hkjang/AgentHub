@@ -54,11 +54,23 @@ if path and path.exists():
 elif target:
     status, detail = "missing", f"{target} was not written"
 
-for name in sorted(os.environ):
-    # Only the variables an administrator can set are reported, by name. The
-    # platform's own are not interesting and the secrets must never appear.
-    if name in ("LANG", "LC_ALL", "TZ", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "NODE_OPTIONS"):
+# The variables an administrator can set are reported by name, never by value.
+# AGENTHUB_REPORT_ENV_KEYS carries the names this runtime's overlay declared, so a
+# runtime configured entirely through the environment — Langflow has no
+# configuration file at all — can be checked against what was intended rather
+# than only against a fingerprint it echoes back.
+declared = {name.strip() for name in os.environ.get("AGENTHUB_REPORT_ENV_KEYS", "").split(",") if name.strip()}
+wellknown = {"LANG", "LC_ALL", "TZ", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "NODE_OPTIONS"}
+for name in sorted(declared | wellknown):
+    if name in os.environ:
         keys.append(f"env:{name}")
+# A declared variable missing from this container's environment is the failure the
+# report exists to surface, so it is named rather than quietly omitted.
+missing = sorted(name for name in declared if name not in os.environ)
+if missing:
+    keys.extend(f"env-missing:{name}" for name in missing)
+    if status == "applied":
+        status, detail = "incomplete", "주입되지 않은 환경변수: " + ", ".join(missing[:8])
 
 print(json.dumps({
     "runtimeId": os.environ["RUNTIME_ID"],
@@ -72,10 +84,22 @@ print(json.dumps({
 PY
 )
 
-# 5 seconds: a slow control plane must not delay a Pod's start.
+# 5 seconds: a slow control plane must not delay a Pod's start. curl is present in
+# the images the platform builds, but a runtime image is allowed to be somebody
+# else's; python3 is already required above, so it is the fallback rather than a
+# report that is silently skipped.
+REPORT_URL="${CONTROL_PLANE%/}/api/v1/runtime-gateway/config-report"
 if command -v curl >/dev/null 2>&1; then
-  curl -sS -m 5 -X POST "${CONTROL_PLANE%/}/api/v1/runtime-gateway/config-report" \
+  curl -sS -m 5 -X POST "$REPORT_URL" \
     -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
     -d "$PAYLOAD" >/dev/null 2>&1 || echo "agenthub: configuration report could not be delivered" >&2
+else
+  REPORT_URL="$REPORT_URL" TOKEN="$TOKEN" PAYLOAD="$PAYLOAD" python3 - <<'POST' >/dev/null 2>&1 || echo "agenthub: configuration report could not be delivered" >&2
+import os, urllib.request
+request = urllib.request.Request(os.environ["REPORT_URL"], data=os.environ["PAYLOAD"].encode(),
+                                 headers={"Authorization": "Bearer " + os.environ["TOKEN"],
+                                          "Content-Type": "application/json"}, method="POST")
+urllib.request.urlopen(request, timeout=5).read()
+POST
 fi
 echo "agenthub-config-report $PAYLOAD" >&2

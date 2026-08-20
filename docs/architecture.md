@@ -80,10 +80,21 @@ behavior lives in the offline `agenthub-base` image:
 - `opencode`: `opencode serve --hostname 0.0.0.0 --port 4096`, authenticated with `OPENCODE_SERVER_PASSWORD`
 - `hermes`: `hermes gateway run --no-supervise` with its authenticated API on 8642 and the loopback Dashboard/proxy pair on 9120/9119
 - `qwenpaw`: `qwenpaw app --host 0.0.0.0 --port 8642`; the app ships no authenticator, so it is published only through the `agenthub-runtime-proxy` sidecar on 9119
+- `langflow`: `langflow run` bound to `127.0.0.1:7860`, published only through the proxy on 9119. This one does **not** boot from `agenthub-base`: it is its own image, `agenthub-langflow`, versioned by `LANGFLOW_VERSION` and published as its own archive, because Langflow carries a Python tree and a built frontend that no other adapter needs and moves on its own schedule.
 - `custom`: an administrator-approved image and command
 
 Runtime UIs are proxied verbatim: the session gateway authenticates, rewrites
-redirects and strips cookies, but never rewrites the response body.
+redirects and strips AgentHub's own cookies, but never rewrites the response body.
+Cookies are dropped by the `agenthub_` prefix rather than by name — the path
+gateway names its access cookie per runtime — and everything else is forwarded,
+because a runtime UI may keep a session of its own: Langflow signs the browser in
+automatically and then authenticates its own API calls with the cookie it just
+set.
+
+A runtime that addresses its assets from the origin root and has no base-path
+setting cannot be served from the Portal under `/{runtimeId}/` at all. Langflow is
+one, so `runtimetype.HostSessionOnly` marks it and a launch without a Runtime Base
+Domain is refused with that reason instead of opening a blank page.
 
 Each adapter is registered in `internal/operator/adapter.go` as a `runtimeAdapter`
 describing its start command, extra environment, init containers and sidecars.
@@ -106,6 +117,14 @@ OpenCode receives the generated configuration through `OPENCODE_CONFIG`;
 Hermes receives a generated `config.yaml` under its isolated `HERMES_HOME`;
 QwenPaw is initialised with `qwenpaw init --defaults` and receives the model
 binding as an `.env` file under `QWENPAW_HOME`.
+
+Langflow has no configuration file: it is configured entirely through the
+environment. The platform sets where it listens, that automatic login is on, that
+its API checks the runtime's own token as `x-api-key`, where its database and
+generated secret key live (`LANGFLOW_CONFIG_DIR` on the home volume, so flows
+survive a restart) and that telemetry is off. The model binding reaches flows as
+global variables through `LANGFLOW_VARIABLES_TO_GET_FROM_ENVIRONMENT`, so a person
+drawing a flow does not retype the endpoint and its key into every component.
 
 Each adapter is also described for the people choosing one — what it is good at,
 whether it has a terminal, where its files live, whether MCP servers reach it
@@ -203,6 +222,48 @@ leaving no way to close this one would keep every handover open forever.
 A handover is offered only when it can happen — the agent has a persistent
 workspace for the work to live in and the runtime has a surface a person can use.
 Whether the task started the Pod is beside the point: a person can start it.
+
+## Running a flow instead of reasoning
+
+The prose loop above is a compromise the platform makes because it cannot reach
+inside a runtime. A Langflow agent does not need it: the flow somebody drew in the
+editor is the program, and the platform can execute it.
+
+A Goal carries `runner`. `prose` is the loop described above and the default, so
+every agent that already exists keeps behaving exactly as it did. `flow` runs the
+Goal's `flow_id` in the agent's own runtime — one POST to
+`/api/v1/run/{flow_id}` through the in-Pod proxy, with the runtime token as both
+the proxy's Basic credential and Langflow's `x-api-key`. The task's title, input,
+goal description and constraints become the flow's input value; the task id
+becomes the Langflow session id, so a flow's own memory components see one
+conversation across retries.
+
+Everything around it stays the platform's: the run record and its step, the
+artifacts and memories the answer declares, the completion verdict from the same
+strategies, the quota, the audit trail. What changes is where the work happened.
+
+Three things are deliberately not claimed. The platform does not meter a flow's
+model calls — they happen inside the flow, against whatever endpoint its own
+components point at — so `token_usage` is passed through as the runtime reported
+it, in the run event, rather than turned into a billed number. The answer is read
+from the several places Langflow reports it (`results.message.text`, then
+`outputs.message.message`, then `artifacts.message`, then `messages[]`), because
+which one is filled in depends on the component; a Goal that names an output
+component gets that one. And an HTTP 4xx is not retried: an unknown flow id or a
+rejected credential does not become valid on the next attempt, and spending the
+retry budget on it only delays the report.
+
+Content scanning happens before the runtime is addressed at all. `guard.NewFlow`
+is the same inspector the model client uses with a different policy action
+(`workflow.run`) and audit trail (`dlp.flow`): a task that must not leave the
+platform has no business being handed to a flow engine, and the flow's answer is
+inspected on the way back for the same reason a model's is.
+
+Choosing a flow is picking from a list the runtime itself answers —
+`GET /api/v1/agents/{id}/flows` asks Langflow with `header_flows=true`, which drops
+each flow's graph and turns a five-megabyte answer into seventeen kilobytes. The
+platform keeps no copy: a copy is what would go stale. When the runtime is
+stopped, the id can still be typed in.
 
 ## Workspace and home persistence
 

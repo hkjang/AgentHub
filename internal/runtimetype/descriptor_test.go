@@ -28,7 +28,7 @@ func TestEverySupportedRuntimeIsDescribed(t *testing.T) {
 // The port in the descriptor is the one the operator opens, so a mismatch would
 // have the console tell a person to look at a port nothing listens on.
 func TestDescribedPortsMatchTheAdapterPorts(t *testing.T) {
-	for _, name := range []string{OpenCode, Hermes, QwenPaw} {
+	for _, name := range []string{OpenCode, Hermes, QwenPaw, Langflow} {
 		if got := Describe(name).Port; got != Port(name) {
 			t.Errorf("%s: descriptor port %d, adapter port %d", name, got, Port(name))
 		}
@@ -38,6 +38,22 @@ func TestDescribedPortsMatchTheAdapterPorts(t *testing.T) {
 	for _, name := range Supported {
 		if got := Describe(name).ProxiedUI; got != UsesGatewayProxy(name) {
 			t.Errorf("%s: descriptor proxiedUi=%v, UsesGatewayProxy=%v", name, got, UsesGatewayProxy(name))
+		}
+	}
+}
+
+// HostSessionOnly decides whether the console offers the "open" button at all,
+// so the descriptor and the rule have to be the same answer.
+func TestDescribedHostSessionRuleMatches(t *testing.T) {
+	for _, name := range Supported {
+		if got := Describe(name).HostSessionOnly; got != HostSessionOnly(name) {
+			t.Errorf("%s: descriptor hostSessionOnly=%v, HostSessionOnly=%v", name, got, HostSessionOnly(name))
+		}
+		// A runtime that cannot be published under a path prefix must be behind
+		// the platform proxy: it has an origin of its own either way, and that
+		// origin is publicly resolvable.
+		if HostSessionOnly(name) && !UsesGatewayProxy(name) {
+			t.Errorf("%s needs its own origin but is not fronted by the proxy", name)
 		}
 	}
 }

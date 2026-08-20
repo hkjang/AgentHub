@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	"github.com/hkjang/AgentHub/internal/execution"
 	"github.com/hkjang/AgentHub/internal/policy"
 	"github.com/hkjang/AgentHub/internal/quota"
+	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -80,6 +82,12 @@ func (s *Server) saveAgentGoal(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_goal", err.Error())
 		return
 	}
+	// Which runner a Goal may use depends on the agent, not on the Goal: only a
+	// runtime that holds its own flows can run one.
+	if err := validateRunner(&goal, agent.RuntimeType); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_runner", err.Error())
+		return
+	}
 	if err := s.store.SetAgentExecutionMode(r.Context(), agent.ID, u.ID, u.Role == "admin", input.ExecutionMode); err != nil {
 		writeStoreError(w, err)
 		return
@@ -91,6 +99,46 @@ func (s *Server) saveAgentGoal(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.Audit(r.Context(), &u, "agent.goal.update", "agent", agent.ID, "success", clientIP(r), map[string]any{"executionMode": input.ExecutionMode})
 	writeJSON(w, http.StatusOK, map[string]any{"goal": saved, "executionMode": input.ExecutionMode})
+}
+
+// validateRunner decides whether this agent can run its work as a flow.
+//
+// The check lives here rather than at execution time because the failure it
+// prevents is a task that queues, starts a Pod and then fails: an agent whose
+// runtime has no flow engine, or a flow-backed Goal with no flow chosen. Both are
+// answerable while somebody is still looking at the form.
+func validateRunner(goal *store.AgentGoal, runtimeType string) error {
+	if goal.Runner == "" {
+		goal.Runner = store.RunnerProse
+	}
+	if goal.Runner != store.RunnerProse && goal.Runner != store.RunnerFlow {
+		return errors.New("실행 방식을 확인해 주세요")
+	}
+	if goal.Runner == store.RunnerProse {
+		// Keep the fields, so switching back and forth in the console does not lose
+		// the flow somebody already picked.
+		goal.FlowID = strings.TrimSpace(goal.FlowID)
+		goal.FlowOutputComponent = strings.TrimSpace(goal.FlowOutputComponent)
+		return nil
+	}
+	descriptor := runtimetype.Describe(runtimeType)
+	if !descriptor.FlowExecution {
+		return fmt.Errorf("%s 런타임은 흐름 실행을 지원하지 않습니다. 흐름으로 자동 실행하려면 Langflow 런타임의 Agent를 사용해 주세요", descriptor.Label)
+	}
+	goal.FlowID = strings.TrimSpace(goal.FlowID)
+	goal.FlowOutputComponent = strings.TrimSpace(goal.FlowOutputComponent)
+	if goal.FlowID == "" {
+		return errors.New("실행할 흐름을 선택해 주세요")
+	}
+	if len(goal.FlowID) > 200 || len(goal.FlowOutputComponent) > 200 {
+		return errors.New("흐름 식별자가 너무 깁니다")
+	}
+	if !goal.StartOnDemand {
+		// The flow lives in the Pod. Without this the task would start, find no
+		// runtime and fail — after queueing and consuming a retry.
+		return errors.New("흐름 실행은 Runtime 안에서 이루어지므로 '작업 시 Runtime 시작'을 켜 주세요")
+	}
+	return nil
 }
 
 func validExecutionMode(mode string) bool {

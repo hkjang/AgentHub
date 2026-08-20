@@ -7,13 +7,14 @@ const (
 	OpenCode = "opencode"
 	Hermes   = "hermes"
 	QwenPaw  = "qwenpaw"
+	Langflow = "langflow"
 	Custom   = "custom"
 )
 
 // Supported lists every runtime type accepted by the API, the database check
 // constraints and the AgentRuntime CRD enum. Keep this in sync with
 // deploy/kubernetes/crd.yaml and the runtime_type CHECK constraints.
-var Supported = []string{OpenCode, Hermes, QwenPaw, Custom}
+var Supported = []string{OpenCode, Hermes, QwenPaw, Langflow, Custom}
 
 // IsSupported reports whether value names a runtime adapter AgentHub can spawn.
 func IsSupported(value string) bool {
@@ -27,8 +28,11 @@ func IsSupported(value string) bool {
 
 // Port is the container port the runtime's primary HTTP surface listens on.
 func Port(value string) int32 {
-	if value == Hermes || value == QwenPaw {
+	switch value {
+	case Hermes, QwenPaw:
 		return 8642
+	case Langflow:
+		return 7860
 	}
 	return 4096
 }
@@ -40,7 +44,18 @@ const GatewayPort int32 = 9119
 // UsesGatewayProxy reports whether the runtime is fronted by the runtime-proxy
 // sidecar. Hermes serves its Dashboard on loopback and QwenPaw ships no
 // authenticator at all, so both are published through the proxy instead of
-// exposing the raw application port.
+// exposing the raw application port. Langflow joins them because AgentHub starts
+// it with automatic login — its visual editor would otherwise be open to anyone
+// who reached the port.
 func UsesGatewayProxy(value string) bool {
-	return value == Hermes || value == QwenPaw
+	return value == Hermes || value == QwenPaw || value == Langflow
 }
+
+// HostSessionOnly reports that a browser session for this runtime needs an
+// origin of its own and cannot be served from the Portal under /{runtimeId}/.
+//
+// Langflow has no base-path setting: its frontend requests /assets and /api from
+// the root of whatever origin it was loaded from, so under a path prefix the
+// editor loads a blank page. Refusing the session with an explanation is better
+// than handing somebody that page.
+func HostSessionOnly(value string) bool { return value == Langflow }

@@ -353,6 +353,10 @@
 .provisioning-list article > header { display: grid; grid-template-columns: 1fr 84px auto 30px; gap: 9px; align-items: center; }
 .provisioning-list article > header .toggle-row { margin: 0; padding: 0; border: 0; background: none; }
 .provisioning-list textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.55; }
+/* A select the operator picks from with the button that refreshes it beside it,
+   rather than under it where it reads as a separate step. */
+.inline-row { display: flex; gap: 8px; align-items: center; }
+.inline-row > select { flex: 1; min-width: 0; }
 .provisioning-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.6fr) auto 30px; gap: 9px; align-items: center; }
 .provisioning-actions { display: flex; flex-wrap: wrap; gap: 7px; }
 .provisioning-actions .button { font-size: 10px; }
@@ -593,5 +597,5 @@ tr.rule-off { opacity: .55; }
 .inject-badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 650; }
 .inject-badge.applied { background: #e7f7ee; color: #067647; }
 .inject-badge.failed { background: #fdecee; color: #b42318; }
-.inject-badge.stale { background: #fff6e6; color: #96610a; }
+.inject-badge.stale, .inject-badge.partial { background: #fff6e6; color: #96610a; }
 .inject-badge.unverified, .inject-badge.pending_start, .inject-badge.none { background: #f1f4f8; color: #667085; }

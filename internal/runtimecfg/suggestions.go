@@ -83,6 +83,30 @@ var suggestions = []Suggestion{
 		Description:  "Hermes 터미널이 열리는 경로입니다. 플랫폼은 작업공간(/workspace)으로 생성하므로, 하위 폴더에서 시작하고 싶을 때만 바꾸세요.",
 		Example:      `"/workspace"`,
 	},
+	{
+		Target: TargetEnv, Key: "LANGFLOW_LOG_LEVEL", Label: "Langflow 로그 수준", Verified: true,
+		RuntimeTypes: []string{runtimetype.Langflow},
+		Description:  "Langflow 서버의 로그 수준입니다. 기본값이 error 라 흐름이 왜 실패했는지 보이지 않는 경우가 많으므로, 도입 초기에는 info 를 권합니다.",
+		Example:      `"info"`,
+	},
+	{
+		Target: TargetEnv, Key: "LANGFLOW_WORKERS", Label: "Langflow 워커 수", Verified: true,
+		RuntimeTypes: []string{runtimetype.Langflow},
+		Description:  "흐름을 동시에 처리할 워커 프로세스 수입니다(기본 1). 늘리면 Runtime 프로파일의 메모리도 함께 올려야 합니다.",
+		Example:      `"2"`,
+	},
+	{
+		Target: TargetEnv, Key: "LANGFLOW_WORKER_TIMEOUT", Label: "Langflow 워커 타임아웃", Verified: true,
+		RuntimeTypes: []string{runtimetype.Langflow},
+		Description:  "한 요청이 이 시간(초)을 넘기면 워커가 끊습니다(기본 300). 오래 걸리는 흐름을 자동 실행할 때는 Goal 의 최대 실행 시간과 함께 올려 주세요.",
+		Example:      `"600"`,
+	},
+	{
+		Target: TargetEnv, Key: "LANGFLOW_DATABASE_URL", Label: "Langflow 데이터베이스", Verified: true,
+		RuntimeTypes: []string{runtimetype.Langflow},
+		Description:  "비우면 작업공간 볼륨의 SQLite 를 사용합니다. 사내 PostgreSQL 을 쓰면 Pod 를 다시 만들어도 흐름이 남습니다. 다만 이 값은 AgentRuntime 객체에 그대로 보이므로, 비밀번호가 들어간 접속 문자열은 권한을 좁힌 전용 계정으로 만드세요.",
+		Example:      `"postgresql://langflow:***@postgres.agenthub.svc:5432/langflow"`,
+	},
 	// Below: what people ask for, whose key belongs to the runtime's own version.
 	{
 		Target: TargetConfig, Label: "자동 승인(YOLO) 모드", Verified: false,
@@ -98,18 +122,32 @@ var suggestions = []Suggestion{
 		Description:  "Qwen Paw 는 초기화 시 스킬 풀을 가져옵니다. 스킬 목록이나 경로를 설정으로 지정할 수 있는 버전이라면 그 키를 여기에 넣으세요. 스킬 파일 자체는 작업공간이나 Runtime 공통 환경(파일)으로 배포하세요.",
 	},
 	{
+		Target: TargetEnv, Label: "Langflow 그 밖의 설정", Verified: false,
+		RuntimeTypes: []string{runtimetype.Langflow},
+		Description:  "Langflow 는 모든 설정이 LANGFLOW_ 로 시작하는 환경변수입니다. 필요한 항목은 Langflow 문서의 Environment variables 에서 이름을 확인해 그대로 넣으세요. 플랫폼이 이미 정하는 접속·인증·저장 위치 관련 변수는 거부됩니다.",
+	},
+	{
 		Target: TargetConfig, Label: "표시 테마·에디터 옵션", Verified: false,
 		Description: "테마나 편집기 동작처럼 사람이 쓰는 화면의 설정입니다. 런타임 문서에서 키를 확인해 입력하면 모든 런타임에 같은 값이 적용됩니다.",
 	},
 }
 
 // Suggestions lists what the console offers, optionally narrowed to one runtime.
+//
+// A configuration suggestion is dropped for a runtime that has no configuration
+// file: offering a setting the API will then refuse is worse than not offering
+// it, because the person reads the offer as a promise.
 func Suggestions(runtimeType string) []Suggestion {
 	items := make([]Suggestion, 0, len(suggestions))
+	_, noConfigFile := configless[runtimeType]
 	for _, item := range suggestions {
-		if runtimeType == "" || len(item.RuntimeTypes) == 0 || contains(item.RuntimeTypes, runtimeType) {
-			items = append(items, item)
+		if runtimeType != "" && len(item.RuntimeTypes) > 0 && !contains(item.RuntimeTypes, runtimeType) {
+			continue
 		}
+		if noConfigFile && item.Target == TargetConfig {
+			continue
+		}
+		items = append(items, item)
 	}
 	return items
 }

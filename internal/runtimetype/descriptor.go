@@ -44,6 +44,14 @@ type Descriptor struct {
 	// ProxiedUI reports that the surface is published through the platform's
 	// authenticating proxy rather than directly.
 	ProxiedUI bool `json:"proxiedUi"`
+	// HostSessionOnly reports that this runtime's UI needs an origin of its own,
+	// so a site without a Runtime Base Domain cannot open it at all. The console
+	// says so before the button is pressed instead of after.
+	HostSessionOnly bool `json:"hostSessionOnly"`
+	// FlowExecution reports that the platform can run this runtime's own saved
+	// flows as an autonomous task, rather than only reasoning at the model
+	// gateway. It is what makes a Langflow agent do work unattended.
+	FlowExecution bool `json:"flowExecution"`
 	// BestFor is one sentence: when to choose this one.
 	BestFor string `json:"bestFor"`
 }
@@ -75,6 +83,16 @@ var descriptors = map[string]Descriptor{
 		Watchouts: []string{"자체 인증이 없어 플랫폼 프록시로만 공개됩니다", "MCP 도구는 이 런타임의 설정으로 전달되지 않습니다"},
 		Workspace: "/workspace", Port: 8642,
 		BrowserUI: true, Terminal: false, ToolLoop: true, MCPConfigured: false, ProxiedUI: true,
+	},
+	Langflow: {
+		Type: Langflow, Code: "LF", Label: "Langflow",
+		Summary:   "흐름을 그려서 만드는 시각적 에이전트 빌더. 저장한 흐름을 AgentHub가 그대로 실행합니다.",
+		BestFor:   "코드 대신 그림으로 조립하는 파이프라인 — 문서 처리, RAG, 여러 단계를 잇는 프롬프트 흐름",
+		Strengths: []string{"드래그로 조립하는 흐름 편집기", "저장한 흐름을 자동 실행 백엔드로 쓸 수 있음", "모델 자격증명이 흐름의 전역 변수로 주입됨", "프로젝트를 MCP 서버로 노출할 수 있음"},
+		Watchouts: []string{"자체 로그인을 끈 상태로 뜨므로 플랫폼 프록시로만 공개됩니다", "하위 경로로 서비스할 수 없어 Runtime Base Domain이 설정된 사이트에서만 UI를 열 수 있습니다", "MCP 도구는 이 런타임의 설정으로 전달되지 않습니다 — 흐름 안에서 직접 연결해야 합니다", "터미널이 없습니다"},
+		Workspace: "/workspace", Port: 7860,
+		BrowserUI: true, Terminal: false, ToolLoop: true, MCPConfigured: false, ProxiedUI: true,
+		HostSessionOnly: true, FlowExecution: true,
 	},
 	Custom: {
 		Type: Custom, Code: "A", Label: "Custom",

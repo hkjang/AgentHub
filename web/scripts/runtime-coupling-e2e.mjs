@@ -49,7 +49,7 @@ try {
   const runtimes = (await get('/api/v1/runtime-types')).body?.items ?? []
   check('런타임 유형을 플랫폼이 설명함', runtimes.length >= 4, `${runtimes.length} runtimes`)
   const byType = Object.fromEntries(runtimes.map((item) => [item.type, item]))
-  for (const type of ['opencode', 'hermes', 'qwenpaw', 'custom']) {
+  for (const type of ['opencode', 'hermes', 'qwenpaw', 'langflow', 'custom']) {
     const item = byType[type]
     check(`${type} 설명 제공`, Boolean(item?.label && item?.summary && item?.bestFor && item?.workspace),
       JSON.stringify({ label: item?.label, bestFor: item?.bestFor?.slice(0, 20) }))
@@ -61,6 +61,12 @@ try {
   check('프록시로만 공개되는 런타임 표시', byType.hermes?.proxiedUi === true && byType.qwenpaw?.proxiedUi === true && byType.opencode?.proxiedUi !== true)
   check('MCP 도구 전달 여부 표시', byType.opencode?.mcpConfigured === true && byType.qwenpaw?.mcpConfigured === false)
   check('터미널 유무 표시', byType.opencode?.terminal === true && byType.qwenpaw?.terminal === false)
+  check('Langflow 포트 7860', byType.langflow?.port === 7860, String(byType.langflow?.port))
+  // Langflow is the one adapter whose saved work the platform can execute, and the
+  // one that cannot be published under a path prefix. Both decide what a person
+  // can do with it, so both have to be in the description rather than in a doc.
+  check('흐름 실행 가능 런타임 표시', byType.langflow?.flowExecution === true && byType.opencode?.flowExecution !== true)
+  check('전용 도메인이 필요한 런타임 표시', byType.langflow?.hostSessionOnly === true && byType.hermes?.hostSessionOnly !== true)
 
   // Only a handed-off task can be closed by hand: everything else keeps its
   // status, or the state would mean nothing.
@@ -148,7 +154,19 @@ try {
   await page.getByRole('button', { name: /런타임 유형 비교/ }).click()
   await page.locator('.runtime-compare-grid').waitFor({ timeout: 10000 })
   const cards = await page.locator('.runtime-compare-grid article').count()
-  check('카탈로그에서 런타임을 비교할 수 있음', cards === 3, `${cards} cards`)
+  // Derived rather than pinned to a number: the grid shows every adapter the
+  // platform reports except `custom`, so a new runtime must appear here without
+  // anybody remembering to update a constant.
+  const comparable = runtimes.filter((item) => item.type !== 'custom')
+  check('카탈로그에서 런타임을 비교할 수 있음', cards === comparable.length, `${cards} cards for ${comparable.length} adapters`)
+  const compareText = await page.locator('.runtime-compare-grid').innerText()
+  for (const item of comparable) {
+    check(`비교 카드에 ${item.label} 이 있음`, compareText.includes(item.label))
+  }
+  // The fact that decides whether an agent can work unattended at all.
+  const flowRuntimes = comparable.filter((item) => item.flowExecution)
+  check('흐름 실행 런타임이 그 사실을 표시함', flowRuntimes.length === 0 || compareText.includes('저장한 흐름을 그대로 실행'),
+    `${flowRuntimes.length} flow runtimes`)
   const comparison = await page.locator('.runtime-compare-grid').innerText()
   check('비교에 작업공간 경로가 포함됨', comparison.includes('/workspace'))
   check('비교에 자동 실행의 한계가 적혀 있음', /자동 실행|이어받/.test(comparison), comparison.slice(0, 80))

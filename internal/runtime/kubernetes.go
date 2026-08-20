@@ -136,7 +136,7 @@ func (k *KubernetesSpawner) object(spec Spec) *unstructured.Unstructured {
 	}
 	image := spec.Image
 	if image == "" {
-		image = DefaultBaseImage()
+		image = DefaultRuntimeImage(spec.Agent.RuntimeType)
 	}
 	workspaceSize := spec.WorkspaceSizeGB
 	if workspaceSize <= 0 {

@@ -14,13 +14,19 @@ than that is emitted as `<name>.tar.gz.part-aa`, `.part-ab`, … instead of a
 single file; smaller archives stay a plain `.tar.gz`. Set `RELEASE_CHUNK` to
 change the split size.
 
-The control plane version lives in `VERSION` and the runtime base image has its
-own `BASE_VERSION`, because the base image is large and slow to build and is
-only rebuilt when something it is built from changes. A release whose notes say
-the base image is unchanged has no `agenthub-base-*.tar.gz` asset, and its notes
-name the base tag it runs on: keep using the archive you already loaded. Both
-files are read by `make release-archives`, so pass overrides only when building
-something other than the checked-out release.
+The control plane version lives in `VERSION`, the shared runtime base image has
+its own `BASE_VERSION`, and the Langflow runtime image has `LANGFLOW_VERSION`.
+Each is versioned separately because each is large, slow to build and only
+rebuilt when something it is built from changes. A release whose notes say an
+image is unchanged has no archive for it, and the notes name the tag it runs on:
+keep using the archive you already loaded. All three files are read by
+`make release-archives`, so pass overrides only when building something other
+than the checked-out release.
+
+`agenthub-langflow` is only needed by sites that run Langflow Agents. It is about
+a gigabyte compressed and nothing else depends on it, so skipping it costs
+nothing — an Agent whose runtime type is `langflow` simply will not start until
+the image is loaded.
 
 Transfer the whole `release/` directory, `compose.yaml`, and the Kubernetes
 manifests through the approved media path. On the offline host, verify the media
@@ -35,8 +41,10 @@ for archive in *.tar.gz.part-aa; do
   cat "${name}".part-* > "${name}"
 done
 
-docker load < agenthub-v0.20.0.tar.gz
-docker load < agenthub-base-v0.10.0.tar.gz
+docker load < agenthub-v0.21.0.tar.gz
+docker load < agenthub-base-v0.11.0.tar.gz
+# Only if this site runs Langflow Agents.
+docker load < agenthub-langflow-v0.1.0.tar.gz
 export AGENTHUB_BOOTSTRAP_ADMIN=admin
 export AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD='a-long-unique-password'
 export AGENTHUB_ENCRYPTION_KEY="$(openssl rand -base64 32)"

@@ -28,10 +28,20 @@ import (
 // not a change anybody notices — while a database round trip per call would be.
 const settingsTTL = 5 * time.Second
 
-// Model is the inspector for model calls.
+// Model is the inspector for text leaving the platform on a model call — and,
+// with NewFlow, for text handed to a runtime's own engine to execute. The two
+// differ only in which policy action decides and which audit trail records it;
+// the detectors, the cache and the refusal are the same, and a second copy of
+// them would be a second place for the rules to drift.
 type Model struct {
 	store  *store.Store
 	logger *slog.Logger
+	// action is the policy action this inspector evaluates.
+	action string
+	// event is the audit action it records under.
+	event string
+	// subject names the boundary in the message a person reads.
+	subject string
 
 	mu       sync.Mutex
 	settings dlp.Settings
@@ -41,7 +51,18 @@ type Model struct {
 
 // NewModel builds the inspector the completion client uses.
 func NewModel(db *store.Store, logger *slog.Logger) *Model {
-	return &Model{store: db, logger: logger}
+	return &Model{store: db, logger: logger, action: policy.ActionModelCall, event: "dlp.model", subject: "모델"}
+}
+
+// NewFlow builds the inspector for a Langflow flow run.
+//
+// A flow is not a prompt: what goes in is executed by components that may call
+// their own models, read their own knowledge bases and post to their own
+// endpoints. The platform cannot see inside it, which is exactly why the text on
+// the way in and the answer on the way out are inspected here — this is the last
+// place it can.
+func NewFlow(db *store.Store, logger *slog.Logger) *Model {
+	return &Model{store: db, logger: logger, action: policy.ActionWorkflowRun, event: "dlp.flow", subject: "흐름"}
 }
 
 // config returns the scanner settings and the policy, cached.
@@ -100,7 +121,7 @@ func (m *Model) inspect(ctx context.Context, step workflow.Step, text, direction
 	// about it. A rule can be narrower than the global action — one agent, one
 	// role — which is the whole reason the two are separate.
 	decision := policy.Evaluate(document, policy.Request{
-		Action: policy.ActionModelCall, Agent: step.AgentName, AgentID: step.AgentID,
+		Action: m.policyAction(), Agent: step.AgentName, AgentID: step.AgentID,
 		DataClasses: result.Classes(),
 	})
 	blocked := result.Blocked || decision.Effect != policy.Allow
@@ -116,9 +137,32 @@ func (m *Model) inspect(ctx context.Context, step workflow.Step, text, direction
 	if blocked {
 		// Wrapped in the sentinel so the execution plane fails the task instead of
 		// retrying a decision that cannot change.
-		return "", fmt.Errorf("%w: 모델 %s에 민감정보가 포함되어 있습니다 — %s", workflow.ErrBlocked, direction, reason)
+		return "", fmt.Errorf("%w: %s %s에 민감정보가 포함되어 있습니다 — %s", workflow.ErrBlocked, m.subjectName(), direction, reason)
 	}
 	return result.Text, nil
+}
+
+// The three describers default to the model boundary, so an inspector built
+// before NewFlow existed keeps behaving exactly as it did.
+func (m *Model) policyAction() string {
+	if m.action == "" {
+		return policy.ActionModelCall
+	}
+	return m.action
+}
+
+func (m *Model) auditEvent() string {
+	if m.event == "" {
+		return "dlp.model"
+	}
+	return m.event
+}
+
+func (m *Model) subjectName() string {
+	if m.subject == "" {
+		return "모델"
+	}
+	return m.subject
 }
 
 // record writes what was found — never what it was.
@@ -137,11 +181,12 @@ func (m *Model) record(ctx context.Context, step workflow.Step, result dlp.Resul
 			"class": finding.Class, "count": finding.Count, "action": finding.Action, "sample": finding.Sample,
 		})
 	}
-	m.store.Audit(ctx, nil, "dlp.model", "agent", step.AgentID, outcome, "", map[string]any{
+	m.store.Audit(ctx, nil, m.auditEvent(), "agent", step.AgentID, outcome, "", map[string]any{
 		"direction": direction, "agent": step.AgentName, "findings": findings,
 		"policyRule": decision.RuleID, "truncated": result.Truncated,
 	})
-	m.logger.Warn("sensitive data found on a model call",
+	m.logger.Warn("sensitive data found leaving the platform",
+		"boundary", m.subjectName(),
 		"agent", step.AgentName, "direction", direction, "outcome", outcome,
 		"classes", result.Summary(), "policyRule", decision.RuleID)
 }

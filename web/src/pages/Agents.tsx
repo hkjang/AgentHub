@@ -4,8 +4,8 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../App'
 import { api } from '../api'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, GuidePanel, Loading, PageHeader, StatusBadge } from '../components/UI'
-import { RUNTIME_TYPES, relativeTime, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
-import type { Agent, AgentGoal, AgentMemory, AgentRelease, AgentTrigger, AgentVersion, ExecutionMode, MCPBundle, MCPServerRef, MCPToolPolicy, ModelEndpoint, RuntimeProfile, Workspace } from '../types'
+import { RUNTIME_TYPES, descriptor, relativeTime, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
+import type { Agent, AgentGoal, AgentMemory, AgentRelease, AgentTrigger, AgentVersion, ExecutionMode, MCPBundle, MCPServerRef, MCPToolPolicy, ModelEndpoint, RuntimeFlow, RuntimeProfile, Workspace } from '../types'
 
 export function Agents({runtimeOnly=false}:{runtimeOnly?:boolean}) {
   const [agents,setAgents]=useState<Agent[]|null>(null)
@@ -260,6 +260,9 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
   const [addingTrigger,setAddingTrigger]=useState(false)
   const [policies,setPolicies]=useState<MCPToolPolicy[]>([])
   const [mcpServers,setMcpServers]=useState<MCPServerRef[]>([])
+  const [flows,setFlows]=useState<RuntimeFlow[]>([])
+  const [flowError,setFlowError]=useState('')
+  const [flowBusy,setFlowBusy]=useState(false)
 
   const load=useCallback(async()=>{
     try{
@@ -305,6 +308,18 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
     try{ await api.delete(`/api/v1/mcp-policies/${id}`); await load() }
     catch(e){ setError(e instanceof Error?e.message:'도구 정책을 삭제하지 못했습니다.') }
   }
+  // The flows live in the runtime, so the list is only available while it runs.
+  // A stopped runtime is not an error here: the id can still be typed in.
+  const loadFlows=async()=>{
+    setFlowBusy(true); setFlowError('')
+    try{
+      const result=await api.get<{items?:RuntimeFlow[];truncated?:boolean}>(`/api/v1/agents/${agent.id}/flows`)
+      setFlows(result.items??[])
+      if(result.truncated) setFlowError('흐름이 많아 앞의 200개만 표시합니다. 목록에 없으면 흐름 ID를 직접 입력해 주세요.')
+      else if(!result.items?.length) setFlowError('이 Runtime에 저장된 흐름이 없습니다. Runtime을 열어 흐름을 먼저 만들어 주세요.')
+    }catch(e){ setFlowError(e instanceof Error?e.message:'흐름 목록을 가져오지 못했습니다.') }
+    finally{ setFlowBusy(false) }
+  }
   const removeMemory=async(id:string)=>{
     try{ await api.delete(`/api/v1/memories/${id}`); await load() }
     catch(e){ setError(e instanceof Error?e.message:'기억을 삭제하지 못했습니다.') }
@@ -347,6 +362,40 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
           placeholder={'MCP 조회 3회 연속 실패'}/>
       </label>
       <label><span>제약</span><textarea rows={2} value={goal.constraints} onChange={(e)=>update({constraints:e.target.value})} placeholder="예) 운영 DB에 쓰기 금지"/></label>
+
+      {descriptor(agent.runtimeType).flowExecution&&<fieldset><legend>실행 방식</legend>
+        <label><span>자동 실행이 하는 일</span>
+          <select value={goal.runner??'prose'} onChange={(e)=>update({runner:e.target.value as AgentGoal['runner']})}>
+            <option value="prose">추론 루프 — 모델과 대화하며 진행하고, 런타임 작업은 사람에게 인계</option>
+            <option value="flow">흐름 실행 — Runtime에 저장된 Langflow 흐름을 실행하고 결과를 기록</option>
+          </select>
+          <small>{goal.runner==='flow'
+            ?'작업 입력이 흐름의 입력으로 들어가고, 흐름의 출력이 실행 기록과 완료 판정에 사용됩니다. 흐름 안에서 일어나는 모델 호출은 플랫폼이 계량하지 않습니다.'
+            :'기존 방식입니다. 파일 편집이나 명령 실행이 필요하면 사람에게 인계합니다.'}</small>
+        </label>
+        {goal.runner==='flow'&&<>
+          <label><span>실행할 흐름</span>
+            <div className="inline-row">
+              <select value={goal.flowId??''} onChange={(e)=>update({flowId:e.target.value})}>
+                <option value="">{goal.flowId?`직접 입력: ${goal.flowId}`:'선택하세요'}</option>
+                {flows.map((flow)=><option key={flow.id} value={flow.id}>{flow.name}</option>)}
+                {goal.flowId&&!flows.some((flow)=>flow.id===goal.flowId)&&<option value={goal.flowId}>{goal.flowId}</option>}
+              </select>
+              <button type="button" className="button ghost" onClick={()=>void loadFlows()} disabled={flowBusy}>
+                <RefreshCw size={14}/>{flowBusy?'불러오는 중…':'목록 불러오기'}</button>
+            </div>
+            <small>목록은 실행 중인 Runtime에서 읽어옵니다. Runtime이 꺼져 있으면 흐름 ID를 그대로 입력해도 됩니다.</small>
+          </label>
+          {flowError&&<div className="info-box"><ShieldAlert size={17}/><div><strong>흐름 목록</strong><p>{flowError}</p></div></div>}
+          <label><span>흐름 ID 직접 입력</span>
+            <input value={goal.flowId??''} onChange={(e)=>update({flowId:e.target.value.trim()})} placeholder="예) ed5d9610-0fd6-465a-b05c-646557c66178"/>
+          </label>
+          <label><span>출력 컴포넌트 (선택)</span>
+            <input value={goal.flowOutputComponent??''} onChange={(e)=>update({flowOutputComponent:e.target.value.trim()})} placeholder="예) ChatOutput-yK0AU"/>
+            <small>출력이 여러 개인 흐름에서 어느 결과를 답으로 볼지 지정합니다. 비우면 마지막 출력을 사용합니다.</small>
+          </label>
+        </>}
+      </fieldset>}
 
       <fieldset><legend>완료 판정</legend>
         <label><span>판정 방식</span>
