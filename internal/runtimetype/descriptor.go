@@ -2,7 +2,7 @@ package runtimetype
 
 // What each runtime actually is, in one place.
 //
-// The three adapters differ in ways that matter to the person choosing one and
+// The adapters differ in ways that matter to the person choosing one and
 // to the platform driving one — whether there is a browser workspace, whether
 // the agent has its own tool loop, whether MCP servers reach it through its
 // configuration, where its work lives. That knowledge was spread across the

@@ -1,6 +1,6 @@
 // Verifies how the platform presents and hands over to the runtime agents.
 //
-// The three adapters differ in ways that decide whether somebody picks the right
+// The adapters differ in ways that decide whether somebody picks the right
 // one, and autonomous execution cannot do what those runtimes do — it is a prose
 // loop. Both facts have to reach the person using the platform, and both used to
 // live only in the heads of whoever wrote the adapters.

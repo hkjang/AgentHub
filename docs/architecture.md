@@ -395,7 +395,7 @@ an environment an agent creates survives the Pod that created it. pip, uv and
 npm caches are pointed at the same volume for the same reason.
 
 The toolchain is a virtualenv rather than the system interpreter so that an agent
-installing a package cannot break the three adapters that share the image. It is
+installing a package cannot break the adapters that share the image. It is
 owned by the runtime user, so `pip install` works directly when a security
 profile leaves the root filesystem writable; under the default read-only root
 filesystem an agent creates its own environment under `$HOME` or `/workspace`,
