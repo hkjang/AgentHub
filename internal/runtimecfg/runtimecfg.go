@@ -114,6 +114,13 @@ var reservedConfig = map[string][]string{
 	runtimetype.Hermes:   {"mcp_servers", "model"},
 	runtimetype.QwenPaw:  {"providers", "active_model"},
 	runtimetype.QwenCode: {"mcpServers", "model"},
+	runtimetype.Goose:    {"extensions", "GOOSE_PROVIDER", "GOOSE_MODEL"},
+	runtimetype.Holmes:   {"mcp_servers", "model", "api_base"},
+	// instructions is reserved for a reason the others do not have: it names the
+	// file telling the agent how to reach the browser running beside it, and an
+	// overlay that replaced it would leave a runtime that starts cleanly and fails
+	// every browser task.
+	runtimetype.BrowserCode: {"mcp", "provider", "model", "instructions"},
 }
 
 // Validate rejects an overlay the platform would have to drop or that would break

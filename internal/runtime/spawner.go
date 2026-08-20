@@ -49,15 +49,25 @@ const (
 	EnvDefaultJupyterImage  = "AGENTHUB_DEFAULT_JUPYTER_IMAGE"
 	EnvDefaultNodeREDImage  = "AGENTHUB_DEFAULT_NODERED_IMAGE"
 	EnvDefaultN8NImage      = "AGENTHUB_DEFAULT_N8N_IMAGE"
+	EnvDefaultGooseImage    = "AGENTHUB_DEFAULT_GOOSE_IMAGE"
+	EnvDefaultHolmesImage   = "AGENTHUB_DEFAULT_HOLMES_IMAGE"
+	EnvDefaultBrowserCode   = "AGENTHUB_DEFAULT_BROWSERCODE_IMAGE"
 )
 
 // DefaultRuntimeImage is the image a runtime of this type starts from when no
 // administrator has approved one.
 //
-// Langflow and Qwen Code do not boot from the shared base image: each is
-// published as its own archive with its own version, because each carries a
-// runtime tree no other adapter needs. Sending one of their agents to
-// agenthub-base would leave it looking for a binary that image never contained.
+// Several runtimes do not boot from the shared base image: each is published as
+// its own archive with its own version, because each carries a runtime tree no
+// other adapter needs. Sending one of their agents to agenthub-base leaves it
+// looking for a binary that image never contained — the Pod starts, the command
+// is not there, and the runtime fails with nothing an operator can act on.
+//
+// That is not hypothetical: Goose, HolmesGPT and BrowserCode each shipped with
+// their own image and no entry here, so an agent created from the catalog went
+// to agenthub-base and could not start. TestEveryRuntimeImageHasADefault now
+// reads the Dockerfiles in the repository and fails when one of them has no
+// case below.
 func DefaultRuntimeImage(runtimeType string) string {
 	switch runtimeType {
 	case runtimetype.Langflow:
@@ -85,6 +95,21 @@ func DefaultRuntimeImage(runtimeType string) string {
 			return override
 		}
 		return "agenthub-n8n:v" + strings.TrimSuffix(buildinfo.N8NVersion, "-dev")
+	case runtimetype.Goose:
+		if override := strings.TrimSpace(os.Getenv(EnvDefaultGooseImage)); override != "" {
+			return override
+		}
+		return "agenthub-goose:v" + strings.TrimSuffix(buildinfo.GooseVersion, "-dev")
+	case runtimetype.Holmes:
+		if override := strings.TrimSpace(os.Getenv(EnvDefaultHolmesImage)); override != "" {
+			return override
+		}
+		return "agenthub-holmes:v" + strings.TrimSuffix(buildinfo.HolmesVersion, "-dev")
+	case runtimetype.BrowserCode:
+		if override := strings.TrimSpace(os.Getenv(EnvDefaultBrowserCode)); override != "" {
+			return override
+		}
+		return "agenthub-browsercode:v" + strings.TrimSuffix(buildinfo.BrowserCodeVersion, "-dev")
 	}
 	return DefaultBaseImage()
 }

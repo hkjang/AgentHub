@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -77,4 +78,63 @@ func TestShippedImageVersionsAreUsableAsTags(t *testing.T) {
 			t.Fatalf("%s %q is not usable as an image tag", name, value)
 		}
 	}
+}
+
+// Every runtime with an image of its own has to be named in DefaultRuntimeImage,
+// or an agent of that type goes to agenthub-base and looks for a binary that
+// image never contained.
+//
+// The list comes from the repository rather than from a constant here, because a
+// constant here is a second list to keep in step. Adding Dockerfile.<name>
+// without a case in DefaultRuntimeImage fails this test — which is how Goose,
+// HolmesGPT and BrowserCode each shipped unable to start from the catalog.
+func TestEveryRuntimeImageHasADefault(t *testing.T) {
+	root := repositoryRoot(t)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("read the repository: %v", err)
+	}
+	found := 0
+	for _, entry := range entries {
+		name, ok := strings.CutPrefix(entry.Name(), "Dockerfile.")
+		if !ok || name == "base" {
+			// Dockerfile.base is the shared image every other runtime falls back to.
+			continue
+		}
+		if !runtimetype.IsSupported(name) {
+			t.Errorf("Dockerfile.%s builds an image for a runtime type nothing supports", name)
+			continue
+		}
+		found++
+		image := DefaultRuntimeImage(name)
+		if strings.HasPrefix(image, "agenthub-base:") {
+			t.Errorf("%s has its own image (Dockerfile.%s) but starts from %s, where its binaries do not exist",
+				name, name, image)
+			continue
+		}
+		if !strings.HasPrefix(image, "agenthub-"+name+":v") {
+			t.Errorf("%s starts from %q, want the image its Dockerfile builds", name, image)
+		}
+	}
+	// A rename that emptied the loop would otherwise pass silently.
+	if found < 5 {
+		t.Fatalf("only %d runtime images were found; the naming convention has changed", found)
+	}
+}
+
+// repositoryRoot walks up from this package to the directory holding go.mod.
+func repositoryRoot(t *testing.T) string {
+	t.Helper()
+	directory, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("working directory: %v", err)
+	}
+	for depth := 0; depth < 8; depth++ {
+		if _, err := os.Stat(filepath.Join(directory, "go.mod")); err == nil {
+			return directory
+		}
+		directory = filepath.Dir(directory)
+	}
+	t.Fatal("could not find the repository root")
+	return ""
 }

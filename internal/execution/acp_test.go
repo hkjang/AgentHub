@@ -150,8 +150,8 @@ func TestSpendIsCountedOnlyWhenTheAgentReportsIt(t *testing.T) {
 func TestEveryDecisionLandsOnExactlyOneToolRecord(t *testing.T) {
 	turn := &acpTurn{}
 	turn.update(acp.SessionUpdate{SessionUpdate: "tool_call", ToolCallID: "t1", Title: "write config", Kind: "edit"})
-	turn.decide(permissionFor("t1", "write config", "edit"), false)
-	turn.decide(permissionFor("t2", "rm -rf build", "delete"), false)
+	turn.decide(permissionFor("t1", "write config", "edit"), "edit", false)
+	turn.decide(permissionFor("t2", "rm -rf build", "delete"), "delete", false)
 
 	records := turn.records()
 	if len(records) != 2 {
@@ -236,5 +236,27 @@ func TestAPermissionIsJudgedByWhatTheAgentAlreadyDeclared(t *testing.T) {
 	turn.update(acp.SessionUpdate{SessionUpdate: "tool_call", ToolCallID: "t2", Title: "rm -rf", Kind: "other"})
 	if got := acpKind(permissionFor("t2", "rm -rf", "other"), turn); got != "other" {
 		t.Errorf("kind = %q, want other", got)
+	}
+}
+
+// The run record and the timeline event have to agree about what a tool call was.
+// The platform judges by a resolved kind — the request's own, or the one the
+// agent declared for that call — and the record keeps that same kind rather than
+// the vaguer one on the request.
+func TestTheRecordKeepsTheKindThePlatformJudgedBy(t *testing.T) {
+	turn := &acpTurn{}
+	turn.update(acp.SessionUpdate{SessionUpdate: "tool_call", ToolCallID: "t1", Title: "write probe.txt", Kind: "edit"})
+	request := permissionFor("t1", "/tmp", "other")
+	turn.decide(request, acpKind(request, turn), true)
+
+	records := turn.records()
+	if len(records) != 1 {
+		t.Fatalf("records = %#v", records)
+	}
+	if records[0].Kind != "edit" {
+		t.Errorf("recorded kind = %q, want the one the decision was made on", records[0].Kind)
+	}
+	if !strings.Contains(acpToolOutcome(records[0]), "edit") {
+		t.Errorf("the step's text does not say what kind of call it was: %q", acpToolOutcome(records[0]))
 	}
 }

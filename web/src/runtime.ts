@@ -16,15 +16,22 @@ export type RuntimeDescriptor = {
   bestFor?: string
 }
 
-/** Enough to render before the platform answers, and to fall back to if it cannot. */
+/**
+ * Enough to render before the platform answers, and to fall back to if it cannot.
+ *
+ * `coarseToolKinds` is carried here as well as in the platform's descriptors,
+ * because the goal drawer warns from it: a failed descriptor fetch would
+ * otherwise let somebody save an ACP goal, on a strict approval mode, that
+ * refuses every tool call the runtime makes — with nothing on screen saying so.
+ */
 const SEED: Record<RuntimeType, RuntimeDescriptor> = {
   opencode: {type: 'opencode', code: 'OC', label: 'OpenCode', summary: '브라우저 기반 코딩 IDE와 터미널 워크스페이스'},
   hermes: {type: 'hermes', code: 'H', label: 'Hermes', summary: '장기 기억과 도구 실행을 갖춘 자율 에이전트'},
   qwenpaw: {type: 'qwenpaw', code: 'QP', label: 'Qwen Paw', summary: 'AgentScope 개인 에이전트 워크스테이션'},
   qwencode: {type: 'qwencode', code: 'QC', label: 'Qwen Code', summary: '터미널에서 사는 코딩 에이전트'},
-  goose: {type: 'goose', code: 'GO', label: 'Goose', summary: '프로토콜로 대화하는 오픈소스 에이전트'},
+  goose: {type: 'goose', code: 'GO', label: 'Goose', summary: '프로토콜로 대화하는 오픈소스 에이전트', coarseToolKinds: true},
   holmes: {type: 'holmes', code: 'HG', label: 'HolmesGPT', summary: '장애를 조사하는 SRE 에이전트'},
-  browsercode: {type: 'browsercode', code: 'BC', label: 'BrowserCode', summary: '진짜 브라우저를 직접 모는 에이전트'},
+  browsercode: {type: 'browsercode', code: 'BC', label: 'BrowserCode', summary: '진짜 브라우저를 직접 모는 에이전트', coarseToolKinds: true},
   jupyter: {type: 'jupyter', code: 'JL', label: 'JupyterLab', summary: '노트북 작업대 + Qwen Code 에이전트'},
   langflow: {type: 'langflow', code: 'LF', label: 'Langflow', summary: '흐름을 그려서 만드는 시각적 에이전트 빌더'},
   nodered: {type: 'nodered', code: 'NR', label: 'Node-RED', summary: '노드를 이어 만드는 배선 자동화'},

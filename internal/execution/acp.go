@@ -228,7 +228,10 @@ func (t *acpTurn) update(u acp.SessionUpdate) {
 	}
 }
 
-func (t *acpTurn) decide(request acp.PermissionRequest, allowed bool) {
+// decide records the answer against the tool call it belongs to. The kind is the
+// one the platform judged by rather than the one on the request, so the run
+// record and the timeline event say the same thing about the same call.
+func (t *acpTurn) decide(request acp.PermissionRequest, kind string, allowed bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	decision := "denied"
@@ -246,7 +249,7 @@ func (t *acpTurn) decide(request acp.PermissionRequest, allowed bool) {
 	}
 	t.tools = append(t.tools, acpToolRecord{
 		ID: request.ToolCall.ToolCallID, Title: request.ToolCall.Title,
-		Kind: request.ToolCall.Kind, Decision: decision,
+		Kind: kind, Decision: decision,
 	})
 }
 
@@ -296,7 +299,7 @@ func (o *Orchestrator) acpTurn(ctx context.Context, run *store.AgentRun, goal st
 	client.Permission = func(request acp.PermissionRequest) acp.PermissionOutcome {
 		kind := acpKind(request, turn)
 		allowed := acpAllows(cliApprovalMode(goal), kind)
-		turn.decide(request, allowed)
+		turn.decide(request, kind, allowed)
 		o.event(ctx, *run, "acp.permission", acpPermissionMessage(request, allowed), map[string]any{
 			"tool": request.ToolCall.Title, "kind": kind,
 			"decision": map[bool]string{true: "granted", false: "denied"}[allowed],

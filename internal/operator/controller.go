@@ -598,6 +598,12 @@ const (
 	configBcode    = "bcode.json"
 )
 
+// browserCodeInstructions is where the image keeps the note telling the agent
+// that a browser is already running in this container and how to attach to it.
+// It is referenced rather than inlined so there is one file to correct when the
+// agent's browser API moves.
+const browserCodeInstructions = "/opt/agenthub/browsercode-browser.md"
+
 // runtimeConfigs builds every generated configuration file, keyed by the name it
 // is delivered under.
 //
@@ -605,11 +611,37 @@ const (
 // four and every caller had to know the order — one of them wanted the second and
 // fourth and said so with three blanks. A fifth runtime is what made that
 // untenable.
-// browserCodeInstructions is where the image keeps the note telling the agent
-// that a browser is already running in this container and how to attach to it.
-// It is referenced rather than inlined so there is one file to correct when the
-// agent's browser API moves.
-const browserCodeInstructions = "/opt/agenthub/browsercode-browser.md"
+// copyDocument deep-copies the generated configuration fragments two runtimes
+// share, so writing through one cannot change the other.
+func copyDocument(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		copied := make(map[string]any, len(typed))
+		for key, item := range typed {
+			copied[key] = copyDocument(item)
+		}
+		return copied
+	case []any:
+		copied := make([]any, len(typed))
+		for index, item := range typed {
+			copied[index] = copyDocument(item)
+		}
+		return copied
+	}
+	return value
+}
+
+// mapAt returns the map stored under a key, replacing whatever is there when it
+// is not one. The caller is about to write the runtime's MCP bindings into it,
+// and writing them into a document nobody generated is better than not starting.
+func mapAt(document map[string]any, key string) map[string]any {
+	if existing, ok := document[key].(map[string]any); ok {
+		return existing
+	}
+	replacement := map[string]any{}
+	document[key] = replacement
+	return replacement
+}
 
 func runtimeConfigs(ns, runtimeName string, value spec) map[string]string {
 	bindings := effectiveMCP(ns, runtimeName, value)
@@ -677,7 +709,10 @@ func runtimeConfigs(ns, runtimeName string, value spec) map[string]string {
 		holmes["model"] = "openai/" + value.Model.Name
 		holmes["api_base"] = value.Model.BaseURL
 		bcode["model"] = openCodeProvider + "/" + value.Model.Name
-		bcode["provider"] = opencode["provider"]
+		// Copied, not shared. Merge writes through nested maps in place, so an
+		// overlay on one runtime would otherwise reach into the other document in
+		// the same ConfigMap.
+		bcode["provider"] = copyDocument(opencode["provider"])
 	}
 	// The administrator's overlay lands here, on the configuration the platform
 	// just generated, so the runtime still reads one file and the platform's own
@@ -701,12 +736,18 @@ func runtimeConfigs(ns, runtimeName string, value spec) map[string]string {
 			holmes, _ = runtimecfg.Merge(runtimetype.Holmes, holmes, overlay)
 		}
 	}
-	openMCP := opencode["mcp"].(map[string]any)
-	hermesMCP := hermes["mcp_servers"].(map[string]any)
-	qwenMCP := qwen["mcpServers"].(map[string]any)
-	gooseExtensions := goose["extensions"].(map[string]any)
-	holmesMCP := holmes["mcp_servers"].(map[string]any)
-	bcodeMCP := bcode["mcp"].(map[string]any)
+	// Read back with the two-value form rather than asserted. These keys are
+	// reserved from the administrator's overlay, so they should still be the maps
+	// built above — but "should" is how an operator process learns to panic, and
+	// a panic here takes the reconcile loop down and brings it back into the same
+	// panic on every retry. A runtime whose bindings went missing is recoverable;
+	// an operator that will not start is not.
+	openMCP := mapAt(opencode, "mcp")
+	hermesMCP := mapAt(hermes, "mcp_servers")
+	qwenMCP := mapAt(qwen, "mcpServers")
+	gooseExtensions := mapAt(goose, "extensions")
+	holmesMCP := mapAt(holmes, "mcp_servers")
+	bcodeMCP := mapAt(bcode, "mcp")
 	for _, item := range bindings {
 		name, endpoint := safeLabel(fmt.Sprint(item["name"])), fmt.Sprint(item["endpoint"])
 		if endpoint == "" {
@@ -745,7 +786,7 @@ func runtimeConfigs(ns, runtimeName string, value spec) map[string]string {
 		// The same entry OpenCode gets, because this agent is that agent's fork —
 		// checked against the real binary, which offers the server's tools
 		// namespaced under its name.
-		bcodeMCP[name] = open
+		bcodeMCP[name] = copyDocument(open)
 		hermesMCP[name] = hermesEntry
 		qwenMCP[name] = qwenEntry
 		gooseExtensions[name] = gooseEntry
