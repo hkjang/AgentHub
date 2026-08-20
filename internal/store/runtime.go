@@ -480,6 +480,34 @@ type CreateAgentInput struct {
 	RuntimeImageID string `json:"runtimeImageId"`
 }
 
+// checkRuntimeImagePin refuses an image built for a different runtime.
+//
+// Every runtime used to boot from the same base image, so a mismatched pin was
+// harmless and nothing checked it. That stopped being true when Langflow and
+// Qwen Code arrived with images of their own: pinning one to an agent of the
+// other starts a Pod whose command does not exist in it, and the symptom is a
+// crash loop with nothing in the status explaining why. The answer is knowable
+// at the moment somebody asks for it, so it is answered here.
+func (s *Store) checkRuntimeImagePin(ctx context.Context, imageID, runtimeType string) error {
+	image, err := s.RuntimeImageByID(ctx, imageID)
+	if errors.Is(err, ErrNotFound) {
+		return errors.New("선택한 Runtime 이미지를 찾을 수 없습니다")
+	}
+	if err != nil {
+		return err
+	}
+	return runtimeImagePinMismatch(image, runtimeType)
+}
+
+// runtimeImagePinMismatch is the decision on its own, so it can be tested without
+// a database.
+func runtimeImagePinMismatch(image RuntimeImage, runtimeType string) error {
+	if image.RuntimeType != runtimeType {
+		return fmt.Errorf("이 이미지는 %s 런타임용이라 %s Agent에 지정할 수 없습니다", image.RuntimeType, runtimeType)
+	}
+	return nil
+}
+
 // nullText maps an empty optional identifier to SQL NULL so that the foreign
 // keys on agent_definitions stay valid instead of pointing at an empty string.
 func nullText(value string) any {
@@ -579,6 +607,8 @@ func (s *Store) CreateAgent(ctx context.Context, ownerID string, input CreateAge
 		if approved, imageErr := s.ApprovedRuntimeImage(ctx, input.RuntimeType); imageErr == nil {
 			input.RuntimeImageID = approved.ID
 		}
+	} else if err := s.checkRuntimeImagePin(ctx, input.RuntimeImageID, input.RuntimeType); err != nil {
+		return Agent{}, err
 	}
 	var item Agent
 	err := s.pool.QueryRow(ctx, `INSERT INTO agent_definitions(id,owner_id,template_id,name,description,runtime_type,runtime_profile_id,workspace_id,mcp_bundle_id,model_endpoint_id,security_profile_id,network_profile_id,system_prompt,spec,runtime_image_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id,owner_id,name,description,runtime_type,runtime_profile_id,runtime_image_id,security_profile_id,network_profile_id,mcp_bundle_id,model_endpoint_id,workspace_id,version,spec,created_at,updated_at`, id, ownerID, nullText(input.TemplateID), input.Name, input.Description, input.RuntimeType, nullText(input.RuntimeProfileID), nullText(input.WorkspaceID), nullText(input.MCPBundleID), nullText(input.ModelEndpointID), input.SecurityProfileID, input.NetworkProfileID, input.SystemPrompt, spec, nullText(input.RuntimeImageID)).Scan(&item.ID, &item.OwnerID, &item.Name, &item.Description, &item.RuntimeType, &item.RuntimeProfileID, &item.RuntimeImageID, &item.SecurityProfileID, &item.NetworkProfileID, &item.MCPBundleID, &item.ModelEndpointID, &item.WorkspaceID, &item.Version, &item.Spec, &item.CreatedAt, &item.UpdatedAt)
@@ -608,6 +638,11 @@ func (s *Store) UpdateAgent(ctx context.Context, id, ownerID string, admin bool,
 	input.RuntimeType = current.RuntimeType
 	if err := normaliseCustomRuntime(&input); err != nil {
 		return Agent{}, err
+	}
+	if strings.TrimSpace(input.RuntimeImageID) != "" {
+		if err := s.checkRuntimeImagePin(ctx, input.RuntimeImageID, current.RuntimeType); err != nil {
+			return Agent{}, err
+		}
 	}
 	spec := agentSpecJSON(input)
 	var item Agent
