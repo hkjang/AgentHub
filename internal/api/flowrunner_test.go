@@ -30,7 +30,7 @@ func TestValidateRunner(t *testing.T) {
 		{
 			name:        "a runtime without a flow engine cannot run flows",
 			goal:        store.AgentGoal{Runner: store.RunnerFlow, FlowID: "abc", StartOnDemand: true},
-			runtimeType: runtimetype.OpenCode, wantErr: "흐름 실행을 지원하지 않습니다",
+			runtimeType: runtimetype.OpenCode, wantErr: "이 실행 방식을 지원하지 않습니다",
 		},
 		{
 			name:        "a flow runner needs a flow",
@@ -41,6 +41,22 @@ func TestValidateRunner(t *testing.T) {
 			name:        "a flow runs inside the runtime, so the runtime has to start",
 			goal:        store.AgentGoal{Runner: store.RunnerFlow, FlowID: "abc"},
 			runtimeType: runtimetype.Langflow, wantErr: "Runtime 시작",
+		},
+		{
+			name:        "a runtime with no ACP agent cannot be driven by the protocol",
+			goal:        store.AgentGoal{Runner: store.RunnerACP, StartOnDemand: true},
+			runtimeType: runtimetype.Langflow, wantErr: "이 실행 방식을 지원하지 않습니다",
+		},
+		{
+			name:        "an ACP goal on an agent that speaks it is accepted",
+			goal:        store.AgentGoal{Runner: store.RunnerACP, StartOnDemand: true},
+			runtimeType: runtimetype.QwenCode, wantRunner: store.RunnerACP,
+		},
+		{
+			name: "an ACP goal that asks a person to approve cannot also approve everything itself",
+			goal: store.AgentGoal{Runner: store.RunnerACP, StartOnDemand: true,
+				CLIApprovalMode: "yolo", ApprovalRequired: true},
+			runtimeType: runtimetype.QwenCode, wantErr: "yolo",
 		},
 		{
 			name:        "a complete flow goal is accepted",

@@ -3,7 +3,7 @@ import { Bot, Boxes, Check, Cpu, Database, Search, Sparkles, WandSparkles } from
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { Drawer, ErrorBanner, Loading, PageHeader } from '../components/UI'
-import { runtimeCode, runtimeDescriptors, runtimeLabel, runtimeLogoClass } from '../runtime'
+import { runnerSummary, runtimeCode, runtimeDescriptors, runtimeLabel, runtimeLogoClass } from '../runtime'
 import type { RuntimeProfile, Template, Workspace } from '../types'
 
 export function Catalog({builder=false}:{builder?:boolean}){
@@ -78,7 +78,7 @@ function RuntimeComparison({open,toggle}:{open:boolean;toggle:()=>void}){
           <li><b>작업공간</b> <code>{item.workspace}</code></li>
           <li><b>브라우저 작업</b> {item.browserUi?(item.terminal?'편집기 + 터미널':'편집기'):'없음'}</li>
           <li><b>MCP 도구</b> {item.mcpConfigured?'런타임 설정에 자동 등록':'런타임에 전달되지 않음'}</li>
-          <li><b>자동 실행</b> {item.flowExecution?'저장한 흐름을 그대로 실행':item.cliExecution?'런타임의 에이전트가 직접 수행':'추론 루프 + 사람에게 인계'}</li>
+          <li><b>자동 실행</b> {runnerSummary(item.runners)}</li>
           {item.hostSessionOnly?<li><b>공개 조건</b> Runtime 전용 도메인 필요</li>:null}
         </ul>
         {item.strengths?.length?<ul className="compare-pros">{item.strengths.map((line)=><li key={line}>{line}</li>)}</ul>:null}

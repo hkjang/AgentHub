@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -857,4 +858,72 @@ func (w *limitedWriter) Write(p []byte) (int, error) {
 		}
 	}
 	return len(p), nil
+}
+
+// ExecStream opens a command inside the agent container and hands back its pipes.
+//
+// The one-shot Exec is enough for a command that takes a prompt and prints an
+// answer. A protocol is not that: the Agent Client Protocol is a JSON-RPC
+// conversation over stdin and stdout, where the agent asks the platform for
+// permission mid-turn and the platform answers before the turn can continue. That
+// needs both directions open at once, which is what this is for.
+func (k *KubernetesSpawner) ExecStream(ctx context.Context, spec Spec, request ExecRequest) (*Session, error) {
+	ensureCRDName(&spec)
+	if spec.Runtime.PodName == "" {
+		return nil, errors.New("runtime pod is not known yet")
+	}
+	if len(request.Command) == 0 {
+		return nil, errors.New("no command to run")
+	}
+	_, coreClient, config, settings, err := k.clients(ctx)
+	if err != nil {
+		return nil, err
+	}
+	namespace := settings.Namespace
+	if namespace == "" {
+		namespace = "agent-runtime-dev"
+	}
+	streamConfig := rest.CopyConfig(config)
+	streamConfig.Timeout = 0
+
+	container := request.Container
+	if container == "" {
+		container = "agent"
+	}
+	options := &corev1.PodExecOptions{
+		Container: container, Command: request.Command,
+		Stdin: true, Stdout: true, Stderr: true,
+	}
+	url := coreClient.CoreV1().RESTClient().Post().
+		Resource("pods").Name(spec.Runtime.PodName).Namespace(namespace).SubResource("exec").
+		VersionedParams(options, scheme.ParameterCodec).URL()
+	executor, err := remotecommand.NewSPDYExecutor(streamConfig, http.MethodPost, url)
+	if err != nil {
+		return nil, err
+	}
+
+	inReader, inWriter := io.Pipe()
+	outReader, outWriter := io.Pipe()
+	var stderr bytes.Buffer
+	session := &Session{
+		Stdin: inWriter, Stdout: outReader,
+		stderr: &stderr,
+		done:   make(chan error, 1),
+		cancel: func() { _ = inWriter.Close() },
+	}
+	go func() {
+		streamErr := executor.StreamWithContext(ctx, remotecommand.StreamOptions{
+			Stdin: inReader, Stdout: outWriter, Stderr: &limitedWriter{limit: execOutputLimit, buffer: &stderr},
+		})
+		// Closing the read end is what tells the client the conversation is over;
+		// without it a caller waiting for the next message waits forever.
+		_ = outWriter.CloseWithError(io.EOF)
+		var exitErr exec.CodeExitError
+		if errors.As(streamErr, &exitErr) && exitErr.Code == 0 {
+			streamErr = nil
+		}
+		session.done <- streamErr
+		close(session.done)
+	}()
+	return session, nil
 }

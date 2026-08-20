@@ -297,6 +297,73 @@ stdout is empty and the explanation is a JSON object on stderr, so both streams
 are read — recording "no output" for a run that stopped for a reportable reason
 would waste the person's time.
 
+## Talking to the agent instead of parsing what it printed
+
+The CLI runner works, and it works by knowing one agent. Its flags, the shape of
+its JSON, the exit codes it uses to say which budget stopped it — none of that
+transfers. The next terminal agent names its budget flags differently, reports
+usage differently, and explains itself in its own words, so every agent added
+that way is another parser to write and another set of exit codes to keep true.
+
+The [Agent Client Protocol](https://agentclientprotocol.com/) is the industry's
+answer to that: JSON-RPC over the agent's stdio, with `initialize` to negotiate,
+`session/new` to open a session in a working directory, `session/prompt` to hand
+over the task, `session/update` notifications while it works, and a stop reason
+when the turn ends. A Goal with `runner: 'acp'` drives that conversation.
+
+The reason to prefer it is not tidiness. It is `session/request_permission`: the
+agent asks before it uses a tool, and the client answers. Under the CLI runner an
+unattended task picks an approval mode up front and the agent then decides for
+itself; here the platform is asked every time, and writes down what it answered.
+A run that changed files ends with a record of which changes it was allowed to
+make and which it was refused.
+
+What the platform answers comes from the same `cli_approval_mode` the CLI runner
+uses, because it is the same question and a second setting would only be a second
+place to get it wrong. What differs is who enforces it. `plan` and `default`
+allow only the protocol's read-only tool kinds — `read`, `search`, `fetch`,
+`think` — and refuse everything else; `default` is strict on purpose, because
+"ask before acting" with nobody at the keyboard honestly reads as no.
+`auto-edit` adds `edit` and `move`, the workspace but not the world outside it.
+`auto` and `yolo` allow everything, and like the CLI runner they are refused when
+the Goal also demands human approval. A tool kind this platform has never heard
+of is never allowed by anything but those two: an unknown verb is not a reason to
+say yes.
+
+Each tool call the agent makes and each permission answered lands on the run as
+its own step, after the turn's own step, so the timeline reads in the order it
+happened. The Goal's tool-call budget is enforced here rather than handed over,
+because the protocol has no budget to hand: going over cancels the session, which
+the protocol defines as ending the turn cleanly, and the failure says which limit
+was hit rather than reporting a mysterious cancellation.
+
+Token spend is metered when the agent reports it, and not otherwise. The
+protocol has nowhere to put spend — its `usage_update` is context occupancy,
+tokens in the window rather than tokens bought — so agents report the real
+numbers in their own extension field, and Qwen Code does. When one arrives the
+run is metered like any other work; when none does the run says so rather than
+being credited with a number that is not one.
+
+Two more things are deliberately not claimed. The agent's `agent_thought_chunk`
+stream is counted but not stored: private reasoning is not the answer, and a
+durable record is the wrong place for a model's scratch work. And no MCP servers
+are passed to `session/new`, because the operator already wrote the agent's bound
+servers into its settings pointed at the in-Pod policy gateway; handing the same
+list to the session would give it two copies of every tool.
+
+Which runtimes speak it is one field on the runtime descriptor: the argv that
+starts that runtime's agent as a protocol peer. Qwen Code — and JupyterLab, which
+is built on it — is started as `agenthub-qwencode-run --acp --approval-mode
+default` through the same wrapper the headless runner uses, so the agent sees the
+workspace and whatever the person installed in it. That last flag is not a
+default but the point of the exercise: started without it this agent approves its
+own tool calls and never asks, verified against the real binary, which wrote a
+file without a word. It stays `default` whatever the Goal chose, because the
+Goal's mode decides what the platform answers, not whether it is asked — a
+permissive Goal still leaves a record of what it permitted. Supporting the next
+ACP agent is that one line, which is the whole point of adopting somebody else's
+protocol.
+
 ## Calling an application the platform does not run
 
 Some products are not one container. Dify is a dozen services — api, worker,

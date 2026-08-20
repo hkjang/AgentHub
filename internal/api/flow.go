@@ -47,7 +47,7 @@ func (s *Server) agentFlows(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	if !runtimetype.Describe(agent.RuntimeType).FlowExecution {
+	if !runtimetype.SupportsRunner(agent.RuntimeType, runtimetype.RunnerFlow) {
 		writeError(w, http.StatusConflict, "flows_unsupported", runtimetype.Describe(agent.RuntimeType).Label+" 런타임에는 실행할 흐름이 없습니다.")
 		return
 	}

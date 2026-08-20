@@ -65,7 +65,7 @@ try {
   // Langflow is the one adapter whose saved work the platform can execute, and the
   // one that cannot be published under a path prefix. Both decide what a person
   // can do with it, so both have to be in the description rather than in a doc.
-  check('흐름 실행 가능 런타임 표시', byType.langflow?.flowExecution === true && byType.opencode?.flowExecution !== true)
+  check('흐름 실행 가능 런타임 표시', (byType.langflow?.runners ?? []).includes('flow') && !(byType.opencode?.runners ?? []).includes('flow'))
   check('전용 도메인이 필요한 런타임 표시', byType.langflow?.hostSessionOnly === true && byType.hermes?.hostSessionOnly !== true)
 
   // Only a handed-off task can be closed by hand: everything else keeps its
@@ -164,7 +164,7 @@ try {
     check(`비교 카드에 ${item.label} 이 있음`, compareText.includes(item.label))
   }
   // The fact that decides whether an agent can work unattended at all.
-  const flowRuntimes = comparable.filter((item) => item.flowExecution)
+  const flowRuntimes = comparable.filter((item) => (item.runners ?? []).includes('flow'))
   check('흐름 실행 런타임이 그 사실을 표시함', flowRuntimes.length === 0 || compareText.includes('저장한 흐름을 그대로 실행'),
     `${flowRuntimes.length} flow runtimes`)
   const comparison = await page.locator('.runtime-compare-grid').innerText()

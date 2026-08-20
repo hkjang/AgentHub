@@ -1,0 +1,196 @@
+package execution
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/hkjang/AgentHub/internal/acp"
+	"github.com/hkjang/AgentHub/internal/runtimetype"
+	"github.com/hkjang/AgentHub/internal/store"
+)
+
+// What the platform answers when an agent asks permission and nobody is at the
+// keyboard. This table is the security contract of the whole runner: get it
+// wrong in the permissive direction and an unattended task deletes a file
+// nobody agreed to.
+func TestWhatAnUnattendedRunAllowsItselfToDo(t *testing.T) {
+	cases := []struct {
+		mode  string
+		kind  string
+		allow bool
+	}{
+		// Reading is always fine; it is why the agent was started.
+		{"default", "read", true},
+		{"default", "search", true},
+		{"default", "fetch", true},
+		{"plan", "read", true},
+		// "Ask first" with nobody there means no.
+		{"default", "edit", false},
+		{"default", "execute", false},
+		{"default", "delete", false},
+		{"plan", "edit", false},
+		{"plan", "execute", false},
+		// The workspace, but not the world outside it.
+		{"auto-edit", "edit", true},
+		{"auto-edit", "move", true},
+		{"auto-edit", "execute", false},
+		{"auto-edit", "delete", false},
+		// Chosen deliberately, and only these two.
+		{"auto", "execute", true},
+		{"yolo", "delete", true},
+		// A kind this platform has never heard of is not a reason to say yes.
+		{"default", "launch_missiles", false},
+		{"auto-edit", "launch_missiles", false},
+		{"", "edit", false},
+	}
+	for _, item := range cases {
+		if got := acpAllows(item.mode, item.kind); got != item.allow {
+			t.Errorf("mode %q, kind %q = %v, want %v", item.mode, item.kind, got, item.allow)
+		}
+	}
+}
+
+// A stop reason is the agent saying why it finished, and the difference between
+// "try again" and "change the Goal" is what an operator reads off the run.
+func TestStopReasonsBecomeSomethingAPersonCanActOn(t *testing.T) {
+	goal := store.AgentGoal{MaxToolCalls: 3}
+	cases := []struct {
+		reason    string
+		turn      *acpTurn
+		wantFail  string
+		retryable bool
+	}{
+		{reason: "end_turn", turn: &acpTurn{}},
+		{reason: "", turn: &acpTurn{}},
+		{reason: "max_tokens", turn: &acpTurn{}, wantFail: "컨텍스트"},
+		{reason: "max_turn_requests", turn: &acpTurn{}, wantFail: "모델 호출"},
+		{reason: "refusal", turn: &acpTurn{}, wantFail: "거부"},
+		// Cancelled because the platform stopped it at the Goal's budget: saying so
+		// is the difference between a mystery and a number to raise.
+		{reason: "cancelled", turn: &acpTurn{toolCalls: 4}, wantFail: "한도(3)"},
+		// Cancelled for some other reason is a bad moment, so it may be retried.
+		{reason: "cancelled", turn: &acpTurn{toolCalls: 1}, wantFail: "중단", retryable: true},
+		{reason: "invented_by_a_future_agent", turn: &acpTurn{}, wantFail: "알 수 없는"},
+	}
+	for _, item := range cases {
+		err, retryable := acpStopFailure(item.reason, goal, item.turn)
+		if item.wantFail == "" {
+			if err != nil {
+				t.Errorf("%q reported %v, want success", item.reason, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), item.wantFail) {
+			t.Errorf("%q = %v, want one mentioning %q", item.reason, err, item.wantFail)
+		}
+		if retryable != item.retryable {
+			t.Errorf("%q retryable = %v, want %v", item.reason, retryable, item.retryable)
+		}
+	}
+}
+
+// The turn's updates arrive on the client's read loop while the caller waits, so
+// what a run records is assembled from a stream rather than read from a result.
+func TestATurnAssemblesWhatTheAgentSaidAndDid(t *testing.T) {
+	turn := &acpTurn{}
+	turn.update(acp.SessionUpdate{SessionUpdate: "agent_message_chunk", Content: acp.ContentBlock{Text: "먼저 "}})
+	turn.update(acp.SessionUpdate{SessionUpdate: "agent_thought_chunk", Content: acp.ContentBlock{Text: "속마음"}})
+	turn.update(acp.SessionUpdate{SessionUpdate: "agent_message_chunk", Content: acp.ContentBlock{Text: "확인했습니다."}})
+	turn.update(acp.SessionUpdate{SessionUpdate: "tool_call", ToolCallID: "t1", Title: "read main.go", Kind: "read", Status: "pending"})
+	turn.update(acp.SessionUpdate{SessionUpdate: "tool_call_update", ToolCallID: "t1", Status: "completed"})
+	turn.update(acp.SessionUpdate{SessionUpdate: "usage_update", Used: 1200, Size: 128000})
+
+	if turn.answer() != "먼저 확인했습니다." {
+		t.Errorf("answer = %q", turn.answer())
+	}
+	// The agent's private reasoning is counted, not stored: it is not the answer,
+	// and a durable record is the wrong place for a model's scratch work.
+	if turn.thoughts != 1 || strings.Contains(turn.answer(), "속마음") {
+		t.Errorf("thoughts leaked into the answer: %q", turn.answer())
+	}
+	if turn.toolCalls != 1 || turn.records()[0].Status != "completed" {
+		t.Errorf("tool call not tracked: %#v", turn.records())
+	}
+	if turn.contextUsed != 1200 || turn.contextSize != 128000 {
+		t.Errorf("context usage = %d/%d", turn.contextUsed, turn.contextSize)
+	}
+}
+
+// Spend is metered when the agent reports it, and only then. The protocol has no
+// field for it — its usage_update is how full the context window is, not what was
+// bought — so a real agent puts the numbers in its own extension, and a run whose
+// agent says nothing is recorded as unmetered rather than credited with a guess.
+func TestSpendIsCountedOnlyWhenTheAgentReportsIt(t *testing.T) {
+	reported := &acpTurn{}
+	reported.update(acp.SessionUpdate{SessionUpdate: "agent_message_chunk",
+		Usage: acp.Usage{InputTokens: 120, OutputTokens: 30, TotalTokens: 150}})
+	reported.update(acp.SessionUpdate{SessionUpdate: "tool_call", ToolCallID: "t1",
+		Usage: acp.Usage{InputTokens: 200, OutputTokens: 40, TotalTokens: 240}})
+	if reported.totalTokens != 390 || reported.inputTokens != 320 || reported.outputTokens != 70 {
+		t.Errorf("spend = %d (%d in / %d out)", reported.totalTokens, reported.inputTokens, reported.outputTokens)
+	}
+
+	// An agent that reports only the two halves still gets counted; one that
+	// reports nothing leaves the run unmetered.
+	halves := &acpTurn{}
+	halves.update(acp.SessionUpdate{SessionUpdate: "agent_message_chunk", Usage: acp.Usage{InputTokens: 10, OutputTokens: 5}})
+	if halves.totalTokens != 15 {
+		t.Errorf("halves = %d, want them added up", halves.totalTokens)
+	}
+	silent := &acpTurn{}
+	silent.update(acp.SessionUpdate{SessionUpdate: "agent_message_chunk", Content: acp.ContentBlock{Text: "안녕"}})
+	silent.update(acp.SessionUpdate{SessionUpdate: "usage_update", Used: 9000, Size: 128000})
+	if silent.totalTokens != 0 {
+		t.Errorf("context occupancy was counted as spend: %d", silent.totalTokens)
+	}
+}
+
+// A permission answered for a tool the platform has not seen announced still has
+// to appear on the run, and one already announced must not be duplicated.
+func TestEveryDecisionLandsOnExactlyOneToolRecord(t *testing.T) {
+	turn := &acpTurn{}
+	turn.update(acp.SessionUpdate{SessionUpdate: "tool_call", ToolCallID: "t1", Title: "write config", Kind: "edit"})
+	turn.decide(permissionFor("t1", "write config", "edit"), false)
+	turn.decide(permissionFor("t2", "rm -rf build", "delete"), false)
+
+	records := turn.records()
+	if len(records) != 2 {
+		t.Fatalf("records = %#v", records)
+	}
+	if records[0].Decision != "denied" || records[1].Decision != "denied" || records[1].Title != "rm -rf build" {
+		t.Errorf("decisions not recorded: %#v", records)
+	}
+	if turn.denied != 2 || turn.granted != 0 {
+		t.Errorf("counted %d denied / %d granted", turn.denied, turn.granted)
+	}
+	if !strings.Contains(acpToolOutcome(records[1]), "거절됨") {
+		t.Errorf("outcome = %q", acpToolOutcome(records[1]))
+	}
+}
+
+func permissionFor(id, title, kind string) acp.PermissionRequest {
+	var request acp.PermissionRequest
+	request.ToolCall.ToolCallID = id
+	request.ToolCall.Title = title
+	request.ToolCall.Kind = kind
+	request.Options = []acp.PermissionOption{
+		{OptionID: "y", Kind: "allow_once"}, {OptionID: "n", Kind: "reject_once"},
+	}
+	return request
+}
+
+// A runtime that says it speaks the protocol must have something to speak it
+// with. Declaring the runner without the command would pass every form in the
+// console and fail at the moment a task starts.
+func TestEveryACPRuntimeHasAnAgentToTalkTo(t *testing.T) {
+	for _, name := range runtimetype.Supported {
+		descriptor := runtimetype.Describe(name)
+		speaks := runtimetype.SupportsRunner(name, runtimetype.RunnerACP)
+		if speaks && len(descriptor.ACPCommand) == 0 {
+			t.Errorf("%s lists the acp runner but names no command to start", name)
+		}
+		if !speaks && len(descriptor.ACPCommand) > 0 {
+			t.Errorf("%s names an acp command but does not list the runner, so nobody can choose it", name)
+		}
+	}
+}

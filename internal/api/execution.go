@@ -101,7 +101,8 @@ func (s *Server) saveAgentGoal(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"goal": saved, "executionMode": input.ExecutionMode})
 }
 
-// validateRunner decides whether this agent can run its work as a flow.
+// validateRunner decides whether this agent can be handed its work the way the
+// Goal asks for.
 //
 // The check lives here rather than at execution time because the failure it
 // prevents is a task that queues, starts a Pod and then fails: an agent whose
@@ -111,7 +112,7 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 	if goal.Runner == "" {
 		goal.Runner = store.RunnerProse
 	}
-	if !contains([]string{store.RunnerProse, store.RunnerFlow, store.RunnerCLI, store.RunnerDify}, goal.Runner) {
+	if !contains([]string{store.RunnerProse, store.RunnerFlow, store.RunnerCLI, store.RunnerDify, store.RunnerACP}, goal.Runner) {
 		return errors.New("실행 방식을 확인해 주세요")
 	}
 	// Kept whatever the runner is, so switching back and forth in the console does
@@ -142,26 +143,28 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 		return nil
 	}
 	descriptor := runtimetype.Describe(runtimeType)
-	// Both of these run inside the Pod. Without a runtime the task would queue,
-	// start, find nothing and fail — after consuming a retry.
+	// The rest run inside the Pod. Without a runtime the task would queue, start,
+	// find nothing and fail — after consuming a retry.
 	if !goal.StartOnDemand {
 		return errors.New("이 실행 방식은 Runtime 안에서 이루어지므로 '작업 시 Runtime 시작'을 켜 주세요")
 	}
-	if goal.Runner == store.RunnerCLI {
-		if !descriptor.CLIExecution {
-			return fmt.Errorf("%s 런타임은 자체 에이전트 실행을 지원하지 않습니다. 런타임의 에이전트로 자동 실행하려면 Qwen Code 런타임의 Agent를 사용해 주세요", descriptor.Label)
-		}
+	// One question, asked of the descriptor: can this runtime be handed a task
+	// this way. Adding a backend adds a name to the runtime's list rather than
+	// another branch here.
+	if !runtimetype.SupportsRunner(runtimeType, goal.Runner) {
+		return fmt.Errorf("%s 런타임은 이 실행 방식을 지원하지 않습니다(지원: %s)", descriptor.Label, runnerNames(descriptor.Runners))
+	}
+	if goal.Runner == store.RunnerCLI || goal.Runner == store.RunnerACP {
 		// The approval gate parks a task before a state-changing action and waits
 		// for a person. An agent told to approve everything itself would sail past
 		// it, so the two settings must not be on at once — and the honest place to
-		// say so is here rather than in a run that surprises somebody.
+		// say so is here rather than in a run that surprises somebody. It holds for
+		// both backends: under ACP the platform is the one answering the agent's
+		// permission requests, and yolo is it answering yes to all of them.
 		if goal.ApprovalRequired && goal.CLIApprovalMode == "yolo" {
 			return errors.New("사람 승인을 요구하는 목표에서는 승인 모드 yolo 를 쓸 수 없습니다. 승인 모드를 낮추거나 승인 요구를 끄세요")
 		}
 		return nil
-	}
-	if !descriptor.FlowExecution {
-		return fmt.Errorf("%s 런타임은 흐름 실행을 지원하지 않습니다. 흐름으로 자동 실행하려면 Langflow 런타임의 Agent를 사용해 주세요", descriptor.Label)
 	}
 	if goal.FlowID == "" {
 		return errors.New("실행할 흐름을 선택해 주세요")
@@ -170,6 +173,15 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 		return errors.New("흐름 식별자가 너무 깁니다")
 	}
 	return nil
+}
+
+// runnerNames renders a runtime's supported backends for a refusal message, so
+// the person reading it knows what they can choose instead.
+func runnerNames(runners []string) string {
+	if len(runners) == 0 {
+		return "추론 루프"
+	}
+	return "추론 루프, " + strings.Join(runners, ", ")
 }
 
 func validExecutionMode(mode string) bool {

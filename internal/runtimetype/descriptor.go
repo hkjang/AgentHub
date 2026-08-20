@@ -48,18 +48,45 @@ type Descriptor struct {
 	// so a site without a Runtime Base Domain cannot open it at all. The console
 	// says so before the button is pressed instead of after.
 	HostSessionOnly bool `json:"hostSessionOnly"`
-	// FlowExecution reports that the platform can run this runtime's own saved
-	// flows as an autonomous task, rather than only reasoning at the model
-	// gateway. It is what makes a Langflow agent do work unattended.
-	FlowExecution bool `json:"flowExecution"`
-	// CLIExecution reports that the platform can drive this runtime's own agent
-	// headlessly for an autonomous task — the runtime's tool loop, running in its
-	// own workspace, rather than a prose loop that can only describe what it would
-	// have done.
-	CLIExecution bool `json:"cliExecution"`
+	// Runners are the ways the platform can hand this runtime an autonomous task
+	// beyond the prose loop every agent has: "flow" runs something somebody drew,
+	// "cli" drives the runtime's own agent headlessly, "acp" speaks the Agent
+	// Client Protocol to it.
+	//
+	// It is a list rather than one boolean per backend because the list is the
+	// question every caller actually asks — can this runtime do this — and a
+	// boolean per backend is a field to add, thread through the console, and
+	// forget to check every time a backend is added.
+	Runners []string `json:"runners,omitempty"`
+	// ACPCommand is the argv that starts this runtime's own agent as an Agent
+	// Client Protocol peer, speaking JSON-RPC over its stdio.
+	//
+	// This one field is what makes the protocol worth having. The CLI runner has
+	// to know an agent's flags, its output shape and its exit codes; an ACP agent
+	// only has to be started, because everything after that is the protocol. So
+	// supporting the next one is this line and nothing else, and it is not sent
+	// to the console — a person chooses a runtime, not a command line.
+	ACPCommand []string `json:"-"`
 	// BestFor is one sentence: when to choose this one.
 	BestFor string `json:"bestFor"`
 }
+
+// qwenCodeACP starts Qwen Code as a protocol peer rather than as a terminal. It
+// goes through the same wrapper the headless runner uses, because an exec has no
+// working directory and no PATH of its own, and an agent that cannot see what the
+// person installed in this workspace is not working in it.
+//
+// `--approval-mode default` is not a default: it is the whole point. Started
+// without it this agent approves its own tool calls and never asks — verified
+// against the real binary, which wrote a file without a word. With it, every
+// tool call becomes a `session/request_permission` the platform answers and
+// records. It stays `default` regardless of what the Goal chose, because the
+// Goal's mode decides what the platform answers, not whether it is asked; a
+// permissive Goal still leaves a record of what it permitted.
+//
+// JupyterLab shares it: that image is built on this one, and the agent beside the
+// notebooks is the same agent.
+var qwenCodeACP = []string{"/usr/local/bin/agenthub-qwencode-run", "--acp", "--approval-mode", "default"}
 
 var descriptors = map[string]Descriptor{
 	OpenCode: {
@@ -93,11 +120,11 @@ var descriptors = map[string]Descriptor{
 		Type: QwenCode, Code: "QC", Label: "Qwen Code",
 		Summary:   "터미널에서 사는 코딩 에이전트. 브라우저로 열면 그 터미널이 그대로 열립니다.",
 		BestFor:   "리포지터리를 직접 고치는 일 — 사람이 옆에서 보며 시키거나, 작업을 맡겨 무인으로 돌리거나",
-		Strengths: []string{"자체 도구 루프로 파일을 고치고 명령을 실행함", "자동 실행에서도 같은 도구 루프를 그대로 사용함", "MCP 도구가 설정에 자동 등록됨", "pip·npm 설치가 되는 작업 도구모음 포함"},
+		Strengths: []string{"자체 도구 루프로 파일을 고치고 명령을 실행함", "자동 실행에서도 같은 도구 루프를 그대로 사용함", "ACP로 실행하면 도구 요청마다 플랫폼이 승인·거절을 판단하고 기록함", "MCP 도구가 설정에 자동 등록됨", "pip·npm 설치가 되는 작업 도구모음 포함"},
 		Watchouts: []string{"자체 인증이 없는 브라우저 터미널이라 플랫폼 프록시로만 공개됩니다", "무인 실행은 승인 모드에 따라 파일을 실제로 바꿉니다 — 승인 모드를 먼저 정하세요", "흐름 편집기 같은 화면은 없습니다 — 터미널이 전부입니다"},
 		Workspace: "/workspace", Port: 7681,
 		BrowserUI: true, Terminal: true, ToolLoop: true, MCPConfigured: true, ProxiedUI: true,
-		CLIExecution: true,
+		Runners: []string{RunnerCLI, RunnerACP}, ACPCommand: qwenCodeACP,
 	},
 	Langflow: {
 		Type: Langflow, Code: "LF", Label: "Langflow",
@@ -107,17 +134,17 @@ var descriptors = map[string]Descriptor{
 		Watchouts: []string{"자체 로그인을 끈 상태로 뜨므로 플랫폼 프록시로만 공개됩니다", "하위 경로로 서비스할 수 없어 Runtime Base Domain이 설정된 사이트에서만 UI를 열 수 있습니다", "MCP 도구는 이 런타임의 설정으로 전달되지 않습니다 — 흐름 안에서 직접 연결해야 합니다", "터미널이 없습니다"},
 		Workspace: "/workspace", Port: 7860,
 		BrowserUI: true, Terminal: false, ToolLoop: true, MCPConfigured: false, ProxiedUI: true,
-		HostSessionOnly: true, FlowExecution: true,
+		HostSessionOnly: true, Runners: []string{RunnerFlow},
 	},
 	Jupyter: {
 		Type: Jupyter, Code: "JL", Label: "JupyterLab",
 		Summary:   "노트북으로 데이터를 다루는 작업대. 옆 터미널에 Qwen Code 에이전트가 함께 있습니다.",
 		BestFor:   "데이터 분석과 리포트 — 표를 읽고 그림을 그리고, 지루한 부분은 에이전트에게 넘기는 일",
-		Strengths: []string{"노트북·파일 브라우저·터미널이 한 화면에", "pandas·matplotlib·scikit-learn 등 분석 도구 기본 포함", "같은 작업공간에서 Qwen Code 에이전트를 그대로 사용", "자동 실행에서도 그 에이전트가 직접 수행", "pip 설치가 홈 볼륨에 남아 재기동해도 유지"},
+		Strengths: []string{"노트북·파일 브라우저·터미널이 한 화면에", "pandas·matplotlib·scikit-learn 등 분석 도구 기본 포함", "같은 작업공간에서 Qwen Code 에이전트를 그대로 사용", "자동 실행에서도 그 에이전트가 직접 수행", "ACP 실행이면 그 에이전트의 도구 요청이 기록으로 남음", "pip 설치가 홈 볼륨에 남아 재기동해도 유지"},
 		Watchouts: []string{"자체 토큰 로그인을 끈 상태로 뜨므로 플랫폼 프록시로만 공개됩니다", "MCP 도구는 노트북이 아니라 에이전트 설정으로 전달됩니다", "커널이 메모리를 많이 쓰므로 Runtime 프로파일을 넉넉히 잡으세요"},
 		Workspace: "/workspace", Port: 8888,
 		BrowserUI: true, Terminal: true, ToolLoop: true, MCPConfigured: true, ProxiedUI: true,
-		CLIExecution: true,
+		Runners: []string{RunnerCLI, RunnerACP}, ACPCommand: qwenCodeACP,
 	},
 	NodeRED: {
 		Type: NodeRED, Code: "NR", Label: "Node-RED",
@@ -152,6 +179,29 @@ var descriptors = map[string]Descriptor{
 // unknown is what an unrecognised type resolves to. It exists so every caller
 // can render something honest instead of branching on a missing key.
 var unknown = Descriptor{Code: "A", Label: "Unknown", Summary: "알 수 없는 Runtime 유형", Workspace: "/workspace"}
+
+// The autonomous backends a runtime can offer. They are named here rather than in
+// the store because the descriptor is what says which runtime supports which, and
+// a name that exists in one place and not the other is the drift this avoids.
+const (
+	// RunnerFlow runs a flow the runtime holds.
+	RunnerFlow = "flow"
+	// RunnerCLI drives the runtime's own command-line agent headlessly.
+	RunnerCLI = "cli"
+	// RunnerACP speaks the Agent Client Protocol to whatever agent the runtime
+	// was given, which is how one adapter serves many agents.
+	RunnerACP = "acp"
+)
+
+// SupportsRunner reports whether this runtime can be handed a task that way.
+func SupportsRunner(runtimeType, runner string) bool {
+	for _, item := range Describe(runtimeType).Runners {
+		if item == runner {
+			return true
+		}
+	}
+	return false
+}
 
 // Describe returns the descriptor for a runtime type.
 func Describe(value string) Descriptor {

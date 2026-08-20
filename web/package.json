@@ -25,7 +25,11 @@
     "test:admin": "node scripts/admin-e2e.mjs",
     "test:policy": "node scripts/policy-e2e.mjs",
     "test:dlp": "node scripts/dlp-e2e.mjs",
-    "test:runtime-coupling": "node scripts/runtime-coupling-e2e.mjs"
+    "test:runtime-coupling": "node scripts/runtime-coupling-e2e.mjs",
+    "test:langflow": "node scripts/langflow-e2e.mjs",
+    "test:qwencode": "node scripts/qwencode-e2e.mjs",
+    "test:external-app": "node scripts/external-app-e2e.mjs",
+    "test:acp": "node scripts/acp-e2e.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",

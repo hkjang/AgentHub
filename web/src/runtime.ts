@@ -12,7 +12,7 @@ export type RuntimeDescriptor = {
   strengths?: string[]; watchouts?: string[]
   workspace?: string; port?: number
   browserUi?: boolean; terminal?: boolean; toolLoop?: boolean; mcpConfigured?: boolean; proxiedUi?: boolean
-  hostSessionOnly?: boolean; flowExecution?: boolean; cliExecution?: boolean
+  hostSessionOnly?: boolean; runners?: string[]
   bestFor?: string
 }
 
@@ -61,6 +61,21 @@ export const runtimeCode = (type: string) => descriptor(type).code
 export const runtimeLabel = (type: string) => (loaded[type]?.label ?? SEED[type as RuntimeType]?.label ?? type ?? FALLBACK.label)
 
 export const runtimeSummary = (type: string) => descriptor(type).summary
+
+/** What a runtime supports beyond the prose loop, said in one line. */
+export const RUNNER_LABELS: Record<string, string> = {
+  flow: '저장한 흐름을 그대로 실행',
+  cli: '런타임의 에이전트가 직접 수행',
+  acp: 'ACP로 에이전트와 대화하며 수행',
+}
+
+export function runnerSummary(runners?: string[]) {
+  const known = (runners ?? []).map((item) => RUNNER_LABELS[item]).filter(Boolean)
+  return known.length ? known.join(' · ') : '추론 루프 + 사람에게 인계'
+}
+
+/** Whether this runtime can be handed a task that way. */
+export const supportsRunner = (type: string, runner: string) => (descriptor(type).runners ?? []).includes(runner)
 
 /**
  * Class list for the runtime logo tile. Unknown types get the neutral `custom`

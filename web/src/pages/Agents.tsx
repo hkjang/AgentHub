@@ -264,6 +264,10 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
   const [apps,setApps]=useState<ExternalApp[]>([])
   const [flowError,setFlowError]=useState('')
   const [flowBusy,setFlowBusy]=useState(false)
+  // What this agent's runtime can be handed a task with, straight from the
+  // platform's descriptor rather than from a list kept here — adding a backend
+  // adds a name there, and this form follows.
+  const runners=descriptor(agent.runtimeType).runners??[]
 
   const load=useCallback(async()=>{
     try{
@@ -367,12 +371,13 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
       </label>
       <label><span>제약</span><textarea rows={2} value={goal.constraints} onChange={(e)=>update({constraints:e.target.value})} placeholder="예) 운영 DB에 쓰기 금지"/></label>
 
-      {(descriptor(agent.runtimeType).flowExecution||descriptor(agent.runtimeType).cliExecution||apps.length>0)&&<fieldset><legend>실행 방식</legend>
+      {(runners.length>0||apps.length>0)&&<fieldset><legend>실행 방식</legend>
         <label><span>자동 실행이 하는 일</span>
           <select value={goal.runner??'prose'} onChange={(e)=>update({runner:e.target.value as AgentGoal['runner']})}>
             <option value="prose">추론 루프 — 모델과 대화하며 진행하고, 런타임 작업은 사람에게 인계</option>
-            {descriptor(agent.runtimeType).flowExecution&&<option value="flow">흐름 실행 — Runtime에 저장된 Langflow 흐름을 실행하고 결과를 기록</option>}
-            {descriptor(agent.runtimeType).cliExecution&&<option value="cli">에이전트 실행 — Runtime의 코딩 에이전트가 작업공간에서 직접 수행</option>}
+            {runners.includes('flow')&&<option value="flow">흐름 실행 — Runtime에 저장된 Langflow 흐름을 실행하고 결과를 기록</option>}
+            {runners.includes('cli')&&<option value="cli">에이전트 실행 — Runtime의 코딩 에이전트가 작업공간에서 직접 수행</option>}
+            {runners.includes('acp')&&<option value="acp">ACP 실행 — 같은 에이전트와 프로토콜로 대화하며, 도구 요청마다 플랫폼이 답합니다</option>}
             {apps.length>0&&<option value="dify">외부 앱 실행 — 사내에 이미 있는 앱(Dify 등)에 작업을 맡김</option>}
           </select>
           <small>{goal.runner==='dify'
@@ -381,6 +386,8 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
             ?'작업 입력이 흐름의 입력으로 들어가고, 흐름의 출력이 실행 기록과 완료 판정에 사용됩니다. 흐름 안에서 일어나는 모델 호출은 플랫폼이 계량하지 않습니다.'
             :goal.runner==='cli'
             ?'런타임의 에이전트를 헤드리스로 실행합니다. 최대 단계·도구 호출·실행 시간이 에이전트 자체 예산으로 전달되고, 토큰 사용량은 실제 값이 기록됩니다.'
+            :goal.runner==='acp'
+            ?'같은 에이전트를 Agent Client Protocol로 실행합니다. 에이전트가 도구를 쓰기 전마다 플랫폼에 묻고, 승인 모드에 따라 플랫폼이 답한 내용이 실행 기록에 남습니다. 토큰 사용량은 에이전트가 알려줄 때만 집계합니다.'
             :'기존 방식입니다. 파일 편집이나 명령 실행이 필요하면 사람에게 인계합니다.'}</small>
         </label>
         {goal.runner==='dify'&&<>
@@ -396,7 +403,7 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
             <small>Workflow 앱은 이름 붙은 입력을 받습니다. 앱에서 정의한 변수 이름을 넣으세요. 비우면 <code>input</code> 을 사용합니다.</small>
           </label>}
         </>}
-        {goal.runner==='cli'&&<>
+        {(goal.runner==='cli'||goal.runner==='acp')&&<>
           <label><span>에이전트 승인 모드</span>
             <select value={goal.cliApprovalMode??'default'} onChange={(e)=>update({cliApprovalMode:e.target.value as AgentGoal['cliApprovalMode']})}>
               <option value="plan">plan — 계획만 세우고 바꾸지 않음</option>
@@ -405,7 +412,13 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
               <option value="auto">auto — 편집과 안전한 명령을 자동 승인</option>
               <option value="yolo">yolo — 모두 자동 승인</option>
             </select>
-            <small>{goal.cliApprovalMode==='yolo'
+            <small>{goal.runner==='acp'
+              ?goal.cliApprovalMode==='yolo'
+                ?'에이전트의 모든 요청을 플랫폼이 승인합니다. 무엇을 승인했는지는 실행 기록에 남지만, 막지는 않습니다.'
+                :goal.cliApprovalMode==='auto-edit'
+                ?'읽기와 작업공간 파일 편집은 승인하고, 명령 실행·삭제는 거절합니다.'
+                :'읽기·검색만 승인하고 바꾸는 요청은 모두 거절합니다. ACP에서는 사람 대신 플랫폼이 답하므로, 확인을 요구하는 모드는 곧 거절입니다.'
+              :goal.cliApprovalMode==='yolo'
               ?'모든 도구 실행이 확인 없이 진행됩니다. 작업공간과 MCP 도구 정책으로 범위를 먼저 좁히세요.'
               :goal.cliApprovalMode==='plan'
               ?'파일을 바꾸지 않고 계획만 남깁니다. 무인 실행 결과를 먼저 검토하고 싶을 때 적합합니다.'

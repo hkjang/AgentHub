@@ -1,8 +1,10 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"strings"
 
@@ -225,6 +227,39 @@ type ExecRequest struct {
 	Stdin string
 }
 
+// Session is a command running inside a runtime with its pipes still open.
+//
+// It exists for protocols: something that has to be spoken, where the answer to
+// one message decides the next. Closing Stdin ends the conversation; Wait then
+// reports how the command finished and what it said on stderr.
+type Session struct {
+	Stdin  io.WriteCloser
+	Stdout io.Reader
+
+	stderr *bytes.Buffer
+	done   chan error
+	cancel func()
+}
+
+// Wait blocks until the command exits and returns why, if it failed.
+func (s *Session) Wait() error { return <-s.done }
+
+// Stderr is whatever the command complained about, which is usually where an
+// agent that could not start says so.
+func (s *Session) Stderr() string {
+	if s.stderr == nil {
+		return ""
+	}
+	return s.stderr.String()
+}
+
+// Close ends the conversation from this side.
+func (s *Session) Close() {
+	if s.cancel != nil {
+		s.cancel()
+	}
+}
+
 // ExecResult is what the command said and how it ended.
 type ExecResult struct {
 	Stdout   string
@@ -257,6 +292,9 @@ type Spawner interface {
 	// lets the execution plane drive a runtime whose agent is a command-line
 	// program with no API of its own.
 	Exec(context.Context, Spec, ExecRequest) (ExecResult, error)
+	// ExecStream opens one with both directions held open, for an agent that
+	// speaks a protocol rather than answering a single prompt.
+	ExecStream(context.Context, Spec, ExecRequest) (*Session, error)
 	Snapshot(context.Context, SnapshotSpec) error
 	SnapshotStatus(context.Context, SnapshotSpec) (string, int64, error)
 }
@@ -290,6 +328,9 @@ func (DisabledSpawner) Connection(context.Context, Spec) (Connection, error) {
 }
 func (DisabledSpawner) Exec(context.Context, Spec, ExecRequest) (ExecResult, error) {
 	return ExecResult{}, ErrNotConfigured
+}
+func (DisabledSpawner) ExecStream(context.Context, Spec, ExecRequest) (*Session, error) {
+	return nil, ErrNotConfigured
 }
 func (DisabledSpawner) Snapshot(context.Context, SnapshotSpec) error { return ErrNotConfigured }
 func (DisabledSpawner) SnapshotStatus(context.Context, SnapshotSpec) (string, int64, error) {

@@ -202,10 +202,11 @@ func (o *Orchestrator) run(ctx context.Context, run *store.AgentRun, task store.
 		}
 	}
 
-	// Two Goals do not reason step by step, because the work is a program that
-	// already exists: a flow somebody drew, or the runtime's own agent. Both still
-	// go through the same evaluator afterwards, so completion is judged by the
-	// same criteria as any other agent's.
+	// Some Goals do not reason step by step, because the work is a program that
+	// already exists: a flow somebody drew, the runtime's own agent, or an
+	// application the site already runs. All of them still go through the same
+	// evaluator afterwards, so completion is judged by the same criteria as any
+	// other agent's.
 	switch goal.Runner {
 	case store.RunnerFlow:
 		transcript, outcome := o.runFlow(ctx, run, task, agent, goal, acquired)
@@ -215,6 +216,12 @@ func (o *Orchestrator) run(ctx context.Context, run *store.AgentRun, task store.
 		return o.evaluate(ctx, run, task, agent, goal, model, transcript)
 	case store.RunnerCLI:
 		transcript, outcome := o.runCLI(ctx, run, task, agent, goal, model, acquired)
+		if outcome.Status != "" {
+			return outcome
+		}
+		return o.evaluate(ctx, run, task, agent, goal, model, transcript)
+	case store.RunnerACP:
+		transcript, outcome := o.runACP(ctx, run, task, agent, goal, acquired)
 		if outcome.Status != "" {
 			return outcome
 		}

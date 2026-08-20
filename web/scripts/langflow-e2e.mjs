@@ -54,7 +54,7 @@ try {
   const langflow = runtimes.find((item) => item.type === 'langflow')
   check('langflow 런타임 유형 제공', Boolean(langflow), JSON.stringify(runtimes.map((r) => r.type)))
   check('Langflow 포트 7860', langflow?.port === 7860, String(langflow?.port))
-  check('흐름 실행 가능으로 표시', langflow?.flowExecution === true)
+  check('흐름 실행 가능으로 표시', (langflow?.runners ?? []).includes('flow'))
   check('전용 도메인 필요로 표시', langflow?.hostSessionOnly === true)
   check('MCP 도구는 전달되지 않는다고 표시', langflow?.mcpConfigured === false)
   check('터미널 없음으로 표시', langflow?.terminal === false)
