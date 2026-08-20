@@ -2,6 +2,7 @@ package operator
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/hkjang/AgentHub/internal/runtimetype"
@@ -112,5 +113,57 @@ func TestHolmesIsNotStartedWithToolsetsThatCannotWork(t *testing.T) {
 	}
 	if found != "internet" {
 		t.Errorf("default toolsets = %q", found)
+	}
+}
+
+// BrowserCode reads the configuration shape it inherited from OpenCode, so the
+// platform builds it the same way — the provider block, and MCP servers written
+// exactly as OpenCode's are. Checked against the real agent too, which offers
+// the server's tools namespaced under its name.
+func TestBrowserCodeConfigCarriesTheModelTheBrowserNoteAndItsMCPServers(t *testing.T) {
+	var value spec
+	value.Runtime.Type = runtimetype.BrowserCode
+	value.Model.Name = "gpt-5"
+	value.Model.BaseURL = "http://models.internal/v1"
+	value.MCP = []mcpBinding{{Name: "toolbox", Mode: "shared", Endpoint: "http://mcp.internal:8000/mcp"}}
+
+	raw := runtimeConfigs("agent-runtime-dev", "rt-1", value)[configBcode]
+	var config struct {
+		Model        string   `json:"model"`
+		Autoupdate   bool     `json:"autoupdate"`
+		Instructions []string `json:"instructions"`
+		Provider     map[string]struct {
+			Options struct {
+				BaseURL string `json:"baseURL"`
+			} `json:"options"`
+		} `json:"provider"`
+		MCP map[string]struct {
+			Type    string `json:"type"`
+			URL     string `json:"url"`
+			Enabled bool   `json:"enabled"`
+		} `json:"mcp"`
+	}
+	if err := json.Unmarshal([]byte(raw), &config); err != nil {
+		t.Fatalf("the generated configuration is not valid JSON: %v\n%s", err, raw)
+	}
+	if config.Model != openCodeProvider+"/gpt-5" {
+		t.Errorf("model = %q", config.Model)
+	}
+	if config.Provider[openCodeProvider].Options.BaseURL != "http://models.internal/v1" {
+		t.Errorf("the model endpoint did not reach the agent: %s", raw)
+	}
+	// An agent that updates itself is an agent whose version nobody pinned.
+	if config.Autoupdate {
+		t.Error("the agent is configured to update itself")
+	}
+	// Without this the agent cannot find the browser running beside it: it looks
+	// for a DevTools port file current Chromium does not write, so it has to be
+	// told the websocket URL, and this file is where that is written down.
+	if len(config.Instructions) != 1 || !strings.HasSuffix(config.Instructions[0], "browsercode-browser.md") {
+		t.Errorf("instructions = %v, want the browser note the image ships", config.Instructions)
+	}
+	server, ok := config.MCP["toolbox"]
+	if !ok || server.URL != "http://mcp.internal:8000/mcp" || server.Type != "remote" || !server.Enabled {
+		t.Errorf("the bound MCP server is missing or misdeclared: %s", raw)
 	}
 }

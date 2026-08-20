@@ -351,6 +351,36 @@ are passed to `session/new`, because the operator already wrote the agent's boun
 servers into its settings pointed at the in-Pod policy gateway; handing the same
 list to the session would give it two copies of every tool.
 
+BrowserCode was the third, and it brought the browser — the one thing none of the
+other runtimes can reach. It drives a real Chromium through the DevTools protocol
+by writing JavaScript against the page rather than choosing from a fixed set of
+actions, and it speaks the protocol without being asked to: unlike Qwen Code it
+requests permission by default, and unlike Goose it labels a file edit an edit.
+
+Its runtime runs two programs. Chromium listens for DevTools on loopback, started
+by the runtime's own command; ttyd serves the agent's terminal. Three things
+about that arrangement were found by running it, and each would otherwise have
+shipped as a runtime that starts cleanly and fails on its first real task.
+Chromium does not start inside an unprivileged container with its own sandbox on,
+so it runs with that sandbox off and the Pod is the boundary instead — an
+unprivileged user, no cluster credentials, and whatever network policy the site
+applied. `--disable-dev-shm-usage` is not optional either, because a Pod's
+/dev/shm is 64MB and a browser that runs out of it dies mid-page rather than at
+startup. And the agent cannot find the browser by itself: its session looks for a
+DevTools port file that current Chromium does not write when started with
+`--user-data-dir`, so the image ships a note telling it to read the websocket URL
+from `http://127.0.0.1:9222/json/version`, and the generated configuration points
+the agent at that note. The readiness probe asks both the terminal and the
+browser, because a runtime that came up with only the first is one whose tasks
+all fail on their first tool call.
+
+One thing about it is stated in the console rather than worked around. Its
+browser tool — the reason to run this runtime — is announced with kind "other",
+so the fine-grained approval modes refuse it and only `auto` and `yolo` let it
+work. That is the same situation Goose is in, and the platform now says so as a
+fact on the descriptor (`coarseToolKinds`) that the goal drawer warns from,
+rather than as a list of runtime names kept in the console.
+
 Which runtimes speak it is one field on the runtime descriptor: the argv that
 starts that runtime's agent as a protocol peer. Qwen Code — and JupyterLab, which
 is built on it — is started as `agenthub-qwencode-run --acp --approval-mode
@@ -362,7 +392,7 @@ file without a word. It stays `default` whatever the Goal chose, because the
 Goal's mode decides what the platform answers, not whether it is asked — a
 permissive Goal still leaves a record of what it permitted.
 
-Goose is the proof that the line is all it takes. It is Block's open agent, it
+Goose and BrowserCode are the proof that the line is all it takes. It is Block's open agent, it
 speaks the protocol natively as `goose acp`, and adding it needed no execution
 code at all — an image, a descriptor entry, and the backend above drove it.
 Two differences it brought are worth knowing, because both were bugs or

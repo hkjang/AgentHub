@@ -10,17 +10,19 @@ const (
 	QwenCode = "qwencode"
 	Goose    = "goose"
 	Holmes   = "holmes"
-	Langflow = "langflow"
-	NodeRED  = "nodered"
-	N8N      = "n8n"
-	Jupyter  = "jupyter"
-	Custom   = "custom"
+	// BrowserCode drives a real browser through the DevTools Protocol.
+	BrowserCode = "browsercode"
+	Langflow    = "langflow"
+	NodeRED     = "nodered"
+	N8N         = "n8n"
+	Jupyter     = "jupyter"
+	Custom      = "custom"
 )
 
 // Supported lists every runtime type accepted by the API, the database check
 // constraints and the AgentRuntime CRD enum. Keep this in sync with
 // deploy/kubernetes/crd.yaml and the runtime_type CHECK constraints.
-var Supported = []string{OpenCode, Hermes, QwenPaw, QwenCode, Goose, Holmes, Jupyter, Langflow, NodeRED, N8N, Custom}
+var Supported = []string{OpenCode, Hermes, QwenPaw, QwenCode, Goose, Holmes, BrowserCode, Jupyter, Langflow, NodeRED, N8N, Custom}
 
 // IsSupported reports whether value names a runtime adapter AgentHub can spawn.
 func IsSupported(value string) bool {
@@ -39,7 +41,7 @@ func Port(value string) int32 {
 		return 8642
 	case Langflow:
 		return 7860
-	case QwenCode, Goose, Holmes:
+	case QwenCode, Goose, Holmes, BrowserCode:
 		// ttyd, which is what puts the agent's terminal in a browser.
 		return 7681
 	case NodeRED:
@@ -64,7 +66,7 @@ const GatewayPort int32 = 9119
 // who reached the port.
 func UsesGatewayProxy(value string) bool {
 	switch value {
-	case Hermes, QwenPaw, Langflow, QwenCode, Goose, Holmes, NodeRED, N8N, Jupyter:
+	case Hermes, QwenPaw, Langflow, QwenCode, Goose, Holmes, BrowserCode, NodeRED, N8N, Jupyter:
 		return true
 	}
 	return false
@@ -106,7 +108,7 @@ func HostSessionOnly(value string) bool {
 // when a site configures a Runtime Base Domain.
 func ServesUnderRuntimePath(value string) bool {
 	switch value {
-	case QwenCode, Goose, Holmes, NodeRED, Jupyter:
+	case QwenCode, Goose, Holmes, BrowserCode, NodeRED, Jupyter:
 		return true
 	}
 	return false

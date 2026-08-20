@@ -194,3 +194,47 @@ func TestEveryACPRuntimeHasAnAgentToTalkTo(t *testing.T) {
 		}
 	}
 }
+
+// An agent may announce a tool call with its kind and then ask permission without
+// it. Judging the request alone would refuse a file edit under a mode that allows
+// file edits, and the operator would have no way to see why.
+//
+// Found against BrowserCode, which announces `tool_call` with kind "edit" and
+// then asks with kind "other".
+func TestAPermissionIsJudgedByWhatTheAgentAlreadyDeclared(t *testing.T) {
+	turn := &acpTurn{}
+	turn.update(acp.SessionUpdate{SessionUpdate: "tool_call", ToolCallID: "t1", Title: "write probe.txt", Kind: "edit"})
+
+	vague := permissionFor("t1", "/tmp", "other")
+	if got := acpKind(vague, turn); got != "edit" {
+		t.Errorf("kind = %q, want the one the agent declared for this call", got)
+	}
+	if !acpAllows("auto-edit", acpKind(vague, turn)) {
+		t.Error("a file edit was refused under a mode that allows file edits")
+	}
+
+	// The request's own kind wins when it says something: the agent may have
+	// changed its mind about what this call is, and the later word is the one to
+	// answer.
+	explicit := permissionFor("t1", "run tests", "execute")
+	if got := acpKind(explicit, turn); got != "execute" {
+		t.Errorf("kind = %q, want the request's own", got)
+	}
+
+	// Nothing declared anywhere stays unknown rather than becoming something
+	// convenient, so the strict modes still refuse it.
+	unknown := permissionFor("t9", "mystery", "other")
+	if got := acpKind(unknown, turn); got != "other" {
+		t.Errorf("kind = %q, want it left alone", got)
+	}
+	if acpAllows("auto-edit", acpKind(unknown, turn)) {
+		t.Error("an undeclared tool call was allowed")
+	}
+	// And a call the agent itself called "other" is not upgraded by this lookup:
+	// Goose labels everything that way, and reading intent into it would be the
+	// platform inventing a fact the agent declined to state.
+	turn.update(acp.SessionUpdate{SessionUpdate: "tool_call", ToolCallID: "t2", Title: "rm -rf", Kind: "other"})
+	if got := acpKind(permissionFor("t2", "rm -rf", "other"), turn); got != "other" {
+		t.Errorf("kind = %q, want other", got)
+	}
+}

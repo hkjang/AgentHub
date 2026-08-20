@@ -58,6 +58,17 @@ type Descriptor struct {
 	// boolean per backend is a field to add, thread through the console, and
 	// forget to check every time a backend is added.
 	Runners []string `json:"runners,omitempty"`
+	// CoarseToolKinds says this runtime's agent does not tell the platform what
+	// kind of action a tool call is — it labels them all "other", or labels the
+	// ones that matter that way.
+	//
+	// It matters because the ACP backend answers permission requests by the kind
+	// the agent declares. With nothing to judge by, the fine-grained approval
+	// modes refuse everything, and an operator sees a runtime that starts and
+	// then does nothing. The platform will not guess a kind from a tool's name —
+	// that would be inventing a fact the agent declined to state — so it says this
+	// instead, and the console warns before the Goal is saved.
+	CoarseToolKinds bool `json:"coarseToolKinds,omitempty"`
 	// ACPCommand is the argv that starts this runtime's own agent as an Agent
 	// Client Protocol peer, speaking JSON-RPC over its stdio.
 	//
@@ -93,6 +104,11 @@ var qwenCodeACP = []string{"/usr/local/bin/agenthub-qwencode-run", "--acp", "--a
 // wrapper this points at — the same wrapper that supplies the working directory
 // and the PATH an exec does not have.
 var gooseACP = []string{"/usr/local/bin/agenthub-goose-run", "acp"}
+
+// browserCodeACP starts BrowserCode as a protocol peer. It asks before using a
+// tool without being told to, which is the third of three agents and the first
+// that needed no persuading.
+var browserCodeACP = []string{"/usr/local/bin/agenthub-browsercode-run", "acp"}
 
 var descriptors = map[string]Descriptor{
 	OpenCode: {
@@ -155,7 +171,7 @@ var descriptors = map[string]Descriptor{
 			"사용 토큰을 알려주지 않아 ACP 실행이 계량되지 않습니다"},
 		Workspace: "/workspace", Port: 7681,
 		BrowserUI: true, Terminal: true, ToolLoop: true, MCPConfigured: true, ProxiedUI: true,
-		Runners: []string{RunnerACP}, ACPCommand: gooseACP,
+		Runners: []string{RunnerACP}, ACPCommand: gooseACP, CoarseToolKinds: true,
 	},
 	Holmes: {
 		Type: Holmes, Code: "HG", Label: "HolmesGPT",
@@ -172,6 +188,25 @@ var descriptors = map[string]Descriptor{
 		Workspace: "/workspace", Port: 7681,
 		BrowserUI: true, Terminal: true, ToolLoop: true, MCPConfigured: true, ProxiedUI: true,
 		Runners: []string{RunnerInvestigate},
+	},
+	BrowserCode: {
+		Type: BrowserCode, Code: "BC", Label: "BrowserCode",
+		Summary:   "진짜 브라우저를 직접 몰아 일하는 에이전트. 웹에서 해야 하는 일을 맡깁니다.",
+		BestFor:   "사람이 브라우저로 하던 일 — 로그인이 필요한 사이트 조회, 웹 UI 확인, 화면을 통한 데이터 수집",
+		Strengths: []string{"컨테이너 안의 Chromium을 DevTools 프로토콜로 직접 제어", "고정된 동작 목록이 아니라 필요한 JavaScript를 그때그때 작성해 실행", "ACP를 직접 지원해 도구 요청마다 플랫폼이 승인·거절을 판단하고 기록", "브라우저 프로필이 홈 볼륨에 남아 로그인 세션이 재기동 후에도 유지", "MCP 도구가 설정에 자동 등록됨"},
+		Watchouts: []string{"자체 인증이 없는 브라우저 터미널이라 플랫폼 프록시로만 공개됩니다",
+			// The trade this runtime makes, said before it is made rather than
+			// found in a log: Chromium cannot start with its own sandbox inside an
+			// unprivileged container, so the container is the boundary.
+			"컨테이너 안에서는 Chromium 자체 샌드박스를 켤 수 없어 끄고 실행합니다 — 격리는 Pod가 담당하므로, 이 런타임의 네트워크 정책을 좁게 잡고 신뢰할 수 없는 페이지를 여는 용도로 쓰세요",
+			"에이전트가 여는 페이지에 자격증명을 남기면 홈 볼륨의 브라우저 프로필에 남습니다",
+			"브라우저가 메모리를 많이 쓰므로 Runtime 프로파일을 넉넉히 잡으세요"},
+		Workspace: "/workspace", Port: 7681,
+		BrowserUI: true, Terminal: true, ToolLoop: true, MCPConfigured: true, ProxiedUI: true,
+		// Its file tools declare a kind, but the browser tool — the reason to run
+		// this runtime — is labelled "other", so the strict modes refuse the one
+		// thing it is for.
+		Runners: []string{RunnerACP}, ACPCommand: browserCodeACP, CoarseToolKinds: true,
 	},
 	Jupyter: {
 		Type: Jupyter, Code: "JL", Label: "JupyterLab",

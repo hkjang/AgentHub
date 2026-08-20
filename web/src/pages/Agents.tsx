@@ -441,7 +441,7 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
               :'무인 실행은 사람이 없으므로, 확인을 요구하는 모드에서는 변경이 필요한 순간 진행되지 않을 수 있습니다.'}</small>
           </label>
           {goal.approvalRequired&&goal.cliApprovalMode==='yolo'&&<div className="info-box"><ShieldAlert size={17}/><div><strong>같이 켤 수 없습니다</strong><p>사람 승인을 요구하는 목표에서는 yolo 를 쓸 수 없습니다. 승인 모드를 낮추거나 아래 자율성의 승인 요구를 끄세요.</p></div></div>}
-          {goal.runner==='acp'&&agent.runtimeType==='goose'&&!['auto','yolo'].includes(goal.cliApprovalMode??'default')&&<div className="info-box"><ShieldAlert size={17}/><div><strong>이 모드에서는 아무것도 못 합니다</strong><p>Goose는 도구 종류를 모두 <code>other</code> 로 알려주기 때문에, 종류로 판단하는 이 모드에서는 읽기까지 전부 거절됩니다. 무인 실행에는 <b>auto</b> 를 고르세요 — 무엇을 승인했는지는 그대로 기록에 남습니다.</p></div></div>}
+          {goal.runner==='acp'&&descriptor(agent.runtimeType).coarseToolKinds&&!['auto','yolo'].includes(goal.cliApprovalMode??'default')&&<div className="info-box"><ShieldAlert size={17}/><div><strong>이 모드에서는 거의 아무것도 못 합니다</strong><p>{runtimeLabel(agent.runtimeType)}는 도구의 종류를 <code>other</code> 로 알려주기 때문에, 종류로 판단하는 이 모드에서는 대부분의 요청이 거절됩니다. 무인 실행에는 <b>auto</b> 를 고르세요 — 무엇을 승인했는지는 그대로 기록에 남습니다.</p></div></div>}
         </>}
         {goal.runner==='flow'&&<>
           <label><span>실행할 흐름</span>

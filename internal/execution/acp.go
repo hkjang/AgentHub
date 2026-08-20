@@ -250,6 +250,29 @@ func (t *acpTurn) decide(request acp.PermissionRequest, allowed bool) {
 	})
 }
 
+// kindFor is what the agent said this tool call was, if it said so before asking
+// about it.
+//
+// It exists because a permission request does not always carry the kind the same
+// agent already declared for the same call: BrowserCode announces `tool_call`
+// with kind "edit" and then asks permission with kind "other". Answering the
+// second one on its own would refuse a file edit under a mode that allows file
+// edits, for no reason the operator could see. This is not guessing — it is the
+// agent's own declaration about the same tool call id, made moments earlier.
+func (t *acpTurn) kindFor(toolCallID string) string {
+	if toolCallID == "" {
+		return ""
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, item := range t.tools {
+		if item.ID == toolCallID && item.Kind != "" && item.Kind != "other" {
+			return item.Kind
+		}
+	}
+	return ""
+}
+
 // acpTurn's counters are read after the conversation ends, but the read loop may
 // still be draining, so reading goes through the same lock.
 func (t *acpTurn) records() []acpToolRecord {
@@ -271,10 +294,11 @@ func (o *Orchestrator) acpTurn(ctx context.Context, run *store.AgentRun, goal st
 	client := acp.New(session.Stdout, session.Stdin)
 	client.Update = turn.update
 	client.Permission = func(request acp.PermissionRequest) acp.PermissionOutcome {
-		allowed := acpAllows(cliApprovalMode(goal), request.ToolCall.Kind)
+		kind := acpKind(request, turn)
+		allowed := acpAllows(cliApprovalMode(goal), kind)
 		turn.decide(request, allowed)
 		o.event(ctx, *run, "acp.permission", acpPermissionMessage(request, allowed), map[string]any{
-			"tool": request.ToolCall.Title, "kind": request.ToolCall.Kind,
+			"tool": request.ToolCall.Title, "kind": kind,
 			"decision": map[bool]string{true: "granted", false: "denied"}[allowed],
 			"mode":     cliApprovalMode(goal),
 		})
@@ -422,6 +446,20 @@ func acpAllows(mode, kind string) bool {
 	default: // "default", "plan", anything unrecognised
 		return acpReadOnlyKinds[kind]
 	}
+}
+
+// acpKind is what the platform judges by: the kind on the request, or the one
+// the agent already declared for the same tool call when the request carries
+// nothing useful.
+func acpKind(request acp.PermissionRequest, turn *acpTurn) string {
+	kind := request.ToolCall.Kind
+	if kind != "" && kind != "other" {
+		return kind
+	}
+	if declared := turn.kindFor(request.ToolCall.ToolCallID); declared != "" {
+		return declared
+	}
+	return kind
 }
 
 func acpPermissionMessage(request acp.PermissionRequest, allowed bool) string {

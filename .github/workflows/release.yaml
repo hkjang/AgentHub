@@ -130,6 +130,7 @@ jobs:
             "jupyter:JUPYTER_VERSION:Dockerfile.jupyter Dockerfile.qwencode deploy/runtime/agenthub-report-config.sh deploy/runtime/qwencode-configure.sh deploy/runtime/qwencode-shell.sh deploy/runtime/qwencode-run.sh deploy/runtime/qwencode-toolchain.sh"
             "goose:GOOSE_VERSION:Dockerfile.goose deploy/runtime/agenthub-report-config.sh deploy/runtime/goose-configure.sh deploy/runtime/goose-shell.sh deploy/runtime/goose-run.sh deploy/runtime/goose-toolchain.sh"
             "holmes:HOLMES_VERSION:Dockerfile.holmes deploy/runtime/agenthub-report-config.sh deploy/runtime/holmes-configure.sh deploy/runtime/holmes-shell.sh deploy/runtime/holmes-run.sh deploy/runtime/holmes-toolchain.sh"
+            "browsercode:BROWSERCODE_VERSION:Dockerfile.browsercode deploy/runtime/agenthub-report-config.sh deploy/runtime/browsercode-configure.sh deploy/runtime/browsercode-shell.sh deploy/runtime/browsercode-run.sh deploy/runtime/browsercode-toolchain.sh deploy/runtime/browsercode-browser.md"
             "nodered:NODERED_VERSION:Dockerfile.nodered deploy/runtime/agenthub-report-config.sh"
             "n8n:N8N_VERSION:Dockerfile.n8n deploy/runtime/agenthub-report-config.sh"
           )
@@ -201,6 +202,9 @@ jobs:
           HOLMES_VERSION: ${{ steps.runtimes.outputs.holmes_version }}
           HOLMES_TAG: ${{ steps.runtimes.outputs.holmes_tag }}
           HOLMES_CHANGED: ${{ steps.runtimes.outputs.holmes_changed }}
+          BROWSERCODE_VERSION: ${{ steps.runtimes.outputs.browsercode_version }}
+          BROWSERCODE_TAG: ${{ steps.runtimes.outputs.browsercode_tag }}
+          BROWSERCODE_CHANGED: ${{ steps.runtimes.outputs.browsercode_changed }}
           NODERED_VERSION: ${{ steps.runtimes.outputs.nodered_version }}
           NODERED_TAG: ${{ steps.runtimes.outputs.nodered_tag }}
           NODERED_CHANGED: ${{ steps.runtimes.outputs.nodered_changed }}
@@ -213,7 +217,7 @@ jobs:
             --build-arg LANGFLOW_VERSION="${LANGFLOW_VERSION}" --build-arg QWENCODE_VERSION="${QWENCODE_VERSION}" \
             --build-arg JUPYTER_VERSION="${JUPYTER_VERSION}" --build-arg NODERED_VERSION="${NODERED_VERSION}" \
             --build-arg N8N_VERSION="${N8N_VERSION}" --build-arg GOOSE_VERSION="${GOOSE_VERSION}" \
-            --build-arg HOLMES_VERSION="${HOLMES_VERSION}" \
+            --build-arg HOLMES_VERSION="${HOLMES_VERSION}" --build-arg BROWSERCODE_VERSION="${BROWSERCODE_VERSION}" \
             --build-arg COMMIT="${GITHUB_SHA}" --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -t "agenthub:${RELEASE_TAG}" .
           if [ "${BASE_CHANGED}" = "true" ]; then
             docker build -f Dockerfile.base -t "agenthub-base:${BASE_TAG}" .
@@ -234,6 +238,11 @@ jobs:
             docker build -f Dockerfile.holmes -t "agenthub-holmes:${HOLMES_TAG}" .
           else
             echo "skipping holmes; ${HOLMES_TAG} from ${PREVIOUS} still applies"
+          fi
+          if [ "${BROWSERCODE_CHANGED}" = "true" ]; then
+            docker build -f Dockerfile.browsercode -t "agenthub-browsercode:${BROWSERCODE_TAG}" .
+          else
+            echo "skipping browsercode; ${BROWSERCODE_TAG} from ${PREVIOUS} still applies"
           fi
           if [ "${NODERED_CHANGED}" = "true" ]; then
             docker build -f Dockerfile.nodered -t "agenthub-nodered:${NODERED_TAG}" .
@@ -274,6 +283,8 @@ jobs:
           GOOSE_CHANGED: ${{ steps.runtimes.outputs.goose_changed }}
           HOLMES_TAG: ${{ steps.runtimes.outputs.holmes_tag }}
           HOLMES_CHANGED: ${{ steps.runtimes.outputs.holmes_changed }}
+          BROWSERCODE_TAG: ${{ steps.runtimes.outputs.browsercode_tag }}
+          BROWSERCODE_CHANGED: ${{ steps.runtimes.outputs.browsercode_changed }}
           NODERED_TAG: ${{ steps.runtimes.outputs.nodered_tag }}
           NODERED_CHANGED: ${{ steps.runtimes.outputs.nodered_changed }}
           N8N_TAG: ${{ steps.runtimes.outputs.n8n_tag }}
@@ -317,6 +328,9 @@ jobs:
           if [ "${HOLMES_CHANGED}" = "true" ]; then
             package "agenthub-holmes:${HOLMES_TAG}" "agenthub-holmes-${HOLMES_TAG}.tar.gz"
           fi
+          if [ "${BROWSERCODE_CHANGED}" = "true" ]; then
+            package "agenthub-browsercode:${BROWSERCODE_TAG}" "agenthub-browsercode-${BROWSERCODE_TAG}.tar.gz"
+          fi
           if [ "${NODERED_CHANGED}" = "true" ]; then
             package "agenthub-nodered:${NODERED_TAG}" "agenthub-nodered-${NODERED_TAG}.tar.gz"
           fi
@@ -338,6 +352,7 @@ jobs:
           JUPYTER_TAG: ${{ steps.runtimes.outputs.jupyter_tag }}
           GOOSE_TAG: ${{ steps.runtimes.outputs.goose_tag }}
           HOLMES_TAG: ${{ steps.runtimes.outputs.holmes_tag }}
+          BROWSERCODE_TAG: ${{ steps.runtimes.outputs.browsercode_tag }}
           NODERED_TAG: ${{ steps.runtimes.outputs.nodered_tag }}
           N8N_TAG: ${{ steps.runtimes.outputs.n8n_tag }}
         run: |
@@ -347,7 +362,7 @@ jobs:
           # into a valid archive without needing room for a second copy.
           for name in "agenthub-${RELEASE_TAG}.tar.gz" "agenthub-base-${BASE_TAG}.tar.gz" "agenthub-langflow-${LANGFLOW_TAG}.tar.gz" "agenthub-qwencode-${QWENCODE_TAG}.tar.gz" \
                        "agenthub-jupyter-${JUPYTER_TAG}.tar.gz" "agenthub-goose-${GOOSE_TAG}.tar.gz" \
-                       "agenthub-holmes-${HOLMES_TAG}.tar.gz" \
+                       "agenthub-holmes-${HOLMES_TAG}.tar.gz" "agenthub-browsercode-${BROWSERCODE_TAG}.tar.gz" \
                        "agenthub-nodered-${NODERED_TAG}.tar.gz" "agenthub-n8n-${N8N_TAG}.tar.gz"; do
             if [ -z "$(ls -d release/"${name}"* 2>/dev/null)" ]; then
               echo "skipped ${name}"
@@ -386,6 +401,8 @@ jobs:
           GOOSE_CHANGED: ${{ steps.runtimes.outputs.goose_changed }}
           HOLMES_TAG: ${{ steps.runtimes.outputs.holmes_tag }}
           HOLMES_CHANGED: ${{ steps.runtimes.outputs.holmes_changed }}
+          BROWSERCODE_TAG: ${{ steps.runtimes.outputs.browsercode_tag }}
+          BROWSERCODE_CHANGED: ${{ steps.runtimes.outputs.browsercode_changed }}
           NODERED_TAG: ${{ steps.runtimes.outputs.nodered_tag }}
           NODERED_CHANGED: ${{ steps.runtimes.outputs.nodered_changed }}
           N8N_TAG: ${{ steps.runtimes.outputs.n8n_tag }}
@@ -418,6 +435,7 @@ jobs:
             note_image "JupyterLab" agenthub-jupyter "${JUPYTER_TAG}" "${JUPYTER_CHANGED}" "노트북 작업대(Qwen Code 포함)를 쓰는 사이트만 필요합니다."
             note_image "Goose" agenthub-goose "${GOOSE_TAG}" "${GOOSE_CHANGED}" "Goose Agent(ACP 실행)를 쓰는 사이트만 필요합니다."
             note_image "HolmesGPT" agenthub-holmes "${HOLMES_TAG}" "${HOLMES_CHANGED}" "장애 조사(조사 실행)를 쓰는 사이트만 필요합니다."
+            note_image "BrowserCode" agenthub-browsercode "${BROWSERCODE_TAG}" "${BROWSERCODE_CHANGED}" "브라우저를 직접 모는 에이전트를 쓰는 사이트만 필요합니다."
             note_image "Langflow" agenthub-langflow "${LANGFLOW_TAG}" "${LANGFLOW_CHANGED}" "Langflow Agent를 쓰는 사이트만 필요합니다."
             note_image "Node-RED" agenthub-nodered "${NODERED_TAG}" "${NODERED_CHANGED}" "Node-RED Agent를 쓰는 사이트만 필요합니다."
             note_image "n8n" agenthub-n8n "${N8N_TAG}" "${N8N_CHANGED}" "n8n Agent를 쓰는 사이트만 필요합니다."

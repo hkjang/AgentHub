@@ -25,24 +25,27 @@ var (
 	N8NVersion     = "0.1.0-dev"
 	GooseVersion   = "0.1.0-dev"
 	HolmesVersion  = "0.1.0-dev"
+	// BrowserCodeVersion is the image that carries the browser-driving agent.
+	BrowserCodeVersion = "0.1.0-dev"
 )
 
 type Info struct {
-	Name            string `json:"name"`
-	Version         string `json:"version"`
-	Commit          string `json:"commit"`
-	BuildTime       string `json:"buildTime"`
-	BaseVersion     string `json:"baseVersion"`
-	LangflowVersion string `json:"langflowVersion"`
-	QwenCodeVersion string `json:"qwenCodeVersion"`
-	JupyterVersion  string `json:"jupyterVersion"`
-	NodeREDVersion  string `json:"nodeRedVersion"`
-	N8NVersion      string `json:"n8nVersion"`
-	GooseVersion    string `json:"gooseVersion"`
-	HolmesVersion   string `json:"holmesVersion"`
+	Name               string `json:"name"`
+	Version            string `json:"version"`
+	Commit             string `json:"commit"`
+	BuildTime          string `json:"buildTime"`
+	BaseVersion        string `json:"baseVersion"`
+	LangflowVersion    string `json:"langflowVersion"`
+	QwenCodeVersion    string `json:"qwenCodeVersion"`
+	JupyterVersion     string `json:"jupyterVersion"`
+	NodeREDVersion     string `json:"nodeRedVersion"`
+	N8NVersion         string `json:"n8nVersion"`
+	GooseVersion       string `json:"gooseVersion"`
+	HolmesVersion      string `json:"holmesVersion"`
+	BrowserCodeVersion string `json:"browserCodeVersion"`
 }
 
 func Current() Info {
 	return Info{Name: "AgentHub", Version: Version, Commit: Commit, BuildTime: BuildTime, BaseVersion: BaseVersion, LangflowVersion: LangflowVersion, QwenCodeVersion: QwenCodeVersion,
-		JupyterVersion: JupyterVersion, NodeREDVersion: NodeREDVersion, N8NVersion: N8NVersion, GooseVersion: GooseVersion, HolmesVersion: HolmesVersion}
+		JupyterVersion: JupyterVersion, NodeREDVersion: NodeREDVersion, N8NVersion: N8NVersion, GooseVersion: GooseVersion, HolmesVersion: HolmesVersion, BrowserCodeVersion: BrowserCodeVersion}
 }

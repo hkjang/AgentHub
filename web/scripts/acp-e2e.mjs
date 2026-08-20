@@ -61,6 +61,12 @@ try {
   // Goose is the runtime that exists because of this backend: it speaks the
   // protocol natively and has no other way to be handed a task.
   check('goose 는 ACP 실행만 지원', JSON.stringify(runnersOf('goose')) === '["acp"]', JSON.stringify(runnersOf('goose')))
+  check('browsercode 도 ACP 실행만 지원', JSON.stringify(runnersOf('browsercode')) === '["acp"]', JSON.stringify(runnersOf('browsercode')))
+  // Which runtimes cannot be judged by tool kind is a fact the platform states,
+  // not a list the console keeps: the warning in the goal drawer reads it.
+  const coarse = runtimes.filter((item) => item.coarseToolKinds).map((item) => item.type).sort()
+  check('도구 종류를 알려주지 않는 런타임을 플랫폼이 표시', JSON.stringify(coarse) === '["browsercode","goose"]', JSON.stringify(coarse))
+  check('Qwen Code 는 도구 종류를 알려줌', !runtimes.find((item) => item.type === 'qwencode')?.coarseToolKinds)
   check('jupyter 도 같은 에이전트를 가지므로 지원', runnersOf('jupyter').includes('acp'), JSON.stringify(runnersOf('jupyter')))
   check('langflow 는 ACP 를 지원하지 않음', !runnersOf('langflow').includes('acp'), JSON.stringify(runnersOf('langflow')))
   check('opencode 는 자동 실행 백엔드가 없음', runnersOf('opencode').length === 0, JSON.stringify(runnersOf('opencode')))
@@ -177,9 +183,9 @@ try {
         await gooseDrawer.waitFor({ timeout: 15000 })
         await gooseDrawer.locator('select:has(option[value="acp"])').first().selectOption('acp')
         await gooseDrawer.locator('select:has(option[value="auto-edit"])').first().selectOption('default')
-        check('엄격한 모드가 Goose에서 소용없다고 경고', /도구 종류를 모두/.test(await gooseDrawer.innerText()))
+        check('엄격한 모드가 Goose에서 소용없다고 경고', /도구의 종류를/.test(await gooseDrawer.innerText()))
         await gooseDrawer.locator('select:has(option[value="auto-edit"])').first().selectOption('auto')
-        check('auto 를 고르면 경고가 사라짐', !/도구 종류를 모두/.test(await gooseDrawer.innerText()))
+        check('auto 를 고르면 경고가 사라짐', !/도구의 종류를/.test(await gooseDrawer.innerText()))
         await page.keyboard.press('Escape')
 
         const gooseFlow = await put(`/api/v1/agents/${gooseAgent.id}/goal`, { ...goalBase, runner: 'cli' })

@@ -24,12 +24,13 @@
 
 - 🔒 **완전 폐쇄망 (Offline-Ready)**: 외부 인터넷 연결 없이 로컬 Docker 레지스트리와 내부 Kubernetes 클러스터 상에서 100% 결정론적으로 동작합니다.
 - 📦 **영속 Workspace & CSI 스냅샷**: Agent Pod가 종료/재생성되어도 사용자의 소스 코드와 데이터는 PVC에 보존되며, CSI VolumeSnapshot을 통해 언제든 원하는 시점으로 복원할 수 있습니다.
-- 🤖 **10대 엔터프라이즈 런타임**: 인터랙티브 코딩 워크스페이스(**OpenCode**), 자율 에이전트 어시스턴트(**Hermes** / [**Qwen Paw**](https://qwenpaw.agentscope.io/)), 터미널 코딩 에이전트([**Qwen Code**](https://qwenlm.github.io/qwen-code-docs/)), 프로토콜로 대화하는 에이전트([**Goose**](https://block.github.io/goose/)), 시각적 흐름 빌더([**Langflow**](https://docs.langflow.org/))를 사용자 전용 비루트(Non-root) Pod로 격리 기동합니다.
+- 🤖 **11대 엔터프라이즈 런타임**: 인터랙티브 코딩 워크스페이스(**OpenCode**), 자율 에이전트 어시스턴트(**Hermes** / [**Qwen Paw**](https://qwenpaw.agentscope.io/)), 터미널 코딩 에이전트([**Qwen Code**](https://qwenlm.github.io/qwen-code-docs/)), 프로토콜로 대화하는 에이전트([**Goose**](https://block.github.io/goose/)), 시각적 흐름 빌더([**Langflow**](https://docs.langflow.org/))를 사용자 전용 비루트(Non-root) Pod로 격리 기동합니다.
   - **Qwen Paw (AgentScope)**: 3계층 ReMe 메모리, 커널 샌드박스 보안 가드, 스킬/MCP 확장 및 Qwen/Ollama 모델 자율 추론을 지원하는 개인 에이전트 워크스테이션
   - **OpenCode**: 브라우저 기반 풀스택 코딩 IDE 및 실시간 파일/터미널 워크스페이스
   - **Hermes Agent**: 장기 기억(Long-term Memory) 및 도구 실행 자율 에이전트
   - **Qwen Code**: 터미널에서 사는 코딩 에이전트. 브라우저로 열면 그 터미널이 그대로 열리고, 작업을 맡기면 **같은 도구 루프로 무인 실행**합니다 — 자율 실행이 처음으로 실제 파일을 고칩니다(승인 모드로 범위를 정하고, 토큰 사용량은 실제 값으로 계량됩니다). 전용 `agenthub-qwencode` 이미지로 별도 게시합니다.
   - **Goose**: [Agent Client Protocol](https://agentclientprotocol.com/)을 직접 말하는 오픈소스 에이전트. 이 런타임을 붙이는 데 실행 코드는 한 줄도 필요 없었습니다 — 디스크립터에 시작 명령만 적으면 승인 처리·도구 기록·실행 타임라인은 ACP 백엔드가 이미 해 줍니다. 전용 `agenthub-goose` 이미지로 별도 게시합니다.
+  - **BrowserCode**: 진짜 브라우저를 직접 모는 에이전트. 컨테이너 안의 Chromium을 DevTools 프로토콜로 제어하며, 고정된 동작 목록이 아니라 필요한 JavaScript를 그때그때 작성해 실행합니다. 로그인 세션이 담긴 브라우저 프로필은 홈 볼륨에 남습니다. ACP를 직접 지원해 실행 코드 없이 붙었습니다 — 전용 `agenthub-browsercode` 이미지로 별도 게시합니다.
   - **HolmesGPT**: 장애를 조사하는 [CNCF SRE 에이전트](https://holmesgpt.dev/). 알림·메트릭·로그를 스스로 조회해 근본 원인을 찾고, **그 조회 하나하나가 실행 기록의 단계로 남습니다** — 결론만 있는 답과 달리 근거를 나중에 확인할 수 있습니다. 토큰 사용량도 실제 값으로 계량됩니다. 전용 `agenthub-holmes` 이미지로 별도 게시합니다.
   - **JupyterLab (+ Qwen Code)**: 노트북·파일 브라우저·터미널이 한 화면에 있는 데이터 작업대. 같은 작업공간에서 Qwen Code 에이전트를 그대로 쓰고, 자동 실행도 그 에이전트가 수행합니다.
   - **Node-RED / n8n**: 에이전트가 아니라 **배선**입니다 — 이벤트를 받아 변환하고 다른 시스템을 호출하는 자동화가 Runtime 안에서 계속 돌아갑니다. 사내 연동이 필요한 업무는 대개 이쪽입니다.

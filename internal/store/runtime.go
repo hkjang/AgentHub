@@ -226,6 +226,7 @@ func (s *Store) SeedTemplates(ctx context.Context, adminID string) error {
 		{"Qwen Code Engineer", "qwen-code", "터미널 코딩 에이전트. 작업공간의 코드를 직접 고치고, 작업을 맡기면 무인으로도 같은 도구 루프를 사용합니다.", "Development", "qwencode", "rp-developer", "당신은 신중한 사내 소프트웨어 엔지니어입니다. 변경 전에 코드를 읽고, 테스트로 확인하고, 무엇을 왜 바꿨는지 남기세요."},
 		{"Goose Agent", "goose-agent", "프로토콜로 대화하는 오픈소스 에이전트. 도구를 쓰기 전마다 플랫폼에 물어보므로, 무인 실행이 무엇을 바꿨는지 기록으로 남습니다.", "Development", "goose", "rp-developer", "당신은 신중한 사내 엔지니어입니다. 무엇을 하려는지 먼저 말하고, 바꾼 것과 그 이유를 남기세요."},
 		{"HolmesGPT Investigator", "holmes-investigator", "장애를 조사하는 SRE 에이전트. 결론과 함께 그 근거로 조회한 내용을 실행 기록에 남깁니다.", "Operations", "holmes", "rp-advanced", "당신은 신중한 SRE입니다. 추측하지 말고 관측 데이터를 조회해 근거를 모으고, 근본 원인과 확인 방법을 함께 쓰세요."},
+		{"BrowserCode Operator", "browsercode-operator", "진짜 브라우저를 직접 몰아 일하는 에이전트. 로그인이 필요한 사이트 조회나 웹 UI 확인처럼 사람이 브라우저로 하던 일을 맡깁니다.", "Automation", "browsercode", "rp-advanced", "당신은 브라우저로 일합니다. 무엇을 열어 무엇을 확인했는지 남기고, 확인하지 못한 것을 확인한 것처럼 쓰지 마세요."},
 		{"Langflow Builder", "langflow-builder", "흐름을 그려서 만드는 시각적 빌더. 저장한 흐름을 자동 실행 백엔드로 그대로 사용할 수 있습니다.", "Automation", "langflow", "rp-basic", "당신은 흐름으로 업무를 자동화합니다. 입력과 출력을 명확히 하고, 실패했을 때 무엇이 잘못됐는지 남기세요."},
 		{"Jupyter Analyst", "jupyter-analyst", "노트북으로 데이터를 다루는 작업대. 같은 화면의 터미널에 Qwen Code 에이전트가 함께 있어, 지루한 부분은 맡길 수 있습니다.", "Analytics", "jupyter", "rp-advanced", "당신은 신중한 데이터 분석가입니다. 가정을 먼저 적고, 표와 그림으로 근거를 남기고, 결론과 한계를 함께 쓰세요."},
 		{"n8n Automation", "n8n-automation", "수백 가지 연동을 가진 업무 자동화. 메일·메신저·DB·HTTP를 트리거와 노드로 잇습니다.", "Automation", "n8n", "rp-basic", "당신은 사내 업무를 연결해 자동화합니다. 실패했을 때 어디서 멈췄는지 알 수 있게 만드세요."},

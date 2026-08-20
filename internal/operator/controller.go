@@ -595,6 +595,7 @@ const (
 	configQwen     = "qwen-settings.json"
 	configGoose    = "goose-config.yaml"
 	configHolmes   = "holmes-config.yaml"
+	configBcode    = "bcode.json"
 )
 
 // runtimeConfigs builds every generated configuration file, keyed by the name it
@@ -604,6 +605,12 @@ const (
 // four and every caller had to know the order — one of them wanted the second and
 // fourth and said so with three blanks. A fifth runtime is what made that
 // untenable.
+// browserCodeInstructions is where the image keeps the note telling the agent
+// that a browser is already running in this container and how to attach to it.
+// It is referenced rather than inlined so there is one file to correct when the
+// agent's browser API moves.
+const browserCodeInstructions = "/opt/agenthub/browsercode-browser.md"
+
 func runtimeConfigs(ns, runtimeName string, value spec) map[string]string {
 	bindings := effectiveMCP(ns, runtimeName, value)
 	runtimeValue := map[string]any{"owner": value.Owner, "runtime": value.Runtime, "profile": value.Profile, "workspace": value.Workspace, "model": value.Model, "mcp": bindings, "lifecycle": value.Lifecycle}
@@ -627,6 +634,15 @@ func runtimeConfigs(ns, runtimeName string, value spec) map[string]string {
 	// sources it may query. Its MCP servers are toolsets like any other, which is
 	// why they go in the same document rather than beside it.
 	holmes := map[string]any{"mcp_servers": map[string]any{}}
+	// BrowserCode is a fork of OpenCode and reads the same configuration shape,
+	// so its provider and MCP blocks are built the same way. What it adds is the
+	// instructions file the image ships, which is how the agent learns that a
+	// browser is already running here and how to attach to it.
+	bcode := map[string]any{
+		"$schema": "https://bcode.sh/config.json", "autoupdate": false,
+		"mcp":          map[string]any{},
+		"instructions": []any{browserCodeInstructions},
+	}
 	if value.Model.BaseURL != "" && value.Model.Name != "" {
 		// One provider entry named after the platform, not after whichever backend
 		// happens to serve it: the same binding fronts Ollama, vLLM or any other
@@ -660,6 +676,8 @@ func runtimeConfigs(ns, runtimeName string, value spec) map[string]string {
 		// arrives through OPENAI_API_KEY, which is already in the environment.
 		holmes["model"] = "openai/" + value.Model.Name
 		holmes["api_base"] = value.Model.BaseURL
+		bcode["model"] = openCodeProvider + "/" + value.Model.Name
+		bcode["provider"] = opencode["provider"]
 	}
 	// The administrator's overlay lands here, on the configuration the platform
 	// just generated, so the runtime still reads one file and the platform's own
@@ -674,6 +692,8 @@ func runtimeConfigs(ns, runtimeName string, value spec) map[string]string {
 			qwen, _ = runtimecfg.Merge(runtimetype.QwenCode, qwen, overlay)
 		case runtimetype.Goose:
 			goose, _ = runtimecfg.Merge(runtimetype.Goose, goose, overlay)
+		case runtimetype.BrowserCode:
+			bcode, _ = runtimecfg.Merge(runtimetype.BrowserCode, bcode, overlay)
 		case runtimetype.Holmes:
 			// This is where a site points the investigator at its own Prometheus,
 			// Grafana or Loki: those are `toolsets` entries, and the overlay is the
@@ -686,6 +706,7 @@ func runtimeConfigs(ns, runtimeName string, value spec) map[string]string {
 	qwenMCP := qwen["mcpServers"].(map[string]any)
 	gooseExtensions := goose["extensions"].(map[string]any)
 	holmesMCP := holmes["mcp_servers"].(map[string]any)
+	bcodeMCP := bcode["mcp"].(map[string]any)
 	for _, item := range bindings {
 		name, endpoint := safeLabel(fmt.Sprint(item["name"])), fmt.Sprint(item["endpoint"])
 		if endpoint == "" {
@@ -721,6 +742,10 @@ func runtimeConfigs(ns, runtimeName string, value spec) map[string]string {
 			holmesEntry["config"].(map[string]any)["headers"] = map[string]any{headerName: headerValue}
 		}
 		openMCP[name] = open
+		// The same entry OpenCode gets, because this agent is that agent's fork —
+		// checked against the real binary, which offers the server's tools
+		// namespaced under its name.
+		bcodeMCP[name] = open
 		hermesMCP[name] = hermesEntry
 		qwenMCP[name] = qwenEntry
 		gooseExtensions[name] = gooseEntry
@@ -735,6 +760,7 @@ func runtimeConfigs(ns, runtimeName string, value spec) map[string]string {
 	// extensions in it.
 	gooseRaw, _ := json.MarshalIndent(goose, "", "  ")
 	holmesRaw, _ := json.MarshalIndent(holmes, "", "  ")
+	bcodeRaw, _ := json.MarshalIndent(bcode, "", "  ")
 	return map[string]string{
 		configRuntime:  string(runtimeRaw),
 		configOpenCode: string(openRaw),
@@ -742,6 +768,7 @@ func runtimeConfigs(ns, runtimeName string, value spec) map[string]string {
 		configQwen:     string(qwenRaw),
 		configGoose:    string(gooseRaw),
 		configHolmes:   string(holmesRaw),
+		configBcode:    string(bcodeRaw),
 	}
 }
 

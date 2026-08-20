@@ -204,6 +204,15 @@ func jupyterHealthCommand(build adapterBuild) []string {
 // the Pod.
 const gooseConfigHome = "/home/agent/.config/goose"
 
+// Where BrowserCode keeps its configuration, and where the browser it drives
+// keeps its profile. Both are on the home volume: a login somebody established
+// in that browser should survive the Pod, like everything else they did here.
+const (
+	browserCodeConfigHome = "/home/agent/.config/bcode"
+	browserProfileDir     = "/home/agent/.chrome-profile"
+	browserDebugPort      = "9222"
+)
+
 // holmesConfigHome is where the investigator keeps its configuration and the
 // toolset status it caches. It is on the home volume so a runtime that has
 // already worked out which data sources answer does not do it again every start.
@@ -263,6 +272,35 @@ func holmesStart(build adapterBuild) string {
 // holmesHealthCommand asks ttyd's own token endpoint under the same base path.
 func holmesHealthCommand(build adapterBuild) []string {
 	return []string{"/bin/sh", "-c", "curl -fsS -m 3 http://127.0.0.1:7681/" + build.runtimeID() + "/token >/dev/null"}
+}
+
+// browserCodeStart runs the two programs this runtime needs: the browser the
+// agent drives, and the terminal a person opens.
+//
+// Chromium goes first and into the background, bound to loopback, so the agent
+// has something to attach to whether it was started by a task or by somebody
+// typing. Its own sandbox is off because it cannot start with it on inside an
+// unprivileged container — the Pod is the boundary instead. --disable-dev-shm-usage
+// is not optional either: a Pod's /dev/shm is 64MB by default, and a browser
+// that runs out of it dies in the middle of a page rather than at startup.
+func browserCodeStart(build adapterBuild) string {
+	return "mkdir -p " + browserProfileDir + "\n" +
+		"chromium --headless --no-sandbox --disable-dev-shm-usage " +
+		"--remote-debugging-address=127.0.0.1 --remote-debugging-port=" + browserDebugPort + " " +
+		"--user-data-dir=" + browserProfileDir + " about:blank >/tmp/chromium.log 2>&1 &\n" +
+		"exec /usr/local/bin/ttyd --port 7681 --interface 127.0.0.1 --writable " +
+		"--base-path /" + build.runtimeID() + " " +
+		"--client-option titleFixed=AgentHub " +
+		"/usr/local/bin/agenthub-browsercode-shell"
+}
+
+// browserCodeHealthCommand asks both of them: the terminal a person opens, and
+// the browser the agent drives. A runtime that came up with only the first is a
+// runtime whose tasks all fail on their first tool call.
+func browserCodeHealthCommand(build adapterBuild) []string {
+	return []string{"/bin/sh", "-c",
+		"curl -fsS -m 3 http://127.0.0.1:7681/" + build.runtimeID() + "/token >/dev/null && " +
+			"curl -fsS -m 3 http://127.0.0.1:" + browserDebugPort + "/json/version >/dev/null"}
 }
 
 // gooseModelEnv is the model binding by the names Goose reads.
@@ -490,6 +528,44 @@ var runtimeAdapters = map[string]runtimeAdapter{
 				}, &corev1.Probe{
 					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
 					InitialDelaySeconds: 60, PeriodSeconds: 30, TimeoutSeconds: 3, FailureThreshold: 4,
+				}
+		},
+	},
+	runtimetype.BrowserCode: {
+		Type:    runtimetype.BrowserCode,
+		Command: []string{"/bin/sh", "-ec"},
+		ArgsFor: func(build adapterBuild) []string { return []string{browserCodeStart(build)} },
+		Env: func(adapterBuild) []corev1.EnvVar {
+			return []corev1.EnvVar{
+				{Name: "BCODE_CONFIG_HOME", Value: browserCodeConfigHome},
+				{Name: "AGENTHUB_BCODE_CONFIG", Value: "/etc/agenthub/" + configBcode},
+				{Name: "AGENTHUB_BROWSER_PROFILE", Value: browserProfileDir},
+				// This agent reports usage traces outward by default; an offline site
+				// must not, and a site that is not offline has not agreed to it.
+				{Name: "DO_NOT_TRACK", Value: "1"},
+			}
+		},
+		InitContainers: func(build adapterBuild) []corev1.Container {
+			return []corev1.Container{{
+				Name: "browsercode-config-init", Image: build.image(), ImagePullPolicy: corev1.PullIfNotPresent,
+				Command: []string{"/usr/local/bin/agenthub-browsercode-configure"}, Env: build.Env,
+				Resources:       initResources("500m", "512Mi"),
+				SecurityContext: restrictedContainerSecurityContext(build.Value.Security.ReadOnlyRootFilesystem),
+				VolumeMounts:    homeAndConfigMounts,
+			}}
+		},
+		Sidecars: func(build adapterBuild) []corev1.Container {
+			return []corev1.Container{runtimeProxyContainer("browsercode-proxy", build.Name, build.sidecarImage(), "http://127.0.0.1:7681")}
+		},
+		Probes: func(build adapterBuild) (*corev1.Probe, *corev1.Probe) {
+			command := browserCodeHealthCommand(build)
+			return &corev1.Probe{
+					ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					// A browser takes longer to come up than a terminal does.
+					InitialDelaySeconds: 5, PeriodSeconds: 5, TimeoutSeconds: 5, FailureThreshold: 36,
+				}, &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 90, PeriodSeconds: 30, TimeoutSeconds: 5, FailureThreshold: 4,
 				}
 		},
 	},
