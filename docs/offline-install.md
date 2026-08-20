@@ -15,7 +15,8 @@ single file; smaller archives stay a plain `.tar.gz`. Set `RELEASE_CHUNK` to
 change the split size.
 
 The control plane version lives in `VERSION`, the shared runtime base image has
-its own `BASE_VERSION`, and the Langflow runtime image has `LANGFLOW_VERSION`.
+its own `BASE_VERSION`, and the runtimes that do not boot from it have theirs:
+`LANGFLOW_VERSION` and `QWENCODE_VERSION`.
 Each is versioned separately because each is large, slow to build and only
 rebuilt when something it is built from changes. A release whose notes say an
 image is unchanged has no archive for it, and the notes name the tag it runs on:
@@ -23,10 +24,9 @@ keep using the archive you already loaded. All three files are read by
 `make release-archives`, so pass overrides only when building something other
 than the checked-out release.
 
-`agenthub-langflow` is only needed by sites that run Langflow Agents. It is about
-a gigabyte compressed and nothing else depends on it, so skipping it costs
-nothing — an Agent whose runtime type is `langflow` simply will not start until
-the image is loaded.
+`agenthub-langflow` and `agenthub-qwencode` are only needed by sites that run
+those Agents. Nothing else depends on either, so skipping one costs nothing — an
+Agent of that runtime type simply will not start until its image is loaded.
 
 Transfer the whole `release/` directory, `compose.yaml`, and the Kubernetes
 manifests through the approved media path. On the offline host, verify the media
@@ -41,10 +41,11 @@ for archive in *.tar.gz.part-aa; do
   cat "${name}".part-* > "${name}"
 done
 
-docker load < agenthub-v0.21.0.tar.gz
+docker load < agenthub-v0.22.0.tar.gz
 docker load < agenthub-base-v0.11.0.tar.gz
-# Only if this site runs Langflow Agents.
+# Only if this site runs Agents of that runtime type.
 docker load < agenthub-langflow-v0.1.0.tar.gz
+docker load < agenthub-qwencode-v0.1.0.tar.gz
 export AGENTHUB_BOOTSTRAP_ADMIN=admin
 export AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD='a-long-unique-password'
 export AGENTHUB_ENCRYPTION_KEY="$(openssl rand -base64 32)"

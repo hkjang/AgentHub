@@ -107,10 +107,35 @@ var suggestions = []Suggestion{
 		Description:  "비우면 작업공간 볼륨의 SQLite 를 사용합니다. 사내 PostgreSQL 을 쓰면 Pod 를 다시 만들어도 흐름이 남습니다. 다만 이 값은 AgentRuntime 객체에 그대로 보이므로, 비밀번호가 들어간 접속 문자열은 권한을 좁힌 전용 계정으로 만드세요.",
 		Example:      `"postgresql://langflow:***@postgres.agenthub.svc:5432/langflow"`,
 	},
+	{
+		Target: TargetConfig, Key: "tools.approvalMode", Label: "자동 승인 모드", Verified: true,
+		RuntimeTypes: []string{runtimetype.QwenCode},
+		Description:  "사람이 런타임을 직접 쓸 때 이 에이전트가 어디까지 묻지 않고 진행할지 정합니다. plan(변경 없음) · default(매번 확인) · auto-edit(파일 편집만) · auto(편집과 안전한 명령) · yolo(모두). 자동 실행에서는 Goal의 승인 모드가 이 값을 대신하므로, 여기 값은 사람이 여는 터미널에만 적용됩니다.",
+		Example:      `"auto-edit"`,
+	},
+	{
+		Target: TargetConfig, Key: "model.sessionTokenLimit", Label: "세션 토큰 상한", Verified: true,
+		RuntimeTypes: []string{runtimetype.QwenCode},
+		Description:  "한 세션이 쓸 수 있는 토큰 상한입니다. 넘으면 대화가 자동으로 압축됩니다.",
+		Example:      `120000`,
+	},
+	{
+		Target: TargetConfig, Key: "telemetry.otlpEndpoint", Label: "OTLP 수집기 주소", Verified: true,
+		RuntimeTypes: []string{runtimetype.QwenCode},
+		Description:  "사내 OpenTelemetry 수집기로 이 에이전트의 실행 기록을 보냅니다. 플랫폼은 기본적으로 꺼 두므로(외부로 나가지 않도록), 켤 때는 telemetry.enabled 도 함께 넣으세요.",
+		Example:      `"http://otel-collector.agenthub.svc:4317"`,
+	},
+	{
+		Target: TargetConfig, Key: "ui.theme", Label: "터미널 테마", Verified: true,
+		RuntimeTypes: []string{runtimetype.QwenCode},
+		Description:  "브라우저 터미널에서 보이는 색 테마입니다.",
+		Example:      `"Default Light"`,
+	},
 	// Below: what people ask for, whose key belongs to the runtime's own version.
 	{
 		Target: TargetConfig, Label: "자동 승인(YOLO) 모드", Verified: false,
-		Description: "도구 실행마다 묻지 않고 진행하게 하는 설정입니다. 키 이름은 런타임 버전마다 다르므로(권한·승인·approval 관련 항목) 해당 런타임 문서에서 확인해 입력하세요. 넣으면 설정 파일에 반영되고, 아래 주입 상태에서 반영 여부를 확인할 수 있습니다. 승인 없이 도구가 실행되므로 MCP 도구 정책과 정책 규칙으로 범위를 먼저 좁히는 것을 권합니다.",
+		RuntimeTypes: []string{runtimetype.OpenCode, runtimetype.Hermes, runtimetype.QwenPaw},
+		Description:  "도구 실행마다 묻지 않고 진행하게 하는 설정입니다. 키 이름은 런타임 버전마다 다르므로(권한·승인·approval 관련 항목) 해당 런타임 문서에서 확인해 입력하세요. 넣으면 설정 파일에 반영되고, 아래 주입 상태에서 반영 여부를 확인할 수 있습니다. 승인 없이 도구가 실행되므로 MCP 도구 정책과 정책 규칙으로 범위를 먼저 좁히는 것을 권합니다.",
 	},
 	{
 		Target: TargetConfig, Label: "기본 모델·응답 옵션", Verified: false,

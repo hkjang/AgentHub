@@ -111,32 +111,49 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 	if goal.Runner == "" {
 		goal.Runner = store.RunnerProse
 	}
-	if goal.Runner != store.RunnerProse && goal.Runner != store.RunnerFlow {
+	if goal.Runner != store.RunnerProse && goal.Runner != store.RunnerFlow && goal.Runner != store.RunnerCLI {
 		return errors.New("실행 방식을 확인해 주세요")
 	}
+	// Kept whatever the runner is, so switching back and forth in the console does
+	// not lose a flow or an approval mode somebody already picked.
+	goal.FlowID = strings.TrimSpace(goal.FlowID)
+	goal.FlowOutputComponent = strings.TrimSpace(goal.FlowOutputComponent)
+	if goal.CLIApprovalMode == "" {
+		goal.CLIApprovalMode = "default"
+	}
+	if !contains(execution.CLIApprovalModes, goal.CLIApprovalMode) {
+		return errors.New("에이전트 승인 모드를 확인해 주세요")
+	}
 	if goal.Runner == store.RunnerProse {
-		// Keep the fields, so switching back and forth in the console does not lose
-		// the flow somebody already picked.
-		goal.FlowID = strings.TrimSpace(goal.FlowID)
-		goal.FlowOutputComponent = strings.TrimSpace(goal.FlowOutputComponent)
 		return nil
 	}
 	descriptor := runtimetype.Describe(runtimeType)
+	// Both of these run inside the Pod. Without a runtime the task would queue,
+	// start, find nothing and fail — after consuming a retry.
+	if !goal.StartOnDemand {
+		return errors.New("이 실행 방식은 Runtime 안에서 이루어지므로 '작업 시 Runtime 시작'을 켜 주세요")
+	}
+	if goal.Runner == store.RunnerCLI {
+		if !descriptor.CLIExecution {
+			return fmt.Errorf("%s 런타임은 자체 에이전트 실행을 지원하지 않습니다. 런타임의 에이전트로 자동 실행하려면 Qwen Code 런타임의 Agent를 사용해 주세요", descriptor.Label)
+		}
+		// The approval gate parks a task before a state-changing action and waits
+		// for a person. An agent told to approve everything itself would sail past
+		// it, so the two settings must not be on at once — and the honest place to
+		// say so is here rather than in a run that surprises somebody.
+		if goal.ApprovalRequired && goal.CLIApprovalMode == "yolo" {
+			return errors.New("사람 승인을 요구하는 목표에서는 승인 모드 yolo 를 쓸 수 없습니다. 승인 모드를 낮추거나 승인 요구를 끄세요")
+		}
+		return nil
+	}
 	if !descriptor.FlowExecution {
 		return fmt.Errorf("%s 런타임은 흐름 실행을 지원하지 않습니다. 흐름으로 자동 실행하려면 Langflow 런타임의 Agent를 사용해 주세요", descriptor.Label)
 	}
-	goal.FlowID = strings.TrimSpace(goal.FlowID)
-	goal.FlowOutputComponent = strings.TrimSpace(goal.FlowOutputComponent)
 	if goal.FlowID == "" {
 		return errors.New("실행할 흐름을 선택해 주세요")
 	}
 	if len(goal.FlowID) > 200 || len(goal.FlowOutputComponent) > 200 {
 		return errors.New("흐름 식별자가 너무 깁니다")
-	}
-	if !goal.StartOnDemand {
-		// The flow lives in the Pod. Without this the task would start, find no
-		// runtime and fail — after queueing and consuming a retry.
-		return errors.New("흐름 실행은 Runtime 안에서 이루어지므로 '작업 시 Runtime 시작'을 켜 주세요")
 	}
 	return nil
 }

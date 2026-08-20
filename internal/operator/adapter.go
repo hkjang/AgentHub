@@ -106,6 +106,19 @@ const (
 	qwenPawStart = "/usr/local/bin/agenthub-qwenpaw-configure || true\n" +
 		"exec /opt/qwenpaw/.venv/bin/qwenpaw app --host 0.0.0.0 --port 8642"
 
+	// Qwen Code is a terminal program, so what a person opens is the terminal
+	// itself: ttyd serves it over a websocket, bound to loopback and published
+	// only through the token-checking proxy. Everything the agent needs — its
+	// settings with the bound MCP servers, its credentials, and the Python
+	// environment `pip install` writes into — is prepared by the initialiser on
+	// the home volume, because the default security profile mounts the root
+	// filesystem read-only and the toolchain the image ships lives there.
+	qwenCodeConfigInit = "/usr/local/bin/agenthub-qwencode-configure"
+
+	qwenCodeStart = "exec /usr/local/bin/ttyd --port 7681 --interface 127.0.0.1 --writable " +
+		"--client-option titleFixed=AgentHub --client-option disableLeaveAlert=true " +
+		"/usr/local/bin/agenthub-qwencode-shell"
+
 	// Langflow keeps everything it owns — the flows, the encryption key it
 	// generates on first start, its database — under LANGFLOW_CONFIG_DIR, so that
 	// directory has to be the persistent home rather than the image's /app. The
@@ -117,6 +130,14 @@ const (
 	langflowStart = "mkdir -p " + langflowConfigDir + "\n" +
 		"exec /app/.venv/bin/langflow run"
 )
+
+// qwenCodeHome is where Qwen Code keeps its settings and credentials. It is on
+// the home volume so a person's own settings survive the Pod.
+const qwenCodeHome = "/home/agent/.qwen"
+
+// qwenCodeHealthCommand asks ttyd's own token endpoint, which answers as soon as
+// the terminal is being served.
+var qwenCodeHealthCommand = []string{"/bin/sh", "-c", "curl -fsS -m 3 http://127.0.0.1:7681/token >/dev/null"}
 
 // langflowHealthCommand is Langflow's own health endpoint, asked from inside the
 // container. It answers `{"status":"ok"}` once the server is up.
@@ -194,6 +215,48 @@ var runtimeAdapters = map[string]runtimeAdapter{
 				VolumeMounts:    homeAndConfigMounts,
 			}
 			return []corev1.Container{dashboard, runtimeProxyContainer("hermes-dashboard-proxy", build.Name, build.sidecarImage(), "http://127.0.0.1:9120")}
+		},
+	},
+	runtimetype.QwenCode: {
+		Type:    runtimetype.QwenCode,
+		Command: []string{"/bin/sh", "-ec"},
+		Args:    []string{qwenCodeStart},
+		Env: func(build adapterBuild) []corev1.EnvVar {
+			return []corev1.EnvVar{
+				{Name: "QWEN_CODE_HOME", Value: qwenCodeHome},
+				{Name: "AGENTHUB_QWEN_SETTINGS", Value: "/etc/agenthub/qwen-settings.json"},
+				// The model binding by the names Qwen Code reads. OPENAI_API_KEY and
+				// OPENAI_BASE_URL are already in the shared environment; the model
+				// name is not, because every other adapter takes it from its own
+				// configuration file.
+				{Name: "OPENAI_MODEL", Value: build.Value.Model.Name},
+			}
+		},
+		InitContainers: func(build adapterBuild) []corev1.Container {
+			return []corev1.Container{{
+				Name: "qwencode-config-init", Image: build.image(), ImagePullPolicy: corev1.PullIfNotPresent,
+				Command: []string{"/usr/local/bin/agenthub-qwencode-configure"}, Env: build.Env,
+				// Creating the agent's virtualenv is the expensive part; it happens
+				// once per home volume and then never again.
+				Resources:       initResources("500m", "512Mi"),
+				SecurityContext: restrictedContainerSecurityContext(build.Value.Security.ReadOnlyRootFilesystem),
+				VolumeMounts:    homeAndConfigMounts,
+			}}
+		},
+		Sidecars: func(build adapterBuild) []corev1.Container {
+			// A browser terminal with no authenticator in front of it is a shell
+			// anyone who reaches the port can use.
+			return []corev1.Container{runtimeProxyContainer("qwencode-proxy", build.Name, build.sidecarImage(), "http://127.0.0.1:7681")}
+		},
+		// Checked from inside the container: ttyd is on loopback, so a probe from
+		// the kubelet could never connect.
+		Readiness: &corev1.Probe{
+			ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: qwenCodeHealthCommand}},
+			InitialDelaySeconds: 5, PeriodSeconds: 5, TimeoutSeconds: 3, FailureThreshold: 24,
+		},
+		Liveness: &corev1.Probe{
+			ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: qwenCodeHealthCommand}},
+			InitialDelaySeconds: 60, PeriodSeconds: 30, TimeoutSeconds: 3, FailureThreshold: 4,
 		},
 	},
 	runtimetype.Langflow: {

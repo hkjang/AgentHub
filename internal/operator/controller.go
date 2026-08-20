@@ -559,12 +559,21 @@ func mcpAuthHeader(binding map[string]any) (string, string) {
 	return "", ""
 }
 
-func runtimeConfigs(ns, runtimeName string, value spec) (string, string, string) {
+func runtimeConfigs(ns, runtimeName string, value spec) (string, string, string, string) {
 	bindings := effectiveMCP(ns, runtimeName, value)
 	runtimeValue := map[string]any{"owner": value.Owner, "runtime": value.Runtime, "profile": value.Profile, "workspace": value.Workspace, "model": value.Model, "mcp": bindings, "lifecycle": value.Lifecycle}
 	runtimeRaw, _ := json.MarshalIndent(runtimeValue, "", "  ")
 	opencode := map[string]any{"$schema": "https://opencode.ai/config.json", "autoupdate": false, "mcp": map[string]any{}}
 	hermes := map[string]any{"terminal": map[string]any{"cwd": "/workspace", "home_mode": "profile"}, "mcp_servers": map[string]any{}}
+	// Qwen Code reads one settings file for both the model it uses and the tools
+	// it may call. Telemetry and usage statistics are off because an offline site
+	// must not report outwards; an administrator who runs their own collector can
+	// turn telemetry back on through the settings overlay.
+	qwen := map[string]any{
+		"mcpServers": map[string]any{},
+		"privacy":    map[string]any{"usageStatisticsEnabled": false},
+		"telemetry":  map[string]any{"enabled": false},
+	}
 	if value.Model.BaseURL != "" && value.Model.Name != "" {
 		// One provider entry named after the platform, not after whichever backend
 		// happens to serve it: the same binding fronts Ollama, vLLM or any other
@@ -584,6 +593,10 @@ func runtimeConfigs(ns, runtimeName string, value spec) (string, string, string)
 			},
 		}
 		hermes["model"] = map[string]any{"provider": "custom", "default": value.Model.Name, "base_url": value.Model.BaseURL, "api_key": "${OPENAI_API_KEY}"}
+		// The key and the endpoint reach Qwen Code through its own .env, which the
+		// initialiser writes; the settings file names the model so that a session
+		// somebody opens by hand starts on the same one a task would use.
+		qwen["model"] = map[string]any{"name": value.Model.Name}
 	}
 	// The administrator's overlay lands here, on the configuration the platform
 	// just generated, so the runtime still reads one file and the platform's own
@@ -594,10 +607,13 @@ func runtimeConfigs(ns, runtimeName string, value spec) (string, string, string)
 			opencode, _ = runtimecfg.Merge(runtimetype.OpenCode, opencode, overlay)
 		case runtimetype.Hermes:
 			hermes, _ = runtimecfg.Merge(runtimetype.Hermes, hermes, overlay)
+		case runtimetype.QwenCode:
+			qwen, _ = runtimecfg.Merge(runtimetype.QwenCode, qwen, overlay)
 		}
 	}
 	openMCP := opencode["mcp"].(map[string]any)
 	hermesMCP := hermes["mcp_servers"].(map[string]any)
+	qwenMCP := qwen["mcpServers"].(map[string]any)
 	for _, item := range bindings {
 		name, endpoint := safeLabel(fmt.Sprint(item["name"])), fmt.Sprint(item["endpoint"])
 		if endpoint == "" {
@@ -605,6 +621,9 @@ func runtimeConfigs(ns, runtimeName string, value spec) (string, string, string)
 		}
 		open := map[string]any{"type": "remote", "url": endpoint, "enabled": true, "oauth": false}
 		hermesEntry := map[string]any{"url": endpoint, "enabled": true, "timeout": 120, "connect_timeout": 60}
+		// httpUrl, not url: in Qwen Code the second one means SSE, and a streamable
+		// HTTP server declared under it never connects.
+		qwenEntry := map[string]any{"httpUrl": endpoint, "timeout": 120000}
 		// The ConfigMap is not a Secret, so the credential is referenced by the
 		// environment variable the Pod reads from the runtime Secret.
 		// A policied binding is authenticated by the gateway, so the credential
@@ -612,13 +631,16 @@ func runtimeConfigs(ns, runtimeName string, value spec) (string, string, string)
 		if headerName, headerValue := mcpAuthHeader(item); headerName != "" && item["toolPolicyMode"] == nil {
 			open["headers"] = map[string]any{headerName: headerValue}
 			hermesEntry["headers"] = map[string]any{headerName: headerValue}
+			qwenEntry["headers"] = map[string]any{headerName: headerValue}
 		}
 		openMCP[name] = open
 		hermesMCP[name] = hermesEntry
+		qwenMCP[name] = qwenEntry
 	}
 	openRaw, _ := json.MarshalIndent(opencode, "", "  ")
 	hermesRaw, _ := json.MarshalIndent(hermes, "", "  ")
-	return string(runtimeRaw), string(openRaw), string(hermesRaw)
+	qwenRaw, _ := json.MarshalIndent(qwen, "", "  ")
+	return string(runtimeRaw), string(openRaw), string(hermesRaw), string(qwenRaw)
 }
 
 func (c *Controller) Reconcile(ctx context.Context, object *unstructured.Unstructured) error {
@@ -725,8 +747,8 @@ func (c *Controller) ensureServiceAccount(ctx context.Context, ns, name string, 
 	return err
 }
 func (c *Controller) ensureConfigMap(ctx context.Context, ns, name string, value spec, owner *unstructured.Unstructured) error {
-	runtimeConfig, opencodeConfig, hermesConfig := runtimeConfigs(ns, name, value)
-	data := map[string]string{"runtime.json": runtimeConfig, "opencode.json": opencodeConfig, "hermes-config.yaml": hermesConfig}
+	runtimeConfig, opencodeConfig, hermesConfig, qwenConfig := runtimeConfigs(ns, name, value)
+	data := map[string]string{"runtime.json": runtimeConfig, "opencode.json": opencodeConfig, "hermes-config.yaml": hermesConfig, "qwen-settings.json": qwenConfig}
 	// Qwen Paw writes its own configuration during initialisation, so its overlay
 	// cannot be merged here — it is delivered as a patch the initialiser applies
 	// after `qwenpaw init` has created the file.
@@ -1401,12 +1423,12 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 // the model binding, MCP bundle, system prompt or the administrator's common
 // files and variables produces a new Pod template.
 func configHash(ns, name string, value spec) string {
-	runtimeRaw, openRaw, hermesRaw := runtimeConfigs(ns, name, value)
+	runtimeRaw, openRaw, hermesRaw, qwenRaw := runtimeConfigs(ns, name, value)
 	// The overlay's fingerprint is folded in so that changing a setting rolls the
 	// Pod. Qwen Paw's overlay never reaches the generated configs above, and an
 	// environment variable is not part of them either, so without this a saved
 	// setting would sit in the ConfigMap while the running Pod kept its old one.
-	sum := sha256.Sum256([]byte(runtimeRaw + "\x00" + openRaw + "\x00" + hermesRaw + "\x00" +
+	sum := sha256.Sum256([]byte(runtimeRaw + "\x00" + openRaw + "\x00" + hermesRaw + "\x00" + qwenRaw + "\x00" +
 		provisioningHash(value) + "\x00" + value.RuntimeSettings.Fingerprint))
 	return hex.EncodeToString(sum[:])
 }

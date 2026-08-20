@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -8,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -21,7 +23,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/remotecommand"
+	"k8s.io/client-go/util/exec"
 
 	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
@@ -62,13 +67,17 @@ func (k *KubernetesSpawner) logger() *slog.Logger {
 	return slog.Default()
 }
 
-func (k *KubernetesSpawner) clients(ctx context.Context) (dynamic.Interface, kubernetes.Interface, kubernetesSettings, error) {
+// clients builds everything a call needs to reach the cluster, including the
+// REST configuration itself: an exec stream is built from that rather than from
+// a typed client, and rebuilding it at the call site would mean a second place
+// that has to know how this deployment authenticates.
+func (k *KubernetesSpawner) clients(ctx context.Context) (dynamic.Interface, kubernetes.Interface, *rest.Config, kubernetesSettings, error) {
 	var settings kubernetesSettings
 	if err := k.store.Setting(ctx, "kubernetes", &settings); err != nil {
-		return nil, nil, settings, err
+		return nil, nil, nil, settings, err
 	}
 	if !settings.Enabled {
-		return nil, nil, settings, ErrNotConfigured
+		return nil, nil, nil, settings, ErrNotConfigured
 	}
 	var config *rest.Config
 	var err error
@@ -77,19 +86,19 @@ func (k *KubernetesSpawner) clients(ctx context.Context) (dynamic.Interface, kub
 	} else {
 		token, secretErr := k.store.SettingSecret(ctx, "kubernetes")
 		if secretErr != nil {
-			return nil, nil, settings, secretErr
+			return nil, nil, nil, settings, secretErr
 		}
 		config = &rest.Config{Host: settings.APIServer, BearerToken: token, TLSClientConfig: rest.TLSClientConfig{Insecure: !settings.VerifyTLS}, Timeout: 15 * time.Second}
 	}
 	if err != nil {
-		return nil, nil, settings, fmt.Errorf("configure Kubernetes client: %w", err)
+		return nil, nil, nil, settings, fmt.Errorf("configure Kubernetes client: %w", err)
 	}
 	dynamicClient, err := dynamic.NewForConfig(config)
 	if err != nil {
-		return nil, nil, settings, err
+		return nil, nil, nil, settings, err
 	}
 	coreClient, err := kubernetes.NewForConfig(config)
-	return dynamicClient, coreClient, settings, err
+	return dynamicClient, coreClient, config, settings, err
 }
 
 func (k *KubernetesSpawner) object(spec Spec) *unstructured.Unstructured {
@@ -346,7 +355,7 @@ func (k *KubernetesSpawner) Spawn(ctx context.Context, spec Spec) error {
 	if spec.Runtime.CRDName == "" {
 		return errors.New("resource name may not be empty")
 	}
-	client, coreClient, settings, err := k.clients(ctx)
+	client, coreClient, _, settings, err := k.clients(ctx)
 	if err != nil {
 		return err
 	}
@@ -448,7 +457,7 @@ func (k *KubernetesSpawner) Restart(ctx context.Context, spec Spec) error {
 	if spec.Runtime.CRDName == "" {
 		return errors.New("resource name may not be empty")
 	}
-	client, coreClient, settings, err := k.clients(ctx)
+	client, coreClient, _, settings, err := k.clients(ctx)
 	if err != nil {
 		return err
 	}
@@ -491,7 +500,7 @@ func (k *KubernetesSpawner) Sync(ctx context.Context, spec Spec) error {
 	if spec.Runtime.CRDName == "" {
 		return nil
 	}
-	client, _, settings, err := k.clients(ctx)
+	client, _, _, settings, err := k.clients(ctx)
 	if err != nil {
 		return err
 	}
@@ -553,7 +562,7 @@ func (k *KubernetesSpawner) Delete(ctx context.Context, spec Spec) error {
 	if spec.Runtime.CRDName == "" {
 		return nil
 	}
-	client, _, settings, err := k.clients(ctx)
+	client, _, _, settings, err := k.clients(ctx)
 	if err != nil {
 		return err
 	}
@@ -572,7 +581,7 @@ func (k *KubernetesSpawner) setDesired(ctx context.Context, spec Spec, state str
 	if spec.Runtime.CRDName == "" {
 		return errors.New("resource name may not be empty")
 	}
-	client, coreClient, settings, err := k.clients(ctx)
+	client, coreClient, _, settings, err := k.clients(ctx)
 	if err != nil {
 		return err
 	}
@@ -606,7 +615,7 @@ func (k *KubernetesSpawner) Status(ctx context.Context, spec Spec) (Status, erro
 	if spec.Runtime.CRDName == "" {
 		return Status{Phase: "Stopped"}, nil
 	}
-	client, _, settings, err := k.clients(ctx)
+	client, _, _, settings, err := k.clients(ctx)
 	if err != nil {
 		return Status{}, err
 	}
@@ -632,7 +641,7 @@ func (k *KubernetesSpawner) Logs(ctx context.Context, spec Spec, tail int64) ([]
 	if spec.Runtime.PodName == "" {
 		return []byte("Pod가 아직 시작되지 않았거나 대기 중입니다."), nil
 	}
-	_, client, settings, err := k.clients(ctx)
+	_, client, _, settings, err := k.clients(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -652,7 +661,7 @@ func (k *KubernetesSpawner) Connection(ctx context.Context, spec Spec) (Connecti
 	if spec.Runtime.CRDName == "" {
 		return Connection{}, errors.New("runtime is not spawned yet")
 	}
-	dynamicClient, coreClient, settings, err := k.clients(ctx)
+	dynamicClient, coreClient, _, settings, err := k.clients(ctx)
 	if err != nil {
 		return Connection{}, err
 	}
@@ -687,7 +696,7 @@ func (k *KubernetesSpawner) Connection(ctx context.Context, spec Spec) (Connecti
 }
 
 func (k *KubernetesSpawner) Snapshot(ctx context.Context, spec SnapshotSpec) error {
-	client, _, settings, err := k.clients(ctx)
+	client, _, _, settings, err := k.clients(ctx)
 	if err != nil {
 		return err
 	}
@@ -725,7 +734,7 @@ func snapshotSupportError(err error) error {
 }
 
 func (k *KubernetesSpawner) SnapshotStatus(ctx context.Context, spec SnapshotSpec) (string, int64, error) {
-	client, _, settings, err := k.clients(ctx)
+	client, _, _, settings, err := k.clients(ctx)
 	if err != nil {
 		return "", 0, err
 	}
@@ -750,4 +759,102 @@ func (k *KubernetesSpawner) SnapshotStatus(ctx context.Context, spec SnapshotSpe
 		return "ready", 0, nil
 	}
 	return "ready", quantity.Value(), nil
+}
+
+// Exec runs a command inside the agent container of a running runtime.
+//
+// This is how an autonomous task drives a runtime whose agent is a terminal
+// program rather than a server: Qwen Code has no API to call, it has a command
+// line, and the platform reaches it the same way a person with kubectl would.
+//
+// It is deliberately narrow. The container is always the agent's, the command
+// comes from the platform rather than from anything a model produced, and the
+// output is captured rather than streamed to a terminal — a task's evidence has
+// to end up in the run record, not on somebody's screen.
+func (k *KubernetesSpawner) Exec(ctx context.Context, spec Spec, request ExecRequest) (ExecResult, error) {
+	ensureCRDName(&spec)
+	if spec.Runtime.PodName == "" {
+		return ExecResult{}, errors.New("runtime pod is not known yet")
+	}
+	if len(request.Command) == 0 {
+		return ExecResult{}, errors.New("no command to run")
+	}
+	_, coreClient, config, settings, err := k.clients(ctx)
+	if err != nil {
+		return ExecResult{}, err
+	}
+	namespace := settings.Namespace
+	if namespace == "" {
+		namespace = "agent-runtime-dev"
+	}
+	// The shared configuration carries a 15 second timeout, which is right for an
+	// API call and wrong for a command that may run for minutes. The deadline for
+	// this one belongs to the caller's context.
+	streamConfig := rest.CopyConfig(config)
+	streamConfig.Timeout = 0
+
+	container := request.Container
+	if container == "" {
+		container = "agent"
+	}
+	options := &corev1.PodExecOptions{
+		Container: container,
+		Command:   request.Command,
+		Stdin:     request.Stdin != "",
+		Stdout:    true,
+		Stderr:    true,
+	}
+	url := coreClient.CoreV1().RESTClient().Post().
+		Resource("pods").Name(spec.Runtime.PodName).Namespace(namespace).SubResource("exec").
+		VersionedParams(options, scheme.ParameterCodec).URL()
+
+	executor, err := remotecommand.NewSPDYExecutor(streamConfig, http.MethodPost, url)
+	if err != nil {
+		return ExecResult{}, err
+	}
+	var stdout, stderr bytes.Buffer
+	streams := remotecommand.StreamOptions{
+		Stdout: &limitedWriter{limit: execOutputLimit, buffer: &stdout},
+		Stderr: &limitedWriter{limit: execOutputLimit, buffer: &stderr},
+	}
+	if request.Stdin != "" {
+		streams.Stdin = strings.NewReader(request.Stdin)
+	}
+	err = executor.StreamWithContext(ctx, streams)
+	result := ExecResult{Stdout: stdout.String(), Stderr: stderr.String()}
+	if err == nil {
+		return result, nil
+	}
+	// A non-zero exit is the command's answer, not a failure to run it: the CLI
+	// agents this drives use exit codes to say which guardrail stopped them, and
+	// collapsing that into an error would throw the distinction away.
+	var exitErr exec.CodeExitError
+	if errors.As(err, &exitErr) {
+		result.ExitCode = exitErr.Code
+		return result, nil
+	}
+	return result, err
+}
+
+// execOutputLimit bounds what one command may return. A CLI agent's JSON answer
+// is kilobytes; anything approaching this is a runaway that would otherwise land
+// in the worker's memory and then in the run record.
+const execOutputLimit = 4 << 20
+
+// limitedWriter keeps the first execOutputLimit bytes and silently drops the
+// rest, so a flood cannot end the stream early — the exit code still matters.
+type limitedWriter struct {
+	limit  int
+	buffer *bytes.Buffer
+}
+
+func (w *limitedWriter) Write(p []byte) (int, error) {
+	if remaining := w.limit - w.buffer.Len(); remaining > 0 {
+		if len(p) > remaining {
+			w.buffer.Write(p[:remaining])
+		} else {
+			w.buffer.Write(p)
+		}
+	}
+	return len(p), nil
 }

@@ -164,7 +164,15 @@ try {
   await page.locator('.agent-cell').first().click()
   await page.locator('.drawer').waitFor({ timeout: 10000 })
   const logoText = await page.locator('.detail-hero .runtime-logo').innerText()
-  if (!/^(OC|H|QP|A)$/.test(logoText.trim())) note(route, 'runtime-badge', `unexpected badge ${logoText}`)
+  // The badges come from the platform's own runtime descriptions, so a new
+  // adapter must not fail this check for existing — a pinned list here would
+  // report a correct badge as a defect, which is what it did once.
+  const badges = await page.evaluate(async () => {
+    const response = await fetch('/api/v1/runtime-types', { credentials: 'include' })
+    const body = await response.json()
+    return (body.items ?? []).map((item) => item.code)
+  })
+  if (!badges.includes(logoText.trim())) note(route, 'runtime-badge', `unexpected badge ${logoText} (known: ${badges.join(',')})`)
   await page.screenshot({ path: `${shotDir}/_agent_drawer.png`, fullPage: true })
 
   // Every resource surface must offer edit/delete, not just create.

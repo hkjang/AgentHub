@@ -202,11 +202,19 @@ func (o *Orchestrator) run(ctx context.Context, run *store.AgentRun, task store.
 		}
 	}
 
-	// A flow-backed Goal does not reason step by step: the flow is the program.
-	// It still goes through the same evaluator afterwards, so completion is judged
-	// by the same criteria as any other agent's.
-	if goal.Runner == store.RunnerFlow {
+	// Two Goals do not reason step by step, because the work is a program that
+	// already exists: a flow somebody drew, or the runtime's own agent. Both still
+	// go through the same evaluator afterwards, so completion is judged by the
+	// same criteria as any other agent's.
+	switch goal.Runner {
+	case store.RunnerFlow:
 		transcript, outcome := o.runFlow(ctx, run, task, agent, goal, acquired)
+		if outcome.Status != "" {
+			return outcome
+		}
+		return o.evaluate(ctx, run, task, agent, goal, model, transcript)
+	case store.RunnerCLI:
+		transcript, outcome := o.runCLI(ctx, run, task, agent, goal, model, acquired)
 		if outcome.Status != "" {
 			return outcome
 		}

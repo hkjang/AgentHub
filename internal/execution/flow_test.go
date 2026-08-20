@@ -121,8 +121,8 @@ func TestRetryableFlowError(t *testing.T) {
 
 // What the flow receives has to carry the task and the standing instructions: a
 // flow author cannot read the Goal, so anything not in the input does not exist.
-func TestFlowInputCarriesTheTaskAndTheGoal(t *testing.T) {
-	input := flowInput(
+func TestRunnerInputCarriesTheTaskAndTheGoal(t *testing.T) {
+	input := runnerInput(
 		store.AgentTask{Title: "월간 보고서 작성", Input: "8월 데이터"},
 		store.AgentGoal{Description: "보고서를 만들고 저장한다", Constraints: "운영 DB 쓰기 금지"},
 	)

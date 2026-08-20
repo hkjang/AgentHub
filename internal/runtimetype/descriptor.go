@@ -52,6 +52,11 @@ type Descriptor struct {
 	// flows as an autonomous task, rather than only reasoning at the model
 	// gateway. It is what makes a Langflow agent do work unattended.
 	FlowExecution bool `json:"flowExecution"`
+	// CLIExecution reports that the platform can drive this runtime's own agent
+	// headlessly for an autonomous task — the runtime's tool loop, running in its
+	// own workspace, rather than a prose loop that can only describe what it would
+	// have done.
+	CLIExecution bool `json:"cliExecution"`
 	// BestFor is one sentence: when to choose this one.
 	BestFor string `json:"bestFor"`
 }
@@ -83,6 +88,16 @@ var descriptors = map[string]Descriptor{
 		Watchouts: []string{"자체 인증이 없어 플랫폼 프록시로만 공개됩니다", "MCP 도구는 이 런타임의 설정으로 전달되지 않습니다"},
 		Workspace: "/workspace", Port: 8642,
 		BrowserUI: true, Terminal: false, ToolLoop: true, MCPConfigured: false, ProxiedUI: true,
+	},
+	QwenCode: {
+		Type: QwenCode, Code: "QC", Label: "Qwen Code",
+		Summary:   "터미널에서 사는 코딩 에이전트. 브라우저로 열면 그 터미널이 그대로 열립니다.",
+		BestFor:   "리포지터리를 직접 고치는 일 — 사람이 옆에서 보며 시키거나, 작업을 맡겨 무인으로 돌리거나",
+		Strengths: []string{"자체 도구 루프로 파일을 고치고 명령을 실행함", "자동 실행에서도 같은 도구 루프를 그대로 사용함", "MCP 도구가 설정에 자동 등록됨", "pip·npm 설치가 되는 작업 도구모음 포함"},
+		Watchouts: []string{"자체 인증이 없는 브라우저 터미널이라 플랫폼 프록시로만 공개됩니다", "무인 실행은 승인 모드에 따라 파일을 실제로 바꿉니다 — 승인 모드를 먼저 정하세요", "흐름 편집기 같은 화면은 없습니다 — 터미널이 전부입니다"},
+		Workspace: "/workspace", Port: 7681,
+		BrowserUI: true, Terminal: true, ToolLoop: true, MCPConfigured: true, ProxiedUI: true,
+		CLIExecution: true,
 	},
 	Langflow: {
 		Type: Langflow, Code: "LF", Label: "Langflow",

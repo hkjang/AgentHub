@@ -207,19 +207,30 @@ func (s *Store) Templates(ctx context.Context) ([]Template, error) {
 	return items, rows.Err()
 }
 
+// SeedTemplates publishes the starter templates, one slug at a time.
+//
+// It used to do nothing at all once the table had a single row, which meant a
+// platform that gained a runtime never offered it where people actually start —
+// the catalog. Adding a runtime and leaving it out of the catalog is the same as
+// not adding it for anyone who does not already know it exists.
+//
+// Per-slug and conflict-free, so an upgrade gains the new templates while an
+// administrator's edits to the existing ones survive, and a template somebody
+// deliberately unpublished stays unpublished.
 func (s *Store) SeedTemplates(ctx context.Context, adminID string) error {
-	var count int
-	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM agent_templates`).Scan(&count); err != nil || count > 0 {
-		return err
-	}
 	data := []struct{ name, slug, description, category, runtime, profile, prompt string }{
 		{"OpenCode Developer", "opencode-developer", "Secure persistent coding workspace with Git and MCP tools.", "Development", "opencode", "rp-developer", "You are a careful enterprise software engineer. Inspect, test, and explain every change."},
 		{"Hermes Research", "hermes-research", "Long-running research agent with persistent memory.", "Research", "hermes", "rp-advanced", "Research the request using approved tools and cite the evidence used."},
 		{"Qwen Paw Assistant", "qwen-paw", "Autonomous agentic AI assistant powered by Qwen Paw for complex workflows and reasoning.", "Automation", "qwenpaw", "rp-basic", "You are an intelligent agentic assistant powered by Qwen Paw. Plan, orchestrate tools, and solve enterprise problems step-by-step."},
 		{"IT Operator", "it-operator", "Policy-controlled operations assistant with approval gates.", "Operations", "hermes", "rp-basic", "Assist with IT operations. Request approval before any state-changing action."},
+		{"Qwen Code Engineer", "qwen-code", "터미널 코딩 에이전트. 작업공간의 코드를 직접 고치고, 작업을 맡기면 무인으로도 같은 도구 루프를 사용합니다.", "Development", "qwencode", "rp-developer", "당신은 신중한 사내 소프트웨어 엔지니어입니다. 변경 전에 코드를 읽고, 테스트로 확인하고, 무엇을 왜 바꿨는지 남기세요."},
+		{"Langflow Builder", "langflow-builder", "흐름을 그려서 만드는 시각적 빌더. 저장한 흐름을 자동 실행 백엔드로 그대로 사용할 수 있습니다.", "Automation", "langflow", "rp-basic", "당신은 흐름으로 업무를 자동화합니다. 입력과 출력을 명확히 하고, 실패했을 때 무엇이 잘못됐는지 남기세요."},
 	}
 	for _, item := range data {
-		_, err := s.pool.Exec(ctx, `INSERT INTO agent_templates(id,name,slug,description,category,runtime_type,runtime_profile_id,security_profile_id,network_profile_id,system_prompt,published,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,'sp-restricted','np-restricted',$8,true,$9)`, uuid.NewString(), item.name, item.slug, item.description, item.category, item.runtime, item.profile, item.prompt, adminID)
+		_, err := s.pool.Exec(ctx, `INSERT INTO agent_templates(id,name,slug,description,category,runtime_type,runtime_profile_id,security_profile_id,network_profile_id,system_prompt,published,created_by)
+			VALUES($1,$2,$3,$4,$5,$6,$7,'sp-restricted','np-restricted',$8,true,$9)
+			ON CONFLICT (slug) DO NOTHING`,
+			uuid.NewString(), item.name, item.slug, item.description, item.category, item.runtime, item.profile, item.prompt, adminID)
 		if err != nil {
 			return err
 		}

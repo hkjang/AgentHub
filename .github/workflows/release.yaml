@@ -23,10 +23,13 @@ jobs:
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           langflow="$(tr -d '\r\n' < LANGFLOW_VERSION)"
+          qwencode="$(tr -d '\r\n' < QWENCODE_VERSION)"
           echo "baseVersion=${base}" >> "$GITHUB_OUTPUT"
           echo "baseTag=v${base}" >> "$GITHUB_OUTPUT"
           echo "langflowVersion=${langflow}" >> "$GITHUB_OUTPUT"
           echo "langflowTag=v${langflow}" >> "$GITHUB_OUTPUT"
+          echo "qwencodeVersion=${qwencode}" >> "$GITHUB_OUTPUT"
+          echo "qwencodeTag=v${qwencode}" >> "$GITHUB_OUTPUT"
       - name: Decide whether the runtime base image must be rebuilt
         id: base
         shell: bash
@@ -136,6 +139,43 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Decide whether the Qwen Code runtime image must be rebuilt
+        id: qwencode
+        shell: bash
+        env:
+          QWENCODE_VERSION: ${{ steps.version.outputs.qwencodeVersion }}
+        run: |
+          set -euo pipefail
+          # Same rule as the other two images. Its inputs are its Dockerfile and
+          # the scripts it copies; it compiles nothing, so no Go module moves it.
+          sources=(Dockerfile.qwencode deploy/runtime/agenthub-report-config.sh deploy/runtime/qwencode-configure.sh deploy/runtime/qwencode-shell.sh deploy/runtime/qwencode-run.sh deploy/runtime/qwencode-toolchain.sh)
+          previous="$(git tag --list 'v*.*.*' --sort=-v:refname | grep -v "^${GITHUB_REF_NAME}$" | head -1 || true)"
+          if [ -z "${previous}" ]; then
+            echo "no previous release tag; building the Qwen Code image"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "previous=${previous}" >> "$GITHUB_OUTPUT"
+          previous_version="$(git show "${previous}:QWENCODE_VERSION" 2>/dev/null | tr -d '\r\n' || true)"
+          inputs_changed=false
+          if [ -z "${previous_version}" ]; then
+            inputs_changed=true
+          elif ! git diff --quiet "${previous}" "${GITHUB_REF_NAME}" -- "${sources[@]}"; then
+            git diff --name-only "${previous}" "${GITHUB_REF_NAME}" -- "${sources[@]}"
+            inputs_changed=true
+          fi
+          if [ "${inputs_changed}" = true ] && [ "${QWENCODE_VERSION}" = "${previous_version}" ]; then
+            echo "::error::Qwen Code image sources changed since ${previous} but QWENCODE_VERSION is still ${QWENCODE_VERSION}; bump QWENCODE_VERSION so the new image gets its own tag" >&2
+            exit 1
+          fi
+          if [ "${QWENCODE_VERSION}" = "${previous_version}" ]; then
+            echo "Qwen Code image v${QWENCODE_VERSION} is unchanged since ${previous}"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Qwen Code image moves from v${previous_version:-none} to v${QWENCODE_VERSION}"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Reclaim runner disk
         shell: bash
         run: |
@@ -157,8 +197,12 @@ jobs:
           LANGFLOW_TAG: ${{ steps.version.outputs.langflowTag }}
           LANGFLOW_CHANGED: ${{ steps.langflow.outputs.changed }}
           LANGFLOW_PREVIOUS: ${{ steps.langflow.outputs.previous }}
+          QWENCODE_VERSION: ${{ steps.version.outputs.qwencodeVersion }}
+          QWENCODE_TAG: ${{ steps.version.outputs.qwencodeTag }}
+          QWENCODE_CHANGED: ${{ steps.qwencode.outputs.changed }}
+          QWENCODE_PREVIOUS: ${{ steps.qwencode.outputs.previous }}
         run: |
-          docker build --build-arg VERSION="${RELEASE_VERSION}" --build-arg BASE_VERSION="${BASE_VERSION}" --build-arg LANGFLOW_VERSION="${LANGFLOW_VERSION}" --build-arg COMMIT="${GITHUB_SHA}" --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -t "agenthub:${RELEASE_TAG}" .
+          docker build --build-arg VERSION="${RELEASE_VERSION}" --build-arg BASE_VERSION="${BASE_VERSION}" --build-arg LANGFLOW_VERSION="${LANGFLOW_VERSION}" --build-arg QWENCODE_VERSION="${QWENCODE_VERSION}" --build-arg COMMIT="${GITHUB_SHA}" --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -t "agenthub:${RELEASE_TAG}" .
           if [ "${BASE_CHANGED}" = "true" ]; then
             docker build -f Dockerfile.base -t "agenthub-base:${BASE_TAG}" .
           else
@@ -169,6 +213,11 @@ jobs:
           else
             echo "skipping the Langflow runtime image build; ${LANGFLOW_TAG} from ${LANGFLOW_PREVIOUS} still applies"
           fi
+          if [ "${QWENCODE_CHANGED}" = "true" ]; then
+            docker build -f Dockerfile.qwencode -t "agenthub-qwencode:${QWENCODE_TAG}" .
+          else
+            echo "skipping the Qwen Code runtime image build; ${QWENCODE_TAG} from ${QWENCODE_PREVIOUS} still applies"
+          fi
       - name: Package archives
         shell: bash
         env:
@@ -177,6 +226,8 @@ jobs:
           BASE_CHANGED: ${{ steps.base.outputs.changed }}
           LANGFLOW_TAG: ${{ steps.version.outputs.langflowTag }}
           LANGFLOW_CHANGED: ${{ steps.langflow.outputs.changed }}
+          QWENCODE_TAG: ${{ steps.version.outputs.qwencodeTag }}
+          QWENCODE_CHANGED: ${{ steps.qwencode.outputs.changed }}
         run: |
           set -euo pipefail
           mkdir -p release
@@ -204,6 +255,9 @@ jobs:
           if [ "${LANGFLOW_CHANGED}" = "true" ]; then
             package "agenthub-langflow:${LANGFLOW_TAG}" "agenthub-langflow-${LANGFLOW_TAG}.tar.gz"
           fi
+          if [ "${QWENCODE_CHANGED}" = "true" ]; then
+            package "agenthub-qwencode:${QWENCODE_TAG}" "agenthub-qwencode-${QWENCODE_TAG}.tar.gz"
+          fi
           # Glob only the archives: including SHA256SUMS in its own listing is
           # both meaningless and racy with the redirect.
           ( cd release && sha256sum -- agenthub-* > SHA256SUMS )
@@ -215,12 +269,13 @@ jobs:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
           BASE_TAG: ${{ steps.version.outputs.baseTag }}
           LANGFLOW_TAG: ${{ steps.version.outputs.langflowTag }}
+          QWENCODE_TAG: ${{ steps.version.outputs.qwencodeTag }}
         run: |
           set -euo pipefail
           ( cd release && sha256sum -c SHA256SUMS )
           # Reassemble through a pipe: this proves the parts concatenate back
           # into a valid archive without needing room for a second copy.
-          for name in "agenthub-${RELEASE_TAG}.tar.gz" "agenthub-base-${BASE_TAG}.tar.gz" "agenthub-langflow-${LANGFLOW_TAG}.tar.gz"; do
+          for name in "agenthub-${RELEASE_TAG}.tar.gz" "agenthub-base-${BASE_TAG}.tar.gz" "agenthub-langflow-${LANGFLOW_TAG}.tar.gz" "agenthub-qwencode-${QWENCODE_TAG}.tar.gz"; do
             if [ -z "$(ls -d release/"${name}"* 2>/dev/null)" ]; then
               echo "skipped ${name}"
               continue
@@ -250,6 +305,9 @@ jobs:
           LANGFLOW_TAG: ${{ steps.version.outputs.langflowTag }}
           LANGFLOW_CHANGED: ${{ steps.langflow.outputs.changed }}
           LANGFLOW_PREVIOUS: ${{ steps.langflow.outputs.previous }}
+          QWENCODE_TAG: ${{ steps.version.outputs.qwencodeTag }}
+          QWENCODE_CHANGED: ${{ steps.qwencode.outputs.changed }}
+          QWENCODE_PREVIOUS: ${{ steps.qwencode.outputs.previous }}
         run: |
           {
             echo 'body<<RELEASE_NOTE'
@@ -268,6 +326,13 @@ jobs:
               echo "이번 릴리즈에 \`agenthub-langflow-${LANGFLOW_TAG}.tar.gz\`로 함께 게시됩니다."
             else
               echo "변경 없음입니다. 이미 설치된 \`agenthub-langflow:${LANGFLOW_TAG}\`를 그대로 사용하세요(직전 게시는 ${LANGFLOW_PREVIOUS} 이전 릴리즈의 같은 이름 자산입니다)."
+            fi
+            echo ""
+            echo "Qwen Code Runtime 이미지: \`agenthub-qwencode:${QWENCODE_TAG}\` — Qwen Code Agent를 쓰는 사이트만 필요합니다."
+            if [ "${QWENCODE_CHANGED}" = "true" ]; then
+              echo "이번 릴리즈에 \`agenthub-qwencode-${QWENCODE_TAG}.tar.gz\`로 함께 게시됩니다."
+            else
+              echo "변경 없음입니다. 이미 설치된 \`agenthub-qwencode:${QWENCODE_TAG}\`를 그대로 사용하세요(직전 게시는 ${QWENCODE_PREVIOUS} 이전 릴리즈의 같은 이름 자산입니다)."
             fi
             echo 'RELEASE_NOTE'
           } >> "$GITHUB_OUTPUT"

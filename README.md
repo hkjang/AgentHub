@@ -24,10 +24,11 @@
 
 - 🔒 **완전 폐쇄망 (Offline-Ready)**: 외부 인터넷 연결 없이 로컬 Docker 레지스트리와 내부 Kubernetes 클러스터 상에서 100% 결정론적으로 동작합니다.
 - 📦 **영속 Workspace & CSI 스냅샷**: Agent Pod가 종료/재생성되어도 사용자의 소스 코드와 데이터는 PVC에 보존되며, CSI VolumeSnapshot을 통해 언제든 원하는 시점으로 복원할 수 있습니다.
-- 🤖 **4대 엔터프라이즈 에이전트 런타임**: 인터랙티브 코딩 워크스페이스(**OpenCode**), 자율 에이전트 어시스턴트(**Hermes** / [**Qwen Paw**](https://qwenpaw.agentscope.io/)), 시각적 흐름 빌더([**Langflow**](https://docs.langflow.org/))를 사용자 전용 비루트(Non-root) Pod로 격리 기동합니다.
+- 🤖 **5대 엔터프라이즈 에이전트 런타임**: 인터랙티브 코딩 워크스페이스(**OpenCode**), 자율 에이전트 어시스턴트(**Hermes** / [**Qwen Paw**](https://qwenpaw.agentscope.io/)), 터미널 코딩 에이전트([**Qwen Code**](https://qwenlm.github.io/qwen-code-docs/)), 시각적 흐름 빌더([**Langflow**](https://docs.langflow.org/))를 사용자 전용 비루트(Non-root) Pod로 격리 기동합니다.
   - **Qwen Paw (AgentScope)**: 3계층 ReMe 메모리, 커널 샌드박스 보안 가드, 스킬/MCP 확장 및 Qwen/Ollama 모델 자율 추론을 지원하는 개인 에이전트 워크스테이션
   - **OpenCode**: 브라우저 기반 풀스택 코딩 IDE 및 실시간 파일/터미널 워크스페이스
   - **Hermes Agent**: 장기 기억(Long-term Memory) 및 도구 실행 자율 에이전트
+  - **Qwen Code**: 터미널에서 사는 코딩 에이전트. 브라우저로 열면 그 터미널이 그대로 열리고, 작업을 맡기면 **같은 도구 루프로 무인 실행**합니다 — 자율 실행이 처음으로 실제 파일을 고칩니다(승인 모드로 범위를 정하고, 토큰 사용량은 실제 값으로 계량됩니다). 전용 `agenthub-qwencode` 이미지로 별도 게시합니다.
   - **Langflow**: 흐름을 그려서 만드는 시각적 빌더. 그린 흐름을 **자동 실행 백엔드로 그대로 사용**할 수 있어(작업 입력 → 흐름 → 결과·산출물), 정책·DLP·쿼터·감사 안에서 무인 실행됩니다. Langflow는 파이썬 트리와 프런트엔드를 함께 담기 때문에 공용 base 이미지와 분리된 `agenthub-langflow` 이미지로 별도 게시합니다 — 쓰지 않는 사이트는 내려받지 않습니다.
   - **custom**: 사내에서 직접 만든 에이전트도 시작 명령과 포트만 지정하면 동일한 격리·정책·실행 플레인 위에서 운영할 수 있습니다.
 - 🤖 **자율 실행 플레인**: Agent에 Goal과 Trigger를 주면 예약·Webhook·수동으로 스스로 Task를 수행하고, 완료 조건을 플랫폼이 검증한 뒤 산출물과 실행 타임라인을 남깁니다. 기존 Interactive 방식은 그대로 유지됩니다.
@@ -150,7 +151,7 @@ kubectl apply -k deploy/kubernetes
 # 3. AgentHub 런타임 베이스 이미지 빌드 및 로드
 make image image-base
 # base 이미지는 BASE_VERSION 파일을 따르며, 변경이 없으면 이전 태그를 그대로 사용합니다.
-minikube image load agenthub:v0.21.0
+minikube image load agenthub:v0.22.0
 minikube image load agenthub-base:v0.11.0
 
 # 4. 파드 상태 확인

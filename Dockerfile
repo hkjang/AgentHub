@@ -10,6 +10,7 @@ FROM golang:1.25-bookworm AS go-build
 ARG VERSION
 ARG BASE_VERSION=0.1.0-dev
 ARG LANGFLOW_VERSION=0.1.0-dev
+ARG QWENCODE_VERSION=0.1.0-dev
 ARG COMMIT=unknown
 ARG BUILD_TIME=unknown
 WORKDIR /src
@@ -17,9 +18,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X github.com/hkjang/AgentHub/internal/buildinfo.Version=${VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.Commit=${COMMIT} -X github.com/hkjang/AgentHub/internal/buildinfo.BuildTime=${BUILD_TIME} -X github.com/hkjang/AgentHub/internal/buildinfo.BaseVersion=${BASE_VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.LangflowVersion=${LANGFLOW_VERSION}" -o /out/agenthub ./cmd/agenthub \
- && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X github.com/hkjang/AgentHub/internal/buildinfo.Version=${VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.Commit=${COMMIT} -X github.com/hkjang/AgentHub/internal/buildinfo.BuildTime=${BUILD_TIME} -X github.com/hkjang/AgentHub/internal/buildinfo.BaseVersion=${BASE_VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.LangflowVersion=${LANGFLOW_VERSION}" -o /out/agenthub-operator ./cmd/operator \
- && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X github.com/hkjang/AgentHub/internal/buildinfo.Version=${VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.Commit=${COMMIT} -X github.com/hkjang/AgentHub/internal/buildinfo.BuildTime=${BUILD_TIME} -X github.com/hkjang/AgentHub/internal/buildinfo.BaseVersion=${BASE_VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.LangflowVersion=${LANGFLOW_VERSION}" -o /out/agenthub-worker ./cmd/worker \
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X github.com/hkjang/AgentHub/internal/buildinfo.Version=${VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.Commit=${COMMIT} -X github.com/hkjang/AgentHub/internal/buildinfo.BuildTime=${BUILD_TIME} -X github.com/hkjang/AgentHub/internal/buildinfo.BaseVersion=${BASE_VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.LangflowVersion=${LANGFLOW_VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.QwenCodeVersion=${QWENCODE_VERSION}" -o /out/agenthub ./cmd/agenthub \
+ && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X github.com/hkjang/AgentHub/internal/buildinfo.Version=${VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.Commit=${COMMIT} -X github.com/hkjang/AgentHub/internal/buildinfo.BuildTime=${BUILD_TIME} -X github.com/hkjang/AgentHub/internal/buildinfo.BaseVersion=${BASE_VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.LangflowVersion=${LANGFLOW_VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.QwenCodeVersion=${QWENCODE_VERSION}" -o /out/agenthub-operator ./cmd/operator \
+ && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X github.com/hkjang/AgentHub/internal/buildinfo.Version=${VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.Commit=${COMMIT} -X github.com/hkjang/AgentHub/internal/buildinfo.BuildTime=${BUILD_TIME} -X github.com/hkjang/AgentHub/internal/buildinfo.BaseVersion=${BASE_VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.LangflowVersion=${LANGFLOW_VERSION} -X github.com/hkjang/AgentHub/internal/buildinfo.QwenCodeVersion=${QWENCODE_VERSION}" -o /out/agenthub-worker ./cmd/worker \
  && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/agenthub-runtime-proxy ./cmd/runtime-proxy
 
 FROM gcr.io/distroless/static-debian12:nonroot

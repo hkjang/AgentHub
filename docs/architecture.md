@@ -80,6 +80,7 @@ behavior lives in the offline `agenthub-base` image:
 - `opencode`: `opencode serve --hostname 0.0.0.0 --port 4096`, authenticated with `OPENCODE_SERVER_PASSWORD`
 - `hermes`: `hermes gateway run --no-supervise` with its authenticated API on 8642 and the loopback Dashboard/proxy pair on 9120/9119
 - `qwenpaw`: `qwenpaw app --host 0.0.0.0 --port 8642`; the app ships no authenticator, so it is published only through the `agenthub-runtime-proxy` sidecar on 9119
+- `qwencode`: `ttyd` serving the Qwen Code terminal on `127.0.0.1:7681`, published only through the proxy on 9119. Its own image too, `agenthub-qwencode`, versioned by `QWENCODE_VERSION`: it carries a Node toolchain and the agent itself, and it is deliberately leaner than the shared image — a coding agent needs git, grep and a language runtime, not the whole data-science toolchain.
 - `langflow`: `langflow run` bound to `127.0.0.1:7860`, published only through the proxy on 9119. This one does **not** boot from `agenthub-base`: it is its own image, `agenthub-langflow`, versioned by `LANGFLOW_VERSION` and published as its own archive, because Langflow carries a Python tree and a built frontend that no other adapter needs and moves on its own schedule.
 - `custom`: an administrator-approved image and command
 
@@ -117,6 +118,17 @@ OpenCode receives the generated configuration through `OPENCODE_CONFIG`;
 Hermes receives a generated `config.yaml` under its isolated `HERMES_HOME`;
 QwenPaw is initialised with `qwenpaw init --defaults` and receives the model
 binding as an `.env` file under `QWENPAW_HOME`.
+
+Qwen Code reads `~/.qwen/settings.json` for its model and its MCP servers, and
+`~/.qwen/.env` for the credential. The MCP entries are declared as `httpUrl`
+rather than `url` — in this product the second one means SSE, and a streamable
+HTTP server declared under it never connects, which looks exactly like a tool
+policy that denied everything. Its initialiser also creates the agent's own
+Python environment on the home volume with a `.pth` file pointing back at the
+image's toolchain, because the default security profile mounts the root
+filesystem read-only: without it `pip install` fails in a coding agent, and with
+it packages land on a volume that survives the Pod and take precedence over the
+preinstalled ones.
 
 Langflow has no configuration file: it is configured entirely through the
 environment. The platform sets where it listens, that automatic login is on, that
@@ -222,6 +234,44 @@ leaving no way to close this one would keep every handover open forever.
 A handover is offered only when it can happen — the agent has a persistent
 workspace for the work to live in and the runtime has a surface a person can use.
 Whether the task started the Pod is beside the point: a person can start it.
+
+## Running the runtime's own agent
+
+Some runtimes are a command line rather than a server. Qwen Code is one: it has a
+tool loop, it runs in the workspace, and it has a headless mode meant for exactly
+this. So for those, an autonomous task is that agent — executed in its own
+container, with the Goal's guardrails handed over as the agent's own budgets:
+max steps become `--max-session-turns`, max tool calls become `--max-tool-calls`,
+and the duration becomes `--max-wall-time`, set slightly under the platform's own
+deadline so the agent stops itself and says why instead of being cut off.
+
+The Goal carries `runner: 'cli'` and one more setting that matters more than any
+other: `cli_approval_mode`. `plan` changes nothing, `default` asks before every
+change (which unattended means it stops), `auto-edit` and `auto` widen that, and
+`yolo` approves everything. It defaults to `default` rather than to the
+convenient one, and it is refused outright when the Goal also demands human
+approval — an agent told to approve everything itself would sail straight past
+the gate that exists to stop it.
+
+Reaching the agent means executing a command in the Pod, which is why the control
+plane's role has `pods/exec`. It grants nothing the role could not already do —
+it creates the Pods and decides what they run — and a deployment that never uses
+this runner can remove the rule; those tasks then fail with a permission error
+rather than doing something unexpected. The command is argv, never a shell
+string, and it goes through a wrapper the image ships (`agenthub-qwencode-run`)
+because an exec has no working directory and no profile: the wrapper supplies
+both, so a task title with a quote in it cannot become a command.
+
+What comes back is the agent's own JSON: the result text, the turn count, the
+tool calls, the lines added and removed, and — unlike a flow — real token usage,
+so a CLI run is metered like any other work rather than described as unmetered.
+Its exit codes are its contract: 53 for the turn limit, 55 for the time or
+tool-call budget, 130 for an interrupt. None of those are retried, because the
+same task with the same limits stops in the same place; anything else is treated
+as a bad moment in the runtime and gets another attempt. On the guardrail exits
+stdout is empty and the explanation is a JSON object on stderr, so both streams
+are read — recording "no output" for a run that stopped for a reportable reason
+would waste the person's time.
 
 ## Running a flow instead of reasoning
 

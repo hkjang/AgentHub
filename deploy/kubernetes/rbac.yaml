@@ -26,6 +26,16 @@ rules:
   - apiGroups: [""]
     resources: [pods, pods/log]
     verbs: [get, list]
+  # Running a task as the runtime's own command-line agent means executing it in
+  # the Pod, which is the only way to reach an agent that has no API. It is the
+  # narrowest addition that makes an unattended Qwen Code run possible, and it
+  # grants nothing this role could not already do by other means: it already
+  # creates the Pods and decides what they run. A deployment that never uses the
+  # `cli` runner can remove this rule — those tasks then fail with a permission
+  # error rather than doing anything unexpected.
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create, get]
   - apiGroups: [""]
     resources: [secrets]
     verbs: [get, create, update, delete]

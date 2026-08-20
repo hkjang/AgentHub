@@ -363,16 +363,36 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
       </label>
       <label><span>제약</span><textarea rows={2} value={goal.constraints} onChange={(e)=>update({constraints:e.target.value})} placeholder="예) 운영 DB에 쓰기 금지"/></label>
 
-      {descriptor(agent.runtimeType).flowExecution&&<fieldset><legend>실행 방식</legend>
+      {(descriptor(agent.runtimeType).flowExecution||descriptor(agent.runtimeType).cliExecution)&&<fieldset><legend>실행 방식</legend>
         <label><span>자동 실행이 하는 일</span>
           <select value={goal.runner??'prose'} onChange={(e)=>update({runner:e.target.value as AgentGoal['runner']})}>
             <option value="prose">추론 루프 — 모델과 대화하며 진행하고, 런타임 작업은 사람에게 인계</option>
-            <option value="flow">흐름 실행 — Runtime에 저장된 Langflow 흐름을 실행하고 결과를 기록</option>
+            {descriptor(agent.runtimeType).flowExecution&&<option value="flow">흐름 실행 — Runtime에 저장된 Langflow 흐름을 실행하고 결과를 기록</option>}
+            {descriptor(agent.runtimeType).cliExecution&&<option value="cli">에이전트 실행 — Runtime의 코딩 에이전트가 작업공간에서 직접 수행</option>}
           </select>
           <small>{goal.runner==='flow'
             ?'작업 입력이 흐름의 입력으로 들어가고, 흐름의 출력이 실행 기록과 완료 판정에 사용됩니다. 흐름 안에서 일어나는 모델 호출은 플랫폼이 계량하지 않습니다.'
+            :goal.runner==='cli'
+            ?'런타임의 에이전트를 헤드리스로 실행합니다. 최대 단계·도구 호출·실행 시간이 에이전트 자체 예산으로 전달되고, 토큰 사용량은 실제 값이 기록됩니다.'
             :'기존 방식입니다. 파일 편집이나 명령 실행이 필요하면 사람에게 인계합니다.'}</small>
         </label>
+        {goal.runner==='cli'&&<>
+          <label><span>에이전트 승인 모드</span>
+            <select value={goal.cliApprovalMode??'default'} onChange={(e)=>update({cliApprovalMode:e.target.value as AgentGoal['cliApprovalMode']})}>
+              <option value="plan">plan — 계획만 세우고 바꾸지 않음</option>
+              <option value="default">default — 변경 전마다 확인(무인 실행에서는 사실상 멈춤)</option>
+              <option value="auto-edit">auto-edit — 파일 편집만 자동 승인</option>
+              <option value="auto">auto — 편집과 안전한 명령을 자동 승인</option>
+              <option value="yolo">yolo — 모두 자동 승인</option>
+            </select>
+            <small>{goal.cliApprovalMode==='yolo'
+              ?'모든 도구 실행이 확인 없이 진행됩니다. 작업공간과 MCP 도구 정책으로 범위를 먼저 좁히세요.'
+              :goal.cliApprovalMode==='plan'
+              ?'파일을 바꾸지 않고 계획만 남깁니다. 무인 실행 결과를 먼저 검토하고 싶을 때 적합합니다.'
+              :'무인 실행은 사람이 없으므로, 확인을 요구하는 모드에서는 변경이 필요한 순간 진행되지 않을 수 있습니다.'}</small>
+          </label>
+          {goal.approvalRequired&&goal.cliApprovalMode==='yolo'&&<div className="info-box"><ShieldAlert size={17}/><div><strong>같이 켤 수 없습니다</strong><p>사람 승인을 요구하는 목표에서는 yolo 를 쓸 수 없습니다. 승인 모드를 낮추거나 아래 자율성의 승인 요구를 끄세요.</p></div></div>}
+        </>}
         {goal.runner==='flow'&&<>
           <label><span>실행할 흐름</span>
             <div className="inline-row">

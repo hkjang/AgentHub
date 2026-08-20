@@ -70,7 +70,7 @@ func (o *Orchestrator) runFlow(ctx context.Context, run *store.AgentRun, task st
 	// must not leave the platform has no business being sent to a flow engine, and
 	// finding that out first costs nothing.
 	step := workflow.Step{ID: "flow", AgentID: agent.ID, AgentName: agent.Name}
-	input := flowInput(task, goal)
+	input := runnerInput(task, goal)
 	if o.flowInspector != nil {
 		scanned, scanErr := o.flowInspector.Outbound(ctx, step, input)
 		if scanErr != nil {
@@ -149,10 +149,12 @@ func (o *Orchestrator) flowConnection(ctx context.Context, agent store.Agent, ru
 	return o.spawner.Connection(ctx, spec)
 }
 
-// flowInput is what the flow receives as its input value: the task, and the
-// standing instructions the Goal carries. A flow's author decides what to do with
-// it, so it is plain text rather than the prose loop's scaffolding.
-func flowInput(task store.AgentTask, goal store.AgentGoal) string {
+// runnerInput is what a runtime's own engine receives: the task, and the standing
+// instructions the Goal carries. Whoever wrote the flow — or whatever the CLI
+// agent decides to do — cannot read the Goal, so anything not in here does not
+// exist as far as the work is concerned. It is plain text rather than the prose
+// loop's scaffolding, which is addressed to a model rather than to a program.
+func runnerInput(task store.AgentTask, goal store.AgentGoal) string {
 	var b strings.Builder
 	b.WriteString(task.Title)
 	if strings.TrimSpace(task.Input) != "" {
@@ -166,6 +168,14 @@ func flowInput(task store.AgentTask, goal store.AgentGoal) string {
 	if strings.TrimSpace(goal.Constraints) != "" {
 		b.WriteString("\n\n[제약]\n")
 		b.WriteString(goal.Constraints)
+	}
+	if len(goal.SuccessCriteria) > 0 {
+		b.WriteString("\n\n[완료 조건]\n")
+		for _, criterion := range goal.SuccessCriteria {
+			b.WriteString("- ")
+			b.WriteString(criterion)
+			b.WriteString("\n")
+		}
 	}
 	return b.String()
 }

@@ -33,7 +33,7 @@ func TestRuntimeConfigsCompileModelAndMCPBindings(t *testing.T) {
 		mcpBinding{Name: "database", Mode: "dedicated", Image: "mcp/database:1", Port: 8200},
 	)
 
-	runtimeRaw, openRaw, hermesRaw := runtimeConfigs("agent-runtime-dev", "agent-alice-1234", value)
+	runtimeRaw, openRaw, hermesRaw, _ := runtimeConfigs("agent-runtime-dev", "agent-alice-1234", value)
 	for _, expected := range []string{"http://127.0.0.1:8100/mcp", "agent-alice-1234-mcp-database.agent-runtime-dev.svc:8200", "https://mcp.example.test/mcp"} {
 		if !strings.Contains(runtimeRaw, expected) || !strings.Contains(openRaw, expected) || !strings.Contains(hermesRaw, expected) {
 			t.Fatalf("compiled configurations do not contain %q", expected)
@@ -411,7 +411,7 @@ func TestMCPCredentialsNeverReachTheConfigMap(t *testing.T) {
 		mcpBinding{Name: "public", Mode: "shared", Endpoint: "https://public.test/mcp"},
 	)
 
-	_, openRaw, hermesRaw := runtimeConfigs("agent-runtime-dev", "agent-1", value)
+	_, openRaw, hermesRaw, _ := runtimeConfigs("agent-runtime-dev", "agent-1", value)
 	for _, raw := range []string{openRaw, hermesRaw} {
 		if !strings.Contains(raw, "Bearer ${AGENTHUB_MCP_CONTEXT7}") {
 			t.Fatalf("bearer auth is not compiled as an env placeholder: %s", raw)
@@ -651,7 +651,7 @@ func TestPoliciedMCPBindingIsRoutedThroughTheGateway(t *testing.T) {
 		t.Fatal("a binding with no policy must not be marked as policied")
 	}
 
-	_, openRaw, hermesRaw := runtimeConfigs("agent-runtime-dev", "rt-1", value)
+	_, openRaw, hermesRaw, _ := runtimeConfigs("agent-runtime-dev", "rt-1", value)
 	for _, raw := range []string{openRaw, hermesRaw} {
 		if strings.Contains(raw, "mcp.context7.test") {
 			t.Fatalf("the agent config must not learn the upstream address:\n%s", raw)
@@ -1103,7 +1103,7 @@ func TestRuntimeSettingsOverlayMergesIntoTheGeneratedConfig(t *testing.T) {
 		"terminal": map[string]any{"shell": "/bin/bash"},
 		"theme":    "dark",
 	}
-	_, _, hermes := runtimeConfigs("ns", "rt-1", value)
+	_, _, hermes, _ := runtimeConfigs("ns", "rt-1", value)
 	// The file is written as JSON, which is valid YAML and what Hermes reads.
 	for _, expected := range []string{`"shell": "/bin/bash"`, `"theme": "dark"`, `"cwd": "/workspace"`, `"default": "qwen"`} {
 		if !strings.Contains(hermes, expected) {
@@ -1117,7 +1117,7 @@ func TestRuntimeSettingsOverlayMergesIntoTheGeneratedConfig(t *testing.T) {
 	open.Model.BaseURL = "http://gateway.svc:8000/v1"
 	open.Model.Name = "qwen"
 	open.RuntimeSettings.Config = map[string]any{"autoupdate": true, "theme": "dark"}
-	_, opencode, _ := runtimeConfigs("ns", "rt-1", open)
+	_, opencode, _, _ := runtimeConfigs("ns", "rt-1", open)
 	var decoded map[string]any
 	if err := json.Unmarshal([]byte(opencode), &decoded); err != nil {
 		t.Fatal(err)

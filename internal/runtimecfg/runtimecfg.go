@@ -113,6 +113,7 @@ var reservedConfig = map[string][]string{
 	runtimetype.OpenCode: {"mcp", "provider", "model"},
 	runtimetype.Hermes:   {"mcp_servers", "model"},
 	runtimetype.QwenPaw:  {"providers", "active_model"},
+	runtimetype.QwenCode: {"mcpServers", "model"},
 }
 
 // Validate rejects an overlay the platform would have to drop or that would break

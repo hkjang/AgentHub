@@ -38,25 +38,35 @@ func DefaultBaseImage() string {
 	return "agenthub-base:v" + strings.TrimSuffix(buildinfo.BaseVersion, "-dev")
 }
 
-// EnvDefaultLangflowImage overrides the Langflow runtime image the same way
-// EnvDefaultRuntimeImage overrides the shared one.
-const EnvDefaultLangflowImage = "AGENTHUB_DEFAULT_LANGFLOW_IMAGE"
+// EnvDefaultLangflowImage and EnvDefaultQwenCodeImage override the images of the
+// runtimes that do not boot from the shared one, the same way
+// EnvDefaultBaseImage overrides it.
+const (
+	EnvDefaultLangflowImage = "AGENTHUB_DEFAULT_LANGFLOW_IMAGE"
+	EnvDefaultQwenCodeImage = "AGENTHUB_DEFAULT_QWENCODE_IMAGE"
+)
 
 // DefaultRuntimeImage is the image a runtime of this type starts from when no
 // administrator has approved one.
 //
-// Langflow does not boot from the shared base image: it is published as its own
-// archive with its own version, because it carries a Python tree and a built
-// frontend no other adapter needs. Sending a Langflow agent to agenthub-base
-// would leave it looking for a binary that image has never contained.
+// Langflow and Qwen Code do not boot from the shared base image: each is
+// published as its own archive with its own version, because each carries a
+// runtime tree no other adapter needs. Sending one of their agents to
+// agenthub-base would leave it looking for a binary that image never contained.
 func DefaultRuntimeImage(runtimeType string) string {
-	if runtimeType != runtimetype.Langflow {
-		return DefaultBaseImage()
+	switch runtimeType {
+	case runtimetype.Langflow:
+		if override := strings.TrimSpace(os.Getenv(EnvDefaultLangflowImage)); override != "" {
+			return override
+		}
+		return "agenthub-langflow:v" + strings.TrimSuffix(buildinfo.LangflowVersion, "-dev")
+	case runtimetype.QwenCode:
+		if override := strings.TrimSpace(os.Getenv(EnvDefaultQwenCodeImage)); override != "" {
+			return override
+		}
+		return "agenthub-qwencode:v" + strings.TrimSuffix(buildinfo.QwenCodeVersion, "-dev")
 	}
-	if override := strings.TrimSpace(os.Getenv(EnvDefaultLangflowImage)); override != "" {
-		return override
-	}
-	return "agenthub-langflow:v" + strings.TrimSuffix(buildinfo.LangflowVersion, "-dev")
+	return DefaultBaseImage()
 }
 
 // EnvSidecarImage names the image AgentHub's own sidecars run. Deployments that
@@ -185,6 +195,25 @@ type Connection struct {
 	Token       string
 }
 
+// ExecRequest is one command to run inside a runtime.
+type ExecRequest struct {
+	// Command is argv. It is never a shell string: the platform builds it from
+	// its own settings, and a shell would invite quoting bugs where a task title
+	// becomes a command.
+	Command []string
+	// Container defaults to the agent container.
+	Container string
+	// Stdin is fed to the command when it is not empty.
+	Stdin string
+}
+
+// ExecResult is what the command said and how it ended.
+type ExecResult struct {
+	Stdout   string
+	Stderr   string
+	ExitCode int
+}
+
 type SnapshotSpec struct {
 	Name      string
 	PVCName   string
@@ -206,6 +235,10 @@ type Spawner interface {
 	Status(context.Context, Spec) (Status, error)
 	Logs(context.Context, Spec, int64) ([]byte, error)
 	Connection(context.Context, Spec) (Connection, error)
+	// Exec runs a command inside a running runtime's agent container. It is what
+	// lets the execution plane drive a runtime whose agent is a command-line
+	// program with no API of its own.
+	Exec(context.Context, Spec, ExecRequest) (ExecResult, error)
 	Snapshot(context.Context, SnapshotSpec) error
 	SnapshotStatus(context.Context, SnapshotSpec) (string, int64, error)
 }
@@ -236,6 +269,9 @@ func (DisabledSpawner) Logs(context.Context, Spec, int64) ([]byte, error) {
 }
 func (DisabledSpawner) Connection(context.Context, Spec) (Connection, error) {
 	return Connection{}, ErrNotConfigured
+}
+func (DisabledSpawner) Exec(context.Context, Spec, ExecRequest) (ExecResult, error) {
+	return ExecResult{}, ErrNotConfigured
 }
 func (DisabledSpawner) Snapshot(context.Context, SnapshotSpec) error { return ErrNotConfigured }
 func (DisabledSpawner) SnapshotStatus(context.Context, SnapshotSpec) (string, int64, error) {

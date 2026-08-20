@@ -36,7 +36,7 @@ func TestLiveFlowRun(t *testing.T) {
 	goal := store.AgentGoal{Runner: store.RunnerFlow, FlowID: flowID}
 	task := store.AgentTask{ID: "live-task", Title: "라이브 확인", Input: "흐름이 응답하는지 확인합니다"}
 
-	answer, usage, err := orchestrator.callFlow(context.Background(), connection, goal, task, flowInput(task, goal))
+	answer, usage, err := orchestrator.callFlow(context.Background(), connection, goal, task, runnerInput(task, goal))
 	if err != nil {
 		t.Fatalf("the flow did not run: %v", err)
 	}

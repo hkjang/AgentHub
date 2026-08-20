@@ -48,9 +48,10 @@ export type AgentGoal = {
   keepWarmSeconds: number
   resumeFromCheckpoint: boolean
   tokenBudget: number
-  runner: 'prose' | 'flow'
+  runner: 'prose' | 'flow' | 'cli'
   flowId: string
   flowOutputComponent: string
+  cliApprovalMode: 'plan' | 'default' | 'auto-edit' | 'auto' | 'yolo'
 }
 export type RuntimeFlow = { id:string; name:string; description?:string; endpointName?:string; mcpEnabled?:boolean }
 export type UsageBudget = { windowDays:number; tokenBudget:number; tokensUsed:number; costBudget:number; costUsed:number; currency:string; maxRunning:number; runningNow:number }

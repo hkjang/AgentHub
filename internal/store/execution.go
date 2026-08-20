@@ -81,6 +81,11 @@ type AgentGoal struct {
 	// FlowOutputComponent picks which output to read when a flow has several.
 	// Empty takes the flow's own answer.
 	FlowOutputComponent string `json:"flowOutputComponent"`
+	// CLIApprovalMode is how much the runtime's own agent may do without asking
+	// when it runs a task unattended. It is stored rather than defaulted at the
+	// call site because the difference between "plan" and "yolo" is the difference
+	// between a report and a changed repository.
+	CLIApprovalMode string `json:"cliApprovalMode"`
 }
 
 // The two places a task's work can happen.
@@ -89,6 +94,8 @@ const (
 	RunnerProse = "prose"
 	// RunnerFlow hands the task to a flow the runtime holds and keeps its answer.
 	RunnerFlow = "flow"
+	// RunnerCLI runs the runtime's own agent headlessly, in its own workspace.
+	RunnerCLI = "cli"
 )
 
 // DefaultAgentGoal is what an agent without an explicit goal runs with, so a
@@ -101,7 +108,7 @@ func DefaultAgentGoal(agentID string) AgentGoal {
 		CompletionStrategy: "agent", ConcurrencyPolicy: "queue", MaxConcurrentRuns: 1,
 		PlannerMode: "native", ApprovalRequired: false, MaxDelegationDepth: 0,
 		WarmupSeconds: 0, KeepWarmSeconds: 0, ResumeFromCheckpoint: true,
-		Runner: RunnerProse,
+		Runner: RunnerProse, CLIApprovalMode: "default",
 	}
 }
 
@@ -227,8 +234,8 @@ type AgentArtifact struct {
 func (s *Store) AgentGoalByID(ctx context.Context, agentID string) (AgentGoal, error) {
 	item := AgentGoal{AgentID: agentID}
 	var success, failure []byte
-	err := s.pool.QueryRow(ctx, `SELECT description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint,token_budget,runner,flow_id,flow_output_component FROM agent_goals WHERE agent_id=$1`, agentID).
-		Scan(&item.Description, &success, &failure, &item.Constraints, &item.MaxSteps, &item.MaxToolCalls, &item.MaxDurationSeconds, &item.MaxRetries, &item.StartOnDemand, &item.StopAfterTask, &item.CompletionStrategy, &item.ConcurrencyPolicy, &item.MaxConcurrentRuns, &item.PlannerMode, &item.ApprovalRequired, &item.MaxDelegationDepth, &item.WarmupSeconds, &item.KeepWarmSeconds, &item.ResumeFromCheckpoint, &item.TokenBudget, &item.Runner, &item.FlowID, &item.FlowOutputComponent)
+	err := s.pool.QueryRow(ctx, `SELECT description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint,token_budget,runner,flow_id,flow_output_component,cli_approval_mode FROM agent_goals WHERE agent_id=$1`, agentID).
+		Scan(&item.Description, &success, &failure, &item.Constraints, &item.MaxSteps, &item.MaxToolCalls, &item.MaxDurationSeconds, &item.MaxRetries, &item.StartOnDemand, &item.StopAfterTask, &item.CompletionStrategy, &item.ConcurrencyPolicy, &item.MaxConcurrentRuns, &item.PlannerMode, &item.ApprovalRequired, &item.MaxDelegationDepth, &item.WarmupSeconds, &item.KeepWarmSeconds, &item.ResumeFromCheckpoint, &item.TokenBudget, &item.Runner, &item.FlowID, &item.FlowOutputComponent, &item.CLIApprovalMode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DefaultAgentGoal(agentID), nil
 	}
@@ -249,10 +256,10 @@ func (s *Store) AgentGoalByID(ctx context.Context, agentID string) (AgentGoal, e
 func (s *Store) PutAgentGoal(ctx context.Context, item AgentGoal) (AgentGoal, error) {
 	success, _ := json.Marshal(item.SuccessCriteria)
 	failure, _ := json.Marshal(item.FailureCriteria)
-	_, err := s.pool.Exec(ctx, `INSERT INTO agent_goals(agent_id,description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint,token_budget,runner,flow_id,flow_output_component)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
-		ON CONFLICT(agent_id) DO UPDATE SET description=excluded.description,success_criteria=excluded.success_criteria,failure_criteria=excluded.failure_criteria,constraints=excluded.constraints,max_steps=excluded.max_steps,max_tool_calls=excluded.max_tool_calls,max_duration_seconds=excluded.max_duration_seconds,max_retries=excluded.max_retries,start_on_demand=excluded.start_on_demand,stop_after_task=excluded.stop_after_task,completion_strategy=excluded.completion_strategy,concurrency_policy=excluded.concurrency_policy,max_concurrent_runs=excluded.max_concurrent_runs,planner_mode=excluded.planner_mode,approval_required=excluded.approval_required,max_delegation_depth=excluded.max_delegation_depth,warmup_seconds=excluded.warmup_seconds,keep_warm_seconds=excluded.keep_warm_seconds,resume_from_checkpoint=excluded.resume_from_checkpoint,token_budget=excluded.token_budget,runner=excluded.runner,flow_id=excluded.flow_id,flow_output_component=excluded.flow_output_component,updated_at=now()`,
-		item.AgentID, item.Description, success, failure, item.Constraints, item.MaxSteps, item.MaxToolCalls, item.MaxDurationSeconds, item.MaxRetries, item.StartOnDemand, item.StopAfterTask, item.CompletionStrategy, item.ConcurrencyPolicy, item.MaxConcurrentRuns, item.PlannerMode, item.ApprovalRequired, item.MaxDelegationDepth, item.WarmupSeconds, item.KeepWarmSeconds, item.ResumeFromCheckpoint, item.TokenBudget, runnerOrDefault(item.Runner), item.FlowID, item.FlowOutputComponent)
+	_, err := s.pool.Exec(ctx, `INSERT INTO agent_goals(agent_id,description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint,token_budget,runner,flow_id,flow_output_component,cli_approval_mode)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+		ON CONFLICT(agent_id) DO UPDATE SET description=excluded.description,success_criteria=excluded.success_criteria,failure_criteria=excluded.failure_criteria,constraints=excluded.constraints,max_steps=excluded.max_steps,max_tool_calls=excluded.max_tool_calls,max_duration_seconds=excluded.max_duration_seconds,max_retries=excluded.max_retries,start_on_demand=excluded.start_on_demand,stop_after_task=excluded.stop_after_task,completion_strategy=excluded.completion_strategy,concurrency_policy=excluded.concurrency_policy,max_concurrent_runs=excluded.max_concurrent_runs,planner_mode=excluded.planner_mode,approval_required=excluded.approval_required,max_delegation_depth=excluded.max_delegation_depth,warmup_seconds=excluded.warmup_seconds,keep_warm_seconds=excluded.keep_warm_seconds,resume_from_checkpoint=excluded.resume_from_checkpoint,token_budget=excluded.token_budget,runner=excluded.runner,flow_id=excluded.flow_id,flow_output_component=excluded.flow_output_component,cli_approval_mode=excluded.cli_approval_mode,updated_at=now()`,
+		item.AgentID, item.Description, success, failure, item.Constraints, item.MaxSteps, item.MaxToolCalls, item.MaxDurationSeconds, item.MaxRetries, item.StartOnDemand, item.StopAfterTask, item.CompletionStrategy, item.ConcurrencyPolicy, item.MaxConcurrentRuns, item.PlannerMode, item.ApprovalRequired, item.MaxDelegationDepth, item.WarmupSeconds, item.KeepWarmSeconds, item.ResumeFromCheckpoint, item.TokenBudget, runnerOrDefault(item.Runner), item.FlowID, item.FlowOutputComponent, cliApprovalOrDefault(item.CLIApprovalMode))
 	if err != nil {
 		return AgentGoal{}, err
 	}
@@ -263,10 +270,22 @@ func (s *Store) PutAgentGoal(ctx context.Context, item AgentGoal) (AgentGoal, er
 // only sets the fields it cares about — on the prose loop rather than failing the
 // CHECK constraint with an empty string.
 func runnerOrDefault(value string) string {
-	if value == RunnerFlow {
-		return RunnerFlow
+	switch value {
+	case RunnerFlow, RunnerCLI:
+		return value
 	}
 	return RunnerProse
+}
+
+// cliApprovalOrDefault keeps a goal written without one on the runtime's own
+// default, which asks before it changes anything. Defaulting the other way would
+// make an unattended agent edit a repository because a field was omitted.
+func cliApprovalOrDefault(value string) string {
+	switch value {
+	case "plan", "default", "auto-edit", "auto", "yolo":
+		return value
+	}
+	return "default"
 }
 
 func (s *Store) SetAgentExecutionMode(ctx context.Context, agentID, ownerID string, admin bool, mode string) error {

@@ -14,6 +14,9 @@ var (
 	// Langflow ships its own Python tree and frontend, so it is built and
 	// published apart from the shared base image and moves on its own schedule.
 	LangflowVersion = "0.1.0-dev"
+	// QwenCodeVersion is the Qwen Code runtime image this control plane expects.
+	// Like Langflow's, it is built and published apart from the shared base image.
+	QwenCodeVersion = "0.1.0-dev"
 )
 
 type Info struct {
@@ -23,8 +26,9 @@ type Info struct {
 	BuildTime       string `json:"buildTime"`
 	BaseVersion     string `json:"baseVersion"`
 	LangflowVersion string `json:"langflowVersion"`
+	QwenCodeVersion string `json:"qwenCodeVersion"`
 }
 
 func Current() Info {
-	return Info{Name: "AgentHub", Version: Version, Commit: Commit, BuildTime: BuildTime, BaseVersion: BaseVersion, LangflowVersion: LangflowVersion}
+	return Info{Name: "AgentHub", Version: Version, Commit: Commit, BuildTime: BuildTime, BaseVersion: BaseVersion, LangflowVersion: LangflowVersion, QwenCodeVersion: QwenCodeVersion}
 }

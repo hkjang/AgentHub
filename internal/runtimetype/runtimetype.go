@@ -7,6 +7,7 @@ const (
 	OpenCode = "opencode"
 	Hermes   = "hermes"
 	QwenPaw  = "qwenpaw"
+	QwenCode = "qwencode"
 	Langflow = "langflow"
 	Custom   = "custom"
 )
@@ -14,7 +15,7 @@ const (
 // Supported lists every runtime type accepted by the API, the database check
 // constraints and the AgentRuntime CRD enum. Keep this in sync with
 // deploy/kubernetes/crd.yaml and the runtime_type CHECK constraints.
-var Supported = []string{OpenCode, Hermes, QwenPaw, Langflow, Custom}
+var Supported = []string{OpenCode, Hermes, QwenPaw, QwenCode, Langflow, Custom}
 
 // IsSupported reports whether value names a runtime adapter AgentHub can spawn.
 func IsSupported(value string) bool {
@@ -33,6 +34,9 @@ func Port(value string) int32 {
 		return 8642
 	case Langflow:
 		return 7860
+	case QwenCode:
+		// ttyd, which is what puts the agent's terminal in a browser.
+		return 7681
 	}
 	return 4096
 }
@@ -48,7 +52,7 @@ const GatewayPort int32 = 9119
 // it with automatic login — its visual editor would otherwise be open to anyone
 // who reached the port.
 func UsesGatewayProxy(value string) bool {
-	return value == Hermes || value == QwenPaw || value == Langflow
+	return value == Hermes || value == QwenPaw || value == Langflow || value == QwenCode
 }
 
 // HostSessionOnly reports that a browser session for this runtime needs an
