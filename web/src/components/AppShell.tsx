@@ -45,6 +45,7 @@ const groups: NavGroup[] = [
     { to: '/admin/runtime-profiles', label: '런타임 프로파일', icon: Bot, keywords: 'runtime profile cpu memory 자원' },
     { to: '/admin/runtime-images', label: '런타임 이미지', icon: Boxes, keywords: 'runtime image registry 이미지' },
     { to: '/admin/models', label: '모델 엔드포인트', icon: Sparkles, keywords: 'model endpoint llm vllm ollama 모델' },
+    { to: '/admin/external-apps', label: '외부 앱', icon: Sparkles, keywords: 'dify external app workflow 외부 앱 연동' },
     { to: '/admin/mcp', label: 'MCP 서버', icon: Network, keywords: 'mcp server 서버' },
     { to: '/admin/mcp-bundles', label: 'MCP 번들 관리', icon: Boxes, keywords: 'mcp bundle 번들' },
     { to: '/admin/users', label: '사용자 · 팀', icon: UsersRound, keywords: 'user team role 권한 사용자' },

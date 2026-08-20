@@ -297,6 +297,36 @@ stdout is empty and the explanation is a JSON object on stderr, so both streams
 are read — recording "no output" for a run that stopped for a reportable reason
 would waste the person's time.
 
+## Calling an application the platform does not run
+
+Some products are not one container. Dify is a dozen services — api, worker,
+beat, web, a plugin daemon, sandboxes, a proxy, PostgreSQL, Redis and a vector
+store — and reproducing that topology inside a Pod would mean carrying a fork of
+somebody else's deployment and following it every release. What a site has is a
+Dify they already run.
+
+So `external_apps` holds an address, a credential and enough about the API to
+call it correctly, administered like the model endpoints are. A Goal with
+`runner: 'dify'` names one, and the task becomes a call: `POST /v1/workflows/run`
+for a workflow app, `POST /v1/chat-messages` for a chat app, authenticated with
+the app's own key. The kind is stored rather than guessed because the two answer
+differently — one returns named outputs, the other an answer — and a workflow
+that failed says so in its body with HTTP 200, so the status is read rather than
+inferred from the code.
+
+This is the only backend that starts nothing: no Pod, no runtime, and therefore
+no dependence on the agent's runtime type. What the platform still keeps is
+everything around the call — the content scanner on the way out and back, the run
+record and its step, the artifacts and memories the answer declares, the
+completion verdict, the quota and the audit trail.
+
+Two things are deliberately not claimed. The tokens the app reports are recorded
+as the app reported them and kept out of the platform's own metering, because
+they were bought against that deployment's model provider rather than the
+endpoint this platform holds. And a workflow's outputs are whatever its author
+named them, so a single output is used as it is and several are kept together
+with their names rather than one being picked and the rest dropped.
+
 ## Running a flow instead of reasoning
 
 The prose loop above is a compromise the platform makes because it cannot reach

@@ -164,6 +164,7 @@ func (s *Server) apiRoutes() []Route {
 		write(http.MethodDelete, "/mcp-policies/{id}", "Agents", "Delete an MCP tool policy", s.deleteAgentMCPPolicy),
 		read("/agents/{id}/memories", "Agents", "Read an Agent's stored memories", s.agentMemories),
 		read("/agents/{id}/flows", "Agents", "List the flows the Agent's runtime holds", s.agentFlows),
+		read("/external-apps", "Platform", "Applications a Goal can send work to", s.externalApps),
 		write(http.MethodDelete, "/memories/{id}", "Agents", "Delete a stored memory", s.deleteMemory),
 
 		// --- Runtimes ---
@@ -277,6 +278,9 @@ func (s *Server) apiRoutes() []Route {
 		admin(http.MethodGet, "/admin/runtime-images", "Administration", "List runtime images", s.adminRuntimeImages),
 		admin(http.MethodPost, "/admin/runtime-images", "Administration", "Create or update a runtime image", s.saveRuntimeImage),
 		admin(http.MethodDelete, "/admin/runtime-images/{id}", "Administration", "Delete a runtime image", s.deleteAdminResource("runtime-images")),
+		admin(http.MethodGet, "/admin/external-apps", "Administration", "List applications the platform drives but does not run", s.adminExternalApps),
+		admin(http.MethodPost, "/admin/external-apps", "Administration", "Create or update an external application", s.saveExternalApp),
+		admin(http.MethodDelete, "/admin/external-apps/{id}", "Administration", "Delete an external application", s.deleteExternalApp),
 		admin(http.MethodGet, "/admin/models", "Administration", "List model endpoints", s.adminModels),
 		admin(http.MethodPost, "/admin/models", "Administration", "Create or update a model endpoint", s.saveModel),
 		admin(http.MethodDelete, "/admin/models/{id}", "Administration", "Delete a model endpoint", s.deleteAdminResource("models")),

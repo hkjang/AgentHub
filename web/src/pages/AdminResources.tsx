@@ -12,7 +12,7 @@ import {
 } from "../components/UI";
 import { RUNTIME_TYPES, runtimeLabel } from "../runtime";
 
-type Kind = "profiles" | "images" | "models" | "mcp" | "bundles";
+type Kind = "profiles" | "images" | "models" | "apps" | "mcp" | "bundles";
 type Item = Record<string, unknown> & {
   id: string;
   name: string;
@@ -41,6 +41,13 @@ const meta: Record<
     title: "모델 엔드포인트",
     description: "사내 vLLM, Ollama와 OpenAI-compatible 모델 연결입니다.",
     endpoint: "models",
+    icon: Sparkles,
+  },
+  apps: {
+    title: "외부 앱",
+    description:
+      "플랫폼이 실행하지는 않지만 작업을 맡길 수 있는 애플리케이션입니다. 사내에 이미 돌고 있는 Dify 앱을 연결하면, 작업 대기열이 그 앱을 호출하고 결과를 실행 기록에 남깁니다.",
+    endpoint: "external-apps",
     icon: Sparkles,
   },
   mcp: {
@@ -196,6 +203,7 @@ function summary(kind: Kind, item: Item) {
     return String(item.description || "표준 Runtime 자원");
   if (kind === "images") return String(item.image || "");
   if (kind === "models") return String(item.baseUrl || "");
+  if (kind === "apps") return String(item.description || item.baseUrl || "");
   return String(item.description || item.endpoint || "MCP 구성");
 }
 function facts(kind: Kind, item: Item): [string, unknown][] {
@@ -222,6 +230,13 @@ function facts(kind: Kind, item: Item): [string, unknown][] {
           ? `입력 ${item.inputPricePerMTok} / 출력 ${item.outputPricePerMTok} ${item.currency ?? ""}`
           : "미산정",
       ],
+    ];
+  if (kind === "apps")
+    return [
+      ["Provider", item.provider],
+      ["종류", item.appKind === "chat" ? "Chat 앱" : "Workflow 앱"],
+      ["API 키", item.secretConfigured ? "설정됨" : "없음"],
+      ["상태", item.enabled ? "Enabled" : "Disabled"],
     ];
   if (kind === "bundles")
     return [
@@ -546,6 +561,51 @@ function ResourceDrawer({
               form={form}
               update={update}
             />
+          </>
+        )}
+        {kind === "apps" && (
+          <>
+            <label>
+              <span>
+                Base URL <b>*</b>
+              </span>
+              <input
+                required
+                type="url"
+                value={field("baseUrl")}
+                onChange={(e) => update("baseUrl", e.target.value)}
+                placeholder="https://dify.internal"
+              />
+              <small>Dify 주소입니다. /v1 은 붙이지 않아도 됩니다.</small>
+            </label>
+            <label>
+              <span>앱 종류</span>
+              <select
+                value={field("appKind") || "workflow"}
+                onChange={(e) => update("appKind", e.target.value)}
+              >
+                <option value="workflow">Workflow — 입력 변수를 받아 결과를 돌려줍니다</option>
+                <option value="chat">Chat — 질문을 보내고 답변을 받습니다</option>
+              </select>
+            </label>
+            <label>
+              <span>API 키 <b>*</b></span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                onChange={(e) => update("secret", e.target.value)}
+                placeholder="app-..."
+              />
+              <small>Dify 앱마다 발급되는 키입니다. 저장 후에는 다시 보이지 않으며, 비워 두면 기존 키가 유지됩니다.</small>
+            </label>
+            <label>
+              <span>설명</span>
+              <input
+                value={field("description")}
+                onChange={(e) => update("description", e.target.value)}
+                placeholder="예) 고객 문의 분류 워크플로"
+              />
+            </label>
           </>
         )}
         {kind === "models" && (

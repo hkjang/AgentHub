@@ -48,12 +48,15 @@ export type AgentGoal = {
   keepWarmSeconds: number
   resumeFromCheckpoint: boolean
   tokenBudget: number
-  runner: 'prose' | 'flow' | 'cli'
+  runner: 'prose' | 'flow' | 'cli' | 'dify'
   flowId: string
   flowOutputComponent: string
   cliApprovalMode: 'plan' | 'default' | 'auto-edit' | 'auto' | 'yolo'
+  externalAppId: string
+  externalInputKey: string
 }
 export type RuntimeFlow = { id:string; name:string; description?:string; endpointName?:string; mcpEnabled?:boolean }
+export type ExternalApp = { id:string; name:string; provider:string; baseUrl:string; appKind:'workflow'|'chat'; description?:string; enabled:boolean; secretConfigured?:boolean }
 export type UsageBudget = { windowDays:number; tokenBudget:number; tokensUsed:number; costBudget:number; costUsed:number; currency:string; maxRunning:number; runningNow:number }
 export type QueueSnapshot = { ready:number; running:number; workers:number; status:Record<string,number> }
 export type WarmRuntime = { runtimeId:string; agentId:string; agentName:string; status:string; warmUntil:string }

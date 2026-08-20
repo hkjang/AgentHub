@@ -111,7 +111,7 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 	if goal.Runner == "" {
 		goal.Runner = store.RunnerProse
 	}
-	if goal.Runner != store.RunnerProse && goal.Runner != store.RunnerFlow && goal.Runner != store.RunnerCLI {
+	if !contains([]string{store.RunnerProse, store.RunnerFlow, store.RunnerCLI, store.RunnerDify}, goal.Runner) {
 		return errors.New("실행 방식을 확인해 주세요")
 	}
 	// Kept whatever the runner is, so switching back and forth in the console does
@@ -124,7 +124,21 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 	if !contains(execution.CLIApprovalModes, goal.CLIApprovalMode) {
 		return errors.New("에이전트 승인 모드를 확인해 주세요")
 	}
+	goal.ExternalAppID = strings.TrimSpace(goal.ExternalAppID)
+	goal.ExternalInputKey = strings.TrimSpace(goal.ExternalInputKey)
 	if goal.Runner == store.RunnerProse {
+		return nil
+	}
+	// An external application is the one backend that starts nothing here: the
+	// work happens in a system the site already runs, so this Goal needs no
+	// runtime and says nothing about the agent's runtime type.
+	if goal.Runner == store.RunnerDify {
+		if goal.ExternalAppID == "" {
+			return errors.New("실행할 외부 앱을 선택해 주세요")
+		}
+		if len(goal.ExternalInputKey) > 100 {
+			return errors.New("입력 변수 이름이 너무 깁니다")
+		}
 		return nil
 	}
 	descriptor := runtimetype.Describe(runtimeType)

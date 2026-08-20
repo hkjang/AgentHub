@@ -219,6 +219,12 @@ func (o *Orchestrator) run(ctx context.Context, run *store.AgentRun, task store.
 			return outcome
 		}
 		return o.evaluate(ctx, run, task, agent, goal, model, transcript)
+	case store.RunnerDify:
+		transcript, outcome := o.runExternalApp(ctx, run, task, agent, goal)
+		if outcome.Status != "" {
+			return outcome
+		}
+		return o.evaluate(ctx, run, task, agent, goal, model, transcript)
 	}
 
 	plan := ""

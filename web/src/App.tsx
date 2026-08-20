@@ -97,6 +97,7 @@ export function App() {
         <Route path="admin/runtime-profiles" element={<AdminResources kind="profiles" />} />
         <Route path="admin/runtime-images" element={<AdminResources kind="images" />} />
         <Route path="admin/models" element={<AdminResources kind="models" />} />
+        <Route path="admin/external-apps" element={<AdminResources kind="apps" />} />
         <Route path="admin/mcp" element={<AdminResources kind="mcp" />} />
         <Route path="admin/mcp-bundles" element={<AdminResources kind="bundles" />} />
         <Route path="admin/users" element={<AdminUsers />} />

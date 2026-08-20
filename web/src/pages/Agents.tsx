@@ -5,7 +5,7 @@ import { useAuth } from '../App'
 import { api } from '../api'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, GuidePanel, Loading, PageHeader, StatusBadge } from '../components/UI'
 import { RUNTIME_TYPES, descriptor, relativeTime, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
-import type { Agent, AgentGoal, AgentMemory, AgentRelease, AgentTrigger, AgentVersion, ExecutionMode, MCPBundle, MCPServerRef, MCPToolPolicy, ModelEndpoint, RuntimeFlow, RuntimeProfile, Workspace } from '../types'
+import type { Agent, AgentGoal, AgentMemory, AgentRelease, AgentTrigger, AgentVersion, ExecutionMode, ExternalApp, MCPBundle, MCPServerRef, MCPToolPolicy, ModelEndpoint, RuntimeFlow, RuntimeProfile, Workspace } from '../types'
 
 export function Agents({runtimeOnly=false}:{runtimeOnly?:boolean}) {
   const [agents,setAgents]=useState<Agent[]|null>(null)
@@ -261,19 +261,23 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
   const [policies,setPolicies]=useState<MCPToolPolicy[]>([])
   const [mcpServers,setMcpServers]=useState<MCPServerRef[]>([])
   const [flows,setFlows]=useState<RuntimeFlow[]>([])
+  const [apps,setApps]=useState<ExternalApp[]>([])
   const [flowError,setFlowError]=useState('')
   const [flowBusy,setFlowBusy]=useState(false)
 
   const load=useCallback(async()=>{
     try{
-      const [goalResult,triggerResult,memoryResult,policyResult]=await Promise.all([
+      const [goalResult,triggerResult,memoryResult,policyResult,appResult]=await Promise.all([
         api.get<{goal:AgentGoal;executionMode:ExecutionMode}>(`/api/v1/agents/${agent.id}/goal`),
         api.get<{items?:AgentTrigger[]}>(`/api/v1/agents/${agent.id}/triggers`),
         api.get<{items?:AgentMemory[]}>(`/api/v1/agents/${agent.id}/memories`),
         api.get<{items?:MCPToolPolicy[];servers?:MCPServerRef[]}>(`/api/v1/agents/${agent.id}/mcp-policies`),
+        // Offered to every agent: an external application runs somewhere the
+        // platform does not, so it does not depend on this agent's runtime.
+        api.get<{items?:ExternalApp[]}>('/api/v1/external-apps'),
       ])
       setGoal(goalResult.goal); setMode(goalResult.executionMode); setTriggers(triggerResult.items??[]); setMemories(memoryResult.items??[])
-      setPolicies(policyResult.items??[]); setMcpServers(policyResult.servers??[])
+      setPolicies(policyResult.items??[]); setMcpServers(policyResult.servers??[]); setApps(appResult.items??[])
     }catch(e){ setError(e instanceof Error?e.message:'목표 설정을 불러오지 못했습니다.') }
   },[agent.id])
   useEffect(()=>{void load()},[load])
@@ -363,19 +367,35 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
       </label>
       <label><span>제약</span><textarea rows={2} value={goal.constraints} onChange={(e)=>update({constraints:e.target.value})} placeholder="예) 운영 DB에 쓰기 금지"/></label>
 
-      {(descriptor(agent.runtimeType).flowExecution||descriptor(agent.runtimeType).cliExecution)&&<fieldset><legend>실행 방식</legend>
+      {(descriptor(agent.runtimeType).flowExecution||descriptor(agent.runtimeType).cliExecution||apps.length>0)&&<fieldset><legend>실행 방식</legend>
         <label><span>자동 실행이 하는 일</span>
           <select value={goal.runner??'prose'} onChange={(e)=>update({runner:e.target.value as AgentGoal['runner']})}>
             <option value="prose">추론 루프 — 모델과 대화하며 진행하고, 런타임 작업은 사람에게 인계</option>
             {descriptor(agent.runtimeType).flowExecution&&<option value="flow">흐름 실행 — Runtime에 저장된 Langflow 흐름을 실행하고 결과를 기록</option>}
             {descriptor(agent.runtimeType).cliExecution&&<option value="cli">에이전트 실행 — Runtime의 코딩 에이전트가 작업공간에서 직접 수행</option>}
+            {apps.length>0&&<option value="dify">외부 앱 실행 — 사내에 이미 있는 앱(Dify 등)에 작업을 맡김</option>}
           </select>
-          <small>{goal.runner==='flow'
+          <small>{goal.runner==='dify'
+            ?'플랫폼은 이 앱을 실행하지 않고 호출만 합니다. Runtime을 띄우지 않으며, 앱 안에서 일어나는 모델 호출은 그 배포의 몫이라 플랫폼 토큰 집계에 넣지 않습니다.'
+            :goal.runner==='flow'
             ?'작업 입력이 흐름의 입력으로 들어가고, 흐름의 출력이 실행 기록과 완료 판정에 사용됩니다. 흐름 안에서 일어나는 모델 호출은 플랫폼이 계량하지 않습니다.'
             :goal.runner==='cli'
             ?'런타임의 에이전트를 헤드리스로 실행합니다. 최대 단계·도구 호출·실행 시간이 에이전트 자체 예산으로 전달되고, 토큰 사용량은 실제 값이 기록됩니다.'
             :'기존 방식입니다. 파일 편집이나 명령 실행이 필요하면 사람에게 인계합니다.'}</small>
         </label>
+        {goal.runner==='dify'&&<>
+          <label><span>외부 앱</span>
+            <select value={goal.externalAppId??''} onChange={(e)=>update({externalAppId:e.target.value})}>
+              <option value="">선택하세요</option>
+              {apps.map((app)=><option key={app.id} value={app.id}>{app.name} · {app.appKind==='chat'?'Chat':'Workflow'}</option>)}
+            </select>
+            <small>관리자 ▸ 리소스 ▸ 외부 앱에서 등록한 앱입니다. API 키는 플랫폼이 보관하고 화면에 다시 보여주지 않습니다.</small>
+          </label>
+          {apps.find((app)=>app.id===goal.externalAppId)?.appKind!=='chat'&&<label><span>입력 변수 이름 (선택)</span>
+            <input value={goal.externalInputKey??''} onChange={(e)=>update({externalInputKey:e.target.value.trim()})} placeholder="예) query"/>
+            <small>Workflow 앱은 이름 붙은 입력을 받습니다. 앱에서 정의한 변수 이름을 넣으세요. 비우면 <code>input</code> 을 사용합니다.</small>
+          </label>}
+        </>}
         {goal.runner==='cli'&&<>
           <label><span>에이전트 승인 모드</span>
             <select value={goal.cliApprovalMode??'default'} onChange={(e)=>update({cliApprovalMode:e.target.value as AgentGoal['cliApprovalMode']})}>
