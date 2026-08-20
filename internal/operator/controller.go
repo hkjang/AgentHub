@@ -21,6 +21,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -95,6 +96,9 @@ func (c *Controller) periodicReconcile(ctx context.Context) {
 				if err := c.Reconcile(ctx, &items.Items[i]); err != nil {
 					c.logger.Warn("periodic reconcile failed", "name", items.Items[i].GetName(), "error", err)
 				}
+			}
+			if err := c.sweepClusterRead(ctx, items); err != nil {
+				c.logger.Warn("sweep cluster read grants", "error", err)
 			}
 		}
 	}
@@ -255,6 +259,7 @@ type spec struct {
 		AllowPrivilegeEscalation     bool   `json:"allowPrivilegeEscalation"`
 		AutomountServiceAccountToken bool   `json:"automountServiceAccountToken"`
 		SeccompProfile               string `json:"seccompProfile"`
+		ClusterRead                  bool   `json:"clusterRead"`
 	} `json:"security"`
 	Network struct {
 		DefaultDeny         bool     `json:"defaultDeny"`
@@ -596,6 +601,9 @@ const (
 	configGoose    = "goose-config.yaml"
 	configHolmes   = "holmes-config.yaml"
 	configBcode    = "bcode.json"
+	// The kubeconfig a runtime granted cluster read uses. Generated for every
+	// runtime and read only by those, because the ConfigMap is built in one place.
+	configKubeconfig = "cluster.kubeconfig"
 )
 
 // browserCodeInstructions is where the image keeps the note telling the agent
@@ -803,13 +811,14 @@ func runtimeConfigs(ns, runtimeName string, value spec) map[string]string {
 	holmesRaw, _ := json.MarshalIndent(holmes, "", "  ")
 	bcodeRaw, _ := json.MarshalIndent(bcode, "", "  ")
 	return map[string]string{
-		configRuntime:  string(runtimeRaw),
-		configOpenCode: string(openRaw),
-		configHermes:   string(hermesRaw),
-		configQwen:     string(qwenRaw),
-		configGoose:    string(gooseRaw),
-		configHolmes:   string(holmesRaw),
-		configBcode:    string(bcodeRaw),
+		configRuntime:    string(runtimeRaw),
+		configOpenCode:   string(openRaw),
+		configHermes:     string(hermesRaw),
+		configQwen:       string(qwenRaw),
+		configGoose:      string(gooseRaw),
+		configHolmes:     string(holmesRaw),
+		configBcode:      string(bcodeRaw),
+		configKubeconfig: clusterReadKubeconfig(ns),
 	}
 }
 
@@ -838,6 +847,9 @@ func (c *Controller) Reconcile(ctx context.Context, object *unstructured.Unstruc
 		return c.updateStatus(ctx, object, "Stopped", "", "", 0, "")
 	}
 	if err := c.ensureServiceAccount(ctx, namespace, name, object); err != nil {
+		return err
+	}
+	if err := c.ensureClusterRead(ctx, namespace, name, value, object); err != nil {
 		return err
 	}
 	if err := c.ensureSecret(ctx, namespace, name, object); err != nil {
@@ -916,6 +928,178 @@ func (c *Controller) ensureServiceAccount(ctx context.Context, ns, name string, 
 	}
 	return err
 }
+
+// Where a runtime granted cluster read finds its credential. The token is
+// projected rather than automounted: it carries an audience and an expiry the
+// kubelet refreshes, and it appears only in runtimes that were granted it, while
+// the service account token every Pod would otherwise get stays switched off.
+const (
+	clusterReadMount     = "/var/run/agenthub/cluster"
+	clusterReadVolumeRef = "cluster-read"
+	// One hour, refreshed by the kubelet. A token that never expires is one that
+	// keeps working after the privilege is withdrawn.
+	clusterReadTokenSeconds int64 = 3600
+)
+
+// clusterReadVolume is the projected token, present only when the privilege was
+// granted.
+func clusterReadVolume(value spec) []corev1.Volume {
+	if !value.Security.ClusterRead {
+		return nil
+	}
+	return []corev1.Volume{{
+		Name: clusterReadVolumeRef,
+		VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{Sources: []corev1.VolumeProjection{
+			// No audience: the projection then issues a token for the API server's
+			// own audience, which is the one thing this token is for. Naming an
+			// audience explicitly is what makes the API server refuse it — it did,
+			// with "the server has asked for the client to provide credentials",
+			// which reads like a missing token rather than a wrong one.
+			{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
+				Path: "token", ExpirationSeconds: ptr(clusterReadTokenSeconds),
+			}},
+			// The API server's certificate has to come with it. The path every
+			// example uses — /var/run/secrets/kubernetes.io/serviceaccount/ca.crt —
+			// exists only when the token is automounted, which it is not here, so
+			// kubectl read a kubeconfig naming a file that was never mounted and
+			// failed before it reached the network. Kubernetes publishes the same
+			// certificate as a ConfigMap in every namespace.
+			{ConfigMap: &corev1.ConfigMapProjection{
+				LocalObjectReference: corev1.LocalObjectReference{Name: "kube-root-ca.crt"},
+				Items:                []corev1.KeyToPath{{Key: "ca.crt", Path: "ca.crt"}},
+			}},
+		}}},
+	}}
+}
+
+// clusterReadMounts and clusterReadEnv are what the agent container gets: the
+// token, and a kubeconfig naming it. The kubeconfig is generated into the same
+// ConfigMap as every other generated file, so it is one more thing an operator
+// can read rather than a secret arrangement between two pieces of code.
+func clusterReadMounts(value spec) []corev1.VolumeMount {
+	if !value.Security.ClusterRead {
+		return nil
+	}
+	return []corev1.VolumeMount{{Name: clusterReadVolumeRef, MountPath: clusterReadMount, ReadOnly: true}}
+}
+
+func clusterReadEnv(value spec) []corev1.EnvVar {
+	if !value.Security.ClusterRead {
+		return nil
+	}
+	return []corev1.EnvVar{{Name: "KUBECONFIG", Value: "/etc/agenthub/" + configKubeconfig}}
+}
+
+// clusterReadKubeconfig points kubectl at the in-cluster API server with the
+// projected token. It is written for every runtime and used only by those that
+// were granted the privilege, because the ConfigMap is generated in one place.
+func clusterReadKubeconfig(ns string) string {
+	return `apiVersion: v1
+kind: Config
+clusters:
+  - name: agenthub
+    cluster:
+      server: https://kubernetes.default.svc
+      certificate-authority: ` + clusterReadMount + `/ca.crt
+contexts:
+  - name: agenthub
+    context:
+      cluster: agenthub
+      namespace: ` + ns + `
+      user: agenthub
+current-context: agenthub
+users:
+  - name: agenthub
+    user:
+      tokenFile: ` + clusterReadMount + `/token
+`
+}
+
+// clusterReadRole is Kubernetes' own read-only role. It is used rather than one
+// of this platform's making because it is the role every cluster administrator
+// already knows the shape of — and because it cannot read Secrets, which is the
+// property that makes granting it defensible at all.
+const clusterReadRole = "view"
+
+// clusterReadBindingName and clusterReadBinding describe the grant. They are
+// separate from the call that creates it so what is granted can be read — and
+// tested — without a cluster.
+//
+// The owner reference is provenance rather than lifecycle: Kubernetes will not
+// garbage-collect a cluster-scoped object owned by a namespaced one, so
+// sweepClusterRead is what actually removes these.
+const clusterReadBindingPrefix = "agenthub-cluster-read-"
+
+func clusterReadBindingName(ns, name string) string {
+	return clusterReadBindingPrefix + ns + "-" + name
+}
+
+func clusterReadBinding(ns, name string, owner *unstructured.Unstructured) *rbacv1.ClusterRoleBinding {
+	return &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: clusterReadBindingName(ns, name), Labels: labels(name, nil), OwnerReferences: ownerRef(owner)},
+		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: clusterReadRole},
+		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: name, Namespace: ns}},
+	}
+}
+
+// sweepClusterRead removes grants whose runtime is gone.
+//
+// An owner reference cannot do this. Kubernetes will not garbage-collect a
+// cluster-scoped object owned by a namespaced one, so the binding written with
+// the AgentRuntime as its owner simply outlived it — verified against a real
+// cluster, where the runtime was deleted and the binding stayed.
+//
+// The privilege did end with the runtime either way, because the binding names
+// that runtime's own service account and the account is deleted with it. What
+// was left behind was litter, and litter naming a privilege is the kind that
+// makes an audit take an afternoon.
+func (c *Controller) sweepClusterRead(ctx context.Context, live *unstructured.UnstructuredList) error {
+	bindings, err := c.client.RbacV1().ClusterRoleBindings().List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=agenthub-operator"})
+	if err != nil {
+		return err
+	}
+	wanted := map[string]bool{}
+	for i := range live.Items {
+		item := &live.Items[i]
+		if value, parseErr := parseSpec(item); parseErr == nil && value.Security.ClusterRead {
+			wanted[clusterReadBindingName(item.GetNamespace(), item.GetName())] = true
+		}
+	}
+	for i := range bindings.Items {
+		name := bindings.Items[i].Name
+		if !strings.HasPrefix(name, clusterReadBindingPrefix) || wanted[name] {
+			continue
+		}
+		if err := c.client.RbacV1().ClusterRoleBindings().Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+		c.logger.Info("cluster read grant withdrawn", "binding", name)
+	}
+	return nil
+}
+
+// ensureClusterRead binds the runtime's own service account to that role, or
+// removes the binding when the privilege is withdrawn.
+//
+// The binding is owned by the AgentRuntime, so deleting the runtime deletes the
+// grant: a privilege that outlived the thing it was granted to would be one
+// nobody remembers giving.
+func (c *Controller) ensureClusterRead(ctx context.Context, ns, name string, value spec, owner *unstructured.Unstructured) error {
+	bindingName := clusterReadBindingName(ns, name)
+	if !value.Security.ClusterRead {
+		err := c.client.RbacV1().ClusterRoleBindings().Delete(ctx, bindingName, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) && !apierrors.IsForbidden(err) {
+			return err
+		}
+		return nil
+	}
+	_, err := c.client.RbacV1().ClusterRoleBindings().Create(ctx, clusterReadBinding(ns, name, owner), metav1.CreateOptions{})
+	if apierrors.IsAlreadyExists(err) {
+		return nil
+	}
+	return err
+}
+
 func (c *Controller) ensureConfigMap(ctx context.Context, ns, name string, value spec, owner *unstructured.Unstructured) error {
 	data := runtimeConfigs(ns, name, value)
 	if value.Runtime.Type == runtimetype.NodeRED {
@@ -1525,10 +1709,10 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 		Command:         adapter.Command,
 		Args:            adapterArgs(adapter, build),
 		Ports:           []corev1.ContainerPort{{Name: "http", ContainerPort: port}},
-		Env:             env,
+		Env:             append(env, clusterReadEnv(value)...),
 		Resources:       corev1.ResourceRequirements{Requests: requests, Limits: limits},
 		SecurityContext: restrictedContainerSecurityContext(value.Security.ReadOnlyRootFilesystem),
-		VolumeMounts:    []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "home", MountPath: "/home/agent"}, {Name: "tmp", MountPath: "/tmp"}, {Name: "config", MountPath: "/etc/agenthub", ReadOnly: true}},
+		VolumeMounts:    append([]corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "home", MountPath: "/home/agent"}, {Name: "tmp", MountPath: "/tmp"}, {Name: "config", MountPath: "/etc/agenthub", ReadOnly: true}}, clusterReadMounts(value)...),
 		ReadinessProbe:  &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)}}, InitialDelaySeconds: 5, PeriodSeconds: 5, TimeoutSeconds: 2, FailureThreshold: 12},
 		LivenessProbe:   &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)}}, InitialDelaySeconds: 20, PeriodSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 4},
 	}
@@ -1571,7 +1755,7 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 	desired := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels(name, nil), OwnerReferences: ownerRef(owner)}, Spec: appsv1.StatefulSetSpec{ServiceName: name, Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"agenthub.io/runtime": name}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels(name, map[string]string{"agenthub.io/owner": safeLabel(value.Owner)}), Annotations: podAnnotations}, Spec: corev1.PodSpec{
 		ServiceAccountName: name, AutomountServiceAccountToken: ptr(false), EnableServiceLinks: ptr(false), SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonRoot, RunAsUser: &runAs, RunAsGroup: &runAs, FSGroup: &runAs, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
 		InitContainers: initContainers, Containers: containers,
-		Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName}}}, {Name: "home", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: homePVCName(name)}}}, {Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}, {Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}}}}},
+		Volumes: append([]corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName}}}, {Name: "home", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: homePVCName(name)}}}, {Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}, {Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}}}}}, clusterReadVolume(value)...),
 	}}}}
 	// Last, so the administrator's common files and variables reach every
 	// container the adapters contributed as well as the agent's own.

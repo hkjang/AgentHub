@@ -1209,6 +1209,13 @@ func (s *Server) savePolicyProfile(kind string) http.HandlerFunc {
 				writeError(w, http.StatusBadRequest, "unsafe_security_profile", "Agent Runtime은 non-root, 권한 상승 차단, ServiceAccount Token 차단 및 RuntimeDefault seccomp를 반드시 유지해야 합니다.")
 				return
 			}
+			// clusterRead is the one privilege a profile may grant. It is not a
+			// relaxation of the four above: the token is projected with an audience
+			// and an expiry rather than automounted, and it carries Kubernetes' own
+			// view role, which cannot read Secrets.
+			if clusterRead, _ := item.Spec["clusterRead"].(bool); clusterRead {
+				s.store.Audit(r.Context(), &u, "security.profile.cluster_read", "security_profile", item.ID, "success", clientIP(r), map[string]any{"profile": item.Name})
+			}
 		}
 		if kind == "network" {
 			if values, ok := item.Spec["allowedDestinations"].([]any); ok {

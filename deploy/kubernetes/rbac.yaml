@@ -63,6 +63,20 @@ rules:
   - apiGroups: [networking.k8s.io]
     resources: [networkpolicies]
     verbs: [get, list, watch, create, update, patch, delete]
+  # Granting a runtime read-only access to the cluster, which an administrator
+  # turns on per security profile. The operator may create the binding and may
+  # bind exactly one role — Kubernetes' own read-only `view`, which cannot read
+  # Secrets. It cannot bind anything else, so this permission cannot be used to
+  # grant more than was designed.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    # list, because the operator sweeps grants whose runtime is gone: Kubernetes
+    # will not garbage-collect a cluster-scoped object owned by a namespaced one.
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames: ["view"]
+    verbs: ["bind"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

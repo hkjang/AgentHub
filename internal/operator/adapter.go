@@ -494,18 +494,23 @@ var runtimeAdapters = map[string]runtimeAdapter{
 		Type:    runtimetype.Holmes,
 		Command: []string{"/bin/sh", "-ec"},
 		ArgsFor: func(build adapterBuild) []string { return []string{holmesStart(build)} },
-		Env: func(adapterBuild) []corev1.EnvVar {
+		Env: func(build adapterBuild) []corev1.EnvVar {
+			// The agent's own default enables kubernetes/core, kubernetes/logs and
+			// robusta. Robusta needs an account a site has or does not, and the
+			// Kubernetes toolsets need credentials this platform does not hand out
+			// unless an administrator granted them — left on regardless, they spend
+			// every start failing their health check and then tell the model they
+			// could not look. So the list follows the privilege: with cluster read
+			// granted the investigator can actually investigate the cluster, and
+			// without it the toolset is not offered rather than offered and broken.
+			toolsets := "internet"
+			if build.Value.Security.ClusterRead {
+				toolsets = "internet,kubernetes/core,kubernetes/logs"
+			}
 			return []corev1.EnvVar{
 				{Name: "HOLMES_CONFIG_HOME", Value: holmesConfigHome},
 				{Name: "AGENTHUB_HOLMES_CONFIG", Value: "/etc/agenthub/holmes-config.yaml"},
-				// The agent's own default enables kubernetes/core, kubernetes/logs and
-				// robusta as well. Neither can work here — runtime Pods get no
-				// service account token, and a Robusta account is something a site
-				// has or does not — so they would spend every start failing their
-				// health check and then tell the model it could not look. A site
-				// that wants more turns it on through the runtime settings overlay,
-				// where it can also say where its Prometheus is.
-				{Name: "ENABLED_BY_DEFAULT_TOOLSETS", Value: "internet"},
+				{Name: "ENABLED_BY_DEFAULT_TOOLSETS", Value: toolsets},
 			}
 		},
 		InitContainers: func(build adapterBuild) []corev1.Container {

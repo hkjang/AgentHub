@@ -30,7 +30,7 @@ services:
         NODERED_VERSION: 0.1.0
         N8N_VERSION: 0.1.0
         GOOSE_VERSION: 0.1.0
-        HOLMES_VERSION: 0.1.0
+        HOLMES_VERSION: 0.2.0
         BROWSERCODE_VERSION: 0.1.0
     restart: unless-stopped
     depends_on:

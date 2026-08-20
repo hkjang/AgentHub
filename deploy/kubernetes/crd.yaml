@@ -163,6 +163,11 @@ spec:
                     allowPrivilegeEscalation: {type: boolean, enum: [false], default: false}
                     automountServiceAccountToken: {type: boolean, enum: [false], default: false}
                     seccompProfile: {type: string, enum: [RuntimeDefault], default: RuntimeDefault}
+                    # Read-only access to the cluster, for runtimes that investigate
+                    # it. Granted through a projected, audience-scoped token and a
+                    # kubeconfig rather than by mounting the service account token,
+                    # which stays forbidden above.
+                    clusterRead: {type: boolean, default: false}
                 network:
                   type: object
                   properties:

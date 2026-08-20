@@ -25,6 +25,9 @@ const password = process.env.AGENTHUB_TEST_PASSWORD ?? 'local-development-passwo
 // agent and were the ones that broke.
 const wanted = (process.env.AGENTHUB_PLATFORM_PATH_RUNTIMES ?? 'qwencode,goose,holmes').split(',').map((s) => s.trim()).filter(Boolean)
 const readyTimeoutMs = Number(process.env.AGENTHUB_PLATFORM_PATH_TIMEOUT ?? 300000)
+// A security profile to attach, for walking a runtime that needs a privilege —
+// HolmesGPT with cluster read is the case this exists for.
+const securityProfileId = process.env.AGENTHUB_PLATFORM_PATH_SECURITY_PROFILE ?? ''
 
 const problems = []
 const check = (label, ok, detail = '') => {
@@ -75,6 +78,18 @@ try {
       description: 'platform path e2e',
     })
     const agent = created.body?.agent ?? created.body
+    if (agent?.id && securityProfileId) {
+      // Creating from a template takes the template's security profile, so a
+      // privilege has to be attached afterwards — which is also how an
+      // administrator would do it.
+      const assigned = await call('PUT', `/api/v1/agents/${agent.id}`, {
+        name: agent.name, description: agent.description ?? '', runtimeType,
+        runtimeProfileId: profile.id, workspaceId: workspace.id,
+        securityProfileId,
+      })
+      check(`${runtimeType}: 보안 프로파일 ${securityProfileId} 지정`, assigned.status === 200,
+        `HTTP ${assigned.status} ${JSON.stringify(assigned.body?.error?.message ?? '')}`)
+    }
     check(`${runtimeType}: 에이전트 생성`, Boolean(agent?.id), `HTTP ${created.status} ${JSON.stringify(created.body?.error?.message ?? '')}`)
     if (!agent?.id) continue
 

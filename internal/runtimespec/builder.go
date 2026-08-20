@@ -7,6 +7,7 @@ package runtimespec
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -205,9 +206,16 @@ func (b *Builder) Build(ctx context.Context, rt store.Runtime, agent store.Agent
 	if agent.SecurityProfileID != nil {
 		item, profileErr := b.store.PolicyProfileByID(ctx, "security", *agent.SecurityProfileID)
 		if profileErr != nil {
-			return runtime.Spec{}, profileErr
+			// Named, because the lookup also fails when the profile exists but is
+			// disabled, and a bare "not found" for an agent that plainly exists
+			// sends whoever sees it looking in the wrong place entirely.
+			return runtime.Spec{}, fmt.Errorf("보안 프로파일 %q을(를) 사용할 수 없습니다(삭제되었거나 비활성): %w", *agent.SecurityProfileID, profileErr)
 		}
 		security.ReadOnlyRootFilesystem, _ = item.Spec["readOnlyRootFilesystem"].(bool)
+		// The one privilege a profile may grant. Everything else in the profile can
+		// only keep the defaults; this can add to them, which is why it is
+		// administered rather than chosen by whoever creates the agent.
+		security.ClusterRead, _ = item.Spec["clusterRead"].(bool)
 		if seccomp, ok := item.Spec["seccompProfile"].(string); ok && seccomp != "" {
 			security.SeccompProfile = seccomp
 		}

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
 	"github.com/hkjang/AgentHub/internal/runtimecfg"
 	"github.com/hkjang/AgentHub/internal/runtimetype"
 )
@@ -277,5 +279,125 @@ func TestTwoRuntimesDoNotShareOneGeneratedDocument(t *testing.T) {
 	generated := runtimeConfigs("agent-runtime-dev", "rt-1", value)
 	if generated[configOpenCode] != configs[configOpenCode] {
 		t.Error("generating twice produced different OpenCode configuration")
+	}
+}
+
+// Cluster read is a privilege, so what it does and does not do is worth pinning
+// down. Off by default; and when it is on, the credential arrives the way every
+// other credential does rather than by mounting the service account token, which
+// stays forbidden.
+func TestClusterReadIsOffUntilGrantedAndNeverAutomountsAToken(t *testing.T) {
+	build := func(granted bool) spec {
+		var value spec
+		value.Runtime.Type = runtimetype.Holmes
+		value.Security.ClusterRead = granted
+		return value
+	}
+
+	withoutIt := clusterReadVolume(build(false))
+	if len(withoutIt) != 0 || len(clusterReadMounts(build(false))) != 0 || len(clusterReadEnv(build(false))) != 0 {
+		t.Error("a runtime nobody granted anything to was given a cluster credential")
+	}
+
+	volumes := clusterReadVolume(build(true))
+	if len(volumes) != 1 || volumes[0].Projected == nil {
+		t.Fatalf("volume = %#v, want a projected token", volumes)
+	}
+	projected := volumes[0].Projected.Sources[0].ServiceAccountToken
+	if projected == nil {
+		t.Fatal("the volume is not a service account token projection")
+	}
+	// The API server's certificate has to travel with the token: the path every
+	// example uses exists only when the token is automounted, which it is not
+	// here, so a kubeconfig naming it fails before reaching the network.
+	var certificate bool
+	for _, source := range volumes[0].Projected.Sources {
+		if source.ConfigMap != nil && source.ConfigMap.Name == "kube-root-ca.crt" {
+			certificate = true
+		}
+	}
+	if !certificate {
+		t.Error("the projection carries a token but no certificate authority")
+	}
+	if !strings.Contains(clusterReadKubeconfig("agent-runtime-dev"), clusterReadMount+"/ca.crt") {
+		t.Error("the kubeconfig does not point at the projected certificate")
+	}
+	// The expiry is the difference between this and automounting: the kubelet
+	// replaces the token, so withdrawing the privilege stops working access rather
+	// than leaving a usable token behind.
+	if projected.ExpirationSeconds == nil || *projected.ExpirationSeconds <= 0 {
+		t.Error("the token does not expire")
+	}
+	// And the audience is deliberately unset, which means the API server's own.
+	// Naming one made the API server refuse the token with a message that reads
+	// like there was no token at all.
+	if projected.Audience != "" {
+		t.Errorf("audience = %q, want the API server's own", projected.Audience)
+	}
+	if mounts := clusterReadMounts(build(true)); len(mounts) != 1 || !mounts[0].ReadOnly {
+		t.Errorf("mount = %#v, want one read-only mount", mounts)
+	}
+	if env := clusterReadEnv(build(true)); len(env) != 1 || env[0].Name != "KUBECONFIG" {
+		t.Errorf("env = %#v, want KUBECONFIG", env)
+	}
+}
+
+// The investigator's toolsets follow the privilege: with no cluster credential
+// the Kubernetes toolsets are not offered at all, rather than offered and
+// failing their health check on every start.
+func TestHolmesToolsetsFollowTheGrant(t *testing.T) {
+	toolsets := func(granted bool) string {
+		var build adapterBuild
+		build.Name = "rt-1"
+		build.Value.Runtime.Type = runtimetype.Holmes
+		build.Value.Security.ClusterRead = granted
+		for _, item := range adapterFor(runtimetype.Holmes).Env(build) {
+			if item.Name == "ENABLED_BY_DEFAULT_TOOLSETS" {
+				return item.Value
+			}
+		}
+		return ""
+	}
+	if got := toolsets(false); strings.Contains(got, "kubernetes") {
+		t.Errorf("without the grant the toolsets are %q", got)
+	}
+	if got := toolsets(true); !strings.Contains(got, "kubernetes/core") || !strings.Contains(got, "kubernetes/logs") {
+		t.Errorf("with the grant the toolsets are %q", got)
+	}
+}
+
+// The binding is owned by the runtime, so deleting the runtime withdraws the
+// grant. A privilege that outlived the thing it was granted to would be one
+// nobody remembers giving.
+func TestTheClusterReadBindingBelongsToTheRuntime(t *testing.T) {
+	owner := &unstructured.Unstructured{}
+	owner.SetAPIVersion("agenthub.io/v1alpha1")
+	owner.SetKind("AgentRuntime")
+	owner.SetName("rt-1")
+	owner.SetUID("uid-1")
+
+	binding := clusterReadBinding("agent-runtime-dev", "rt-1", owner)
+	// Kubernetes' own read-only role, which cannot read Secrets. Binding anything
+	// else would be a different feature with a different conversation behind it.
+	if binding.RoleRef.Name != "view" || binding.RoleRef.Kind != "ClusterRole" {
+		t.Errorf("binds %s/%s", binding.RoleRef.Kind, binding.RoleRef.Name)
+	}
+	if len(binding.Subjects) != 1 || binding.Subjects[0].Name != "rt-1" || binding.Subjects[0].Namespace != "agent-runtime-dev" {
+		t.Errorf("subjects = %#v, want only this runtime's own service account", binding.Subjects)
+	}
+	// The owner reference is provenance, not lifecycle: Kubernetes will not
+	// garbage-collect a cluster-scoped object owned by a namespaced one, which is
+	// why sweepClusterRead exists. Checked against a real cluster, where deleting
+	// the runtime left the binding behind.
+	if len(binding.OwnerReferences) != 1 || binding.OwnerReferences[0].UID != "uid-1" {
+		t.Errorf("owner references = %#v, want the AgentRuntime named", binding.OwnerReferences)
+	}
+	// The label the sweep selects on. Without it the sweep sees nothing and the
+	// grants accumulate silently.
+	if binding.Labels["app.kubernetes.io/managed-by"] != "agenthub-operator" {
+		t.Errorf("labels = %v, want one the sweep can select", binding.Labels)
+	}
+	if !strings.HasPrefix(binding.Name, clusterReadBindingPrefix) {
+		t.Errorf("name = %q, want the prefix the sweep matches", binding.Name)
 	}
 }

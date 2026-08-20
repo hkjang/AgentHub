@@ -23,6 +23,13 @@ ARG HOLMESGPT_VERSION=0.39.0
 # Pinned with its checksum: this is a binary downloaded at build time, and an
 # unpinned one would make the image unreproducible in exactly the way an offline
 # release must not be.
+# kubectl is what the Kubernetes toolsets shell out to. It is in the image
+# whether or not a site grants cluster access, because an image that changes
+# shape with a permission is an image nobody can reason about — without the
+# credential it simply has nothing to talk to.
+ARG KUBECTL_VERSION=1.36.4
+ARG KUBECTL_SHA256_X86_64=8b8f088da2dab964f853b38464033b1be15ede2839eca751482357c45abdd05a
+ARG KUBECTL_SHA256_AARCH64=
 ARG TTYD_VERSION=1.7.7
 ARG TTYD_SHA256_X86_64=8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55
 ARG TTYD_SHA256_AARCH64=
@@ -40,8 +47,16 @@ RUN apt-get update \
     if [ -z "${sum}" ]; then \
       echo "no checksum pinned for ${arch}; refusing to ship an unverified binary" >&2; exit 1; fi; \
     curl -fsSL -o /usr/local/bin/ttyd "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/${asset}"; \
-    echo "${sum}  /usr/local/bin/ttyd" | sha256sum -c - \
- && chmod 0755 /usr/local/bin/ttyd \
+    echo "${sum}  /usr/local/bin/ttyd" | sha256sum -c -; \
+    case "${arch}" in \
+      x86_64) kube_arch="amd64"; kube_sum="${KUBECTL_SHA256_X86_64}" ;; \
+      aarch64) kube_arch="arm64"; kube_sum="${KUBECTL_SHA256_AARCH64}" ;; \
+    esac; \
+    if [ -z "${kube_sum}" ]; then \
+      echo "no kubectl checksum pinned for ${arch}; refusing to ship an unverified binary" >&2; exit 1; fi; \
+    curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${kube_arch}/kubectl"; \
+    echo "${kube_sum}  /usr/local/bin/kubectl" | sha256sum -c - \
+ && chmod 0755 /usr/local/bin/ttyd /usr/local/bin/kubectl \
  && rm -rf /var/lib/apt/lists/*
 
 # The agent and the toolchain live in one virtualenv owned by the runtime user,

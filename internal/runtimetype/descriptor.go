@@ -193,10 +193,10 @@ var descriptors = map[string]Descriptor{
 		BestFor:   "왜 죽었는지 물어보는 일 — 알림·메트릭·로그를 훑어 근본 원인과 근거를 정리",
 		Strengths: []string{"Prometheus·Grafana·Loki·Alertmanager 등 관측 도구를 조회하는 내장 툴셋", "조사에 쓴 조회 하나하나가 실행 기록의 단계로 남음", "토큰 사용량을 실제 값으로 보고해 그대로 계량됨", "MCP 서버가 툴셋으로 자동 등록됨", "터미널에서 사람이 직접 이어서 물어볼 수 있음"},
 		Watchouts: []string{"자체 인증이 없는 브라우저 터미널이라 플랫폼 프록시로만 공개됩니다",
-			// Said plainly because the alternative is a Kubernetes toolset that
-			// silently answers "I could not look": the platform does not mount a
-			// service account token into runtime Pods, on purpose.
-			"Kubernetes 툴셋은 동작하지 않습니다 — 런타임 Pod에는 클러스터 자격증명이 주입되지 않습니다. Prometheus·Grafana 같은 관측 도구를 런타임 설정으로 연결해 쓰세요",
+			// The privilege is off unless an administrator turns it on, and saying
+			// which switch it is saves an hour of wondering why the investigator
+			// keeps answering "I could not look".
+			"Kubernetes 툴셋은 기본으로 꺼져 있습니다 — 관리자가 보안 프로파일에서 '클러스터 읽기'를 켠 Agent에서만 클러스터를 조회할 수 있습니다(읽기 전용이며 Secret은 볼 수 없습니다)",
 			"조사 중 셸 실행은 승인 모드가 auto·yolo 일 때만 허용됩니다",
 			"조회 결과가 크면 컨텍스트를 많이 쓰므로 Runtime 프로파일과 토큰 예산을 넉넉히 잡으세요"},
 		Workspace: "/workspace", Port: 7681,

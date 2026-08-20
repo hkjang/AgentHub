@@ -217,6 +217,17 @@ type SecurityProfile struct {
 	AllowPrivilegeEscalation     bool
 	AutomountServiceAccountToken bool
 	SeccompProfile               string
+	// ClusterRead lets this runtime read the cluster it runs in. It exists for
+	// one kind of agent — an investigator, which cannot say why a Pod restarted
+	// without looking at it — and it is off unless an administrator turns it on
+	// in a security profile, because it is a privilege rather than a setting.
+	//
+	// It does not mount a service account token: that stays forbidden at every
+	// layer. The runtime is given a short-lived, audience-scoped token through a
+	// projected volume the kubelet refreshes, and a kubeconfig naming it, which
+	// is the same way every other credential reaches a Pod here. What it grants
+	// is Kubernetes' own `view` role, which excludes Secrets.
+	ClusterRead bool
 }
 
 type NetworkProfile struct {

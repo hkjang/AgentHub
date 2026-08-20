@@ -492,21 +492,31 @@ It keeps stderr from the same run rather than repeating the investigation to fin
 out why one failed — a second investigation would spend a second investigation's
 tokens.
 
-Two limits are deliberate. Reading metrics and logs is what an investigation is;
-running shell commands to find out more is a different kind of act, so the agent
-is started with `--bash-always-deny` unless the Goal's approval mode is one of
-the two that were chosen deliberately, and that combination is refused when the
-Goal also demands human approval. And the Kubernetes toolset does not work here:
-runtime Pods are given no service account token, on purpose, so the agent cannot
-read the cluster it runs in. That is said in the runtime's own description rather
-than left to be discovered, and a site that wants more points the investigator at
-its Prometheus or Grafana through the runtime settings overlay — which is also
-where its toolsets are configured.
+Reading metrics and logs is what an investigation is; running shell commands to
+find out more is a different kind of act, so the agent is started with
+`--bash-always-deny` unless the Goal's approval mode is one of the two that were
+chosen deliberately, and that combination is refused when the Goal also demands
+human approval.
 
-The agent's own defaults would enable the Kubernetes toolsets and Robusta's cloud
-integration; neither can work in a runtime Pod, and left on they fail their health
-check every start and then tell the model they could not look. The operator starts
-it with `internet` alone and lets the overlay add the rest.
+Reading the cluster is a privilege rather than a setting, so it is granted by an
+administrator in a security profile and off everywhere else. Granting it does not
+relax the rule that runtime Pods never automount a service account token — that
+stays enforced by the API, the CRD schema and the operator alike. Instead the Pod
+gets a projected token with an audience and an hour's expiry that the kubelet
+refreshes, and a generated kubeconfig naming it, which is how every other
+credential reaches a runtime here. The binding is to Kubernetes' own `view` role,
+which cannot read Secrets, and it is owned by the AgentRuntime, so deleting the
+runtime withdraws the grant. The operator may create such a binding and may bind
+that one role and no other, so the permission cannot be used to grant more than
+it was designed to.
+
+The agent's toolsets follow the grant. Its own defaults would enable the
+Kubernetes toolsets and Robusta's cloud integration regardless; without
+credentials those fail their health check on every start and then tell the model
+they could not look, so the operator starts it with `internet` alone and adds the
+Kubernetes toolsets only where the privilege was given. Everything else — a
+site's Prometheus, Grafana or Loki — is configured through the runtime settings
+overlay.
 
 ## Calling an application the platform does not run
 
