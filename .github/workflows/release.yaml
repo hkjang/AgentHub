@@ -41,7 +41,28 @@ jobs:
           # published only when BASE_VERSION says it changed. Changing what it
           # is built from without bumping BASE_VERSION is a mistake: the control
           # plane would keep pointing at a tag whose image no longer matches.
-          sources=(Dockerfile.base deploy/runtime cmd/runtime-proxy)
+          #
+          # The scripts are named one by one rather than watching deploy/runtime
+          # as a directory. That directory holds the scripts of three different
+          # images now, and watching all of it demanded a multi-gigabyte base
+          # rebuild for a file only the Qwen Code image contains.
+          sources=(Dockerfile.base cmd/runtime-proxy
+                   deploy/runtime/entrypoint.sh
+                   deploy/runtime/qwenpaw-configure.sh
+                   deploy/runtime/agenthub-report-config.sh
+                   deploy/runtime/agenthub-toolchain.sh)
+          # A named list drifts the moment somebody adds a script to the base
+          # image and forgets this one — and the failure would be silent: a
+          # released base tag whose image never got the new file. So the list is
+          # checked against what the Dockerfile actually copies.
+          missing=false
+          while read -r copied; do
+            case " ${sources[*]} " in
+              *" ${copied} "*) ;;
+              *) echo "::error::${copied} is copied into the base image but is not watched by this step; add it to sources" >&2; missing=true ;;
+            esac
+          done < <(grep -oE 'deploy/runtime/[A-Za-z0-9._-]+' Dockerfile.base | sort -u)
+          if [ "${missing}" = true ]; then exit 1; fi
           previous="$(git tag --list 'v*.*.*' --sort=-v:refname | grep -v "^${GITHUB_REF_NAME}$" | head -1 || true)"
           if [ -z "${previous}" ]; then
             echo "no previous release tag; building the base image"
