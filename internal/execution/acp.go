@@ -84,7 +84,8 @@ func (o *Orchestrator) runACP(ctx context.Context, run *store.AgentRun, task sto
 		return nil, Outcome{Status: store.TaskFailed, Retryable: true, Failure: "Runtime을 읽지 못했습니다: " + err.Error()}
 	}
 	descriptor := runtimetype.Describe(agent.RuntimeType)
-	if len(descriptor.ACPCommand) == 0 {
+	command := runtimetype.RunnerCommand(agent.RuntimeType, runtimetype.RunnerACP)
+	if len(command) == 0 {
 		// Not retryable: the runtime is simply not one that speaks the protocol,
 		// and the answer is to change the Goal rather than to try again.
 		return nil, Outcome{Status: store.TaskFailed,
@@ -106,7 +107,7 @@ func (o *Orchestrator) runACP(ctx context.Context, run *store.AgentRun, task sto
 		"maxToolCalls": goal.MaxToolCalls,
 	})
 
-	turn, runErr := o.acpTurn(ctx, run, goal, spec, descriptor, prompt)
+	turn, runErr := o.acpTurn(ctx, run, goal, spec, descriptor, command, prompt)
 	elapsed := time.Since(startedAt).Milliseconds()
 	telemetry.Fail(span, runErr)
 
@@ -286,9 +287,9 @@ func (t *acpTurn) records() []acpToolRecord {
 
 // acpTurn runs the whole conversation: start the agent, negotiate, open a
 // session, send the task, and stay on the line answering its questions.
-func (o *Orchestrator) acpTurn(ctx context.Context, run *store.AgentRun, goal store.AgentGoal, spec appRuntime.Spec, descriptor runtimetype.Descriptor, prompt string) (*acpTurn, error) {
+func (o *Orchestrator) acpTurn(ctx context.Context, run *store.AgentRun, goal store.AgentGoal, spec appRuntime.Spec, descriptor runtimetype.Descriptor, command []string, prompt string) (*acpTurn, error) {
 	turn := &acpTurn{retryable: true}
-	session, err := o.spawner.ExecStream(ctx, spec, appRuntime.ExecRequest{Command: descriptor.ACPCommand})
+	session, err := o.spawner.ExecStream(ctx, spec, appRuntime.ExecRequest{Command: command})
 	if err != nil {
 		return turn, errors.New("Runtime에서 ACP 에이전트를 시작하지 못했습니다: " + err.Error())
 	}

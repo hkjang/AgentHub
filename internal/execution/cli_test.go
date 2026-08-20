@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -94,10 +95,10 @@ func TestCLICommandCarriesTheGoalsGuardrails(t *testing.T) {
 	goal := store.AgentGoal{
 		MaxSteps: 12, MaxToolCalls: 40, MaxDurationSeconds: 600, CLIApprovalMode: "auto-edit",
 	}
-	command := cliCommand(goal, resolvedModel{ModelName: "qwen3-coder"}, "작업 내용")
+	command := cliCommand(runtimetype.QwenCode, goal, resolvedModel{ModelName: "qwen3-coder"}, "작업 내용")
 	joined := strings.Join(command, " ")
 	for _, want := range []string{
-		cliBinary, "-p", "작업 내용",
+		"/usr/local/bin/agenthub-qwencode-run", "-p", "작업 내용",
 		"--approval-mode auto-edit", "--output-format json",
 		"--max-session-turns 12", "--max-tool-calls 40", "-m qwen3-coder",
 	} {
@@ -144,7 +145,7 @@ func TestRunCLIWithoutARuntimeIsRetryable(t *testing.T) {
 
 // The wall-time budget must stay a positive duration even for a short goal.
 func TestCLIWallTimeStaysPositiveForShortGoals(t *testing.T) {
-	command := cliCommand(store.AgentGoal{MaxDurationSeconds: 30}, resolvedModel{}, "x")
+	command := cliCommand(runtimetype.QwenCode, store.AgentGoal{MaxDurationSeconds: 30}, resolvedModel{}, "x")
 	index := indexOf(command, "--max-wall-time")
 	if index < 0 {
 		t.Fatalf("no wall time budget: %v", command)

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -31,7 +32,7 @@ func TestLiveInvestigationProducesTheRecordThisParserReads(t *testing.T) {
 	// it — read from the same function rather than repeated, so a command that
 	// drifted from the one production uses would prove the wrong thing.
 	goal := store.AgentGoal{MaxSteps: 3, CLIApprovalMode: "default"}
-	argv := investigateCommand(goal, resolvedModel{ModelName: "stand-in"}, "why is the checkout service failing?")
+	argv := investigateCommand(runtimetype.Holmes, goal, resolvedModel{ModelName: "stand-in"}, "why is the checkout service failing?")
 
 	script := `printf '%s' "$STAND_IN_MODEL" > /tmp/model.py && python3 /tmp/model.py & ` +
 		`until curl -sf -m 1 http://127.0.0.1:7997/v1/models >/dev/null; do sleep 0.2; done; ` +

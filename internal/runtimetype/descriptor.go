@@ -69,15 +69,20 @@ type Descriptor struct {
 	// that would be inventing a fact the agent declined to state — so it says this
 	// instead, and the console warns before the Goal is saved.
 	CoarseToolKinds bool `json:"coarseToolKinds,omitempty"`
-	// ACPCommand is the argv that starts this runtime's own agent as an Agent
-	// Client Protocol peer, speaking JSON-RPC over its stdio.
+	// Commands are the argv the platform executes inside this runtime for each
+	// backend it supports, keyed by runner name.
 	//
-	// This one field is what makes the protocol worth having. The CLI runner has
-	// to know an agent's flags, its output shape and its exit codes; an ACP agent
-	// only has to be started, because everything after that is the protocol. So
-	// supporting the next one is this line and nothing else, and it is not sent
-	// to the console — a person chooses a runtime, not a command line.
-	ACPCommand []string `json:"-"`
+	// Every one of them is a wrapper the image ships rather than the agent binary
+	// itself, because an exec has no shell, no working directory and no profile:
+	// the wrapper supplies all three, and the platform passes plain arguments so a
+	// task title with a quote in it cannot become a command.
+	//
+	// They live here rather than beside each runner because they are all the same
+	// fact — what the platform runs in this image — and a constant in each runner
+	// package is a place for one of them to drift from the Dockerfile that ships
+	// it. TestEveryCommandExistsInItsImage reads both and fails when they part.
+	// Not sent to the console: a person chooses a runtime, not a command line.
+	Commands map[string][]string `json:"-"`
 	// BestFor is one sentence: when to choose this one.
 	BestFor string `json:"bestFor"`
 }
@@ -97,18 +102,27 @@ type Descriptor struct {
 //
 // JupyterLab shares it: that image is built on this one, and the agent beside the
 // notebooks is the same agent.
-var qwenCodeACP = []string{"/usr/local/bin/agenthub-qwencode-run", "--acp", "--approval-mode", "default"}
+var qwenCodeCommands = map[string][]string{
+	// Headless: the agent's own budgets and output format are appended by the
+	// runner, which knows this agent's flags.
+	RunnerCLI: {"/usr/local/bin/agenthub-qwencode-run"},
+	RunnerACP: {"/usr/local/bin/agenthub-qwencode-run", "--acp", "--approval-mode", "default"},
+}
 
 // gooseACP starts Goose as a protocol peer. The mode that makes it ask before
 // acting is an environment variable rather than a flag, so it lives in the
 // wrapper this points at — the same wrapper that supplies the working directory
 // and the PATH an exec does not have.
-var gooseACP = []string{"/usr/local/bin/agenthub-goose-run", "acp"}
+var gooseCommands = map[string][]string{RunnerACP: {"/usr/local/bin/agenthub-goose-run", "acp"}}
 
 // browserCodeACP starts BrowserCode as a protocol peer. It asks before using a
 // tool without being told to, which is the third of three agents and the first
 // that needed no persuading.
-var browserCodeACP = []string{"/usr/local/bin/agenthub-browsercode-run", "acp"}
+var browserCodeCommands = map[string][]string{RunnerACP: {"/usr/local/bin/agenthub-browsercode-run", "acp"}}
+
+// holmesCommands starts one investigation. The wrapper is what makes stdout
+// carry the machine-readable record and nothing else.
+var holmesCommands = map[string][]string{RunnerInvestigate: {"/usr/local/bin/agenthub-holmes-run"}}
 
 var descriptors = map[string]Descriptor{
 	OpenCode: {
@@ -146,7 +160,7 @@ var descriptors = map[string]Descriptor{
 		Watchouts: []string{"자체 인증이 없는 브라우저 터미널이라 플랫폼 프록시로만 공개됩니다", "무인 실행은 승인 모드에 따라 파일을 실제로 바꿉니다 — 승인 모드를 먼저 정하세요", "흐름 편집기 같은 화면은 없습니다 — 터미널이 전부입니다"},
 		Workspace: "/workspace", Port: 7681,
 		BrowserUI: true, Terminal: true, ToolLoop: true, MCPConfigured: true, ProxiedUI: true,
-		Runners: []string{RunnerCLI, RunnerACP}, ACPCommand: qwenCodeACP,
+		Runners: []string{RunnerCLI, RunnerACP}, Commands: qwenCodeCommands,
 	},
 	Langflow: {
 		Type: Langflow, Code: "LF", Label: "Langflow",
@@ -171,7 +185,7 @@ var descriptors = map[string]Descriptor{
 			"사용 토큰을 알려주지 않아 ACP 실행이 계량되지 않습니다"},
 		Workspace: "/workspace", Port: 7681,
 		BrowserUI: true, Terminal: true, ToolLoop: true, MCPConfigured: true, ProxiedUI: true,
-		Runners: []string{RunnerACP}, ACPCommand: gooseACP, CoarseToolKinds: true,
+		Runners: []string{RunnerACP}, Commands: gooseCommands, CoarseToolKinds: true,
 	},
 	Holmes: {
 		Type: Holmes, Code: "HG", Label: "HolmesGPT",
@@ -187,7 +201,7 @@ var descriptors = map[string]Descriptor{
 			"조회 결과가 크면 컨텍스트를 많이 쓰므로 Runtime 프로파일과 토큰 예산을 넉넉히 잡으세요"},
 		Workspace: "/workspace", Port: 7681,
 		BrowserUI: true, Terminal: true, ToolLoop: true, MCPConfigured: true, ProxiedUI: true,
-		Runners: []string{RunnerInvestigate},
+		Runners: []string{RunnerInvestigate}, Commands: holmesCommands,
 	},
 	BrowserCode: {
 		Type: BrowserCode, Code: "BC", Label: "BrowserCode",
@@ -206,7 +220,7 @@ var descriptors = map[string]Descriptor{
 		// Its file tools declare a kind, but the browser tool — the reason to run
 		// this runtime — is labelled "other", so the strict modes refuse the one
 		// thing it is for.
-		Runners: []string{RunnerACP}, ACPCommand: browserCodeACP, CoarseToolKinds: true,
+		Runners: []string{RunnerACP}, Commands: browserCodeCommands, CoarseToolKinds: true,
 	},
 	Jupyter: {
 		Type: Jupyter, Code: "JL", Label: "JupyterLab",
@@ -216,7 +230,7 @@ var descriptors = map[string]Descriptor{
 		Watchouts: []string{"자체 토큰 로그인을 끈 상태로 뜨므로 플랫폼 프록시로만 공개됩니다", "MCP 도구는 노트북이 아니라 에이전트 설정으로 전달됩니다", "커널이 메모리를 많이 쓰므로 Runtime 프로파일을 넉넉히 잡으세요"},
 		Workspace: "/workspace", Port: 8888,
 		BrowserUI: true, Terminal: true, ToolLoop: true, MCPConfigured: true, ProxiedUI: true,
-		Runners: []string{RunnerCLI, RunnerACP}, ACPCommand: qwenCodeACP,
+		Runners: []string{RunnerCLI, RunnerACP}, Commands: qwenCodeCommands,
 	},
 	NodeRED: {
 		Type: NodeRED, Code: "NR", Label: "Node-RED",
@@ -267,6 +281,18 @@ const (
 	// was given, which is how one adapter serves many agents.
 	RunnerACP = "acp"
 )
+
+// RunnerCommand is the argv the platform executes in this runtime for a backend,
+// or nothing when the runtime does not support it. The copy is defensive: the
+// descriptors are package state, and a caller appending its own flags to the
+// returned slice would otherwise append them to every later run.
+func RunnerCommand(runtimeType, runner string) []string {
+	command := Describe(runtimeType).Commands[runner]
+	if len(command) == 0 {
+		return nil
+	}
+	return append([]string(nil), command...)
+}
 
 // SupportsRunner reports whether this runtime can be handed a task that way.
 func SupportsRunner(runtimeType, runner string) bool {

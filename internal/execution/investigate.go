@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
+	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
 	"github.com/hkjang/AgentHub/internal/telemetry"
 	"github.com/hkjang/AgentHub/internal/workflow"
@@ -30,12 +31,6 @@ import (
 // any other, and every tool call behind it becomes a step on the run's timeline.
 // A person reading the run afterwards can see which query produced the number
 // the conclusion rests on, and whether it succeeded.
-
-// holmesBinary is the wrapper the runtime image ships. It exists because an exec
-// has no shell and no working directory, and because the agent renders its
-// answer for a person while writing the machine-readable record to a file: the
-// wrapper makes stdout carry that record and nothing else.
-const holmesBinary = "/usr/local/bin/agenthub-holmes-run"
 
 // investigateEvidenceLimit bounds how much of one tool's result is stored. A
 // query against a busy cluster can return megabytes, and the run record is not
@@ -80,7 +75,7 @@ func (o *Orchestrator) runInvestigate(ctx context.Context, run *store.AgentRun, 
 		"runtimeId": acquired.runtimeID, "maxSteps": goal.MaxSteps,
 		"shell": investigateShellPolicy(goal),
 	})
-	result, execErr := o.spawner.Exec(ctx, spec, appRuntime.ExecRequest{Command: investigateCommand(goal, model, question)})
+	result, execErr := o.spawner.Exec(ctx, spec, appRuntime.ExecRequest{Command: investigateCommand(agent.RuntimeType, goal, model, question)})
 	elapsed := time.Since(startedAt).Milliseconds()
 	telemetry.Fail(span, execErr)
 
@@ -157,8 +152,10 @@ func investigateShellPolicy(goal store.AgentGoal) string {
 
 // investigateCommand builds argv. The Goal's step limit becomes the agent's own,
 // so a limit set in the console is enforced by the thing doing the work.
-func investigateCommand(goal store.AgentGoal, model resolvedModel, question string) []string {
-	command := []string{holmesBinary}
+func investigateCommand(runtimeType string, goal store.AgentGoal, model resolvedModel, question string) []string {
+	// The wrapper the image ships, named by the descriptor. It is what makes
+	// stdout carry the machine-readable record and nothing else.
+	command := runtimetype.RunnerCommand(runtimeType, runtimetype.RunnerInvestigate)
 	if investigateShellPolicy(goal) == "allow" {
 		command = append(command, "--bash-always-allow")
 	} else {

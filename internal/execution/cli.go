@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
+	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
 	"github.com/hkjang/AgentHub/internal/telemetry"
 	"github.com/hkjang/AgentHub/internal/workflow"
@@ -30,12 +31,6 @@ import (
 // artifacts, the verdict, the quota, the audit trail. What is different from the
 // flow runner is that this one reports real token usage, so a CLI run is metered
 // like any other work rather than described as unmetered.
-
-// cliBinary is the wrapper the runtime image ships. It exists because an exec has
-// no shell and no working directory: the wrapper supplies both, and the platform
-// passes plain arguments so a task title with a quote in it cannot become a
-// command.
-const cliBinary = "/usr/local/bin/agenthub-qwencode-run"
 
 // CLIApprovalModes are what the runtime accepts. `yolo` is the only one that
 // changes files without asking, which is why it is a deliberate choice on the
@@ -79,7 +74,7 @@ func (o *Orchestrator) runCLI(ctx context.Context, run *store.AgentRun, task sto
 		return nil, Outcome{Status: store.TaskFailed, Retryable: true, Failure: "Runtime 사양을 만들지 못했습니다: " + err.Error()}
 	}
 
-	command := cliCommand(goal, model, prompt)
+	command := cliCommand(agent.RuntimeType, goal, model, prompt)
 	ctx, span := telemetry.Start(ctx, "cli.run",
 		attribute.String("agenthub.runtime.id", acquired.runtimeID),
 		attribute.String("agenthub.cli.approval_mode", cliApprovalMode(goal)))
@@ -162,10 +157,11 @@ func cliApprovalMode(goal store.AgentGoal) string {
 // cliCommand builds argv. The Goal's guardrails become the agent's own budgets,
 // so a limit set in the console is enforced by the thing doing the work rather
 // than by a timeout that kills it half way.
-func cliCommand(goal store.AgentGoal, model resolvedModel, prompt string) []string {
-	command := []string{cliBinary, "-p", prompt,
-		"--approval-mode", cliApprovalMode(goal),
-		"--output-format", "json"}
+func cliCommand(runtimeType string, goal store.AgentGoal, model resolvedModel, prompt string) []string {
+	// The wrapper the image ships, named by the descriptor: an exec has no shell
+	// and no working directory, and the wrapper supplies both.
+	command := append(runtimetype.RunnerCommand(runtimeType, runtimetype.RunnerCLI),
+		"-p", prompt, "--approval-mode", cliApprovalMode(goal), "--output-format", "json")
 	if goal.MaxSteps > 0 {
 		command = append(command, "--max-session-turns", strconv.Itoa(goal.MaxSteps))
 	}

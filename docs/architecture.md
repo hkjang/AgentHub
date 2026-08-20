@@ -71,6 +71,34 @@ Hermes Dashboard runs only on Pod loopback (`127.0.0.1:9120`). A small
 and reports ready only after the Dashboard responds. NetworkPolicy then limits
 that port to AgentHub's control-plane namespace.
 
+## Verifying the path the platform takes
+
+Three runtimes were released unable to start. Each had been verified — the image
+built, the agent spoke its protocol, a Pod came up under the restricted security
+profile — and every one of those Pods was written by hand with the image name in
+it. The step nobody exercised was the platform choosing the image itself, and for
+those three it chose the shared base image, which contains none of their
+binaries.
+
+So there are now three checks, in increasing cost.
+
+`TestEveryRuntimeImageHasADefault` reads the Dockerfiles in the repository and
+fails when one of them names a runtime whose default image is still the shared
+base. `TestEveryCommandExistsInItsImage` collects every `/usr/local/bin/agenthub-*`
+the platform executes — the container's start command, the initialiser, and the
+wrapper each execution backend calls — and fails when one of them is not copied
+by that runtime's Dockerfile, following `FROM` so an image built on another
+inherits what it ships. Both read the repository rather than a list somebody
+maintains, and both run in CI.
+
+`web/scripts/platform-path-e2e.mjs` walks the whole thing against a real cluster:
+catalog template, agent, spawn, the operator's Pod, ready, session. It is not in
+the default suite because each runtime it walks pulls a large image, and it found
+a second bug on its first run — `/api/v1/runtimes` read the database directly
+while only `/api/v1/agents` refreshed status from the cluster, so an operator
+watching the Runtimes screen saw a Pod that had been running for minutes still
+reported as pending.
+
 ## Runtime adapter contract
 
 The Portal implements a common `Spawner` interface. Kubernetes is the default

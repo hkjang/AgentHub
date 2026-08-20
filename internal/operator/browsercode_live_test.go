@@ -62,7 +62,7 @@ func TestLiveBrowserCodeDrivesABrowserWithTheGeneratedConfiguration(t *testing.T
 		`python3 /probe/model.py >/out/model.log 2>&1 & python3 /probe/mcp.py >/out/mcp.log 2>&1 & ` +
 		`until curl -sf -m 1 http://127.0.0.1:9222/json/version >/dev/null; do sleep 0.3; done; ` +
 		`until curl -sf -m 1 http://127.0.0.1:7997/v1/models >/dev/null; do sleep 0.3; done; ` +
-		`cd /workspace && exec ` + strings.Join(runtimetype.Describe(runtimetype.BrowserCode).ACPCommand, " ")
+		`cd /workspace && exec ` + strings.Join(runtimetype.RunnerCommand(runtimetype.BrowserCode, runtimetype.RunnerACP), " ")
 
 	out := t.TempDir()
 	if err := os.Chmod(out, 0o777); err != nil {

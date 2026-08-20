@@ -42,7 +42,7 @@ func TestLiveExecStreamHoldsAConversation(t *testing.T) {
 	// repeated here: a command that drifted from the one production uses would
 	// prove the wrong thing.
 	session, err := spawner.ExecStream(ctx, spec, ExecRequest{
-		Command: runtimetype.Describe(runtimetype.QwenCode).ACPCommand,
+		Command: runtimetype.RunnerCommand(runtimetype.QwenCode, runtimetype.RunnerACP),
 	})
 	if err != nil {
 		t.Fatalf("open the stream: %v", err)
@@ -112,7 +112,7 @@ func TestLiveExecStreamCarriesTheProtocolClient(t *testing.T) {
 	spawner, spec := liveSpawner(ctx, t)
 
 	session, err := spawner.ExecStream(ctx, spec, ExecRequest{
-		Command: runtimetype.Describe(runtimetype.QwenCode).ACPCommand,
+		Command: runtimetype.RunnerCommand(runtimetype.QwenCode, runtimetype.RunnerACP),
 	})
 	if err != nil {
 		t.Fatalf("open the stream: %v", err)
@@ -154,7 +154,7 @@ func TestLiveExecStreamCarriesASecondAgent(t *testing.T) {
 	spec.Runtime.PodName = pod
 
 	session, err := spawner.ExecStream(ctx, spec, ExecRequest{
-		Command: runtimetype.Describe(runtimetype.Goose).ACPCommand,
+		Command: runtimetype.RunnerCommand(runtimetype.Goose, runtimetype.RunnerACP),
 	})
 	if err != nil {
 		t.Fatalf("open the stream: %v", err)

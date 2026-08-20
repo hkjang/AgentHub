@@ -179,18 +179,20 @@ func permissionFor(id, title, kind string) acp.PermissionRequest {
 	return request
 }
 
-// A runtime that says it speaks the protocol must have something to speak it
-// with. Declaring the runner without the command would pass every form in the
-// console and fail at the moment a task starts.
-func TestEveryACPRuntimeHasAnAgentToTalkTo(t *testing.T) {
+// A runtime that offers a backend must have something to run for it, and a
+// command with no backend offered is a command nobody can reach. Either way round
+// it passes every form in the console and fails at the moment a task starts.
+func TestEveryRunnerARuntimeOffersHasACommand(t *testing.T) {
 	for _, name := range runtimetype.Supported {
-		descriptor := runtimetype.Describe(name)
-		speaks := runtimetype.SupportsRunner(name, runtimetype.RunnerACP)
-		if speaks && len(descriptor.ACPCommand) == 0 {
-			t.Errorf("%s lists the acp runner but names no command to start", name)
-		}
-		if !speaks && len(descriptor.ACPCommand) > 0 {
-			t.Errorf("%s names an acp command but does not list the runner, so nobody can choose it", name)
+		for _, runner := range []string{runtimetype.RunnerACP, runtimetype.RunnerCLI, runtimetype.RunnerInvestigate} {
+			supported := runtimetype.SupportsRunner(name, runner)
+			command := runtimetype.RunnerCommand(name, runner)
+			if supported && len(command) == 0 {
+				t.Errorf("%s lists the %s runner but names no command to start", name, runner)
+			}
+			if !supported && len(command) > 0 {
+				t.Errorf("%s names a %s command but does not list the runner, so nobody can choose it", name, runner)
+			}
 		}
 	}
 }

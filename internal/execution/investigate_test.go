@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -146,7 +147,7 @@ func TestShellStaysBehindADeliberateChoice(t *testing.T) {
 		if got := investigateShellPolicy(goal); got != want {
 			t.Errorf("mode %q = %q, want %q", mode, got, want)
 		}
-		command := investigateCommand(goal, resolvedModel{ModelName: "gpt-5"}, "why?")
+		command := investigateCommand(runtimetype.Holmes, goal, resolvedModel{ModelName: "gpt-5"}, "why?")
 		flag := "--bash-always-deny"
 		if want == "allow" {
 			flag = "--bash-always-allow"
@@ -161,7 +162,7 @@ func TestShellStaysBehindADeliberateChoice(t *testing.T) {
 // must not be read as a flag. Everything the Goal sets has to arrive too.
 func TestTheQuestionCannotBecomeAFlag(t *testing.T) {
 	goal := store.AgentGoal{MaxSteps: 12, CLIApprovalMode: "default"}
-	command := investigateCommand(goal, resolvedModel{ModelName: "gpt-5"}, "--verbose is not a flag here")
+	command := investigateCommand(runtimetype.Holmes, goal, resolvedModel{ModelName: "gpt-5"}, "--verbose is not a flag here")
 
 	separator := -1
 	for index, argument := range command {

@@ -118,20 +118,7 @@ func (s *Server) agents(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	changed := false
-	for _, agent := range items {
-		if agent.Runtime == nil {
-			continue
-		}
-		status, statusErr := s.spawner.Status(r.Context(), runtime.Spec{Runtime: *agent.Runtime, Agent: agent})
-		if statusErr != nil {
-			continue
-		}
-		if err := s.store.UpdateRuntimeObserved(r.Context(), agent.Runtime.ID, status.Phase, status.PodName, status.NodeName, status.Endpoint, status.RestartCount, status.FailureReason); err == nil {
-			changed = true
-		}
-	}
-	if changed {
+	if s.observeRuntimes(r.Context(), items) {
 		items, _ = s.store.Agents(r.Context(), u.ID, u.Role == "admin" && r.URL.Query().Get("scope") == "all")
 	}
 	writeJSON(w, 200, map[string]any{"items": items})
@@ -250,12 +237,40 @@ func (s *Server) spawnNow(r *http.Request, agent store.Agent) (store.Runtime, er
 	return rt, nil
 }
 
+// observeRuntimes asks the cluster what each runtime is actually doing and writes
+// it back, returning whether anything changed.
+//
+// It is shared because it used to live inside the agents listing alone, which
+// meant the endpoint named after runtimes served whatever was last written by a
+// visit to a different page: a Pod could be running for minutes while
+// /api/v1/runtimes still said pending. An operator watching the Runtimes screen
+// saw a runtime that never started.
+func (s *Server) observeRuntimes(ctx context.Context, agents []store.Agent) bool {
+	changed := false
+	for _, agent := range agents {
+		if agent.Runtime == nil {
+			continue
+		}
+		status, err := s.spawner.Status(ctx, runtime.Spec{Runtime: *agent.Runtime, Agent: agent})
+		if err != nil {
+			continue
+		}
+		if err := s.store.UpdateRuntimeObserved(ctx, agent.Runtime.ID, status.Phase, status.PodName, status.NodeName, status.Endpoint, status.RestartCount, status.FailureReason); err == nil {
+			changed = true
+		}
+	}
+	return changed
+}
+
 func (s *Server) runtimes(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	agents, err := s.store.Agents(r.Context(), u.ID, u.Role == "admin" && r.URL.Query().Get("scope") == "all")
 	if err != nil {
 		writeStoreError(w, err)
 		return
+	}
+	if s.observeRuntimes(r.Context(), agents) {
+		agents, _ = s.store.Agents(r.Context(), u.ID, u.Role == "admin" && r.URL.Query().Get("scope") == "all")
 	}
 	items := []store.Runtime{}
 	for _, a := range agents {

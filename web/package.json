@@ -30,7 +30,8 @@
     "test:qwencode": "node scripts/qwencode-e2e.mjs",
     "test:external-app": "node scripts/external-app-e2e.mjs",
     "test:acp": "node scripts/acp-e2e.mjs",
-    "test:investigate": "node scripts/investigate-e2e.mjs"
+    "test:investigate": "node scripts/investigate-e2e.mjs",
+    "test:platform-path": "node scripts/platform-path-e2e.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
