@@ -139,6 +139,48 @@ func TestLiveExecStreamCarriesTheProtocolClient(t *testing.T) {
 	client.Cancel(sessionID)
 }
 
+// And the other agent, in its own image, through its own wrapper. Two runtimes
+// driven the same way is what the descriptor's one-line claim amounts to: the
+// platform starts a command and speaks a protocol, and nothing above this knows
+// which agent answered.
+func TestLiveExecStreamCarriesASecondAgent(t *testing.T) {
+	pod := os.Getenv("AGENTHUB_LIVE_GOOSE_POD")
+	if pod == "" {
+		t.Skip("set AGENTHUB_LIVE_GOOSE_POD to run this against a Goose Pod")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	spawner, spec := liveSpawner(ctx, t)
+	spec.Runtime.PodName = pod
+
+	session, err := spawner.ExecStream(ctx, spec, ExecRequest{
+		Command: runtimetype.Describe(runtimetype.Goose).ACPCommand,
+	})
+	if err != nil {
+		t.Fatalf("open the stream: %v", err)
+	}
+	defer session.Close()
+
+	client := acp.New(session.Stdout, session.Stdin)
+	go client.Run(ctx)
+	capabilities, err := client.Initialize(ctx)
+	if err != nil {
+		t.Fatalf("initialize: %v — %s", err, session.Stderr())
+	}
+	if capabilities.ProtocolVersion != acp.ProtocolVersion {
+		t.Errorf("negotiated protocol %d, this client speaks %d", capabilities.ProtocolVersion, acp.ProtocolVersion)
+	}
+	sessionID, err := client.NewSession(ctx, runtimetype.Describe(runtimetype.Goose).Workspace, nil)
+	if err != nil {
+		t.Fatalf("session/new: %v — %s", err, session.Stderr())
+	}
+	if sessionID == "" {
+		t.Fatal("the agent opened a session with no identifier")
+	}
+	t.Logf("goose session %s opened in a Pod over the platform's own exec stream", sessionID)
+	client.Cancel(sessionID)
+}
+
 // liveSpawner builds the real spawner against a real cluster, reading the
 // connection the same way production does: from the settings row.
 func liveSpawner(ctx context.Context, t *testing.T) (*KubernetesSpawner, Spec) {

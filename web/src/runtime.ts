@@ -5,7 +5,7 @@
 // are facts about the adapter the operator runs, not about this console. They
 // were duplicated here and had already started to drift. The palette stays local:
 // which colour a tile is is genuinely a console decision.
-export type RuntimeType = 'opencode' | 'hermes' | 'qwenpaw' | 'qwencode' | 'jupyter' | 'langflow' | 'nodered' | 'n8n' | 'custom'
+export type RuntimeType = 'opencode' | 'hermes' | 'qwenpaw' | 'qwencode' | 'goose' | 'jupyter' | 'langflow' | 'nodered' | 'n8n' | 'custom'
 
 export type RuntimeDescriptor = {
   type: string; code: string; label: string; summary: string
@@ -22,6 +22,7 @@ const SEED: Record<RuntimeType, RuntimeDescriptor> = {
   hermes: {type: 'hermes', code: 'H', label: 'Hermes', summary: '장기 기억과 도구 실행을 갖춘 자율 에이전트'},
   qwenpaw: {type: 'qwenpaw', code: 'QP', label: 'Qwen Paw', summary: 'AgentScope 개인 에이전트 워크스테이션'},
   qwencode: {type: 'qwencode', code: 'QC', label: 'Qwen Code', summary: '터미널에서 사는 코딩 에이전트'},
+  goose: {type: 'goose', code: 'GO', label: 'Goose', summary: '프로토콜로 대화하는 오픈소스 에이전트'},
   jupyter: {type: 'jupyter', code: 'JL', label: 'JupyterLab', summary: '노트북 작업대 + Qwen Code 에이전트'},
   langflow: {type: 'langflow', code: 'LF', label: 'Langflow', summary: '흐름을 그려서 만드는 시각적 에이전트 빌더'},
   nodered: {type: 'nodered', code: 'NR', label: 'Node-RED', summary: '노드를 이어 만드는 배선 자동화'},

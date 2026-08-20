@@ -58,6 +58,9 @@ try {
   const runtimes = (await get('/api/v1/runtime-types')).body?.items ?? []
   const runnersOf = (type) => runtimes.find((item) => item.type === type)?.runners ?? []
   check('qwencode 가 ACP 실행을 지원한다고 표시', runnersOf('qwencode').includes('acp'), JSON.stringify(runnersOf('qwencode')))
+  // Goose is the runtime that exists because of this backend: it speaks the
+  // protocol natively and has no other way to be handed a task.
+  check('goose 는 ACP 실행만 지원', JSON.stringify(runnersOf('goose')) === '["acp"]', JSON.stringify(runnersOf('goose')))
   check('jupyter 도 같은 에이전트를 가지므로 지원', runnersOf('jupyter').includes('acp'), JSON.stringify(runnersOf('jupyter')))
   check('langflow 는 ACP 를 지원하지 않음', !runnersOf('langflow').includes('acp'), JSON.stringify(runnersOf('langflow')))
   check('opencode 는 자동 실행 백엔드가 없음', runnersOf('opencode').length === 0, JSON.stringify(runnersOf('opencode')))
@@ -67,6 +70,8 @@ try {
     !JSON.stringify(runtimes).includes('agenthub-qwencode-run'))
 
   const templates = (await get('/api/v1/templates')).body?.items ?? []
+  check('카탈로그에 Goose 템플릿이 게시됨', templates.some((item) => item.runtimeType === 'goose'),
+    JSON.stringify(templates.map((item) => item.runtimeType)))
   const template = templates.find((item) => item.runtimeType === 'qwencode')
   if (!template) throw new Error('cannot continue without the qwencode template')
   const sample = ((await get('/api/v1/agents')).body?.items ?? []).find((agent) => agent.workspaceId)
@@ -148,6 +153,44 @@ try {
     await approval.selectOption('auto-edit')
     check('auto-edit 이 무엇을 허용하는지 설명', /작업공간 파일 편집/.test(await drawer.innerText()))
     await page.keyboard.press('Escape')
+    // The same Goal, saved against the runtime that only does this: a backend
+    // that worked for one runtime and not the other would be a branch nobody
+    // wrote down.
+    const gooseTemplate = templates.find((item) => item.runtimeType === 'goose')
+    if (gooseTemplate) {
+      const gooseCreated = await post('/api/v1/agents', {
+        name: `goose-${stamp}`, templateId: gooseTemplate.id, runtimeType: 'goose',
+        workspaceId: sample.workspaceId, runtimeProfileId: sample.runtimeProfileId ?? '',
+        modelEndpointId: sample.modelEndpointId ?? '', description: 'acp e2e 전용',
+      })
+      const gooseAgent = gooseCreated.body?.agent ?? gooseCreated.body
+      if (gooseAgent?.id) {
+        const gooseGoal = await put(`/api/v1/agents/${gooseAgent.id}/goal`, { ...goalBase, runner: 'acp', cliApprovalMode: 'auto' })
+        check('Goose 에이전트에 ACP 목표 저장', gooseGoal.status === 200 && gooseGoal.body?.goal?.runner === 'acp',
+          `HTTP ${gooseGoal.status} ${JSON.stringify(gooseGoal.body?.error?.message ?? '')}`)
+        // The console has to say why a strict mode does nothing on this runtime,
+        // because the reason is the agent's and not something a person could guess.
+        await page.goto(`${baseURL}/agents`, { waitUntil: 'networkidle' })
+        await page.getByText(`goose-${stamp}`).first().waitFor({ timeout: 15000 })
+        await page.locator('tr', { hasText: `goose-${stamp}` }).first().locator('button[title^="목표"]').click()
+        const gooseDrawer = page.locator('.drawer-form')
+        await gooseDrawer.waitFor({ timeout: 15000 })
+        await gooseDrawer.locator('select:has(option[value="acp"])').first().selectOption('acp')
+        await gooseDrawer.locator('select:has(option[value="auto-edit"])').first().selectOption('default')
+        check('엄격한 모드가 Goose에서 소용없다고 경고', /도구 종류를 모두/.test(await gooseDrawer.innerText()))
+        await gooseDrawer.locator('select:has(option[value="auto-edit"])').first().selectOption('auto')
+        check('auto 를 고르면 경고가 사라짐', !/도구 종류를 모두/.test(await gooseDrawer.innerText()))
+        await page.keyboard.press('Escape')
+
+        const gooseFlow = await put(`/api/v1/agents/${gooseAgent.id}/goal`, { ...goalBase, runner: 'cli' })
+        check('Goose 는 헤드리스 실행을 지원하지 않음', gooseFlow.status === 400, `HTTP ${gooseFlow.status}`)
+        const gooseRemoved = await del(`/api/v1/agents/${gooseAgent.id}`)
+        check(`정리: goose-${stamp} 삭제`, gooseRemoved.status === 204 || gooseRemoved.status === 200, `HTTP ${gooseRemoved.status}`)
+      } else {
+        check('Goose Agent 생성', false,
+          `HTTP ${gooseCreated.status} ${JSON.stringify(gooseCreated.body?.error?.message ?? gooseCreated.body ?? '')}`)
+      }
+    }
   } finally {
     const removed = await del(`/api/v1/agents/${agent.id}`)
     check(`정리: acp-${stamp} 삭제`, removed.status === 204 || removed.status === 200, `HTTP ${removed.status}`)

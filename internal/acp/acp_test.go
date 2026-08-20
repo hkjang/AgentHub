@@ -59,7 +59,10 @@ func (a *standIn) run() {
 				"sessionId": "sess_1",
 				"update":    map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "확인하겠습니다. "}},
 			}})
-			permissionID := 9001
+			// A string identifier, because a real agent uses one — Goose numbers its
+			// requests with a UUID — and a client that only understands numbers
+			// silently ignores everything it sends.
+			permissionID := "perm-b33621d7"
 			a.send(map[string]any{"jsonrpc": "2.0", "id": permissionID, "method": "session/request_permission", "params": map[string]any{
 				"sessionId": "sess_1",
 				"toolCall":  map[string]any{"toolCallId": "call_1", "title": "write config.yaml", "kind": "edit"},
@@ -75,7 +78,7 @@ func (a *standIn) run() {
 					return
 				}
 				var answer message
-				if json.Unmarshal(reply, &answer) != nil || answer.ID == nil || *answer.ID != permissionID {
+				if json.Unmarshal(reply, &answer) != nil || string(answer.ID) != `"`+permissionID+`"` {
 					continue
 				}
 				var outcome struct {

@@ -586,7 +586,24 @@ func nodeREDSettings(value spec) string {
 // nodeREDUserDir has to match the adapter's, which is the volume that survives.
 const nodeREDUserDir = "/home/agent/.node-red"
 
-func runtimeConfigs(ns, runtimeName string, value spec) (string, string, string, string) {
+// Filenames the generated configuration is delivered under. Each runtime reads
+// exactly one of them, from the ConfigMap its initialiser copies out of.
+const (
+	configRuntime  = "runtime.json"
+	configOpenCode = "opencode.json"
+	configHermes   = "hermes-config.yaml"
+	configQwen     = "qwen-settings.json"
+	configGoose    = "goose-config.yaml"
+)
+
+// runtimeConfigs builds every generated configuration file, keyed by the name it
+// is delivered under.
+//
+// It returns a map rather than a list of strings because the list had reached
+// four and every caller had to know the order — one of them wanted the second and
+// fourth and said so with three blanks. A fifth runtime is what made that
+// untenable.
+func runtimeConfigs(ns, runtimeName string, value spec) map[string]string {
 	bindings := effectiveMCP(ns, runtimeName, value)
 	runtimeValue := map[string]any{"owner": value.Owner, "runtime": value.Runtime, "profile": value.Profile, "workspace": value.Workspace, "model": value.Model, "mcp": bindings, "lifecycle": value.Lifecycle}
 	runtimeRaw, _ := json.MarshalIndent(runtimeValue, "", "  ")
@@ -601,6 +618,10 @@ func runtimeConfigs(ns, runtimeName string, value spec) (string, string, string,
 		"privacy":    map[string]any{"usageStatisticsEnabled": false},
 		"telemetry":  map[string]any{"enabled": false},
 	}
+	// Goose calls its MCP servers extensions, and names the provider rather than
+	// carrying its address: the endpoint and the key reach it through the
+	// environment, which is where it looks for them.
+	goose := map[string]any{"extensions": map[string]any{}}
 	if value.Model.BaseURL != "" && value.Model.Name != "" {
 		// One provider entry named after the platform, not after whichever backend
 		// happens to serve it: the same binding fronts Ollama, vLLM or any other
@@ -624,6 +645,11 @@ func runtimeConfigs(ns, runtimeName string, value spec) (string, string, string,
 		// initialiser writes; the settings file names the model so that a session
 		// somebody opens by hand starts on the same one a task would use.
 		qwen["model"] = map[string]any{"name": value.Model.Name}
+		// "openai" is the protocol, not the vendor: it is the OpenAI-compatible
+		// client, pointed by OPENAI_HOST at whichever gateway an administrator
+		// registered.
+		goose["GOOSE_PROVIDER"] = "openai"
+		goose["GOOSE_MODEL"] = value.Model.Name
 	}
 	// The administrator's overlay lands here, on the configuration the platform
 	// just generated, so the runtime still reads one file and the platform's own
@@ -636,11 +662,14 @@ func runtimeConfigs(ns, runtimeName string, value spec) (string, string, string,
 			hermes, _ = runtimecfg.Merge(runtimetype.Hermes, hermes, overlay)
 		case runtimetype.QwenCode:
 			qwen, _ = runtimecfg.Merge(runtimetype.QwenCode, qwen, overlay)
+		case runtimetype.Goose:
+			goose, _ = runtimecfg.Merge(runtimetype.Goose, goose, overlay)
 		}
 	}
 	openMCP := opencode["mcp"].(map[string]any)
 	hermesMCP := hermes["mcp_servers"].(map[string]any)
 	qwenMCP := qwen["mcpServers"].(map[string]any)
+	gooseExtensions := goose["extensions"].(map[string]any)
 	for _, item := range bindings {
 		name, endpoint := safeLabel(fmt.Sprint(item["name"])), fmt.Sprint(item["endpoint"])
 		if endpoint == "" {
@@ -651,6 +680,11 @@ func runtimeConfigs(ns, runtimeName string, value spec) (string, string, string,
 		// httpUrl, not url: in Qwen Code the second one means SSE, and a streamable
 		// HTTP server declared under it never connects.
 		qwenEntry := map[string]any{"httpUrl": endpoint, "timeout": 120000}
+		// streamable_http, not sse: the second is Goose's other transport and a
+		// streamable server declared under it never connects. The name is repeated
+		// inside the entry because Goose reads it from there rather than from the
+		// key it is filed under.
+		gooseEntry := map[string]any{"type": "streamable_http", "name": name, "uri": endpoint, "enabled": true, "timeout": 300}
 		// The ConfigMap is not a Secret, so the credential is referenced by the
 		// environment variable the Pod reads from the runtime Secret.
 		// A policied binding is authenticated by the gateway, so the credential
@@ -659,15 +693,28 @@ func runtimeConfigs(ns, runtimeName string, value spec) (string, string, string,
 			open["headers"] = map[string]any{headerName: headerValue}
 			hermesEntry["headers"] = map[string]any{headerName: headerValue}
 			qwenEntry["headers"] = map[string]any{headerName: headerValue}
+			gooseEntry["headers"] = map[string]any{headerName: headerValue}
 		}
 		openMCP[name] = open
 		hermesMCP[name] = hermesEntry
 		qwenMCP[name] = qwenEntry
+		gooseExtensions[name] = gooseEntry
 	}
 	openRaw, _ := json.MarshalIndent(opencode, "", "  ")
 	hermesRaw, _ := json.MarshalIndent(hermes, "", "  ")
 	qwenRaw, _ := json.MarshalIndent(qwen, "", "  ")
-	return string(runtimeRaw), string(openRaw), string(hermesRaw), string(qwenRaw)
+	// Written as JSON under a .yaml name on purpose: Goose parses YAML, YAML is a
+	// superset of JSON, and the platform gets one way of building configuration
+	// rather than two. Verified against the real agent, which loads it and the
+	// extensions in it.
+	gooseRaw, _ := json.MarshalIndent(goose, "", "  ")
+	return map[string]string{
+		configRuntime:  string(runtimeRaw),
+		configOpenCode: string(openRaw),
+		configHermes:   string(hermesRaw),
+		configQwen:     string(qwenRaw),
+		configGoose:    string(gooseRaw),
+	}
 }
 
 func (c *Controller) Reconcile(ctx context.Context, object *unstructured.Unstructured) error {
@@ -774,8 +821,7 @@ func (c *Controller) ensureServiceAccount(ctx context.Context, ns, name string, 
 	return err
 }
 func (c *Controller) ensureConfigMap(ctx context.Context, ns, name string, value spec, owner *unstructured.Unstructured) error {
-	runtimeConfig, opencodeConfig, hermesConfig, qwenConfig := runtimeConfigs(ns, name, value)
-	data := map[string]string{"runtime.json": runtimeConfig, "opencode.json": opencodeConfig, "hermes-config.yaml": hermesConfig, "qwen-settings.json": qwenConfig}
+	data := runtimeConfigs(ns, name, value)
 	if value.Runtime.Type == runtimetype.NodeRED {
 		data["node-red-settings.js"] = nodeREDSettings(value)
 	}
@@ -1452,13 +1498,27 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 // the model binding, MCP bundle, system prompt or the administrator's common
 // files and variables produces a new Pod template.
 func configHash(ns, name string, value spec) string {
-	runtimeRaw, openRaw, hermesRaw, qwenRaw := runtimeConfigs(ns, name, value)
+	configs := runtimeConfigs(ns, name, value)
+	// Every generated file, in a fixed order so the same inputs fingerprint the
+	// same way, and so a file added later is covered without this being edited.
+	names := make([]string, 0, len(configs))
+	for file := range configs {
+		names = append(names, file)
+	}
+	sort.Strings(names)
+	var material strings.Builder
+	for _, file := range names {
+		material.WriteString(file)
+		material.WriteByte(0)
+		material.WriteString(configs[file])
+		material.WriteByte(0)
+	}
 	// The overlay's fingerprint is folded in so that changing a setting rolls the
 	// Pod. Qwen Paw's overlay never reaches the generated configs above, and an
 	// environment variable is not part of them either, so without this a saved
 	// setting would sit in the ConfigMap while the running Pod kept its old one.
-	sum := sha256.Sum256([]byte(runtimeRaw + "\x00" + openRaw + "\x00" + hermesRaw + "\x00" + qwenRaw + "\x00" +
-		nodeREDSettings(value) + "\x00" + provisioningHash(value) + "\x00" + value.RuntimeSettings.Fingerprint))
+	material.WriteString(nodeREDSettings(value) + "\x00" + provisioningHash(value) + "\x00" + value.RuntimeSettings.Fingerprint)
+	sum := sha256.Sum256([]byte(material.String()))
 	return hex.EncodeToString(sum[:])
 }
 

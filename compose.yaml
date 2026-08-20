@@ -29,6 +29,7 @@ services:
         JUPYTER_VERSION: 0.1.0
         NODERED_VERSION: 0.1.0
         N8N_VERSION: 0.1.0
+        GOOSE_VERSION: 0.1.0
     restart: unless-stopped
     depends_on:
       postgres: {condition: service_healthy}

@@ -360,9 +360,29 @@ default but the point of the exercise: started without it this agent approves it
 own tool calls and never asks, verified against the real binary, which wrote a
 file without a word. It stays `default` whatever the Goal chose, because the
 Goal's mode decides what the platform answers, not whether it is asked — a
-permissive Goal still leaves a record of what it permitted. Supporting the next
-ACP agent is that one line, which is the whole point of adopting somebody else's
-protocol.
+permissive Goal still leaves a record of what it permitted.
+
+Goose is the proof that the line is all it takes. It is Block's open agent, it
+speaks the protocol natively as `goose acp`, and adding it needed no execution
+code at all — an image, a descriptor entry, and the backend above drove it.
+Two differences it brought are worth knowing, because both were bugs or
+behaviours nothing but a second real agent would have surfaced.
+
+The first was the platform's. Goose identifies its JSON-RPC requests with a
+string where Qwen Code uses a number, both of which the protocol allows. A client
+that decoded ids as numbers discarded every frame carrying one as "not ours" — so
+its permission request was never answered and the agent waited for a reply that
+was never coming, until the task's deadline killed the run. Ids are now kept as
+they arrived and echoed back byte for byte.
+
+The second is Goose's, and it is documented rather than worked around: it
+declares every tool call's kind as `other`, reads included. The platform judges
+by the kind an agent declares, so `plan`, `default` and `auto-edit` refuse
+everything a Goose session tries and only `auto` and `yolo` let it work. Guessing
+the kind from a tool's title would be the platform inventing a fact the agent
+declined to state, so the console and the runtime's own description say this
+instead, and an unattended Goose Goal is expected to choose `auto` — with every
+call it makes still recorded.
 
 ## Calling an application the platform does not run
 

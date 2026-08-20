@@ -115,7 +115,7 @@ func TestQwenCodeSettingsDeclareMCPServersTheWayTheAgentReadsThem(t *testing.T) 
 	value.Model.BaseURL = "http://models.internal/v1"
 	value.MCP = []mcpBinding{{Name: "toolbox", Mode: "shared", Endpoint: "http://mcp.internal:8000/mcp"}}
 
-	_, _, _, qwenRaw := runtimeConfigs("agent-runtime-dev", "rt-1", value)
+	qwenRaw := runtimeConfigs("agent-runtime-dev", "rt-1", value)[configQwen]
 	var settings struct {
 		Model struct {
 			Name string `json:"name"`

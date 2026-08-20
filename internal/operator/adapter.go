@@ -1,6 +1,9 @@
 package operator
 
 import (
+	"net/url"
+	"strings"
+
 	corev1 "k8s.io/api/core/v1"
 	apiresource "k8s.io/apimachinery/pkg/api/resource"
 
@@ -196,6 +199,11 @@ func jupyterHealthCommand(build adapterBuild) []string {
 	return []string{"/bin/sh", "-c", "curl -fsS -m 3 http://127.0.0.1:8888/" + build.runtimeID() + "/api/status >/dev/null"}
 }
 
+// gooseConfigHome is where Goose keeps its configuration. Its sessions and logs
+// sit beside it under the home volume, so a conversation somebody had survives
+// the Pod.
+const gooseConfigHome = "/home/agent/.config/goose"
+
 // qwenCodeHome is where Qwen Code keeps its settings and credentials. It is on
 // the home volume so a person's own settings survive the Pod.
 const qwenCodeHome = "/home/agent/.qwen"
@@ -220,6 +228,46 @@ func qwenCodeStart(build adapterBuild) string {
 // the terminal is being served — under the same base path.
 func qwenCodeHealthCommand(build adapterBuild) []string {
 	return []string{"/bin/sh", "-c", "curl -fsS -m 3 http://127.0.0.1:7681/" + build.runtimeID() + "/token >/dev/null"}
+}
+
+// gooseStart serves the agent's terminal chat under the runtime's own path, for
+// the same reason Qwen Code's is served that way: ttyd asks for its websocket
+// relative to the base path it was started with.
+func gooseStart(build adapterBuild) string {
+	return "exec /usr/local/bin/ttyd --port 7681 --interface 127.0.0.1 --writable " +
+		"--base-path /" + build.runtimeID() + " " +
+		"--client-option titleFixed=AgentHub " +
+		"/usr/local/bin/agenthub-goose-shell"
+}
+
+// gooseHealthCommand asks ttyd's own token endpoint under the same base path.
+func gooseHealthCommand(build adapterBuild) []string {
+	return []string{"/bin/sh", "-c", "curl -fsS -m 3 http://127.0.0.1:7681/" + build.runtimeID() + "/token >/dev/null"}
+}
+
+// gooseModelEnv is the model binding by the names Goose reads.
+//
+// It splits the platform's base URL rather than passing it whole, because Goose
+// composes its endpoint from a host and a path it appends to it — give it the
+// whole URL as the host and every request goes to /v1/v1/chat/completions. The
+// path defaults to the OpenAI convention when the gateway's URL carries none.
+func gooseModelEnv(baseURL string) []corev1.EnvVar {
+	trimmed := strings.TrimSpace(baseURL)
+	if trimmed == "" {
+		return nil
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" {
+		return nil
+	}
+	path := strings.Trim(parsed.Path, "/")
+	if path == "" {
+		path = "v1"
+	}
+	return []corev1.EnvVar{
+		{Name: "OPENAI_HOST", Value: parsed.Scheme + "://" + parsed.Host},
+		{Name: "OPENAI_BASE_PATH", Value: path + "/chat/completions"},
+	}
 }
 
 // langflowHealthCommand is Langflow's own health endpoint, asked from inside the
@@ -337,6 +385,44 @@ var runtimeAdapters = map[string]runtimeAdapter{
 		// the kubelet could never connect.
 		Probes: func(build adapterBuild) (*corev1.Probe, *corev1.Probe) {
 			command := qwenCodeHealthCommand(build)
+			return &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 5, PeriodSeconds: 5, TimeoutSeconds: 3, FailureThreshold: 24,
+				}, &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 60, PeriodSeconds: 30, TimeoutSeconds: 3, FailureThreshold: 4,
+				}
+		},
+	},
+	runtimetype.Goose: {
+		Type:    runtimetype.Goose,
+		Command: []string{"/bin/sh", "-ec"},
+		ArgsFor: func(build adapterBuild) []string { return []string{gooseStart(build)} },
+		Env: func(build adapterBuild) []corev1.EnvVar {
+			env := []corev1.EnvVar{
+				{Name: "GOOSE_CONFIG_HOME", Value: gooseConfigHome},
+				{Name: "AGENTHUB_GOOSE_CONFIG", Value: "/etc/agenthub/goose-config.yaml"},
+			}
+			return append(env, gooseModelEnv(build.Value.Model.BaseURL)...)
+		},
+		InitContainers: func(build adapterBuild) []corev1.Container {
+			return []corev1.Container{{
+				Name: "goose-config-init", Image: build.image(), ImagePullPolicy: corev1.PullIfNotPresent,
+				Command: []string{"/usr/local/bin/agenthub-goose-configure"}, Env: build.Env,
+				// Creating the agent's virtualenv is the expensive part; it happens
+				// once per home volume and then never again.
+				Resources:       initResources("500m", "512Mi"),
+				SecurityContext: restrictedContainerSecurityContext(build.Value.Security.ReadOnlyRootFilesystem),
+				VolumeMounts:    homeAndConfigMounts,
+			}}
+		},
+		Sidecars: func(build adapterBuild) []corev1.Container {
+			// A browser terminal with no authenticator in front of it is a shell
+			// anyone who reaches the port can use.
+			return []corev1.Container{runtimeProxyContainer("goose-proxy", build.Name, build.sidecarImage(), "http://127.0.0.1:7681")}
+		},
+		Probes: func(build adapterBuild) (*corev1.Probe, *corev1.Probe) {
+			command := gooseHealthCommand(build)
 			return &corev1.Probe{
 					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
 					InitialDelaySeconds: 5, PeriodSeconds: 5, TimeoutSeconds: 3, FailureThreshold: 24,

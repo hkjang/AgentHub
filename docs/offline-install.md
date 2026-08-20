@@ -16,8 +16,8 @@ change the split size.
 
 The control plane version lives in `VERSION`, the shared runtime base image has
 its own `BASE_VERSION`, and the runtimes that do not boot from it have theirs:
-`LANGFLOW_VERSION`, `QWENCODE_VERSION`, `JUPYTER_VERSION`, `NODERED_VERSION` and
-`N8N_VERSION`.
+`LANGFLOW_VERSION`, `QWENCODE_VERSION`, `JUPYTER_VERSION`, `GOOSE_VERSION`,
+`NODERED_VERSION` and `N8N_VERSION`.
 Each is versioned separately because each is large, slow to build and only
 rebuilt when something it is built from changes. A release whose notes say an
 image is unchanged has no archive for it, and the notes name the tag it runs on:
@@ -51,6 +51,7 @@ docker load < agenthub-base-v0.12.0.tar.gz
 docker load < agenthub-langflow-v0.2.0.tar.gz
 docker load < agenthub-qwencode-v0.2.0.tar.gz
 docker load < agenthub-jupyter-v0.1.0.tar.gz
+docker load < agenthub-goose-v0.1.0.tar.gz
 docker load < agenthub-nodered-v0.1.0.tar.gz
 docker load < agenthub-n8n-v0.1.0.tar.gz
 export AGENTHUB_BOOTSTRAP_ADMIN=admin

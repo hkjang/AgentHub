@@ -88,6 +88,12 @@ type Descriptor struct {
 // notebooks is the same agent.
 var qwenCodeACP = []string{"/usr/local/bin/agenthub-qwencode-run", "--acp", "--approval-mode", "default"}
 
+// gooseACP starts Goose as a protocol peer. The mode that makes it ask before
+// acting is an environment variable rather than a flag, so it lives in the
+// wrapper this points at — the same wrapper that supplies the working directory
+// and the PATH an exec does not have.
+var gooseACP = []string{"/usr/local/bin/agenthub-goose-run", "acp"}
+
 var descriptors = map[string]Descriptor{
 	OpenCode: {
 		Type: OpenCode, Code: "OC", Label: "OpenCode",
@@ -135,6 +141,21 @@ var descriptors = map[string]Descriptor{
 		Workspace: "/workspace", Port: 7860,
 		BrowserUI: true, Terminal: false, ToolLoop: true, MCPConfigured: false, ProxiedUI: true,
 		HostSessionOnly: true, Runners: []string{RunnerFlow},
+	},
+	Goose: {
+		Type: Goose, Code: "GO", Label: "Goose",
+		Summary:   "프로토콜로 대화하는 오픈소스 에이전트. 도구를 쓰기 전마다 플랫폼에 묻습니다.",
+		BestFor:   "무엇을 바꿨는지 남아야 하는 무인 작업 — 승인·거절이 실행 기록으로 필요한 일",
+		Strengths: []string{"Agent Client Protocol을 직접 지원해 도구 요청마다 플랫폼이 승인·거절을 판단", "터미널 대화를 브라우저에서 그대로 사용", "MCP 서버가 확장(extension)으로 자동 등록됨", "대화·설정이 홈 볼륨에 남아 재기동해도 유지", "pip 설치가 되는 작업 도구모음 포함"},
+		Watchouts: []string{"자체 인증이 없는 브라우저 터미널이라 플랫폼 프록시로만 공개됩니다",
+			// Learned by driving the real agent: every tool it announces is kind
+			// "other", including reads. The platform judges by the kind an agent
+			// declares, so the fine-grained modes have nothing to work with here.
+			"도구 종류를 모두 other 로 알려주기 때문에, ACP 실행의 승인 모드는 사실상 auto·yolo(전부 승인) 아니면 거절입니다 — 무인 실행에는 auto 를 고르세요",
+			"사용 토큰을 알려주지 않아 ACP 실행이 계량되지 않습니다"},
+		Workspace: "/workspace", Port: 7681,
+		BrowserUI: true, Terminal: true, ToolLoop: true, MCPConfigured: true, ProxiedUI: true,
+		Runners: []string{RunnerACP}, ACPCommand: gooseACP,
 	},
 	Jupyter: {
 		Type: Jupyter, Code: "JL", Label: "JupyterLab",

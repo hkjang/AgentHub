@@ -17,6 +17,7 @@ package acp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -65,12 +66,28 @@ func New(stdout io.Reader, stdin io.Writer) *Client {
 // a notification, and which one it is has to be worked out from what is present:
 // the protocol does not label them.
 type message struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      *int            `json:"id,omitempty"`
-	Method  string          `json:"method,omitempty"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *rpcError       `json:"error,omitempty"`
+	JSONRPC string `json:"jsonrpc"`
+	// ID is kept as it arrived rather than decoded to a number. JSON-RPC allows a
+	// string, and a real agent uses one: Goose identifies its requests with a
+	// UUID. Decoding this to an int meant every frame carrying one failed to parse
+	// and was discarded as "not ours" — so its permission request was never
+	// answered and the agent waited for a reply that was never coming, until the
+	// task's own deadline killed the run.
+	//
+	// A reply echoes what arrived, byte for byte, which is what the protocol asks
+	// for and the only thing that works for both shapes.
+	ID     json.RawMessage `json:"id,omitempty"`
+	Method string          `json:"method,omitempty"`
+	Params json.RawMessage `json:"params,omitempty"`
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  *rpcError       `json:"error,omitempty"`
+}
+
+// identifies reports whether this frame carries an id at all, which is what
+// separates a request from a notification and a response from either.
+func (m message) identifies() bool {
+	trimmed := bytes.TrimSpace(m.ID)
+	return len(trimmed) > 0 && string(trimmed) != "null"
 }
 
 type rpcError struct {
@@ -120,11 +137,11 @@ func (c *Client) dispatch(ctx context.Context, line []byte) {
 		return
 	}
 	switch {
-	case frame.Method != "" && frame.ID != nil:
+	case frame.Method != "" && frame.identifies():
 		c.answer(ctx, frame)
 	case frame.Method != "":
 		c.notify(frame)
-	case frame.ID != nil:
+	case frame.identifies():
 		c.complete(frame)
 	}
 }
@@ -195,9 +212,15 @@ func (c *Client) notify(frame message) {
 }
 
 func (c *Client) complete(frame message) {
+	// Only this client's own requests are waited on, and it numbers them, so a
+	// response whose id is not one of those numbers belongs to nobody here.
+	var id int
+	if err := json.Unmarshal(frame.ID, &id); err != nil {
+		return
+	}
 	c.mu.Lock()
-	waiter, found := c.pending[*frame.ID]
-	delete(c.pending, *frame.ID)
+	waiter, found := c.pending[id]
+	delete(c.pending, id)
 	c.mu.Unlock()
 	if !found {
 		return
@@ -228,7 +251,7 @@ func (c *Client) call(ctx context.Context, method string, params any, out any) e
 	c.nextID++
 	waiter := make(chan rawResponse, 1)
 	c.pending[id] = waiter
-	err := c.writer.Encode(message{JSONRPC: "2.0", ID: &id, Method: method, Params: mustJSON(params)})
+	err := c.writer.Encode(message{JSONRPC: "2.0", ID: mustJSON(id), Method: method, Params: mustJSON(params)})
 	c.mu.Unlock()
 	if err != nil {
 		return fmt.Errorf("%s 요청을 보내지 못했습니다: %w", method, err)
@@ -252,13 +275,13 @@ func (c *Client) call(ctx context.Context, method string, params any, out any) e
 	}
 }
 
-func (c *Client) reply(id *int, result any) {
+func (c *Client) reply(id json.RawMessage, result any) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	_ = c.writer.Encode(message{JSONRPC: "2.0", ID: id, Result: mustJSON(result)})
 }
 
-func (c *Client) replyError(id *int, code int, text string) {
+func (c *Client) replyError(id json.RawMessage, code int, text string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	_ = c.writer.Encode(message{JSONRPC: "2.0", ID: id, Error: &rpcError{Code: code, Message: text}})
