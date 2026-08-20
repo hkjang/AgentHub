@@ -1,40 +1,46 @@
 import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
-  Activity, Bell, Boxes, Bot, Braces, ChevronDown, ChevronRight, CircleUserRound, Command,
+  Activity, Bell, Boxes, Bot, Braces, Check, ChevronDown, ChevronRight, CircleUserRound, Command,
   Database, FileClock, FileCode2, FileCog, Gauge, KeyRound, LayoutDashboard, Library, LogOut, Menu, Network,
-  ListChecks, Search, Settings, ShieldAlert, ShieldCheck, Sparkles, UsersRound, Workflow, X
+  ListChecks, Palette, Search, Settings, ShieldAlert, ShieldCheck, Sparkles, UsersRound, Workflow, X
 } from 'lucide-react'
 import { useAuth } from '../App'
 import { api } from '../api'
+import { setViewMode, term, useTerms, useViewMode, VIEW_MODES, type TermKey } from '../viewmode'
 import type { Notification } from '../types'
 
 // Menu labels are Korean; `keywords` keeps the original English terms (and the
 // route) searchable so the command palette still answers "agents" or "mcp".
-type NavItem = { to: string; label: string; icon: typeof Gauge; keywords?: string }
+// `term` names an entry in the vocabulary, so an item reads differently in
+// workshop mode. Items without one read the same in both, which is most of them:
+// the mode renames what it makes clearer and leaves the rest alone. The English
+// keywords are unchanged either way, so search still finds a screen by the name
+// the reader is not currently using.
+type NavItem = { to: string; label: string; icon: typeof Gauge; keywords?: string; term?: TermKey }
 type NavGroup = { label: string; items: NavItem[]; admin?: boolean; review?: boolean }
 const groups: NavGroup[] = [
   { label: '개요', items: [{ to: '/', label: '홈', icon: LayoutDashboard, keywords: 'home overview dashboard 대시보드' }] },
   { label: '에이전트', items: [
-    { to: '/catalog', label: '에이전트 카탈로그', icon: Library, keywords: 'agent catalog template 템플릿' },
-    { to: '/agents', label: '내 에이전트', icon: Bot, keywords: 'my agents 목록' },
-    { to: '/agents/builder', label: '에이전트 빌더', icon: Sparkles, keywords: 'agent builder create 생성' },
+    { to: '/catalog', label: '에이전트 카탈로그', icon: Library, keywords: 'agent catalog template 템플릿' , term: 'catalog' },
+    { to: '/agents', label: '내 에이전트', icon: Bot, keywords: 'my agents 목록' , term: 'agents' },
+    { to: '/agents/builder', label: '에이전트 빌더', icon: Sparkles, keywords: 'agent builder create 생성' , term: 'builder' },
     { to: '/workflows', label: '워크플로', icon: Workflow, keywords: 'workflow dag 그래프' }
   ]},
   { label: '작업공간 · 런타임', items: [
-    { to: '/workspaces', label: '작업공간', icon: Database, keywords: 'workspace storage pvc 저장소' },
-    { to: '/workspaces/snapshots', label: '스냅샷', icon: Boxes, keywords: 'snapshot backup restore 복원 백업' },
-    { to: '/runtime', label: '런타임', icon: Activity, keywords: 'runtime pod 실행' },
-    { to: '/sessions', label: '세션', icon: FileCode2, keywords: 'session 작업' },
-    { to: '/tasks', label: '작업 대기열', icon: ListChecks, keywords: 'task queue run 자동 실행 큐' }
+    { to: '/workspaces', label: '작업공간', icon: Database, keywords: 'workspace storage pvc 저장소' , term: 'workspaces' },
+    { to: '/workspaces/snapshots', label: '스냅샷', icon: Boxes, keywords: 'snapshot backup restore 복원 백업' , term: 'snapshots' },
+    { to: '/runtime', label: '런타임', icon: Activity, keywords: 'runtime pod 실행' , term: 'runtime' },
+    { to: '/sessions', label: '세션', icon: FileCode2, keywords: 'session 작업' , term: 'sessions' },
+    { to: '/tasks', label: '작업 대기열', icon: ListChecks, keywords: 'task queue run 자동 실행 큐' , term: 'tasks' }
   ]},
   { label: '연동', items: [
-    { to: '/mcp/catalog', label: 'MCP 카탈로그', icon: Network, keywords: 'mcp catalog server 서버' },
-    { to: '/mcp/bundles', label: 'MCP 번들', icon: Boxes, keywords: 'mcp bundle 묶음' },
+    { to: '/mcp/catalog', label: 'MCP 카탈로그', icon: Network, keywords: 'mcp catalog server 서버' , term: 'mcpCatalog' },
+    { to: '/mcp/bundles', label: 'MCP 번들', icon: Boxes, keywords: 'mcp bundle 묶음' , term: 'mcpBundles' },
     { to: '/developer', label: '시크릿 · API 키', icon: Braces, keywords: 'secret api key developer 개인키 토큰' },
     { to: '/evaluation', label: '사전검증', icon: ShieldCheck, keywords: 'evaluation test quality 품질 테스트' }
   ]},
-  { label: '거버넌스', review: true, items: [{ to: '/reviews', label: '검토 · 승인', icon: ShieldCheck, keywords: 'review approval 승인 요청' }] },
+  { label: '거버넌스', review: true, items: [{ to: '/reviews', label: '검토 · 승인', icon: ShieldCheck, keywords: 'review approval 승인 요청' , term: 'reviews' }] },
   { label: '관리자', admin: true, items: [
     { to: '/admin/overview', label: '운영 현황', icon: Gauge, keywords: 'overview dashboard usage statistics 통계 사용량 현황 대시보드 비용' },
     { to: '/admin/policy', label: '정책', icon: ShieldCheck, keywords: 'policy rule guardrail 정책 규칙 차단 허용 승인 거버넌스' },
@@ -42,12 +48,12 @@ const groups: NavGroup[] = [
     { to: '/admin/execution', label: '실행 제어', icon: Gauge, keywords: 'execution control pause worker retention cleanup 워커 중지 재개 회수 보관 정리' },
     { to: '/admin/operations', label: '로그 · 감사', icon: FileClock, keywords: 'control center operations log audit approval 로그 감사 승인 운영' },
     { to: '/admin/runtime-settings', label: '런타임 설정 주입', icon: FileCog, keywords: 'runtime settings inject locale language timezone yolo skill 언어 시간대 로케일 주입 설정' },
-    { to: '/admin/runtime-profiles', label: '런타임 프로파일', icon: Bot, keywords: 'runtime profile cpu memory 자원' },
-    { to: '/admin/runtime-images', label: '런타임 이미지', icon: Boxes, keywords: 'runtime image registry 이미지' },
+    { to: '/admin/runtime-profiles', label: '런타임 프로파일', icon: Bot, keywords: 'runtime profile cpu memory 자원' , term: 'runtimeProfiles' },
+    { to: '/admin/runtime-images', label: '런타임 이미지', icon: Boxes, keywords: 'runtime image registry 이미지' , term: 'runtimeImages' },
     { to: '/admin/models', label: '모델 엔드포인트', icon: Sparkles, keywords: 'model endpoint llm vllm ollama 모델' },
     { to: '/admin/external-apps', label: '외부 앱', icon: Sparkles, keywords: 'dify external app workflow 외부 앱 연동' },
-    { to: '/admin/mcp', label: 'MCP 서버', icon: Network, keywords: 'mcp server 서버' },
-    { to: '/admin/mcp-bundles', label: 'MCP 번들 관리', icon: Boxes, keywords: 'mcp bundle 번들' },
+    { to: '/admin/mcp', label: 'MCP 서버', icon: Network, keywords: 'mcp server 서버' , term: 'mcpServers' },
+    { to: '/admin/mcp-bundles', label: 'MCP 번들 관리', icon: Boxes, keywords: 'mcp bundle 번들' , term: 'mcpBundlesAdmin' },
     { to: '/admin/users', label: '사용자 · 팀', icon: UsersRound, keywords: 'user team role 권한 사용자' },
     { to: '/admin/security', label: '보안 · 네트워크', icon: ShieldCheck, keywords: 'security network policy 정책 보안' },
     { to: '/admin/settings', label: '시스템 설정', icon: Settings, keywords: 'system settings config 설정' }
@@ -64,6 +70,7 @@ function matchesRoute(pathname: string, to: string) {
 
 export function AppShell() {
   const { user, version, capabilities, logout } = useAuth()
+  const t = useTerms(), mode = useViewMode()
   const [sidebar, setSidebar] = useState(false), [command, setCommand] = useState(false), [profile, setProfile] = useState(false)
   const [notificationOpen,setNotificationOpen]=useState(false),[notifications,setNotifications]=useState<Notification[]>([])
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -119,7 +126,7 @@ export function AppShell() {
           <button className="nav-group-title" onClick={() => setCollapsed((v) => ({...v, [group.label]: !v[group.label]}))} aria-expanded={!collapsed[group.label]}>
             <span>{group.label}</span>{collapsed[group.label] ? <ChevronRight size={14}/> : <ChevronDown size={14}/>}
           </button>
-          {!collapsed[group.label] && group.items.map(({to,label,icon:Icon}) => <NavLink end to={to} key={to} onClick={() => setSidebar(false)} className={active?.to === to ? 'nav-link active' : 'nav-link'}><Icon size={18}/><span>{label}</span></NavLink>)}
+          {!collapsed[group.label] && group.items.map(({to,label,icon:Icon,term:key}) => <NavLink end to={to} key={to} onClick={() => setSidebar(false)} className={active?.to === to ? 'nav-link active' : 'nav-link'}><Icon size={18}/><span>{key ? t(key) : label}</span></NavLink>)}
         </section>)}
       </nav>
       <div className="sidebar-status"><span className="status-dot online"/><div><strong>컨트롤 플레인</strong><span>정상 · v{version.version}</span></div></div>
@@ -128,12 +135,20 @@ export function AppShell() {
     <div className="main-column">
       <header className="topbar">
         <button className="icon-button mobile-only" onClick={() => setSidebar(true)} aria-label="메뉴 열기"><Menu size={20}/></button>
-        <div className="breadcrumb"><span>AgentHub</span><ChevronRight size={14}/><strong>{active?.label ?? '작업공간'}</strong></div>
+        <div className="breadcrumb"><span>AgentHub</span><ChevronRight size={14}/><strong>{active ? (active.term ? t(active.term) : active.label) : t('workspaces')}</strong></div>
         <div className="top-actions">
           <button className="command-chip" onClick={() => setCommand(true)}><Command size={15}/><span>빠른 이동</span></button>
           <div className="notification-wrap"><button className="icon-button notification-button" onClick={()=>{setProfile(false);setNotificationOpen((value)=>!value)}} aria-label="알림" aria-expanded={notificationOpen}><Bell size={18}/>{notifications.some((item)=>!item.readAt)&&<i/>}</button>{notificationOpen&&<div className="notification-menu custom-scroll"><header><strong>알림</strong><span>읽지 않음 {notifications.filter((item)=>!item.readAt).length}건</span></header>{notifications.length===0?<div className="empty-compact">새 알림이 없습니다.</div>:notifications.map((item)=><button key={item.id} className={item.readAt?'read':''} onClick={()=>void openNotification(item)}><i/><span><strong>{item.title}</strong><small>{item.message}</small><time>{new Date(item.createdAt).toLocaleString('ko-KR')}</time></span></button>)}</div>}</div>
           <div className="profile-wrap"><button className="profile-button" onClick={() => {setNotificationOpen(false);setProfile((v) => !v)}} aria-expanded={profile}><div className="avatar">{user.displayName.slice(0,1).toUpperCase()}</div><div><strong>{user.displayName}</strong><span>{user.role}</span></div><ChevronDown size={15}/></button>
-            {profile && <div className="profile-menu"><div className="profile-card"><CircleUserRound size={20}/><div><strong>{user.displayName}</strong><span>{user.email || user.username}</span></div></div><NavLink to="/developer" onClick={() => setProfile(false)}><KeyRound size={16}/>개인 키와 API</NavLink><div className="version-row"><span>AgentHub</span><code>v{version.version}</code><small>{version.commit.slice(0,8)}</small></div><button onClick={() => void logout()}><LogOut size={16}/>로그아웃</button></div>}
+            {profile && <div className="profile-menu"><div className="profile-card"><CircleUserRound size={20}/><div><strong>{user.displayName}</strong><span>{user.email || user.username}</span></div></div>
+              <div className="mode-switch" role="group" aria-label="보기 방식">
+                <span className="mode-switch-title">보기 방식</span>
+                {VIEW_MODES.map((option) => <button key={option.id} type="button" className={mode === option.id ? 'mode-option selected' : 'mode-option'}
+                  aria-pressed={mode === option.id} onClick={() => setViewMode(option.id)}>
+                  <Palette size={15}/><span><strong>{option.label}</strong><small>{option.hint}</small></span>{mode === option.id && <Check size={15}/>}
+                </button>)}
+              </div>
+              <NavLink to="/developer" onClick={() => setProfile(false)}><KeyRound size={16}/>개인 키와 API</NavLink><div className="version-row"><span>AgentHub</span><code>v{version.version}</code><small>{version.commit.slice(0,8)}</small></div><button onClick={() => void logout()}><LogOut size={16}/>로그아웃</button></div>}
           </div>
         </div>
       </header>
@@ -149,9 +164,10 @@ function CommandPalette({items,close,go}:{items:NavItem[];close:()=>void;go:(to:
   const results = useMemo(() => {
     const needle = query.trim().toLowerCase()
     if (!needle) return items
-    // Match the Korean label, the English keywords and the route, so the menu
-    // stays reachable by whichever name the user has in mind.
-    return items.filter((item) => `${item.label} ${item.keywords ?? ''} ${item.to}`.toLowerCase().includes(needle))
+    // Match both vocabularies, the English keywords and the route, so the menu
+    // stays reachable by whichever name the user has in mind — including the one
+    // belonging to the mode they are not in.
+    return items.filter((item) => `${item.label} ${item.term ? term(item.term, 'workshop') : ''} ${item.keywords ?? ''} ${item.to}`.toLowerCase().includes(needle))
   }, [items, query])
   useEffect(() => { setCursor(0) }, [query])
   const move = (delta: number) => setCursor((current) => {

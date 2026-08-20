@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { api, UNAUTHORIZED_EVENT } from './api'
+import { setViewModeScope } from './viewmode'
 import { setRuntimeDescriptors, type RuntimeDescriptor } from './runtime'
 import type { User, Version } from './types'
 import { AppShell } from './components/AppShell'
@@ -44,12 +45,15 @@ export function App() {
     try {
       const result = await api.get<{ user: User; version: Version }>('/api/v1/me')
       setUser(result.user); setVersion(result.version)
+      // The reading preference belongs to the person, not the browser: a shared
+      // machine must not hand one person's console to whoever signs in next.
+      setViewModeScope(result.user.id)
       api.get<Capabilities>('/api/v1/capabilities').then(setCapabilities).catch(() => undefined)
       // What each runtime is and is good at comes from the platform, so the
       // console cannot describe an adapter this build does not have.
       api.get<{items: RuntimeDescriptor[]}>('/api/v1/runtime-types')
         .then((value) => setRuntimeDescriptors(value.items)).catch(() => undefined)
-    } catch { setUser(null) }
+    } catch { setUser(null); setViewModeScope('') }
   }, [])
 
   useEffect(() => {

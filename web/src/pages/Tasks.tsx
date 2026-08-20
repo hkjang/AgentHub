@@ -4,6 +4,7 @@ import { api } from '../api'
 import { useAuth } from '../App'
 import { Link } from 'react-router-dom'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, GuideLegend, GuidePanel, Loading, PageHeader, StatusBadge, statusLabel, useEscape } from '../components/UI'
+import { useTerms } from '../viewmode'
 import { relativeTime, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
 import type { Agent, AgentArtifact, AgentPlan, AgentRun, AgentRunEvent, AgentRunStep, AgentTask, PlatformEvent, QueueSnapshot, UsageBudget, UsageReport } from '../types'
 
@@ -47,6 +48,7 @@ const EVENT_LABELS: Record<string, string> = {
 }
 
 export function Tasks() {
+  const t = useTerms()
   const { capabilities } = useAuth()
   const [tasks, setTasks] = useState<AgentTask[]>()
   const [agents, setAgents] = useState<Agent[]>([])
@@ -151,7 +153,7 @@ export function Tasks() {
   }
 
   return <div className="page">
-    <PageHeader eyebrow="실행 플레인" title="작업 대기열"
+    <PageHeader eyebrow="실행 플레인" title={t('tasks')}
       description="에이전트에게 맡긴 일이 대기열에 쌓이고, 워커가 가져가 스스로 수행한 결과가 여기에 남습니다."
       actions={<>
         <button className="button ghost" onClick={() => void load()}><RefreshCw size={15} />새로고침</button>

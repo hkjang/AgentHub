@@ -2,10 +2,12 @@ import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { ExternalLink, FileCode2, ListChecks, MessageSquarePlus, Plus, Square } from 'lucide-react'
 import { api } from '../api'
 import { Drawer, Empty, ErrorBanner, Loading, PageHeader, StatusBadge } from '../components/UI'
+import { useTerms } from '../viewmode'
 import { runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
 import type { Agent, RuntimeSession } from '../types'
 
 export function Sessions() {
+  const t = useTerms()
   const [sessions,setSessions] = useState<RuntimeSession[]>()
   const [agents,setAgents] = useState<Agent[]>([])
   const [open,setOpen] = useState(false)
@@ -22,7 +24,7 @@ export function Sessions() {
   const close = async (id:string) => { try { await api.post(`/api/v1/sessions/${id}/close`); void load() } catch (e) { setError(e instanceof Error?e.message:'세션을 종료하지 못했습니다.') } }
   const launch = async (runtimeId:string) => { try { const result=await api.post<{url:string}>(`/api/v1/runtimes/${runtimeId}/launch`); window.open(result.url,'_blank','noopener,noreferrer') } catch (e) { setError(e instanceof Error?e.message:'세션을 열지 못했습니다.') } }
   return <div className="page">
-    <PageHeader eyebrow="에이전트 작업공간" title="런타임 세션" description="에이전트별 작업 맥락과 실행 진입점을 분리해 관리합니다." actions={<button className="button primary" disabled={available.length===0} title={available.length===0?'실행 중이거나 준비된 런타임이 있어야 세션을 시작할 수 있습니다.':undefined} onClick={() => setOpen(true)}><Plus size={16}/>새 세션</button>}/>
+    <PageHeader eyebrow="에이전트 작업공간" title={t('sessionsTitle')} description="에이전트별 작업 맥락과 실행 진입점을 분리해 관리합니다." actions={<button className="button primary" disabled={available.length===0} title={available.length===0?'실행 중이거나 준비된 런타임이 있어야 세션을 시작할 수 있습니다.':undefined} onClick={() => setOpen(true)}><Plus size={16}/>{t('newSession')}</button>}/>
     {error&&<ErrorBanner message={error} onClose={()=>setError('')}/>}
     {notice&&<div className="notice-banner">{notice}</div>}
     {sessions.length===0?<Empty icon={<FileCode2/>} title="세션이 없습니다" description={available.length?'실행 중인 런타임을 선택해 첫 작업 세션을 시작하세요.':'먼저 내 에이전트에서 런타임을 시작한 뒤 세션을 만들 수 있습니다.'} action={available.length?<button className="button primary" onClick={()=>setOpen(true)}>세션 시작</button>:undefined}/>:<section className="session-list">{sessions.map((item) => <article key={item.id}><div className={runtimeLogoClass(item.runtimeType)}>{runtimeCode(item.runtimeType)}</div><div><div><h3>{item.title}</h3><StatusBadge status={item.status}/></div><p>{item.agentName} · {runtimeLabel(item.runtimeType)}</p><span>{new Date(item.updatedAt).toLocaleString('ko-KR')} · 추적 {Array.isArray(item.trace)?item.trace.length:0}건</span></div><div className="session-actions">{item.status==='active'&&<button className="button primary" onClick={()=>void launch(item.runtimeId)}><ExternalLink size={15}/>열기</button>}{item.status==='active'&&<button className="button ghost" title="지금 하던 일을 에이전트에게 맡기고 화면을 닫아도 계속 진행합니다." onClick={()=>setHandOff(item)}><ListChecks size={15}/>백그라운드로</button>}{item.status==='active'&&<button className="button ghost" onClick={()=>void close(item.id)}><Square size={14}/>종료</button>}</div></article>)}</section>}
