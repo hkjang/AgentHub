@@ -88,6 +88,27 @@ type AgentGoal struct {
 	CLIApprovalMode string `json:"cliApprovalMode"`
 }
 
+// The kinds of step a run's timeline can hold. They are constants rather than
+// literals at each call site because the database checks them: a step written
+// with a type the constraint does not allow is refused, the failure is logged
+// rather than raised, and the run ends up claiming work whose evidence is
+// missing. A test pins this list to the migration that enforces it.
+const (
+	StepPlan       = "plan"
+	StepReasoning  = "reasoning"
+	StepTool       = "tool"
+	StepArtifact   = "artifact"
+	StepCompletion = "completion"
+	StepDelegation = "delegation"
+	// StepFlow is one execution of a runtime's own saved flow.
+	StepFlow = "flow"
+	// StepCLI is one headless run of a runtime's own agent.
+	StepCLI = "cli"
+)
+
+// RunStepTypes is every type the platform writes.
+var RunStepTypes = []string{StepPlan, StepReasoning, StepTool, StepArtifact, StepCompletion, StepDelegation, StepFlow, StepCLI}
+
 // The two places a task's work can happen.
 const (
 	// RunnerProse reasons step by step against the agent's model endpoint.

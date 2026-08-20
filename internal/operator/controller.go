@@ -1351,7 +1351,7 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 		Image:           value.Runtime.Image,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Command:         adapter.Command,
-		Args:            adapter.Args,
+		Args:            adapterArgs(adapter, build),
 		Ports:           []corev1.ContainerPort{{Name: "http", ContainerPort: port}},
 		Env:             env,
 		Resources:       corev1.ResourceRequirements{Requests: requests, Limits: limits},
@@ -1362,11 +1362,10 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 	}
 	// An adapter that binds to loopback says how to check it instead, because a
 	// TCP probe from the kubelet can never reach 127.0.0.1 inside the container.
-	if adapter.Readiness != nil {
-		agentContainer.ReadinessProbe = adapter.Readiness
-	}
-	if adapter.Liveness != nil {
-		agentContainer.LivenessProbe = adapter.Liveness
+	if adapter.Probes != nil {
+		if readiness, liveness := adapter.Probes(build); readiness != nil {
+			agentContainer.ReadinessProbe, agentContainer.LivenessProbe = readiness, liveness
+		}
 	}
 	containers := []corev1.Container{agentContainer}
 	if adapter.Sidecars != nil {

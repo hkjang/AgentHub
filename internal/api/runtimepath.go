@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
+	"github.com/hkjang/AgentHub/internal/runtimetype"
 )
 
 // runtimePathGateway serves runtime browser sessions from the Portal's own origin
@@ -83,7 +84,20 @@ func (s *Server) serveRuntimePathSession(w http.ResponseWriter, r *http.Request,
 		runtimeUnauthorized(w, "AgentHub에서 Runtime을 다시 열어 주세요.")
 		return
 	}
-	s.serveRuntimeAccess(w, r, access, "/"+rest)
+	s.serveRuntimeAccess(w, r, access, proxiedRuntimePath(access.RuntimeType, runtimeID, rest))
+}
+
+// proxiedRuntimePath decides what the runtime is asked for.
+//
+// Normally the prefix is stripped: the runtime knows nothing about it and serves
+// from its own root. A runtime started with its base path set to its runtime id
+// is the exception — it expects the prefix, and stripping it would 404 every
+// request it makes.
+func proxiedRuntimePath(runtimeType, runtimeID, rest string) string {
+	if runtimetype.ServesUnderRuntimePath(runtimeType) {
+		return "/" + runtimeID + "/" + rest
+	}
+	return "/" + rest
 }
 
 // serveRuntimeAccess proxies one request onto the runtime an established session

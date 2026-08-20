@@ -20,9 +20,11 @@ type runtimeAdapter struct {
 	Type string
 
 	// Command and Args start the agent process. Args may reference the config
-	// files the operator writes to /etc/agenthub.
+	// files the operator writes to /etc/agenthub. ArgsFor replaces Args when the
+	// arguments depend on which runtime this is.
 	Command []string
 	Args    []string
+	ArgsFor func(build adapterBuild) []string
 
 	// Env contributes adapter-specific variables on top of the shared set.
 	Env func(build adapterBuild) []corev1.EnvVar
@@ -34,12 +36,12 @@ type runtimeAdapter struct {
 	// proxy in front of it.
 	Sidecars func(build adapterBuild) []corev1.Container
 
-	// Readiness and Liveness replace the default TCP probes. A runtime that binds
-	// to loopback needs them: the kubelet probes the Pod IP, so nothing outside
-	// the container can connect, and the default probe would fail forever on a
-	// runtime that is working perfectly.
-	Readiness *corev1.Probe
-	Liveness  *corev1.Probe
+	// Probes replace the default TCP ones. A runtime that binds to loopback needs
+	// that: the kubelet probes the Pod IP, so nothing outside the container can
+	// connect, and the default probe would fail forever on a runtime that is
+	// working perfectly. They take the build because a runtime served under its
+	// own base path answers on a URL that contains the runtime's id.
+	Probes func(build adapterBuild) (readiness, liveness *corev1.Probe)
 }
 
 // adapterBuild is the context handed to every adapter hook.
@@ -53,6 +55,10 @@ type adapterBuild struct {
 }
 
 func (b adapterBuild) image() string { return b.Value.Runtime.Image }
+
+// runtimeID is the platform's id for this runtime, which is also the path prefix
+// its UI is published under.
+func (b adapterBuild) runtimeID() string { return b.Value.RuntimeRef.ID }
 
 // sidecarImage is the control plane's own image, so a platform sidecar never
 // runs the code of whatever runtime image the agent happens to be pinned to.
@@ -115,10 +121,6 @@ const (
 	// filesystem read-only and the toolchain the image ships lives there.
 	qwenCodeConfigInit = "/usr/local/bin/agenthub-qwencode-configure"
 
-	qwenCodeStart = "exec /usr/local/bin/ttyd --port 7681 --interface 127.0.0.1 --writable " +
-		"--client-option titleFixed=AgentHub --client-option disableLeaveAlert=true " +
-		"/usr/local/bin/agenthub-qwencode-shell"
-
 	// Langflow keeps everything it owns — the flows, the encryption key it
 	// generates on first start, its database — under LANGFLOW_CONFIG_DIR, so that
 	// directory has to be the persistent home rather than the image's /app. The
@@ -135,9 +137,27 @@ const (
 // the home volume so a person's own settings survive the Pod.
 const qwenCodeHome = "/home/agent/.qwen"
 
+// qwenCodeStart serves the terminal under the runtime's own id.
+//
+// The base path is not decoration: ttyd's browser client asks for /ws relative to
+// the base path it was started with, not relative to the page it was loaded from.
+// Served at the root behind a /{runtimeId}/ prefix it therefore asks the Portal
+// for /ws — and a WebSocket handshake carries no Referer, so nothing can route
+// that back to this runtime. The terminal renders and then says "press enter to
+// reconnect". Telling ttyd the prefix it is already being served under is what
+// makes the page and its socket agree.
+func qwenCodeStart(build adapterBuild) string {
+	return "exec /usr/local/bin/ttyd --port 7681 --interface 127.0.0.1 --writable " +
+		"--base-path /" + build.runtimeID() + " " +
+		"--client-option titleFixed=AgentHub " +
+		"/usr/local/bin/agenthub-qwencode-shell"
+}
+
 // qwenCodeHealthCommand asks ttyd's own token endpoint, which answers as soon as
-// the terminal is being served.
-var qwenCodeHealthCommand = []string{"/bin/sh", "-c", "curl -fsS -m 3 http://127.0.0.1:7681/token >/dev/null"}
+// the terminal is being served — under the same base path.
+func qwenCodeHealthCommand(build adapterBuild) []string {
+	return []string{"/bin/sh", "-c", "curl -fsS -m 3 http://127.0.0.1:7681/" + build.runtimeID() + "/token >/dev/null"}
+}
 
 // langflowHealthCommand is Langflow's own health endpoint, asked from inside the
 // container. It answers `{"status":"ok"}` once the server is up.
@@ -220,7 +240,9 @@ var runtimeAdapters = map[string]runtimeAdapter{
 	runtimetype.QwenCode: {
 		Type:    runtimetype.QwenCode,
 		Command: []string{"/bin/sh", "-ec"},
-		Args:    []string{qwenCodeStart},
+		// Args are built per runtime because the terminal is served under the
+		// runtime's own id; the builder calls Args when the adapter leaves it empty.
+		ArgsFor: func(build adapterBuild) []string { return []string{qwenCodeStart(build)} },
 		Env: func(build adapterBuild) []corev1.EnvVar {
 			return []corev1.EnvVar{
 				{Name: "QWEN_CODE_HOME", Value: qwenCodeHome},
@@ -250,13 +272,15 @@ var runtimeAdapters = map[string]runtimeAdapter{
 		},
 		// Checked from inside the container: ttyd is on loopback, so a probe from
 		// the kubelet could never connect.
-		Readiness: &corev1.Probe{
-			ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: qwenCodeHealthCommand}},
-			InitialDelaySeconds: 5, PeriodSeconds: 5, TimeoutSeconds: 3, FailureThreshold: 24,
-		},
-		Liveness: &corev1.Probe{
-			ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: qwenCodeHealthCommand}},
-			InitialDelaySeconds: 60, PeriodSeconds: 30, TimeoutSeconds: 3, FailureThreshold: 4,
+		Probes: func(build adapterBuild) (*corev1.Probe, *corev1.Probe) {
+			command := qwenCodeHealthCommand(build)
+			return &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 5, PeriodSeconds: 5, TimeoutSeconds: 3, FailureThreshold: 24,
+				}, &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 60, PeriodSeconds: 30, TimeoutSeconds: 3, FailureThreshold: 4,
+				}
 		},
 	},
 	runtimetype.Langflow: {
@@ -309,13 +333,14 @@ var runtimeAdapters = map[string]runtimeAdapter{
 		// 127.0.0.1:7860 exists. The grace is generous on purpose: Langflow builds
 		// its component index and migrates its database on first start, which on a
 		// cold volume takes far longer than the second start does.
-		Readiness: &corev1.Probe{
-			ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: langflowHealthCommand}},
-			InitialDelaySeconds: 15, PeriodSeconds: 10, TimeoutSeconds: 5, FailureThreshold: 30,
-		},
-		Liveness: &corev1.Probe{
-			ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: langflowHealthCommand}},
-			InitialDelaySeconds: 300, PeriodSeconds: 30, TimeoutSeconds: 5, FailureThreshold: 4,
+		Probes: func(adapterBuild) (*corev1.Probe, *corev1.Probe) {
+			return &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: langflowHealthCommand}},
+					InitialDelaySeconds: 15, PeriodSeconds: 10, TimeoutSeconds: 5, FailureThreshold: 30,
+				}, &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: langflowHealthCommand}},
+					InitialDelaySeconds: 300, PeriodSeconds: 30, TimeoutSeconds: 5, FailureThreshold: 4,
+				}
 		},
 	},
 	runtimetype.QwenPaw: {
@@ -342,3 +367,12 @@ var runtimeAdapters = map[string]runtimeAdapter{
 }
 
 func adapterFor(runtimeType string) runtimeAdapter { return runtimeAdapters[runtimeType] }
+
+// adapterArgs resolves the start arguments, letting an adapter build them from
+// the runtime it is starting.
+func adapterArgs(adapter runtimeAdapter, build adapterBuild) []string {
+	if adapter.ArgsFor != nil {
+		return adapter.ArgsFor(build)
+	}
+	return adapter.Args
+}

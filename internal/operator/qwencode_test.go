@@ -33,6 +33,7 @@ func TestQwenCodeServesATerminalBehindTheProxy(t *testing.T) {
 	value.Runtime.Type = runtimetype.QwenCode
 	value.Runtime.Image = "agenthub-qwencode:v0.1.0"
 	value.Runtime.SidecarImage = "agenthub:v0.22.0"
+	value.RuntimeRef.ID = "rt-2f9c"
 	value.Security.ReadOnlyRootFilesystem = true
 	value.Model.Name = "qwen3-coder"
 	value.Model.BaseURL = "http://models.internal/v1"
@@ -62,6 +63,17 @@ func TestQwenCodeServesATerminalBehindTheProxy(t *testing.T) {
 	}
 	if !strings.Contains(args, "--interface 127.0.0.1") {
 		t.Errorf("the terminal must be bound to loopback: %#v", agent.Args)
+	}
+	// The base path is what makes the terminal's websocket agree with the URL the
+	// browser loaded it from. Without it the page renders and the socket lands on
+	// the Portal, which is a terminal that says "press enter to reconnect".
+	if !strings.Contains(args, "--base-path /rt-2f9c") {
+		t.Errorf("the terminal is not served under the runtime's own path: %#v", agent.Args)
+	}
+	// And the probe has to ask the same base path, or the Pod never goes Ready.
+	if agent.ReadinessProbe == nil || agent.ReadinessProbe.Exec == nil ||
+		!strings.Contains(strings.Join(agent.ReadinessProbe.Exec.Command, " "), "7681/rt-2f9c/token") {
+		t.Errorf("the readiness probe does not follow the base path: %#v", agent.ReadinessProbe)
 	}
 	if proxy == nil || strings.Join(proxy.Command, " ") != "/usr/local/bin/agenthub-runtime-proxy" {
 		t.Fatalf("the terminal must be published through the authenticated proxy: %#v", proxy)

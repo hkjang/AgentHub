@@ -97,7 +97,7 @@ func (o *Orchestrator) runCLI(ctx context.Context, run *store.AgentRun, task sto
 	// The command line is recorded without the prompt: the prompt is the step's
 	// input and repeating it here would double every task's record.
 	record := store.AgentRunStep{
-		RunID: run.ID, Sequence: 1, Type: "cli",
+		RunID: run.ID, Sequence: 1, Type: store.StepCLI,
 		Title: "에이전트 실행", Input: prompt, Status: "succeeded", DurationMs: elapsed,
 	}
 	run.StepCount = 1

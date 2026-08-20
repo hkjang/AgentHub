@@ -114,6 +114,12 @@ func (s *Server) launchRuntime(w http.ResponseWriter, r *http.Request) {
 	// what keeps a runtime UI out of the Portal's origin. Without one the session
 	// is served from the Portal itself under /{runtimeId}/ — a relative URL, so it
 	// works on whatever hostname the user already reached the Portal on.
+	// A runtime started with its base path set to its own id has to be opened
+	// there in both modes, or its own links point at a prefix nothing serves.
+	launchPath := "/"
+	if agent, agentErr := s.store.AgentByID(r.Context(), instance.AgentID, user.ID, user.Role == "admin"); agentErr == nil && runtimetype.ServesUnderRuntimePath(agent.RuntimeType) {
+		launchPath = "/" + runtimeID + "/"
+	}
 	mode, launch := "path", "/"+runtimeID+"/?"+query
 	if hostMode {
 		host := runtimeID + "." + hostname
@@ -121,7 +127,7 @@ func (s *Server) launchRuntime(w http.ResponseWriter, r *http.Request) {
 			host = net.JoinHostPort(host, hostPort)
 		}
 		mode = "host"
-		launch = (&url.URL{Scheme: settings.Scheme, Host: host, Path: "/", RawQuery: query}).String()
+		launch = (&url.URL{Scheme: settings.Scheme, Host: host, Path: launchPath, RawQuery: query}).String()
 	}
 	s.store.TouchRuntime(r.Context(), runtimeID)
 	// Opening the workspace is a takeover: the warm pool must not stop a runtime
@@ -143,6 +149,12 @@ func (s *Server) runtimeHostGateway(next http.Handler) http.Handler {
 		if ticket := r.URL.Query().Get("ticket"); ticket != "" {
 			ticketRuntimeID, userID, err := s.store.ConsumeRuntimeLaunchTicket(r.Context(), ticket)
 			if err != nil || ticketRuntimeID != runtimeID {
+				// A spent ticket on a request that also carries a valid session is a
+				// stale URL, not an intrusion: fall through and serve the session.
+				if _, valid := s.hostRuntimeAccess(r, runtimeID); valid {
+					http.Redirect(w, r, ticketFreeLocation(r.URL), http.StatusSeeOther)
+					return
+				}
 				s.logger.Warn("invalid launch ticket", "runtime", runtimeID, "error", err)
 				runtimeUnauthorized(w, "Launch ticket이 만료되었거나 이미 사용되었습니다.")
 				return
@@ -160,28 +172,27 @@ func (s *Server) runtimeHostGateway(next http.Handler) http.Handler {
 				return
 			}
 			http.SetCookie(w, &http.Cookie{Name: runtimeAccessCookie, Value: encrypted, Path: "/", HttpOnly: true, Secure: settings.Scheme == "https", SameSite: http.SameSiteLaxMode, Expires: access.ExpiresAt, MaxAge: int(time.Until(access.ExpiresAt).Seconds())})
-			if shouldTouchRuntime(r.URL.Path) {
-				s.store.TouchRuntime(r.Context(), runtimeID)
-			}
-			s.serveRuntimeProxy(w, r, runtimeID, userID, connection, r.URL.Path, "")
+			// Redirect rather than proxy, so the one-time ticket leaves the address
+			// bar. A runtime UI builds its own URLs from the page's location: ttyd
+			// opens its websocket with the page's query string attached, which sent
+			// the spent ticket back here and was refused — a terminal that renders
+			// and never connects. The path gateway has always redirected for the
+			// same reason; this one proxied straight through.
+			http.Redirect(w, r, ticketFreeLocation(r.URL), http.StatusSeeOther)
 			return
 		}
 
-		cookie, err := r.Cookie(runtimeAccessCookie)
-		if err == nil {
-			plain, decryptErr := s.cipher.Decrypt(cookie.Value, "runtime-host-session")
-			var access runtimeAccess
-			if decryptErr == nil && json.Unmarshal(plain, &access) == nil && access.RuntimeID == runtimeID && access.ExpiresAt.After(time.Now()) {
-				connection := appRuntime.Connection{Endpoint: access.Endpoint, Token: access.Token, RuntimeType: access.RuntimeType}
-				if shouldTouchRuntime(r.URL.Path) {
-					s.store.TouchRuntime(r.Context(), runtimeID)
-				}
-				s.serveRuntimeProxy(w, r, runtimeID, access.UserID, connection, r.URL.Path, "")
-				return
+		if access, valid := s.hostRuntimeAccess(r, runtimeID); valid {
+			connection := appRuntime.Connection{Endpoint: access.Endpoint, Token: access.Token, RuntimeType: access.RuntimeType}
+			if shouldTouchRuntime(r.URL.Path) {
+				s.store.TouchRuntime(r.Context(), runtimeID)
 			}
+			s.serveRuntimeProxy(w, r, runtimeID, access.UserID, connection, r.URL.Path, "")
+			return
 		}
 
-		// No ticket and no valid session cookie: the request is unauthenticated.
+		// No usable ticket and no valid session cookie: the request is
+		// unauthenticated.
 		// There is deliberately no direct-proxy fallback here — the runtime
 		// subdomain is publicly resolvable, so serving it without a ticket would
 		// hand anyone who guesses a runtime ID a full workspace session.
@@ -203,6 +214,37 @@ func forwardCookies(request *http.Request) {
 		}
 		request.AddCookie(cookie)
 	}
+}
+
+// hostRuntimeAccess reads the session cookie a runtime origin carries.
+func (s *Server) hostRuntimeAccess(r *http.Request, runtimeID string) (runtimeAccess, bool) {
+	cookie, err := r.Cookie(runtimeAccessCookie)
+	if err != nil {
+		return runtimeAccess{}, false
+	}
+	plain, decryptErr := s.cipher.Decrypt(cookie.Value, "runtime-host-session")
+	var access runtimeAccess
+	if decryptErr != nil || json.Unmarshal(plain, &access) != nil {
+		return runtimeAccess{}, false
+	}
+	if access.RuntimeID != runtimeID || !access.ExpiresAt.After(time.Now()) {
+		return runtimeAccess{}, false
+	}
+	return access, true
+}
+
+// ticketFreeLocation is the same URL with the launch ticket removed.
+func ticketFreeLocation(original *url.URL) string {
+	stripped := *original
+	query := stripped.Query()
+	query.Del("ticket")
+	stripped.RawQuery = query.Encode()
+	// Relative, so the browser stays on the runtime's own origin.
+	stripped.Scheme, stripped.Host = "", ""
+	if stripped.Path == "" {
+		stripped.Path = "/"
+	}
+	return stripped.String()
 }
 
 func (s *Server) runtimeConnection(r *http.Request, runtimeID, userID string, admin bool) (appRuntime.Connection, error) {
@@ -262,7 +304,7 @@ func (s *Server) serveRuntimeProxy(w http.ResponseWriter, r *http.Request, runti
 		if response.StatusCode == http.StatusSwitchingProtocols {
 			return nil
 		}
-		response.Header.Del("Set-Cookie")
+		keepRuntimeCookies(response, prefix)
 		response.Header.Set("X-AgentHub-Runtime-ID", runtimeID)
 		response.Header.Set("X-Content-Type-Options", "nosniff")
 		response.Header.Set("Referrer-Policy", "same-origin")
@@ -280,6 +322,43 @@ func (s *Server) serveRuntimeProxy(w http.ResponseWriter, r *http.Request, runti
 		writeError(writer, http.StatusBadGateway, "runtime_proxy_failed", "Runtime에 연결하지 못했습니다.")
 	}
 	proxy.ServeHTTP(w, r)
+}
+
+// keepRuntimeCookies lets a runtime keep its own session while denying it the two
+// things it must not have: this platform's cookie names, and a scope wider than
+// the runtime itself.
+//
+// The whole Set-Cookie header used to be discarded. That is safe, and it is also
+// why Langflow's editor answered 403 to its own API calls: it signs the browser
+// in through /api/v1/auto_login and then authenticates with the cookies that
+// response sets, so a browser that never receives them stays anonymous.
+//
+// Under a path prefix the runtime shares the Portal's origin, so a cookie it sets
+// lands in the Portal's jar. Scoping it to /{runtimeId} is what keeps one runtime
+// out of another's session and out of the Portal's, and dropping the agenthub_
+// prefix is what stops a runtime from minting something that looks like a
+// platform credential. With an origin of its own the cookie is left as it was.
+func keepRuntimeCookies(response *http.Response, prefix string) {
+	values := response.Header.Values("Set-Cookie")
+	if len(values) == 0 {
+		return
+	}
+	cookies := (&http.Response{Header: http.Header{"Set-Cookie": values}}).Cookies()
+	response.Header.Del("Set-Cookie")
+	for _, cookie := range cookies {
+		if strings.HasPrefix(cookie.Name, agentHubCookiePrefix) {
+			continue
+		}
+		if prefix != "" {
+			// Under a prefix the browser must send this back to this runtime and to
+			// nothing else; a domain the runtime chose would widen it again.
+			cookie.Path = prefix + "/"
+			cookie.Domain = ""
+		}
+		if encoded := cookie.String(); encoded != "" {
+			response.Header.Add("Set-Cookie", encoded)
+		}
+	}
 }
 
 func basicCredential(username, token string) string {

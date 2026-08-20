@@ -63,3 +63,18 @@ func UsesGatewayProxy(value string) bool {
 // editor loads a blank page. Refusing the session with an explanation is better
 // than handing somebody that page.
 func HostSessionOnly(value string) bool { return value == Langflow }
+
+// ServesUnderRuntimePath reports that this runtime is started with its base path
+// set to the runtime's own id, and must therefore be reached at /{runtimeId}/ in
+// both session modes.
+//
+// It exists because of where a browser terminal asks for its websocket. ttyd
+// addresses /ws relative to the base path it was started with, not to the page's
+// URL — so served at the origin root under a /{runtimeId}/ prefix, the browser
+// asks the Portal for /ws, and a WebSocket handshake carries no Referer for the
+// path gateway to route by. The terminal renders and then says "press enter to
+// reconnect", which is a confusing way to learn that half the protocol never
+// arrived. Giving ttyd the prefix it is already being served under makes the two
+// agree, and keeping the prefix in host mode too means the answer does not change
+// when a site configures a Runtime Base Domain.
+func ServesUnderRuntimePath(value string) bool { return value == QwenCode }

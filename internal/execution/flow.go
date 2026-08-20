@@ -100,7 +100,7 @@ func (o *Orchestrator) runFlow(ctx context.Context, run *store.AgentRun, task st
 	telemetry.Fail(span, err)
 
 	record := store.AgentRunStep{
-		RunID: run.ID, Sequence: sequence, Type: "flow",
+		RunID: run.ID, Sequence: sequence, Type: store.StepFlow,
 		Title: "흐름 실행", Input: input, Output: answer, Status: "succeeded", DurationMs: elapsed,
 	}
 	if err != nil {
