@@ -112,7 +112,7 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 	if goal.Runner == "" {
 		goal.Runner = store.RunnerProse
 	}
-	if !contains([]string{store.RunnerProse, store.RunnerFlow, store.RunnerCLI, store.RunnerDify, store.RunnerACP}, goal.Runner) {
+	if !contains([]string{store.RunnerProse, store.RunnerFlow, store.RunnerCLI, store.RunnerDify, store.RunnerACP, store.RunnerInvestigate}, goal.Runner) {
 		return errors.New("실행 방식을 확인해 주세요")
 	}
 	// Kept whatever the runner is, so switching back and forth in the console does
@@ -154,6 +154,16 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 	if !runtimetype.SupportsRunner(runtimeType, goal.Runner) {
 		return fmt.Errorf("%s 런타임은 이 실행 방식을 지원하지 않습니다(지원: %s)", descriptor.Label, runnerNames(descriptor.Runners))
 	}
+	if goal.Runner == store.RunnerInvestigate {
+		// The investigator reads by default and runs shell commands only in the
+		// modes that were chosen deliberately, so the same conflict applies: a Goal
+		// that wants a person to approve state-changing work cannot also hand the
+		// agent a blanket yes.
+		if goal.ApprovalRequired && cliApprovalAllowsShell(goal.CLIApprovalMode) {
+			return errors.New("사람 승인을 요구하는 목표에서는 승인 모드 auto·yolo 를 쓸 수 없습니다. 승인 모드를 낮추거나 승인 요구를 끄세요")
+		}
+		return nil
+	}
 	if goal.Runner == store.RunnerCLI || goal.Runner == store.RunnerACP {
 		// The approval gate parks a task before a state-changing action and waits
 		// for a person. An agent told to approve everything itself would sail past
@@ -173,6 +183,13 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 		return errors.New("흐름 식별자가 너무 깁니다")
 	}
 	return nil
+}
+
+// cliApprovalAllowsShell reports whether this mode lets an agent run shell
+// commands without asking. It is named for the question rather than the two
+// values so the answer stays in one place when a mode is added.
+func cliApprovalAllowsShell(mode string) bool {
+	return mode == "auto" || mode == "yolo"
 }
 
 // runnerNames renders a runtime's supported backends for a refusal message, so

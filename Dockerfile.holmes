@@ -1,0 +1,82 @@
+# syntax=docker/dockerfile:1.7
+#
+# The HolmesGPT runtime image.
+#
+# Holmes is a CNCF sandbox project that investigates production incidents: it
+# runs an agentic loop over live observability data — Prometheus, Grafana, Loki,
+# Datadog, logs, alerts — and reports a root cause with the evidence it used.
+# That last part is why it is a runtime here rather than another chat agent. An
+# investigation that cannot be checked is an opinion, and this one hands back
+# every tool call it made, so the platform can put them on the run's timeline.
+#
+# Separate from agenthub-base for the same reasons the others are: its own
+# dependency tree, its own release cadence, and a site that does not investigate
+# incidents should not have to carry it.
+#
+# `holmes` is the agent and `ttyd` is what puts its interactive session in a
+# browser, because an investigator you cannot ask a follow-up question is half
+# the product. Both run as the unprivileged runtime user, and ttyd binds to
+# loopback: the token-checking proxy sidecar is the only way in.
+FROM python:3.12-slim-bookworm
+
+ARG HOLMESGPT_VERSION=0.39.0
+# Pinned with its checksum: this is a binary downloaded at build time, and an
+# unpinned one would make the image unreproducible in exactly the way an offline
+# release must not be.
+ARG TTYD_VERSION=1.7.7
+ARG TTYD_SHA256_X86_64=8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55
+ARG TTYD_SHA256_AARCH64=
+
+USER root
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      git ca-certificates curl tini jq less procps bash \
+ && arch="$(uname -m)"; \
+    case "${arch}" in \
+      x86_64) asset="ttyd.x86_64"; sum="${TTYD_SHA256_X86_64}" ;; \
+      aarch64) asset="ttyd.aarch64"; sum="${TTYD_SHA256_AARCH64}" ;; \
+      *) echo "unsupported architecture ${arch}" >&2; exit 1 ;; \
+    esac; \
+    if [ -z "${sum}" ]; then \
+      echo "no checksum pinned for ${arch}; refusing to ship an unverified binary" >&2; exit 1; fi; \
+    curl -fsSL -o /usr/local/bin/ttyd "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/${asset}"; \
+    echo "${sum}  /usr/local/bin/ttyd" | sha256sum -c - \
+ && chmod 0755 /usr/local/bin/ttyd \
+ && rm -rf /var/lib/apt/lists/*
+
+# The agent and the toolchain live in one virtualenv owned by the runtime user,
+# first on PATH, so `pip install` works in a session without root and without
+# fighting Debian's externally-managed marker. Deliberately short beyond Holmes
+# itself: what is missing is one pip install away.
+ARG AGENT_TOOLCHAIN="pip setuptools wheel rich httpx requests pyyaml python-dotenv tabulate"
+RUN python3 -m venv /opt/agenthub/venv \
+ && /opt/agenthub/venv/bin/pip install --no-cache-dir --upgrade ${AGENT_TOOLCHAIN} \
+ && /opt/agenthub/venv/bin/pip install --no-cache-dir "holmesgpt==${HOLMESGPT_VERSION}" \
+ && /opt/agenthub/venv/bin/holmes version \
+ && useradd --uid 10000 --gid 0 --home-dir /home/agent --create-home agent \
+ && mkdir -p /workspace /home/agent/.holmes /home/agent/.cache \
+ && chown -R 10000:0 /workspace /home/agent /opt/agenthub \
+ && chmod -R g+rwX /home/agent /workspace
+
+COPY deploy/runtime/agenthub-report-config.sh /usr/local/bin/agenthub-report-config
+COPY deploy/runtime/holmes-configure.sh /usr/local/bin/agenthub-holmes-configure
+COPY deploy/runtime/holmes-shell.sh /usr/local/bin/agenthub-holmes-shell
+COPY deploy/runtime/holmes-run.sh /usr/local/bin/agenthub-holmes-run
+COPY deploy/runtime/holmes-toolchain.sh /etc/profile.d/agenthub-toolchain.sh
+RUN chmod 0755 /usr/local/bin/agenthub-report-config /usr/local/bin/agenthub-holmes-configure \
+      /usr/local/bin/agenthub-holmes-shell /usr/local/bin/agenthub-holmes-run \
+ && chmod 0644 /etc/profile.d/agenthub-toolchain.sh
+
+USER 10000:0
+ENV PATH=/home/agent/.venv/bin:/opt/agenthub/venv/bin:$PATH \
+    HOME=/home/agent \
+    AGENTHUB_RUNTIME_TYPE=holmes \
+    AGENTHUB_WORKSPACE=/workspace \
+    HOLMES_CONFIG_HOME=/home/agent/.holmes \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_CACHE_DIR=/home/agent/.cache/pip \
+    PYTHONUNBUFFERED=1
+WORKDIR /workspace
+EXPOSE 7681
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/usr/local/bin/ttyd", "--port", "7681", "--interface", "127.0.0.1", "--writable", "/usr/local/bin/agenthub-holmes-shell"]

@@ -378,6 +378,7 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
             {runners.includes('flow')&&<option value="flow">흐름 실행 — Runtime에 저장된 Langflow 흐름을 실행하고 결과를 기록</option>}
             {runners.includes('cli')&&<option value="cli">에이전트 실행 — Runtime의 코딩 에이전트가 작업공간에서 직접 수행</option>}
             {runners.includes('acp')&&<option value="acp">ACP 실행 — 같은 에이전트와 프로토콜로 대화하며, 도구 요청마다 플랫폼이 답합니다</option>}
+            {runners.includes('investigate')&&<option value="investigate">조사 실행 — 관측 데이터를 조회해 근본 원인을 찾고, 근거를 실행 기록에 남깁니다</option>}
             {apps.length>0&&<option value="dify">외부 앱 실행 — 사내에 이미 있는 앱(Dify 등)에 작업을 맡김</option>}
           </select>
           <small>{goal.runner==='dify'
@@ -386,6 +387,8 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
             ?'작업 입력이 흐름의 입력으로 들어가고, 흐름의 출력이 실행 기록과 완료 판정에 사용됩니다. 흐름 안에서 일어나는 모델 호출은 플랫폼이 계량하지 않습니다.'
             :goal.runner==='cli'
             ?'런타임의 에이전트를 헤드리스로 실행합니다. 최대 단계·도구 호출·실행 시간이 에이전트 자체 예산으로 전달되고, 토큰 사용량은 실제 값이 기록됩니다.'
+            :goal.runner==='investigate'
+            ?'런타임의 조사 에이전트가 알림·메트릭·로그를 직접 조회합니다. 조회 하나하나가 실행 기록의 단계로 남아 결론의 근거를 나중에 확인할 수 있고, 토큰 사용량은 실제 값이 기록됩니다.'
             :goal.runner==='acp'
             ?'같은 에이전트를 Agent Client Protocol로 실행합니다. 에이전트가 도구를 쓰기 전마다 플랫폼에 묻고, 승인 모드에 따라 플랫폼이 답한 내용이 실행 기록에 남습니다. 토큰 사용량은 에이전트가 알려줄 때만 집계합니다.'
             :'기존 방식입니다. 파일 편집이나 명령 실행이 필요하면 사람에게 인계합니다.'}</small>
@@ -402,6 +405,19 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
             <input value={goal.externalInputKey??''} onChange={(e)=>update({externalInputKey:e.target.value.trim()})} placeholder="예) query"/>
             <small>Workflow 앱은 이름 붙은 입력을 받습니다. 앱에서 정의한 변수 이름을 넣으세요. 비우면 <code>input</code> 을 사용합니다.</small>
           </label>}
+        </>}
+        {goal.runner==='investigate'&&<>
+          <label><span>셸 실행 허용</span>
+            <select value={goal.cliApprovalMode??'default'} onChange={(e)=>update({cliApprovalMode:e.target.value as AgentGoal['cliApprovalMode']})}>
+              <option value="default">조회만 — 셸 명령은 거절합니다(권장)</option>
+              <option value="auto">auto — 조사 중 셸 명령도 허용</option>
+              <option value="yolo">yolo — 조사 중 셸 명령도 허용</option>
+            </select>
+            <small>{['auto','yolo'].includes(goal.cliApprovalMode??'default')
+              ?'조사 중 셸 명령이 확인 없이 실행됩니다. 읽기만으로 부족한 조사에 필요할 수 있지만, 작업공간과 네트워크 정책으로 범위를 먼저 좁히세요.'
+              :'메트릭·로그·알림 조회만 하고 셸 명령은 거절합니다. 조사는 대개 이것으로 충분합니다.'}</small>
+          </label>
+          {goal.approvalRequired&&['auto','yolo'].includes(goal.cliApprovalMode??'default')&&<div className="info-box"><ShieldAlert size={17}/><div><strong>같이 켤 수 없습니다</strong><p>사람 승인을 요구하는 목표에서는 셸 실행을 자동 허용할 수 없습니다. 조회만으로 낮추거나 아래 자율성의 승인 요구를 끄세요.</p></div></div>}
         </>}
         {(goal.runner==='cli'||goal.runner==='acp')&&<>
           <label><span>에이전트 승인 모드</span>

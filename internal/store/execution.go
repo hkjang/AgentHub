@@ -114,10 +114,13 @@ const (
 	StepExternal = "external"
 	// StepACP is one turn of a protocol conversation with a runtime's own agent.
 	StepACP = "acp"
+	// StepInvestigate is one investigation: a question, the evidence gathered for
+	// it, and the conclusion drawn from that evidence.
+	StepInvestigate = "investigate"
 )
 
 // RunStepTypes is every type the platform writes.
-var RunStepTypes = []string{StepPlan, StepReasoning, StepTool, StepArtifact, StepCompletion, StepDelegation, StepFlow, StepCLI, StepExternal, StepACP}
+var RunStepTypes = []string{StepPlan, StepReasoning, StepTool, StepArtifact, StepCompletion, StepDelegation, StepFlow, StepCLI, StepExternal, StepACP, StepInvestigate}
 
 // The two places a task's work can happen.
 const (
@@ -130,6 +133,9 @@ const (
 	// RunnerDify calls an application the site already runs. Nothing is started
 	// for it: the work happens somewhere else and the platform keeps the record.
 	RunnerDify = "dify"
+	// RunnerInvestigate hands the task to an incident investigator, which answers
+	// with a conclusion and the evidence it gathered for it.
+	RunnerInvestigate = "investigate"
 	// RunnerACP speaks the Agent Client Protocol to whatever agent the runtime
 	// holds. One adapter, many agents: the platform is the client and the thing
 	// in the Pod is the agent, whichever vendor wrote it.
@@ -309,7 +315,7 @@ func (s *Store) PutAgentGoal(ctx context.Context, item AgentGoal) (AgentGoal, er
 // CHECK constraint with an empty string.
 func runnerOrDefault(value string) string {
 	switch value {
-	case RunnerFlow, RunnerCLI, RunnerDify, RunnerACP:
+	case RunnerFlow, RunnerCLI, RunnerDify, RunnerACP, RunnerInvestigate:
 		return value
 	}
 	return RunnerProse

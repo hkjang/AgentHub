@@ -1,4 +1,4 @@
-.PHONY: test build image image-base image-langflow image-qwencode image-jupyter image-goose image-nodered image-n8n validate release-archives
+.PHONY: test build image image-base image-langflow image-qwencode image-jupyter image-goose image-holmes image-nodered image-n8n validate release-archives
 
 VERSION ?= $(shell cat VERSION)
 TAG := v$(VERSION)
@@ -19,6 +19,8 @@ N8N_VERSION ?= $(shell cat N8N_VERSION)
 N8N_TAG := v$(N8N_VERSION)
 GOOSE_VERSION ?= $(shell cat GOOSE_VERSION)
 GOOSE_TAG := v$(GOOSE_VERSION)
+HOLMES_VERSION ?= $(shell cat HOLMES_VERSION)
+HOLMES_TAG := v$(HOLMES_VERSION)
 
 test:
 	go test -race ./cmd/... ./internal/...
@@ -30,7 +32,7 @@ build:
 	go build -o bin/agenthub-operator ./cmd/operator
 
 image:
-	docker build --build-arg VERSION=$(VERSION) --build-arg BASE_VERSION=$(BASE_VERSION) --build-arg LANGFLOW_VERSION=$(LANGFLOW_VERSION) --build-arg QWENCODE_VERSION=$(QWENCODE_VERSION) --build-arg JUPYTER_VERSION=$(JUPYTER_VERSION) --build-arg NODERED_VERSION=$(NODERED_VERSION) --build-arg N8N_VERSION=$(N8N_VERSION) --build-arg GOOSE_VERSION=$(GOOSE_VERSION) --build-arg COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) --build-arg BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ) -t agenthub:$(TAG) .
+	docker build --build-arg VERSION=$(VERSION) --build-arg BASE_VERSION=$(BASE_VERSION) --build-arg LANGFLOW_VERSION=$(LANGFLOW_VERSION) --build-arg QWENCODE_VERSION=$(QWENCODE_VERSION) --build-arg JUPYTER_VERSION=$(JUPYTER_VERSION) --build-arg NODERED_VERSION=$(NODERED_VERSION) --build-arg N8N_VERSION=$(N8N_VERSION) --build-arg GOOSE_VERSION=$(GOOSE_VERSION) --build-arg HOLMES_VERSION=$(HOLMES_VERSION) --build-arg COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) --build-arg BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ) -t agenthub:$(TAG) .
 
 image-base:
 	docker build -f Dockerfile.base -t agenthub-base:$(BASE_TAG) .
@@ -47,6 +49,9 @@ image-jupyter: image-qwencode
 
 image-goose:
 	docker build -f Dockerfile.goose -t agenthub-goose:$(GOOSE_TAG) .
+
+image-holmes:
+	docker build -f Dockerfile.holmes -t agenthub-holmes:$(HOLMES_TAG) .
 
 image-nodered:
 	docker build -f Dockerfile.nodered -t agenthub-nodered:$(NODERED_TAG) .
@@ -66,7 +71,7 @@ validate:
 # collapses back to a plain .tar.gz. Reassemble with `cat <name>.part-* > <name>`.
 RELEASE_CHUNK ?= 1900M
 
-release-archives: image image-base image-langflow image-qwencode image-jupyter image-goose image-nodered image-n8n
+release-archives: image image-base image-langflow image-qwencode image-jupyter image-goose image-holmes image-nodered image-n8n
 	mkdir -p release
 	$(call package_image,agenthub:$(TAG),agenthub-$(TAG).tar.gz)
 	$(call package_image,agenthub-base:$(BASE_TAG),agenthub-base-$(BASE_TAG).tar.gz)
@@ -74,6 +79,7 @@ release-archives: image image-base image-langflow image-qwencode image-jupyter i
 	$(call package_image,agenthub-qwencode:$(QWENCODE_TAG),agenthub-qwencode-$(QWENCODE_TAG).tar.gz)
 	$(call package_image,agenthub-jupyter:$(JUPYTER_TAG),agenthub-jupyter-$(JUPYTER_TAG).tar.gz)
 	$(call package_image,agenthub-goose:$(GOOSE_TAG),agenthub-goose-$(GOOSE_TAG).tar.gz)
+	$(call package_image,agenthub-holmes:$(HOLMES_TAG),agenthub-holmes-$(HOLMES_TAG).tar.gz)
 	$(call package_image,agenthub-nodered:$(NODERED_TAG),agenthub-nodered-$(NODERED_TAG).tar.gz)
 	$(call package_image,agenthub-n8n:$(N8N_TAG),agenthub-n8n-$(N8N_TAG).tar.gz)
 	cd release && sha256sum -- agenthub-* > SHA256SUMS

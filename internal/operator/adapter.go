@@ -204,6 +204,11 @@ func jupyterHealthCommand(build adapterBuild) []string {
 // the Pod.
 const gooseConfigHome = "/home/agent/.config/goose"
 
+// holmesConfigHome is where the investigator keeps its configuration and the
+// toolset status it caches. It is on the home volume so a runtime that has
+// already worked out which data sources answer does not do it again every start.
+const holmesConfigHome = "/home/agent/.holmes"
+
 // qwenCodeHome is where Qwen Code keeps its settings and credentials. It is on
 // the home volume so a person's own settings survive the Pod.
 const qwenCodeHome = "/home/agent/.qwen"
@@ -242,6 +247,21 @@ func gooseStart(build adapterBuild) string {
 
 // gooseHealthCommand asks ttyd's own token endpoint under the same base path.
 func gooseHealthCommand(build adapterBuild) []string {
+	return []string{"/bin/sh", "-c", "curl -fsS -m 3 http://127.0.0.1:7681/" + build.runtimeID() + "/token >/dev/null"}
+}
+
+// holmesStart serves the investigator's session under the runtime's own path,
+// for the same reason the other terminals are served that way: ttyd asks for its
+// websocket relative to the base path it was started with.
+func holmesStart(build adapterBuild) string {
+	return "exec /usr/local/bin/ttyd --port 7681 --interface 127.0.0.1 --writable " +
+		"--base-path /" + build.runtimeID() + " " +
+		"--client-option titleFixed=AgentHub " +
+		"/usr/local/bin/agenthub-holmes-shell"
+}
+
+// holmesHealthCommand asks ttyd's own token endpoint under the same base path.
+func holmesHealthCommand(build adapterBuild) []string {
 	return []string{"/bin/sh", "-c", "curl -fsS -m 3 http://127.0.0.1:7681/" + build.runtimeID() + "/token >/dev/null"}
 }
 
@@ -423,6 +443,47 @@ var runtimeAdapters = map[string]runtimeAdapter{
 		},
 		Probes: func(build adapterBuild) (*corev1.Probe, *corev1.Probe) {
 			command := gooseHealthCommand(build)
+			return &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 5, PeriodSeconds: 5, TimeoutSeconds: 3, FailureThreshold: 24,
+				}, &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 60, PeriodSeconds: 30, TimeoutSeconds: 3, FailureThreshold: 4,
+				}
+		},
+	},
+	runtimetype.Holmes: {
+		Type:    runtimetype.Holmes,
+		Command: []string{"/bin/sh", "-ec"},
+		ArgsFor: func(build adapterBuild) []string { return []string{holmesStart(build)} },
+		Env: func(adapterBuild) []corev1.EnvVar {
+			return []corev1.EnvVar{
+				{Name: "HOLMES_CONFIG_HOME", Value: holmesConfigHome},
+				{Name: "AGENTHUB_HOLMES_CONFIG", Value: "/etc/agenthub/holmes-config.yaml"},
+				// The agent's own default enables kubernetes/core, kubernetes/logs and
+				// robusta as well. Neither can work here — runtime Pods get no
+				// service account token, and a Robusta account is something a site
+				// has or does not — so they would spend every start failing their
+				// health check and then tell the model it could not look. A site
+				// that wants more turns it on through the runtime settings overlay,
+				// where it can also say where its Prometheus is.
+				{Name: "ENABLED_BY_DEFAULT_TOOLSETS", Value: "internet"},
+			}
+		},
+		InitContainers: func(build adapterBuild) []corev1.Container {
+			return []corev1.Container{{
+				Name: "holmes-config-init", Image: build.image(), ImagePullPolicy: corev1.PullIfNotPresent,
+				Command: []string{"/usr/local/bin/agenthub-holmes-configure"}, Env: build.Env,
+				Resources:       initResources("500m", "512Mi"),
+				SecurityContext: restrictedContainerSecurityContext(build.Value.Security.ReadOnlyRootFilesystem),
+				VolumeMounts:    homeAndConfigMounts,
+			}}
+		},
+		Sidecars: func(build adapterBuild) []corev1.Container {
+			return []corev1.Container{runtimeProxyContainer("holmes-proxy", build.Name, build.sidecarImage(), "http://127.0.0.1:7681")}
+		},
+		Probes: func(build adapterBuild) (*corev1.Probe, *corev1.Probe) {
+			command := holmesHealthCommand(build)
 			return &corev1.Probe{
 					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
 					InitialDelaySeconds: 5, PeriodSeconds: 5, TimeoutSeconds: 3, FailureThreshold: 24,

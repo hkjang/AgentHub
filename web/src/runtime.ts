@@ -5,7 +5,7 @@
 // are facts about the adapter the operator runs, not about this console. They
 // were duplicated here and had already started to drift. The palette stays local:
 // which colour a tile is is genuinely a console decision.
-export type RuntimeType = 'opencode' | 'hermes' | 'qwenpaw' | 'qwencode' | 'goose' | 'jupyter' | 'langflow' | 'nodered' | 'n8n' | 'custom'
+export type RuntimeType = 'opencode' | 'hermes' | 'qwenpaw' | 'qwencode' | 'goose' | 'holmes' | 'jupyter' | 'langflow' | 'nodered' | 'n8n' | 'custom'
 
 export type RuntimeDescriptor = {
   type: string; code: string; label: string; summary: string
@@ -23,6 +23,7 @@ const SEED: Record<RuntimeType, RuntimeDescriptor> = {
   qwenpaw: {type: 'qwenpaw', code: 'QP', label: 'Qwen Paw', summary: 'AgentScope 개인 에이전트 워크스테이션'},
   qwencode: {type: 'qwencode', code: 'QC', label: 'Qwen Code', summary: '터미널에서 사는 코딩 에이전트'},
   goose: {type: 'goose', code: 'GO', label: 'Goose', summary: '프로토콜로 대화하는 오픈소스 에이전트'},
+  holmes: {type: 'holmes', code: 'HG', label: 'HolmesGPT', summary: '장애를 조사하는 SRE 에이전트'},
   jupyter: {type: 'jupyter', code: 'JL', label: 'JupyterLab', summary: '노트북 작업대 + Qwen Code 에이전트'},
   langflow: {type: 'langflow', code: 'LF', label: 'Langflow', summary: '흐름을 그려서 만드는 시각적 에이전트 빌더'},
   nodered: {type: 'nodered', code: 'NR', label: 'Node-RED', summary: '노드를 이어 만드는 배선 자동화'},
@@ -68,6 +69,7 @@ export const RUNNER_LABELS: Record<string, string> = {
   flow: '저장한 흐름을 그대로 실행',
   cli: '런타임의 에이전트가 직접 수행',
   acp: 'ACP로 에이전트와 대화하며 수행',
+  investigate: '조사하고 근거와 함께 결론을 남김',
 }
 
 export function runnerSummary(runners?: string[]) {

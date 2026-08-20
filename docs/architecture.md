@@ -384,6 +384,54 @@ declined to state, so the console and the runtime's own description say this
 instead, and an unattended Goose Goal is expected to choose `auto` — with every
 call it makes still recorded.
 
+## Investigating, with the evidence kept
+
+The backends above answer a question. This one answers it and hands back what it
+looked at.
+
+HolmesGPT is a CNCF sandbox project that investigates production incidents: it
+runs its own agentic loop over live observability data — Prometheus, Grafana,
+Loki, alerts, runbooks — and reports a root cause. What makes it worth a backend
+of its own rather than a prompt is that it also reports every query it ran and
+what each returned. An investigation whose evidence cannot be checked is an
+opinion, and an opinion about why production broke is worth very little at three
+in the morning.
+
+So a Goal with `runner: 'investigate'` executes one investigation in the agent's
+own Pod and splits what comes back. The conclusion becomes the run's answer,
+judged by the same evaluator as any other. Every tool call behind it becomes a
+step on the run's timeline — the query, the toolset it came from, and whether it
+succeeded — so a person reading the run afterwards can see which query produced
+the number the conclusion rests on, and that half of them did not fail. Token
+usage is the agent's own count, so an investigation is metered like any other
+work.
+
+Reaching it is the same exec the headless runner uses, through a wrapper the
+image ships. The wrapper exists for one reason worth stating: the agent renders
+its answer for a person while it works and writes the machine-readable record
+only to the file named by `--json-output-file`, so parsing its output would mean
+hunting for JSON inside prose. The wrapper points that flag at a temporary file
+and puts the file on stdout, leaving stdout carrying the record and nothing else.
+It keeps stderr from the same run rather than repeating the investigation to find
+out why one failed — a second investigation would spend a second investigation's
+tokens.
+
+Two limits are deliberate. Reading metrics and logs is what an investigation is;
+running shell commands to find out more is a different kind of act, so the agent
+is started with `--bash-always-deny` unless the Goal's approval mode is one of
+the two that were chosen deliberately, and that combination is refused when the
+Goal also demands human approval. And the Kubernetes toolset does not work here:
+runtime Pods are given no service account token, on purpose, so the agent cannot
+read the cluster it runs in. That is said in the runtime's own description rather
+than left to be discovered, and a site that wants more points the investigator at
+its Prometheus or Grafana through the runtime settings overlay — which is also
+where its toolsets are configured.
+
+The agent's own defaults would enable the Kubernetes toolsets and Robusta's cloud
+integration; neither can work in a runtime Pod, and left on they fail their health
+check every start and then tell the model they could not look. The operator starts
+it with `internet` alone and lets the overlay add the rest.
+
 ## Calling an application the platform does not run
 
 Some products are not one container. Dify is a dozen services — api, worker,

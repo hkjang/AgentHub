@@ -48,7 +48,7 @@ export type AgentGoal = {
   keepWarmSeconds: number
   resumeFromCheckpoint: boolean
   tokenBudget: number
-  runner: 'prose' | 'flow' | 'cli' | 'dify' | 'acp'
+  runner: 'prose' | 'flow' | 'cli' | 'dify' | 'acp' | 'investigate'
   flowId: string
   flowOutputComponent: string
   cliApprovalMode: 'plan' | 'default' | 'auto-edit' | 'auto' | 'yolo'

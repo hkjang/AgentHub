@@ -594,6 +594,7 @@ const (
 	configHermes   = "hermes-config.yaml"
 	configQwen     = "qwen-settings.json"
 	configGoose    = "goose-config.yaml"
+	configHolmes   = "holmes-config.yaml"
 )
 
 // runtimeConfigs builds every generated configuration file, keyed by the name it
@@ -622,6 +623,10 @@ func runtimeConfigs(ns, runtimeName string, value spec) map[string]string {
 	// carrying its address: the endpoint and the key reach it through the
 	// environment, which is where it looks for them.
 	goose := map[string]any{"extensions": map[string]any{}}
+	// Holmes reads one file for the model it investigates with and the data
+	// sources it may query. Its MCP servers are toolsets like any other, which is
+	// why they go in the same document rather than beside it.
+	holmes := map[string]any{"mcp_servers": map[string]any{}}
 	if value.Model.BaseURL != "" && value.Model.Name != "" {
 		// One provider entry named after the platform, not after whichever backend
 		// happens to serve it: the same binding fronts Ollama, vLLM or any other
@@ -650,6 +655,11 @@ func runtimeConfigs(ns, runtimeName string, value spec) map[string]string {
 		// registered.
 		goose["GOOSE_PROVIDER"] = "openai"
 		goose["GOOSE_MODEL"] = value.Model.Name
+		// The provider prefix tells this agent's model client which protocol to
+		// speak; api_base is where the platform's gateway actually is. The key
+		// arrives through OPENAI_API_KEY, which is already in the environment.
+		holmes["model"] = "openai/" + value.Model.Name
+		holmes["api_base"] = value.Model.BaseURL
 	}
 	// The administrator's overlay lands here, on the configuration the platform
 	// just generated, so the runtime still reads one file and the platform's own
@@ -664,12 +674,18 @@ func runtimeConfigs(ns, runtimeName string, value spec) map[string]string {
 			qwen, _ = runtimecfg.Merge(runtimetype.QwenCode, qwen, overlay)
 		case runtimetype.Goose:
 			goose, _ = runtimecfg.Merge(runtimetype.Goose, goose, overlay)
+		case runtimetype.Holmes:
+			// This is where a site points the investigator at its own Prometheus,
+			// Grafana or Loki: those are `toolsets` entries, and the overlay is the
+			// supported way to add them.
+			holmes, _ = runtimecfg.Merge(runtimetype.Holmes, holmes, overlay)
 		}
 	}
 	openMCP := opencode["mcp"].(map[string]any)
 	hermesMCP := hermes["mcp_servers"].(map[string]any)
 	qwenMCP := qwen["mcpServers"].(map[string]any)
 	gooseExtensions := goose["extensions"].(map[string]any)
+	holmesMCP := holmes["mcp_servers"].(map[string]any)
 	for _, item := range bindings {
 		name, endpoint := safeLabel(fmt.Sprint(item["name"])), fmt.Sprint(item["endpoint"])
 		if endpoint == "" {
@@ -685,6 +701,14 @@ func runtimeConfigs(ns, runtimeName string, value spec) map[string]string {
 		// inside the entry because Goose reads it from there rather than from the
 		// key it is filed under.
 		gooseEntry := map[string]any{"type": "streamable_http", "name": name, "uri": endpoint, "enabled": true, "timeout": 300}
+		// The address lives under `config` and the mode is spelled with a hyphen —
+		// both checked against the agent, which refuses the alternatives by name.
+		// Its default mode is SSE, and a streamable server left on that default is
+		// asked for /sse and answers 405.
+		holmesEntry := map[string]any{
+			"description": "AgentHub MCP: " + name,
+			"config":      map[string]any{"mode": "streamable-http", "url": endpoint},
+		}
 		// The ConfigMap is not a Secret, so the credential is referenced by the
 		// environment variable the Pod reads from the runtime Secret.
 		// A policied binding is authenticated by the gateway, so the credential
@@ -694,11 +718,13 @@ func runtimeConfigs(ns, runtimeName string, value spec) map[string]string {
 			hermesEntry["headers"] = map[string]any{headerName: headerValue}
 			qwenEntry["headers"] = map[string]any{headerName: headerValue}
 			gooseEntry["headers"] = map[string]any{headerName: headerValue}
+			holmesEntry["config"].(map[string]any)["headers"] = map[string]any{headerName: headerValue}
 		}
 		openMCP[name] = open
 		hermesMCP[name] = hermesEntry
 		qwenMCP[name] = qwenEntry
 		gooseExtensions[name] = gooseEntry
+		holmesMCP[name] = holmesEntry
 	}
 	openRaw, _ := json.MarshalIndent(opencode, "", "  ")
 	hermesRaw, _ := json.MarshalIndent(hermes, "", "  ")
@@ -708,12 +734,14 @@ func runtimeConfigs(ns, runtimeName string, value spec) map[string]string {
 	// rather than two. Verified against the real agent, which loads it and the
 	// extensions in it.
 	gooseRaw, _ := json.MarshalIndent(goose, "", "  ")
+	holmesRaw, _ := json.MarshalIndent(holmes, "", "  ")
 	return map[string]string{
 		configRuntime:  string(runtimeRaw),
 		configOpenCode: string(openRaw),
 		configHermes:   string(hermesRaw),
 		configQwen:     string(qwenRaw),
 		configGoose:    string(gooseRaw),
+		configHolmes:   string(holmesRaw),
 	}
 }
 
