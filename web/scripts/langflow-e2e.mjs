@@ -172,7 +172,10 @@ try {
         // request reads them — so each change needs the cache to turn over before
         // the behaviour it causes can be observed.
         const settle = () => new Promise((resolve) => setTimeout(resolve, 12000))
-        await put('/api/v1/admin/settings/sessionGateway', { value: { ...gateway, enabled: true, baseDomain: '' } })
+        // A site without a Runtime Base Domain is one with the host gateway off;
+        // the setting refuses an enabled gateway with no domain, which is the
+        // same statement said twice.
+        await put('/api/v1/admin/settings/sessionGateway', { value: { ...gateway, enabled: false, baseDomain: '' } })
         await settle()
         const refused = await post(`/api/v1/runtimes/${ready.id}/launch`, {})
         check('전용 도메인 없이 Langflow 세션 열기 거절', refused.status === 409 && refused.body?.error?.code === 'runtime_base_domain_required',

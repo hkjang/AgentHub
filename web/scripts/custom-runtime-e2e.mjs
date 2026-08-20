@@ -92,7 +92,10 @@ try {
   // Pin the image the command exists in, so the run does not depend on whatever
   // the catalog currently approves for this type.
   const images = (await get('/api/v1/admin/runtime-images')).body?.items ?? []
-  let pinned = images.find((item) => `${item.image}:${item.version}` === image || item.image === image)
+  // Same image reference *and* the same runtime type: an image registered for
+  // another runtime cannot be pinned here, and pinning one would start a Pod
+  // whose command does not exist in it.
+  let pinned = images.find((item) => item.runtimeType === 'custom' && (`${item.image}:${item.version}` === image || item.image === image))
   if (!pinned) {
     const [imageName, imageVersion] = image.split(':')
     const saved = await post('/api/v1/admin/runtime-images', {

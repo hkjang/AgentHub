@@ -87,10 +87,31 @@ behavior lives in the offline `agenthub-base` image:
 Runtime UIs are proxied verbatim: the session gateway authenticates, rewrites
 redirects and strips AgentHub's own cookies, but never rewrites the response body.
 Cookies are dropped by the `agenthub_` prefix rather than by name — the path
-gateway names its access cookie per runtime — and everything else is forwarded,
-because a runtime UI may keep a session of its own: Langflow signs the browser in
-automatically and then authenticates its own API calls with the cookie it just
-set.
+gateway names its access cookie per runtime — and everything else is forwarded in
+both directions, because a runtime UI may keep a session of its own: Langflow
+signs the browser in automatically and then authenticates its own API calls with
+the cookies that response sets. A `Set-Cookie` coming back from a runtime is kept
+for the same reason, minus two things: a name in the platform's own namespace,
+and, under a path prefix where the Portal's origin is shared, a scope wider than
+`/{runtimeId}`.
+
+Two more rules exist because of where a runtime UI looks for things.
+
+A runtime whose client addresses its own endpoints relative to a base path rather
+than to the page's URL has to be served under that base path in both session
+modes. `runtimetype.ServesUnderRuntimePath` marks those; the path gateway keeps
+the prefix instead of stripping it, host mode opens them at `/{runtimeId}/` too,
+and the adapter starts the program with the same prefix. Qwen Code is the case:
+ttyd asks for `/ws` relative to its base path, so at the origin root behind a
+prefix it asked the Portal for `/ws` — and a WebSocket handshake carries no
+`Referer` for the path gateway to route by. The page loaded and the socket did
+not, which reads as a terminal that renders and then offers to reconnect.
+
+And a launch ticket never survives into the address bar. Both gateways redirect
+after exchanging one, because a runtime UI builds its own URLs from the page's
+location: ttyd copies the query string onto its websocket, which sent the spent
+ticket back and was refused. A stale ticket arriving with a valid session is
+treated as a stale URL rather than an intrusion.
 
 A runtime that addresses its assets from the origin root and has no base-path
 setting cannot be served from the Portal under `/{runtimeId}/` at all. Langflow is

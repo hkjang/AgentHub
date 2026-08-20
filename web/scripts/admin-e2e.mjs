@@ -234,10 +234,17 @@ try {
   await page.locator('.audit-filters').waitFor({ timeout: 10000 })
   check('감사 검색 필터 표시', (await page.locator('.audit-filters label').count()) === 5, String(await page.locator('.audit-filters label').count()))
   const rowsBefore = await page.locator('.table-panel tbody tr').count()
-  await page.locator('.audit-filters select').first().selectOption('agent.promote')
+  // The action list is built from what the log actually contains, so the value to
+  // filter by is read from the page rather than assumed. A fresh deployment has
+  // no promotions in it yet, and pinning this to one action made the run fail on
+  // a new cluster while proving nothing about the filter.
+  const actionValue = await page.locator('.audit-filters select').first().evaluate((select) =>
+    Array.from(select.options).map((option) => option.value).find((value) => value !== ''))
+  const filtered = (await get(`/api/v1/admin/audit?action=${encodeURIComponent(actionValue)}&limit=100`)).body
+  await page.locator('.audit-filters select').first().selectOption(actionValue)
   await page.waitForTimeout(900)
   const rowsAfter = await page.locator('.table-panel tbody tr').count()
-  check('필터가 표를 좁힘', rowsAfter <= rowsBefore && rowsAfter === Math.min(promoteOnly.total, 50), `${rowsBefore} → ${rowsAfter}`)
+  check('필터가 표를 좁힘', rowsAfter <= rowsBefore && rowsAfter === Math.min(filtered.total, 50), `${actionValue}: ${rowsBefore} → ${rowsAfter}`)
   check('페이지 요약 표시', /건 중/.test(await page.locator('.audit-pager span').innerText()))
 
   await page.goto(`${baseURL}/admin/execution`, { waitUntil: 'networkidle' })

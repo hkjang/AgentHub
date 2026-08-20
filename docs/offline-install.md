@@ -41,7 +41,7 @@ for archive in *.tar.gz.part-aa; do
   cat "${name}".part-* > "${name}"
 done
 
-docker load < agenthub-v0.22.0.tar.gz
+docker load < agenthub-v0.22.1.tar.gz
 docker load < agenthub-base-v0.11.0.tar.gz
 # Only if this site runs Agents of that runtime type.
 docker load < agenthub-langflow-v0.1.0.tar.gz

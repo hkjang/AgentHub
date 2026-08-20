@@ -48,6 +48,13 @@ try {
       },
       [agent.runtime.id, csrf],
     )
+    // A runtime that cannot be served under a path prefix says so, and on a
+    // deployment without a Runtime Base Domain that refusal is the correct
+    // behaviour rather than a failure to report.
+    if (launch.status === 409 && launch.body?.error?.code === 'runtime_base_domain_required') {
+      console.log(`  ${agent.runtimeType.padEnd(9)} ${agent.name.padEnd(22)} skipped — needs a Runtime Base Domain`)
+      continue
+    }
     if (launch.status !== 201 || !launch.body.url) {
       problems.push(`${agent.name}: launch failed ${launch.status} ${JSON.stringify(launch.body)}`)
       continue
@@ -56,7 +63,9 @@ try {
     const errors = []
     tab.on('pageerror', (e) => errors.push(String(e).slice(0, 200)))
     try {
-      const response = await tab.goto(launch.body.url, { waitUntil: 'domcontentloaded', timeout: 45000 })
+      // Path mode answers with a path, host mode with an absolute URL.
+      const target = launch.body.url.startsWith('http') ? launch.body.url : baseURL + launch.body.url
+      const response = await tab.goto(target, { waitUntil: 'domcontentloaded', timeout: 45000 })
       if (!response || response.status() >= 400) {
         problems.push(`${agent.name}: gateway returned ${response?.status()}`)
       }
