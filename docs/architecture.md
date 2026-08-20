@@ -346,6 +346,24 @@ itself; here the platform is asked every time, and writes down what it answered.
 A run that changed files ends with a record of which changes it was allowed to
 make and which it was refused.
 
+When the Goal asks for human approval, the platform does not answer at all: it
+puts the question to a person and leaves the agent holding it. That is the same
+machinery the in-Pod MCP gateway uses to hold a tool call open while somebody
+decides, and an agent waiting on a JSON-RPC reply is exactly the shape it needs.
+Anything that is not read-only is escalated, whatever the approval mode says —
+reading is why the agent was started, and a Goal that wakes somebody to approve a
+file read is a Goal nobody leaves switched on. The wait is bounded by the run's
+own deadline rather than a deadline of its own: the time the Goal was given is
+the time somebody has to answer, and a question nobody answers becomes a refusal
+recorded as one.
+
+This is why one combination is no longer refused. A Goal that wanted a person to
+approve state-changing work could not previously also be permissive, because the
+platform had no way to ask; under this backend it has one, so the two settings
+compose — the person decides, and the mode decides everything the person is not
+asked about. The headless runner still refuses that pair, because it hands the
+mode to the agent and reads the result: there would be nothing left to stop it.
+
 What the platform answers comes from the same `cli_approval_mode` the CLI runner
 uses, because it is the same question and a second setting would only be a second
 place to get it wrong. What differs is who enforces it. `plan` and `default`

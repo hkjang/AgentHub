@@ -53,8 +53,20 @@ func TestValidateRunner(t *testing.T) {
 			runtimeType: runtimetype.QwenCode, wantRunner: store.RunnerACP,
 		},
 		{
-			name: "an ACP goal that asks a person to approve cannot also approve everything itself",
+			// No longer a conflict: under this backend the platform answers the
+			// agent's permission requests itself, so a Goal that asks for human
+			// approval gets it — anything that is not read-only goes to a person
+			// whatever the mode says.
+			name: "an ACP goal may ask a person to approve and still be permissive",
 			goal: store.AgentGoal{Runner: store.RunnerACP, StartOnDemand: true,
+				CLIApprovalMode: "yolo", ApprovalRequired: true},
+			runtimeType: runtimetype.QwenCode, wantRunner: store.RunnerACP,
+		},
+		{
+			// The headless runner still cannot: it hands the mode to the agent and
+			// reads the result, so there would be nothing left to stop it.
+			name: "a headless goal that asks a person to approve cannot also approve everything itself",
+			goal: store.AgentGoal{Runner: store.RunnerCLI, StartOnDemand: true,
 				CLIApprovalMode: "yolo", ApprovalRequired: true},
 			runtimeType: runtimetype.QwenCode, wantErr: "yolo",
 		},

@@ -116,9 +116,15 @@ try {
     // Under ACP the platform is the one answering the agent's permission
     // requests, so yolo is the platform saying yes to all of them — which cannot
     // coexist with a Goal that says a person must approve.
-    const conflict = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'acp', cliApprovalMode: 'yolo', approvalRequired: true })
-    check('사람 승인 + yolo 조합 거절', conflict.status === 400 && /yolo/.test(conflict.body?.error?.message ?? ''),
-      `HTTP ${conflict.status} ${JSON.stringify(conflict.body?.error?.message ?? '')}`)
+    // No longer refused: under ACP the platform can put the question to a person,
+    // so a permissive mode and human approval are no longer in conflict.
+    const escalating = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'acp', cliApprovalMode: 'yolo', approvalRequired: true })
+    check('사람 승인 + 관대한 모드 조합 허용', escalating.status === 200,
+      `HTTP ${escalating.status} ${JSON.stringify(escalating.body?.error?.message ?? '')}`)
+    // The headless runner still cannot ask, so there it stays refused.
+    const headless = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'cli', cliApprovalMode: 'yolo', approvalRequired: true })
+    check('헤드리스 실행에서는 같은 조합을 여전히 거절', headless.status === 400 && /yolo/.test(headless.body?.error?.message ?? ''),
+      `HTTP ${headless.status}`)
 
     const badMode = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'acp', cliApprovalMode: 'reckless' })
     check('알 수 없는 승인 모드 거절', badMode.status === 400, `HTTP ${badMode.status}`)
@@ -152,6 +158,12 @@ try {
     check('플랫폼이 도구 요청에 답한다고 설명', /플랫폼이 답|플랫폼에 묻고/.test(afterSelect))
     check('토큰 집계 조건을 미리 밝힘', /토큰 사용량은 에이전트가 알려줄 때만 집계/.test(afterSelect))
     check('승인 모드를 여기서도 고를 수 있음', afterSelect.includes('승인 모드'))
+    // And the console says who will answer when the Goal asks for a person.
+    await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'acp', approvalRequired: true })
+    await page.reload({ waitUntil: 'networkidle' })
+    await page.locator('tr', { hasText: `acp-${stamp}` }).first().locator('button[title^="목표"]').click()
+    await drawer.waitFor({ timeout: 15000 })
+    check('승인을 요구하면 사람이 답한다고 설명', /사람에게 전달/.test(await drawer.innerText()))
 
     const approval = drawer.locator('select:has(option[value="auto-edit"])').first()
     await approval.selectOption('default')

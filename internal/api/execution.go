@@ -164,15 +164,20 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 		}
 		return nil
 	}
-	if goal.Runner == store.RunnerCLI || goal.Runner == store.RunnerACP {
-		// The approval gate parks a task before a state-changing action and waits
-		// for a person. An agent told to approve everything itself would sail past
-		// it, so the two settings must not be on at once — and the honest place to
-		// say so is here rather than in a run that surprises somebody. It holds for
-		// both backends: under ACP the platform is the one answering the agent's
-		// permission requests, and yolo is it answering yes to all of them.
+	if goal.Runner == store.RunnerACP {
+		// No conflict to refuse here any more. Under this backend the platform
+		// answers the agent itself, so a Goal that asks for human approval gets it:
+		// anything that is not read-only goes to a person, whatever the mode says.
+		// The mode still decides everything else.
+		return nil
+	}
+	if goal.Runner == store.RunnerCLI {
+		// The headless runner cannot ask. It hands the approval mode to the agent
+		// and reads the result, so a Goal that wants a person to approve
+		// state-changing work cannot also tell the agent to approve everything
+		// itself — nothing would be left to stop it.
 		if goal.ApprovalRequired && goal.CLIApprovalMode == "yolo" {
-			return errors.New("사람 승인을 요구하는 목표에서는 승인 모드 yolo 를 쓸 수 없습니다. 승인 모드를 낮추거나 승인 요구를 끄세요")
+			return errors.New("사람 승인을 요구하는 목표에서는 승인 모드 yolo 를 쓸 수 없습니다. 승인 모드를 낮추거나 승인 요구를 끄세요. (ACP 실행에서는 플랫폼이 대신 물어볼 수 있어 함께 쓸 수 있습니다)")
 		}
 		return nil
 	}

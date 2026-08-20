@@ -47,6 +47,10 @@ const (
 	// that is not there, or that printed a stack trace and exited, must fail the
 	// run quickly rather than hold a worker until the task's own deadline.
 	acpStartupGrace = 60 * time.Second
+	// acpApprovalPoll is how often a waiting turn asks whether somebody decided.
+	// The agent is holding its question open, so this is a person's timescale
+	// rather than a machine's.
+	acpApprovalPoll = 2 * time.Second
 	// acpTextLimit bounds what one turn may record, for the same reason the flow
 	// runner bounds its response: an agent that streams its whole context back
 	// would otherwise put it in the worker's memory and then in the run record.
@@ -107,7 +111,7 @@ func (o *Orchestrator) runACP(ctx context.Context, run *store.AgentRun, task sto
 		"maxToolCalls": goal.MaxToolCalls,
 	})
 
-	turn, runErr := o.acpTurn(ctx, run, goal, spec, descriptor, command, prompt)
+	turn, runErr := o.acpTurn(ctx, run, agent, goal, acquired, spec, descriptor, command, prompt)
 	elapsed := time.Since(startedAt).Milliseconds()
 	telemetry.Fail(span, runErr)
 
@@ -287,7 +291,7 @@ func (t *acpTurn) records() []acpToolRecord {
 
 // acpTurn runs the whole conversation: start the agent, negotiate, open a
 // session, send the task, and stay on the line answering its questions.
-func (o *Orchestrator) acpTurn(ctx context.Context, run *store.AgentRun, goal store.AgentGoal, spec appRuntime.Spec, descriptor runtimetype.Descriptor, command []string, prompt string) (*acpTurn, error) {
+func (o *Orchestrator) acpTurn(ctx context.Context, run *store.AgentRun, agent store.Agent, goal store.AgentGoal, acquired *acquiredRuntime, spec appRuntime.Spec, descriptor runtimetype.Descriptor, command []string, prompt string) (*acpTurn, error) {
 	turn := &acpTurn{retryable: true}
 	session, err := o.spawner.ExecStream(ctx, spec, appRuntime.ExecRequest{Command: command})
 	if err != nil {
@@ -299,12 +303,12 @@ func (o *Orchestrator) acpTurn(ctx context.Context, run *store.AgentRun, goal st
 	client.Update = turn.update
 	client.Permission = func(request acp.PermissionRequest) acp.PermissionOutcome {
 		kind := acpKind(request, turn)
-		allowed := acpAllows(cliApprovalMode(goal), kind)
+		allowed, by := o.answerPermission(ctx, run, agent, goal, acquired.runtimeID, request, kind)
 		turn.decide(request, kind, allowed)
 		o.event(ctx, *run, "acp.permission", acpPermissionMessage(request, allowed), map[string]any{
 			"tool": request.ToolCall.Title, "kind": kind,
 			"decision": map[bool]string{true: "granted", false: "denied"}[allowed],
-			"mode":     cliApprovalMode(goal),
+			"mode":     cliApprovalMode(goal), "answeredBy": by,
 		})
 		if allowed {
 			return acp.Allow(request.Options)
@@ -449,6 +453,96 @@ func acpAllows(mode, kind string) bool {
 		return acpReadOnlyKinds[kind] || acpEditKinds[kind]
 	default: // "default", "plan", anything unrecognised
 		return acpReadOnlyKinds[kind]
+	}
+}
+
+// answerPermission decides who answers the agent, and returns the answer with
+// who gave it.
+//
+// The mode alone was the whole policy until now, and it left one combination
+// refused rather than resolved: a Goal that wanted a person to approve
+// state-changing work could not also let the agent act, because the platform had
+// no way to ask. It does have a way — the same one the MCP gateway uses to hold a
+// tool call open while somebody decides — and an agent waiting on a JSON-RPC
+// reply is exactly the shape that needs.
+//
+// So when the Goal requires approval, anything that is not read-only goes to a
+// person. The approval mode still decides everything else, and still decides
+// alone when nobody asked to be consulted.
+func (o *Orchestrator) answerPermission(ctx context.Context, run *store.AgentRun, agent store.Agent, goal store.AgentGoal, runtimeID string, request acp.PermissionRequest, kind string) (bool, string) {
+	asksPerson, allowed := permissionRoute(goal, kind)
+	if !asksPerson {
+		return allowed, "policy"
+	}
+	granted, err := o.askAboutTool(ctx, run, agent, runtimeID, request, kind)
+	if err != nil {
+		// The question could not be put to anybody. Refusing is the only safe
+		// answer, and the reason goes on the run rather than into a log nobody
+		// reads.
+		o.event(ctx, *run, "acp.permission.unavailable", "승인을 요청하지 못해 거절했습니다: "+err.Error(),
+			map[string]any{"tool": request.ToolCall.Title, "kind": kind})
+		return false, "unavailable"
+	}
+	return granted, "person"
+}
+
+// permissionRoute decides who answers one request: the platform from the Goal's
+// approval mode, or a person.
+//
+// Reading is why the agent was started, so it is never escalated — a Goal that
+// wakes somebody to approve a file read is a Goal nobody will leave switched on.
+// Everything else goes to a person when the Goal asked for one, and to the mode
+// when it did not.
+func permissionRoute(goal store.AgentGoal, kind string) (asksPerson bool, allowed bool) {
+	if acpReadOnlyKinds[kind] {
+		return false, true
+	}
+	if !goal.ApprovalRequired {
+		return false, acpAllows(cliApprovalMode(goal), kind)
+	}
+	return true, false
+}
+
+// askAboutTool records the request as an approval and waits for a decision,
+// leaving the agent holding its own question. It is bounded by the run's own
+// deadline: a task with nobody watching must not hold a Pod open forever.
+func (o *Orchestrator) askAboutTool(ctx context.Context, run *store.AgentRun, agent store.Agent, runtimeID string, request acp.PermissionRequest, kind string) (bool, error) {
+	what := strings.TrimSpace(request.ToolCall.Title)
+	if what == "" {
+		what = kind
+	}
+	pending, err := o.store.CreateToolApproval(ctx, store.ToolApproval{
+		RuntimeID: runtimeID, AgentID: agent.ID, OwnerID: agent.OwnerID,
+		ServerName: agent.Name, ToolName: what,
+		Arguments: "종류: " + kind,
+	}, "에이전트가 실행 중 승인을 요청했습니다: "+what)
+	if err != nil {
+		return false, err
+	}
+	o.event(ctx, *run, "acp.permission.asked", "사람의 승인을 기다립니다: "+what, map[string]any{
+		"tool": what, "kind": kind, "approvalId": pending.ApprovalID,
+	})
+
+	ticker := time.NewTicker(acpApprovalPoll)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			// The run's deadline, not a deadline of its own: whatever time the Goal
+			// was given is the time somebody has to answer.
+			return false, errors.New("승인을 기다리는 동안 실행 시간이 끝났습니다")
+		case <-ticker.C:
+			decided, statusErr := o.store.ToolApprovalStatus(ctx, pending.ID, runtimeID)
+			if statusErr != nil {
+				return false, statusErr
+			}
+			switch decided.Status {
+			case "approved":
+				return true, nil
+			case "rejected", "expired", "cancelled":
+				return false, nil
+			}
+		}
 	}
 }
 

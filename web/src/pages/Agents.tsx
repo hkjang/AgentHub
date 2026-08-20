@@ -390,7 +390,7 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
             :goal.runner==='investigate'
             ?'런타임의 조사 에이전트가 알림·메트릭·로그를 직접 조회합니다. 조회 하나하나가 실행 기록의 단계로 남아 결론의 근거를 나중에 확인할 수 있고, 토큰 사용량은 실제 값이 기록됩니다.'
             :goal.runner==='acp'
-            ?'같은 에이전트를 Agent Client Protocol로 실행합니다. 에이전트가 도구를 쓰기 전마다 플랫폼에 묻고, 승인 모드에 따라 플랫폼이 답한 내용이 실행 기록에 남습니다. 토큰 사용량은 에이전트가 알려줄 때만 집계합니다.'
+            ?'같은 에이전트를 Agent Client Protocol로 실행합니다. 에이전트가 도구를 쓰기 전마다 묻고, 승인 모드에 따라 플랫폼이 답한 내용이 실행 기록에 남습니다. 아래 자율성에서 승인을 요구하면 읽기가 아닌 요청은 사람에게 넘어갑니다. 토큰 사용량은 에이전트가 알려줄 때만 집계합니다.'
             :'기존 방식입니다. 파일 편집이나 명령 실행이 필요하면 사람에게 인계합니다.'}</small>
         </label>
         {goal.runner==='dify'&&<>
@@ -441,7 +441,8 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
               :'무인 실행은 사람이 없으므로, 확인을 요구하는 모드에서는 변경이 필요한 순간 진행되지 않을 수 있습니다.'}</small>
           </label>
           {goal.approvalRequired&&goal.cliApprovalMode==='yolo'&&<div className="info-box"><ShieldAlert size={17}/><div><strong>같이 켤 수 없습니다</strong><p>사람 승인을 요구하는 목표에서는 yolo 를 쓸 수 없습니다. 승인 모드를 낮추거나 아래 자율성의 승인 요구를 끄세요.</p></div></div>}
-          {goal.runner==='acp'&&descriptor(agent.runtimeType).coarseToolKinds&&!['auto','yolo'].includes(goal.cliApprovalMode??'default')&&<div className="info-box"><ShieldAlert size={17}/><div><strong>이 모드에서는 거의 아무것도 못 합니다</strong><p>{runtimeLabel(agent.runtimeType)}는 도구의 종류를 <code>other</code> 로 알려주기 때문에, 종류로 판단하는 이 모드에서는 대부분의 요청이 거절됩니다. 무인 실행에는 <b>auto</b> 를 고르세요 — 무엇을 승인했는지는 그대로 기록에 남습니다.</p></div></div>}
+          {goal.runner==='acp'&&goal.approvalRequired&&<div className="info-box"><ShieldAlert size={17}/><div><strong>사람이 답합니다</strong><p>이 목표는 승인을 요구하므로, 읽기가 아닌 도구 요청은 승인 모드와 상관없이 <b>사람에게 전달</b>됩니다. 에이전트는 답을 기다리고, 실행 시간 안에 답이 없으면 거절로 처리합니다.</p></div></div>}
+          {goal.runner==='acp'&&!goal.approvalRequired&&descriptor(agent.runtimeType).coarseToolKinds&&!['auto','yolo'].includes(goal.cliApprovalMode??'default')&&<div className="info-box"><ShieldAlert size={17}/><div><strong>이 모드에서는 거의 아무것도 못 합니다</strong><p>{runtimeLabel(agent.runtimeType)}는 도구의 종류를 <code>other</code> 로 알려주기 때문에, 종류로 판단하는 이 모드에서는 대부분의 요청이 거절됩니다. 무인 실행에는 <b>auto</b> 를 고르세요 — 무엇을 승인했는지는 그대로 기록에 남습니다.</p></div></div>}
         </>}
         {goal.runner==='flow'&&<>
           <label><span>실행할 흐름</span>

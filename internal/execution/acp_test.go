@@ -262,3 +262,57 @@ func TestTheRecordKeepsTheKindThePlatformJudgedBy(t *testing.T) {
 		t.Errorf("the step's text does not say what kind of call it was: %q", acpToolOutcome(records[0]))
 	}
 }
+
+// Who answers the agent, and when. This is the whole of the new behaviour: a
+// Goal that asks for human approval turns a refusal into a question, and one
+// that does not keeps the platform answering alone.
+func TestWhoAnswersTheAgent(t *testing.T) {
+	cases := []struct {
+		name      string
+		goal      store.AgentGoal
+		kind      string
+		wantAsk   bool
+		wantAllow bool
+	}{
+		{
+			// Reading is why the agent was started. Nobody is woken for it, even
+			// when the Goal wants a person for everything else.
+			name: "reading never wakes anybody",
+			goal: store.AgentGoal{ApprovalRequired: true, CLIApprovalMode: "default"},
+			kind: "read", wantAllow: true,
+		},
+		{
+			name: "a change goes to a person when the Goal asks for one",
+			goal: store.AgentGoal{ApprovalRequired: true, CLIApprovalMode: "default"},
+			kind: "edit", wantAsk: true,
+		},
+		{
+			// The combination that used to be refused outright: permissive mode and
+			// human approval together. The person wins.
+			name: "even a permissive mode still asks when the Goal asks",
+			goal: store.AgentGoal{ApprovalRequired: true, CLIApprovalMode: "yolo"},
+			kind: "execute", wantAsk: true,
+		},
+		{
+			name: "without the Goal asking, the mode decides alone",
+			goal: store.AgentGoal{CLIApprovalMode: "auto-edit"},
+			kind: "edit", wantAllow: true,
+		},
+		{
+			name: "and refuses alone",
+			goal: store.AgentGoal{CLIApprovalMode: "default"},
+			kind: "execute", wantAllow: false,
+		},
+	}
+	for _, item := range cases {
+		t.Run(item.name, func(t *testing.T) {
+			asked, allowed := permissionRoute(item.goal, item.kind)
+			if asked != item.wantAsk {
+				t.Errorf("asks a person = %v, want %v", asked, item.wantAsk)
+			}
+			if !asked && allowed != item.wantAllow {
+				t.Errorf("allowed = %v, want %v", allowed, item.wantAllow)
+			}
+		})
+	}
+}
