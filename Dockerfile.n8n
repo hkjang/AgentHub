@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1.7
+#
+# The n8n runtime image.
+#
+# n8n is the connector: several hundred integrations, a scheduler and a webhook
+# endpoint, which is what most "automate this" requests actually want. It sits
+# beside Langflow rather than against it — the usual shape is a model deciding
+# something and n8n carrying it out.
+ARG N8N_IMAGE=latest
+FROM n8nio/n8n:${N8N_IMAGE}
+
+# A hardened vendor image: a shell, node and wget, and no package manager to add
+# anything with. The configuration reporter works without python or curl for
+# exactly this case, so nothing is installed here.
+USER root
+COPY deploy/runtime/agenthub-report-config.sh /usr/local/bin/agenthub-report-config
+RUN chmod 0755 /usr/local/bin/agenthub-report-config \
+ && mkdir -p /workspace /home/agent/.n8n \
+ && chown -R 10000:10000 /workspace /home/agent
+
+USER 10000
+ENV HOME=/home/agent \
+    AGENTHUB_RUNTIME_TYPE=n8n \
+    N8N_USER_FOLDER=/home/agent/.n8n \
+    N8N_LISTEN_ADDRESS=127.0.0.1 \
+    N8N_PORT=5678 \
+    # An offline site must not phone home: no telemetry, no version checks, and no
+    # template gallery that would sit there failing to load.
+    N8N_DIAGNOSTICS_ENABLED=false \
+    N8N_VERSION_NOTIFICATIONS_ENABLED=false \
+    N8N_TEMPLATES_ENABLED=false \
+    N8N_HIRING_BANNER_ENABLED=false
+WORKDIR /workspace
+EXPOSE 5678
+# The image entrypoint already runs n8n, so this is only its subcommand. The
+# platform starts the binary itself with an explicit command instead, which is
+# why it matters that n8n is on PATH.
+CMD ["start"]

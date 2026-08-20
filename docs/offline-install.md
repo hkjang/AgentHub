@@ -16,7 +16,8 @@ change the split size.
 
 The control plane version lives in `VERSION`, the shared runtime base image has
 its own `BASE_VERSION`, and the runtimes that do not boot from it have theirs:
-`LANGFLOW_VERSION` and `QWENCODE_VERSION`.
+`LANGFLOW_VERSION`, `QWENCODE_VERSION`, `JUPYTER_VERSION`, `NODERED_VERSION` and
+`N8N_VERSION`.
 Each is versioned separately because each is large, slow to build and only
 rebuilt when something it is built from changes. A release whose notes say an
 image is unchanged has no archive for it, and the notes name the tag it runs on:
@@ -24,9 +25,12 @@ keep using the archive you already loaded. All three files are read by
 `make release-archives`, so pass overrides only when building something other
 than the checked-out release.
 
-`agenthub-langflow` and `agenthub-qwencode` are only needed by sites that run
-those Agents. Nothing else depends on either, so skipping one costs nothing — an
-Agent of that runtime type simply will not start until its image is loaded.
+Each runtime image is only needed by sites that run Agents of that type, and
+nothing else depends on any of them: skipping one costs nothing, and an Agent of
+that runtime type simply will not start until its image is loaded. The one
+relationship worth knowing is that `agenthub-jupyter` is built from
+`agenthub-qwencode` — it already contains it, so a site running only the
+notebook runtime does not need both archives.
 
 Transfer the whole `release/` directory, `compose.yaml`, and the Kubernetes
 manifests through the approved media path. On the offline host, verify the media
@@ -41,11 +45,14 @@ for archive in *.tar.gz.part-aa; do
   cat "${name}".part-* > "${name}"
 done
 
-docker load < agenthub-v0.22.1.tar.gz
-docker load < agenthub-base-v0.11.0.tar.gz
+docker load < agenthub-v0.23.0.tar.gz
+docker load < agenthub-base-v0.12.0.tar.gz
 # Only if this site runs Agents of that runtime type.
-docker load < agenthub-langflow-v0.1.0.tar.gz
-docker load < agenthub-qwencode-v0.1.0.tar.gz
+docker load < agenthub-langflow-v0.2.0.tar.gz
+docker load < agenthub-qwencode-v0.2.0.tar.gz
+docker load < agenthub-jupyter-v0.1.0.tar.gz
+docker load < agenthub-nodered-v0.1.0.tar.gz
+docker load < agenthub-n8n-v0.1.0.tar.gz
 export AGENTHUB_BOOTSTRAP_ADMIN=admin
 export AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD='a-long-unique-password'
 export AGENTHUB_ENCRYPTION_KEY="$(openssl rand -base64 32)"

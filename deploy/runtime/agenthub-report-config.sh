@@ -12,6 +12,39 @@
 # runtime as unverified rather than pretending.
 set -eu
 
+# 5 seconds everywhere: a slow control plane must not delay a Pod's start. Three
+# ways to make one HTTP call, because a runtime image is allowed to be somebody
+# else's and the platform's own are not the only ones this runs in.
+deliver() {
+  payload="$1"
+  url="${CONTROL_PLANE%/}/api/v1/runtime-gateway/config-report"
+  if command -v curl >/dev/null 2>&1; then
+    curl -sS -m 5 -X POST "$url" -H "Authorization: Bearer ${TOKEN}" \
+      -H 'Content-Type: application/json' -d "$payload" >/dev/null 2>&1 ||
+      echo "agenthub: configuration report could not be delivered" >&2
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -T 5 -O /dev/null --header="Authorization: Bearer ${TOKEN}" \
+      --header='Content-Type: application/json' --post-data="$payload" "$url" 2>/dev/null ||
+      echo "agenthub: configuration report could not be delivered" >&2
+  elif command -v node >/dev/null 2>&1; then
+    AGENTHUB_REPORT_URL="$url" AGENTHUB_REPORT_TOKEN="$TOKEN" AGENTHUB_REPORT_BODY="$payload" \
+      node -e 'fetch(process.env.AGENTHUB_REPORT_URL,{method:"POST",headers:{"Authorization":"Bearer "+process.env.AGENTHUB_REPORT_TOKEN,"Content-Type":"application/json"},body:process.env.AGENTHUB_REPORT_BODY,signal:AbortSignal.timeout(5000)}).catch(()=>process.exit(1))' >/dev/null 2>&1 ||
+      echo "agenthub: configuration report could not be delivered" >&2
+  elif command -v python3 >/dev/null 2>&1; then
+    AGENTHUB_REPORT_URL="$url" AGENTHUB_REPORT_TOKEN="$TOKEN" AGENTHUB_REPORT_BODY="$payload" python3 - <<'POST' >/dev/null 2>&1 ||
+import os, urllib.request
+request = urllib.request.Request(os.environ["AGENTHUB_REPORT_URL"], data=os.environ["AGENTHUB_REPORT_BODY"].encode(),
+                                 headers={"Authorization": "Bearer " + os.environ["AGENTHUB_REPORT_TOKEN"],
+                                          "Content-Type": "application/json"}, method="POST")
+urllib.request.urlopen(request, timeout=5).read()
+POST
+      echo "agenthub: configuration report could not be delivered" >&2
+  else
+    echo "agenthub: no way to deliver the configuration report from this image" >&2
+  fi
+  echo "agenthub-config-report $payload" >&2
+}
+
 TARGET_FILE="${1:-}"
 RUNTIME_TYPE="${AGENTHUB_RUNTIME_TYPE:-unknown}"
 FINGERPRINT="${AGENTHUB_RUNTIME_SETTINGS_FINGERPRINT:-}"
@@ -22,6 +55,49 @@ STATUS="${2:-applied}"
 
 if [ -z "$CONTROL_PLANE" ] || [ -z "$RUNTIME_ID" ] || [ -z "$TOKEN" ]; then
   echo "agenthub: no control plane address, skipping the configuration report" >&2
+  exit 0
+fi
+
+# Not every runtime image has a Python in it. The ones this platform builds do,
+# and a hardened vendor image may have nothing but a shell, node and wget — so the
+# report degrades instead of disappearing: with a parser it describes the file on
+# disk, without one it still names the variables that reached the container, which
+# for a runtime configured entirely through the environment is the whole story.
+if ! command -v python3 >/dev/null 2>&1; then
+  keys=""
+  status="$STATUS"
+  detail=""
+  if [ -n "$TARGET_FILE" ] && [ ! -f "$TARGET_FILE" ]; then
+    status="missing"
+    detail="$TARGET_FILE was not written"
+  elif [ -n "$TARGET_FILE" ]; then
+    # No parser here, so the file is reported as present rather than described.
+    detail="이 이미지에는 설정 파일을 읽을 파서가 없어 키 목록은 생략했습니다"
+  fi
+  missing=""
+  seen=""
+  for name in $(printf '%s' "${AGENTHUB_REPORT_ENV_KEYS:-}" | tr ',' ' ') LANG LC_ALL TZ HTTP_PROXY HTTPS_PROXY NO_PROXY; do
+    [ -n "$name" ] || continue
+    # A declared variable that is also well known would otherwise be listed twice.
+    case " $seen " in *" $name "*) continue ;; esac
+    seen="$seen $name"
+    if [ -n "$(eval printf '%s' "\${$name:-}")" ]; then
+      keys="${keys}${keys:+,}\"env:${name}\""
+    else
+      case " ${AGENTHUB_REPORT_ENV_KEYS:-} " in
+        *"$name"*)
+          keys="${keys}${keys:+,}\"env-missing:${name}\""
+          missing="${missing}${missing:+, }${name}"
+          ;;
+      esac
+    fi
+  done
+  if [ -n "$missing" ] && [ "$status" = "applied" ]; then
+    status="incomplete"
+    detail="주입되지 않은 환경변수: ${missing}"
+  fi
+  PAYLOAD="{\"runtimeId\":\"${RUNTIME_ID}\",\"runtimeType\":\"${RUNTIME_TYPE}\",\"fingerprint\":\"${FINGERPRINT}\",\"file\":\"${TARGET_FILE}\",\"status\":\"${status}\",\"detail\":\"${detail}\",\"keys\":[${keys}]}"
+  deliver "$PAYLOAD"
   exit 0
 fi
 
@@ -84,22 +160,4 @@ print(json.dumps({
 PY
 )
 
-# 5 seconds: a slow control plane must not delay a Pod's start. curl is present in
-# the images the platform builds, but a runtime image is allowed to be somebody
-# else's; python3 is already required above, so it is the fallback rather than a
-# report that is silently skipped.
-REPORT_URL="${CONTROL_PLANE%/}/api/v1/runtime-gateway/config-report"
-if command -v curl >/dev/null 2>&1; then
-  curl -sS -m 5 -X POST "$REPORT_URL" \
-    -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
-    -d "$PAYLOAD" >/dev/null 2>&1 || echo "agenthub: configuration report could not be delivered" >&2
-else
-  REPORT_URL="$REPORT_URL" TOKEN="$TOKEN" PAYLOAD="$PAYLOAD" python3 - <<'POST' >/dev/null 2>&1 || echo "agenthub: configuration report could not be delivered" >&2
-import os, urllib.request
-request = urllib.request.Request(os.environ["REPORT_URL"], data=os.environ["PAYLOAD"].encode(),
-                                 headers={"Authorization": "Bearer " + os.environ["TOKEN"],
-                                          "Content-Type": "application/json"}, method="POST")
-urllib.request.urlopen(request, timeout=5).read()
-POST
-fi
-echo "agenthub-config-report $PAYLOAD" >&2
+deliver "$PAYLOAD"

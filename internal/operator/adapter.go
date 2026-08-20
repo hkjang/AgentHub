@@ -133,6 +133,69 @@ const (
 		"exec /app/.venv/bin/langflow run"
 )
 
+// nodeREDHome and n8nHome are where each keeps the work a person did in it: the
+// flows, the credentials, the settings. Both are under /home/agent because that
+// is the volume that survives the Pod.
+const (
+	nodeREDHome = "/home/agent/.node-red"
+	n8nHome     = "/home/agent/.n8n"
+)
+
+// nodeREDStart runs the editor from the home volume rather than from the image's
+// own /data, which is root-owned and is not a volume this platform mounts.
+const nodeREDStart = "mkdir -p " + nodeREDHome + "\n" +
+	"cp /etc/agenthub/node-red-settings.js " + nodeREDHome + "/settings.js\n" +
+	"exec node /usr/src/node-red/node_modules/node-red/red.js --userDir " + nodeREDHome +
+	" --settings " + nodeREDHome + "/settings.js"
+
+// nodeREDConfigInit copies the generated settings and reports them. The settings
+// file carries the base path, so it is per runtime rather than per image.
+const nodeREDConfigInit = "mkdir -p " + nodeREDHome + "\n" +
+	"cp /etc/agenthub/node-red-settings.js " + nodeREDHome + "/settings.js\n" +
+	"/usr/local/bin/agenthub-report-config " + nodeREDHome + "/settings.js || true"
+
+// n8n is configured entirely through the environment, so its initialiser only has
+// to make the directory and say what arrived.
+const n8nConfigInit = "mkdir -p " + n8nHome + "\n" +
+	"/usr/local/bin/agenthub-report-config || true"
+
+// nodeREDHealthCommand and n8nHealthCommand ask each product from inside the
+// container, under the base path it is served at.
+func nodeREDHealthCommand(build adapterBuild) []string {
+	return []string{"/bin/sh", "-c", "curl -fsS -m 3 http://127.0.0.1:1880/" + build.runtimeID() + "/settings >/dev/null"}
+}
+
+func n8nHealthCommand(adapterBuild) []string {
+	// The hardened n8n image has no curl; wget is what it does have. No base path
+	// here: n8n is served from the root of its own origin.
+	return []string{"/bin/sh", "-c", "wget -q -T 3 -O /dev/null http://127.0.0.1:5678/rest/settings"}
+}
+
+// jupyterStart serves the lab under the runtime's own path.
+//
+// base_url is not decoration here either: JupyterLab's client asks for its
+// static assets and its kernel websockets relative to it, so served at the root
+// behind a prefix the page loads and every kernel dies on connect.
+//
+// Token authentication is off because the proxy in front is the authenticator —
+// the same arrangement every other loopback runtime here uses. The XSRF check
+// goes with it: it rejects the proxied origin, and with no token to steal there
+// is nothing for it to protect.
+func jupyterStart(build adapterBuild) string {
+	prefix := "/" + build.runtimeID() + "/"
+	return "mkdir -p /tmp/jupyter-runtime\n" +
+		"exec /opt/agenthub/venv/bin/jupyter lab --no-browser --ip=127.0.0.1 --port=8888 " +
+		"--ServerApp.base_url=" + prefix + " " +
+		"--IdentityProvider.token='' --ServerApp.password='' " +
+		"--ServerApp.disable_check_xsrf=True --ServerApp.allow_remote_access=True " +
+		"--ServerApp.root_dir=/workspace --ServerApp.open_browser=False"
+}
+
+// jupyterHealthCommand asks the lab's own API under the same base path.
+func jupyterHealthCommand(build adapterBuild) []string {
+	return []string{"/bin/sh", "-c", "curl -fsS -m 3 http://127.0.0.1:8888/" + build.runtimeID() + "/api/status >/dev/null"}
+}
+
 // qwenCodeHome is where Qwen Code keeps its settings and credentials. It is on
 // the home volume so a person's own settings survive the Pod.
 const qwenCodeHome = "/home/agent/.qwen"
@@ -280,6 +343,118 @@ var runtimeAdapters = map[string]runtimeAdapter{
 				}, &corev1.Probe{
 					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
 					InitialDelaySeconds: 60, PeriodSeconds: 30, TimeoutSeconds: 3, FailureThreshold: 4,
+				}
+		},
+	},
+	runtimetype.Jupyter: {
+		Type:    runtimetype.Jupyter,
+		Command: []string{"/bin/sh", "-ec"},
+		ArgsFor: func(build adapterBuild) []string { return []string{jupyterStart(build)} },
+		Env: func(build adapterBuild) []corev1.EnvVar {
+			return []corev1.EnvVar{
+				{Name: "QWEN_CODE_HOME", Value: qwenCodeHome},
+				{Name: "AGENTHUB_QWEN_SETTINGS", Value: "/etc/agenthub/qwen-settings.json"},
+				{Name: "OPENAI_MODEL", Value: build.Value.Model.Name},
+			}
+		},
+		InitContainers: func(build adapterBuild) []corev1.Container {
+			// The same initialiser as Qwen Code: this image is that image plus the
+			// notebook toolchain, and the agent in it needs the same preparation.
+			return []corev1.Container{{
+				Name: "jupyter-config-init", Image: build.image(), ImagePullPolicy: corev1.PullIfNotPresent,
+				Command: []string{"/usr/local/bin/agenthub-qwencode-configure"}, Env: build.Env,
+				Resources:       initResources("500m", "512Mi"),
+				SecurityContext: restrictedContainerSecurityContext(build.Value.Security.ReadOnlyRootFilesystem),
+				VolumeMounts:    homeAndConfigMounts,
+			}}
+		},
+		Sidecars: func(build adapterBuild) []corev1.Container {
+			// A notebook server is arbitrary code execution with a file browser
+			// attached; it is published through the token-checking proxy only.
+			return []corev1.Container{runtimeProxyContainer("jupyter-proxy", build.Name, build.sidecarImage(), "http://127.0.0.1:8888")}
+		},
+		Probes: func(build adapterBuild) (*corev1.Probe, *corev1.Probe) {
+			command := jupyterHealthCommand(build)
+			return &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 10, PeriodSeconds: 5, TimeoutSeconds: 3, FailureThreshold: 30,
+				}, &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 120, PeriodSeconds: 30, TimeoutSeconds: 3, FailureThreshold: 4,
+				}
+		},
+	},
+	runtimetype.NodeRED: {
+		Type:    runtimetype.NodeRED,
+		Command: []string{"/bin/sh", "-ec"},
+		Args:    []string{nodeREDStart},
+		InitContainers: func(build adapterBuild) []corev1.Container {
+			return []corev1.Container{{
+				Name: "nodered-config-init", Image: build.image(), ImagePullPolicy: corev1.PullIfNotPresent,
+				Command: []string{"/bin/sh", "-ec"}, Args: []string{nodeREDConfigInit}, Env: build.Env,
+				Resources:       initResources("200m", "256Mi"),
+				SecurityContext: restrictedContainerSecurityContext(build.Value.Security.ReadOnlyRootFilesystem),
+				VolumeMounts:    homeAndConfigMounts,
+			}}
+		},
+		Sidecars: func(build adapterBuild) []corev1.Container {
+			// The editor has no authenticator of its own here: anyone who reached
+			// the port could deploy a flow, so only the proxy publishes it.
+			return []corev1.Container{runtimeProxyContainer("nodered-proxy", build.Name, build.sidecarImage(), "http://127.0.0.1:1880")}
+		},
+		Probes: func(build adapterBuild) (*corev1.Probe, *corev1.Probe) {
+			command := nodeREDHealthCommand(build)
+			return &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 10, PeriodSeconds: 5, TimeoutSeconds: 3, FailureThreshold: 24,
+				}, &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 90, PeriodSeconds: 30, TimeoutSeconds: 3, FailureThreshold: 4,
+				}
+		},
+	},
+	runtimetype.N8N: {
+		Type:    runtimetype.N8N,
+		Command: []string{"/bin/sh", "-ec"},
+		Args:    []string{"exec n8n start"},
+		Env: func(build adapterBuild) []corev1.EnvVar {
+			return []corev1.EnvVar{
+				// No N8N_PATH. It exists, and n8n does rewrite its HTML to use it,
+				// but with it set the static assets and the REST API both fall
+				// through to the index page — the browser is handed HTML where it
+				// asked for JavaScript and the editor never starts. n8n is therefore
+				// served at the root of its own origin, which is why its descriptor
+				// says a Runtime Base Domain is required.
+				{Name: "N8N_USER_FOLDER", Value: n8nHome},
+				{Name: "N8N_LISTEN_ADDRESS", Value: "127.0.0.1"},
+				{Name: "N8N_PORT", Value: "5678"},
+				// The encryption key protects the credentials a person saves in it.
+				// It is the runtime's own token, which is created once and kept for
+				// the life of the runtime — the same lifetime as the volume those
+				// credentials live on.
+				build.secretEnv("N8N_ENCRYPTION_KEY", "runtime-token"),
+			}
+		},
+		InitContainers: func(build adapterBuild) []corev1.Container {
+			return []corev1.Container{{
+				Name: "n8n-config-init", Image: build.image(), ImagePullPolicy: corev1.PullIfNotPresent,
+				Command: []string{"/bin/sh", "-ec"}, Args: []string{n8nConfigInit}, Env: build.Env,
+				Resources:       initResources("200m", "256Mi"),
+				SecurityContext: restrictedContainerSecurityContext(build.Value.Security.ReadOnlyRootFilesystem),
+				VolumeMounts:    homeAndConfigMounts,
+			}}
+		},
+		Sidecars: func(build adapterBuild) []corev1.Container {
+			return []corev1.Container{runtimeProxyContainer("n8n-proxy", build.Name, build.sidecarImage(), "http://127.0.0.1:5678")}
+		},
+		Probes: func(build adapterBuild) (*corev1.Probe, *corev1.Probe) {
+			command := n8nHealthCommand(build)
+			return &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 15, PeriodSeconds: 5, TimeoutSeconds: 3, FailureThreshold: 36,
+				}, &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 180, PeriodSeconds: 30, TimeoutSeconds: 3, FailureThreshold: 4,
 				}
 		},
 	},

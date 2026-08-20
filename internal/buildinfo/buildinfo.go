@@ -17,6 +17,12 @@ var (
 	// QwenCodeVersion is the Qwen Code runtime image this control plane expects.
 	// Like Langflow's, it is built and published apart from the shared base image.
 	QwenCodeVersion = "0.1.0-dev"
+	// JupyterVersion, NodeREDVersion and N8NVersion are the runtime images for the
+	// products that do not boot from the shared one either. Each is published on
+	// its own schedule and only the sites that use it have to carry it.
+	JupyterVersion = "0.1.0-dev"
+	NodeREDVersion = "0.1.0-dev"
+	N8NVersion     = "0.1.0-dev"
 )
 
 type Info struct {
@@ -27,8 +33,12 @@ type Info struct {
 	BaseVersion     string `json:"baseVersion"`
 	LangflowVersion string `json:"langflowVersion"`
 	QwenCodeVersion string `json:"qwenCodeVersion"`
+	JupyterVersion  string `json:"jupyterVersion"`
+	NodeREDVersion  string `json:"nodeRedVersion"`
+	N8NVersion      string `json:"n8nVersion"`
 }
 
 func Current() Info {
-	return Info{Name: "AgentHub", Version: Version, Commit: Commit, BuildTime: BuildTime, BaseVersion: BaseVersion, LangflowVersion: LangflowVersion, QwenCodeVersion: QwenCodeVersion}
+	return Info{Name: "AgentHub", Version: Version, Commit: Commit, BuildTime: BuildTime, BaseVersion: BaseVersion, LangflowVersion: LangflowVersion, QwenCodeVersion: QwenCodeVersion,
+		JupyterVersion: JupyterVersion, NodeREDVersion: NodeREDVersion, N8NVersion: N8NVersion}
 }

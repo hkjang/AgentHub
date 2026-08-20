@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1.7
+#
+# The JupyterLab runtime image — with the Qwen Code agent in it.
+#
+# This is the analyst's runtime rather than the developer's: notebooks, a kernel,
+# the plotting and dataframe libraries, and a file browser. What makes it more
+# than "Jupyter in a Pod" is the terminal beside it — JupyterLab's own terminal
+# opens into the same workspace with `qwen` on PATH, so the person who is halfway
+# through an analysis can hand the tedious part to the agent without leaving the
+# page, and a task can drive that same agent headlessly.
+#
+# It is built from the Qwen Code image for exactly that reason: the agent, its
+# settings, the MCP wiring and the environment `pip install` writes into are all
+# already arranged there, and duplicating them here would be two places to keep
+# in step.
+ARG QWENCODE_IMAGE=agenthub-qwencode:v0.2.0
+FROM ${QWENCODE_IMAGE}
+
+USER 0
+# The analyst's toolchain on top of the agent's. It goes into the same virtualenv
+# the agent uses, so a notebook and the agent see one set of packages.
+ARG NOTEBOOK_TOOLCHAIN="jupyterlab notebook ipywidgets jupyterlab-lsp papermill pandas numpy matplotlib seaborn scipy scikit-learn openpyxl pyarrow duckdb sqlalchemy"
+RUN /opt/agenthub/venv/bin/pip install --no-cache-dir ${NOTEBOOK_TOOLCHAIN} \
+ && mkdir -p /home/agent/.jupyter /home/agent/.local/share/jupyter \
+ && chown -R 10000:10000 /opt/agenthub /home/agent
+
+USER 10000
+ENV AGENTHUB_RUNTIME_TYPE=jupyter \
+    JUPYTER_CONFIG_DIR=/home/agent/.jupyter \
+    JUPYTER_DATA_DIR=/home/agent/.local/share/jupyter \
+    JUPYTER_RUNTIME_DIR=/tmp/jupyter-runtime \
+    # Notebooks import from the workspace, which is the volume that survives.
+    PYTHONPATH=/workspace
+WORKDIR /workspace
+EXPOSE 8888
+CMD ["/opt/agenthub/venv/bin/jupyter", "lab", "--no-browser", "--ip=127.0.0.1", "--port=8888"]

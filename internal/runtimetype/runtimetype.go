@@ -9,13 +9,16 @@ const (
 	QwenPaw  = "qwenpaw"
 	QwenCode = "qwencode"
 	Langflow = "langflow"
+	NodeRED  = "nodered"
+	N8N      = "n8n"
+	Jupyter  = "jupyter"
 	Custom   = "custom"
 )
 
 // Supported lists every runtime type accepted by the API, the database check
 // constraints and the AgentRuntime CRD enum. Keep this in sync with
 // deploy/kubernetes/crd.yaml and the runtime_type CHECK constraints.
-var Supported = []string{OpenCode, Hermes, QwenPaw, QwenCode, Langflow, Custom}
+var Supported = []string{OpenCode, Hermes, QwenPaw, QwenCode, Jupyter, Langflow, NodeRED, N8N, Custom}
 
 // IsSupported reports whether value names a runtime adapter AgentHub can spawn.
 func IsSupported(value string) bool {
@@ -37,6 +40,12 @@ func Port(value string) int32 {
 	case QwenCode:
 		// ttyd, which is what puts the agent's terminal in a browser.
 		return 7681
+	case NodeRED:
+		return 1880
+	case N8N:
+		return 5678
+	case Jupyter:
+		return 8888
 	}
 	return 4096
 }
@@ -52,7 +61,11 @@ const GatewayPort int32 = 9119
 // it with automatic login — its visual editor would otherwise be open to anyone
 // who reached the port.
 func UsesGatewayProxy(value string) bool {
-	return value == Hermes || value == QwenPaw || value == Langflow || value == QwenCode
+	switch value {
+	case Hermes, QwenPaw, Langflow, QwenCode, NodeRED, N8N, Jupyter:
+		return true
+	}
+	return false
 }
 
 // HostSessionOnly reports that a browser session for this runtime needs an
@@ -62,7 +75,19 @@ func UsesGatewayProxy(value string) bool {
 // the root of whatever origin it was loaded from, so under a path prefix the
 // editor loads a blank page. Refusing the session with an explanation is better
 // than handing somebody that page.
-func HostSessionOnly(value string) bool { return value == Langflow }
+//
+// n8n is here for a subtler reason. It has a base-path setting and it rewrites
+// its HTML to use it — but with the setting on, its static assets and its REST
+// API both fall through to the index page, so the browser is handed HTML where it
+// asked for JavaScript and the editor never starts. Served at the root of its own
+// origin it is correct, so that is where the platform puts it.
+func HostSessionOnly(value string) bool {
+	switch value {
+	case Langflow, N8N:
+		return true
+	}
+	return false
+}
 
 // ServesUnderRuntimePath reports that this runtime is started with its base path
 // set to the runtime's own id, and must therefore be reached at /{runtimeId}/ in
@@ -77,4 +102,10 @@ func HostSessionOnly(value string) bool { return value == Langflow }
 // arrived. Giving ttyd the prefix it is already being served under makes the two
 // agree, and keeping the prefix in host mode too means the answer does not change
 // when a site configures a Runtime Base Domain.
-func ServesUnderRuntimePath(value string) bool { return value == QwenCode }
+func ServesUnderRuntimePath(value string) bool {
+	switch value {
+	case QwenCode, NodeRED, Jupyter:
+		return true
+	}
+	return false
+}

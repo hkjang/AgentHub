@@ -55,7 +55,12 @@ func run() error {
 	}
 	admin, err := db.AuthenticateLocal(ctx, cfg.BootstrapAdmin, cfg.BootstrapPassword)
 	if err == nil {
-		_ = db.SeedTemplates(ctx, admin.ID)
+		// Not fatal — the platform runs without a catalog — but not silent either:
+		// a refused template is a runtime nobody can find, and this failure went
+		// unnoticed once because the error was discarded here.
+		if seedErr := db.SeedTemplates(ctx, admin.ID); seedErr != nil {
+			logger.Error("starter templates could not be published", "error", seedErr)
+		}
 	}
 	// Tracing, when an administrator configured a collector. With none configured
 	// this installs the no-op tracer and costs nothing.

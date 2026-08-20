@@ -225,15 +225,26 @@ func (s *Store) SeedTemplates(ctx context.Context, adminID string) error {
 		{"IT Operator", "it-operator", "Policy-controlled operations assistant with approval gates.", "Operations", "hermes", "rp-basic", "Assist with IT operations. Request approval before any state-changing action."},
 		{"Qwen Code Engineer", "qwen-code", "터미널 코딩 에이전트. 작업공간의 코드를 직접 고치고, 작업을 맡기면 무인으로도 같은 도구 루프를 사용합니다.", "Development", "qwencode", "rp-developer", "당신은 신중한 사내 소프트웨어 엔지니어입니다. 변경 전에 코드를 읽고, 테스트로 확인하고, 무엇을 왜 바꿨는지 남기세요."},
 		{"Langflow Builder", "langflow-builder", "흐름을 그려서 만드는 시각적 빌더. 저장한 흐름을 자동 실행 백엔드로 그대로 사용할 수 있습니다.", "Automation", "langflow", "rp-basic", "당신은 흐름으로 업무를 자동화합니다. 입력과 출력을 명확히 하고, 실패했을 때 무엇이 잘못됐는지 남기세요."},
+		{"Jupyter Analyst", "jupyter-analyst", "노트북으로 데이터를 다루는 작업대. 같은 화면의 터미널에 Qwen Code 에이전트가 함께 있어, 지루한 부분은 맡길 수 있습니다.", "Analytics", "jupyter", "rp-advanced", "당신은 신중한 데이터 분석가입니다. 가정을 먼저 적고, 표와 그림으로 근거를 남기고, 결론과 한계를 함께 쓰세요."},
+		{"n8n Automation", "n8n-automation", "수백 가지 연동을 가진 업무 자동화. 메일·메신저·DB·HTTP를 트리거와 노드로 잇습니다.", "Automation", "n8n", "rp-basic", "당신은 사내 업무를 연결해 자동화합니다. 실패했을 때 어디서 멈췄는지 알 수 있게 만드세요."},
+		{"Node-RED Wiring", "node-red-wiring", "노드를 선으로 이어 만드는 배선 도구. 이벤트를 받아 변환하고 다른 시스템을 호출하는 흐름을 계속 돌립니다.", "Automation", "nodered", "rp-basic", "당신은 시스템과 시스템을 잇습니다. 입력과 출력의 형식을 분명히 하고, 오류 경로를 반드시 만드세요."},
 	}
+	// One template the database refuses must not take the others with it. That is
+	// how three runtimes went missing from the catalog at once: the first of them
+	// was rejected and the loop returned, so the two behind it were never even
+	// attempted. Every row is tried, and the failures are reported together.
+	var failures []string
 	for _, item := range data {
 		_, err := s.pool.Exec(ctx, `INSERT INTO agent_templates(id,name,slug,description,category,runtime_type,runtime_profile_id,security_profile_id,network_profile_id,system_prompt,published,created_by)
 			VALUES($1,$2,$3,$4,$5,$6,$7,'sp-restricted','np-restricted',$8,true,$9)
 			ON CONFLICT (slug) DO NOTHING`,
 			uuid.NewString(), item.name, item.slug, item.description, item.category, item.runtime, item.profile, item.prompt, adminID)
 		if err != nil {
-			return err
+			failures = append(failures, item.slug+": "+err.Error())
 		}
+	}
+	if len(failures) > 0 {
+		return errors.New("일부 템플릿을 게시하지 못했습니다 — " + strings.Join(failures, "; "))
 	}
 	return nil
 }

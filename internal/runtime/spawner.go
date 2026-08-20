@@ -44,6 +44,9 @@ func DefaultBaseImage() string {
 const (
 	EnvDefaultLangflowImage = "AGENTHUB_DEFAULT_LANGFLOW_IMAGE"
 	EnvDefaultQwenCodeImage = "AGENTHUB_DEFAULT_QWENCODE_IMAGE"
+	EnvDefaultJupyterImage  = "AGENTHUB_DEFAULT_JUPYTER_IMAGE"
+	EnvDefaultNodeREDImage  = "AGENTHUB_DEFAULT_NODERED_IMAGE"
+	EnvDefaultN8NImage      = "AGENTHUB_DEFAULT_N8N_IMAGE"
 )
 
 // DefaultRuntimeImage is the image a runtime of this type starts from when no
@@ -65,6 +68,21 @@ func DefaultRuntimeImage(runtimeType string) string {
 			return override
 		}
 		return "agenthub-qwencode:v" + strings.TrimSuffix(buildinfo.QwenCodeVersion, "-dev")
+	case runtimetype.Jupyter:
+		if override := strings.TrimSpace(os.Getenv(EnvDefaultJupyterImage)); override != "" {
+			return override
+		}
+		return "agenthub-jupyter:v" + strings.TrimSuffix(buildinfo.JupyterVersion, "-dev")
+	case runtimetype.NodeRED:
+		if override := strings.TrimSpace(os.Getenv(EnvDefaultNodeREDImage)); override != "" {
+			return override
+		}
+		return "agenthub-nodered:v" + strings.TrimSuffix(buildinfo.NodeREDVersion, "-dev")
+	case runtimetype.N8N:
+		if override := strings.TrimSpace(os.Getenv(EnvDefaultN8NImage)); override != "" {
+			return override
+		}
+		return "agenthub-n8n:v" + strings.TrimSuffix(buildinfo.N8NVersion, "-dev")
 	}
 	return DefaultBaseImage()
 }

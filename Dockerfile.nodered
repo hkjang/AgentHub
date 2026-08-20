@@ -1,0 +1,34 @@
+# syntax=docker/dockerfile:1.7
+#
+# The Node-RED runtime image.
+#
+# Node-RED is wiring rather than reasoning: a person drags nodes to connect an
+# MQTT topic to a database to an HTTP call, and the result runs forever. It earns
+# a runtime of its own because nothing else here does that — the agents reason,
+# the flow builders prompt, and neither is what somebody reaches for to move a
+# message from one system to another.
+#
+# Its own image for the same reasons as the others: it carries its own Node tree,
+# it moves on its own schedule, and a site that does not use it should not have to
+# carry it through the media path.
+ARG NODERED_IMAGE=4.1.0
+FROM nodered/node-red:${NODERED_IMAGE}
+
+USER root
+COPY deploy/runtime/agenthub-report-config.sh /usr/local/bin/agenthub-report-config
+# python3 and curl are what the reporter needs; the image has neither.
+RUN apk add --no-cache python3 curl \
+ && chmod 0755 /usr/local/bin/agenthub-report-config \
+ && mkdir -p /workspace /home/agent/.node-red \
+ && chown -R 10000:10000 /workspace /home/agent
+
+USER 10000
+ENV HOME=/home/agent \
+    AGENTHUB_RUNTIME_TYPE=nodered \
+    NODE_RED_HOME=/home/agent/.node-red
+WORKDIR /workspace
+EXPOSE 1880
+# The image's own start script pins --userDir /data, which is root-owned and not
+# a volume this platform mounts; red.js is started directly so the editor's state
+# lands on the home volume and survives the Pod.
+CMD ["node", "/usr/src/node-red/node_modules/node-red/red.js", "--userDir", "/home/agent/.node-red", "--settings", "/home/agent/.node-red/settings.js"]

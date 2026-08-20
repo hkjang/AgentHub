@@ -64,14 +64,20 @@ try {
   // --- the catalog, which is where people start ------------------------------
   const templates = (await get('/api/v1/templates')).body?.items ?? []
   const byRuntime = Object.fromEntries(templates.map((item) => [item.runtimeType, item]))
-  for (const type of ['qwencode', 'langflow']) {
+  // Every runtime the platform supports and a person could choose has to be in
+  // the catalog: that is where people start, and one that is missing there does
+  // not exist for anybody who does not already know it is possible.
+  const choosable = runtimes.filter((item) => item.type !== 'custom').map((item) => item.type)
+  for (const type of choosable) {
     check(`카탈로그에 ${type} 템플릿이 게시됨`, Boolean(byRuntime[type]),
       JSON.stringify(templates.map((item) => `${item.runtimeType}:${item.name}`)))
   }
   await page.goto(`${baseURL}/catalog`, { waitUntil: 'networkidle' })
   const catalogText = await page.locator('main').innerText()
-  check('카탈로그 화면에 Qwen Code 카드가 보임', catalogText.includes('Qwen Code'))
-  check('카탈로그 화면에 Langflow 카드가 보임', catalogText.includes('Langflow'))
+  for (const type of choosable) {
+    const label = runtimes.find((item) => item.type === type)?.label ?? type
+    check(`카탈로그 화면에 ${label} 카드가 보임`, catalogText.includes(label))
+  }
 
   const template = byRuntime.qwencode
   if (!template) throw new Error('cannot continue without the qwencode template')
