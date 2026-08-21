@@ -645,6 +645,13 @@ func (s *Store) RetryAgentTask(ctx context.Context, taskID string, delay time.Du
 // RequeueAgentTask returns a task to the queue for a manual retry, clearing the
 // attempt counter so the operator gets a full retry budget again.
 //
+// A blocked task is included, and that was a gap worth naming: the block is
+// lifted by fixing whatever caused it — promoting a version, changing a policy
+// rule — and only the promotion had a path back. A task held by a policy could be
+// released solely by promoting the agent, which has nothing to do with the rule
+// that stopped it, so the honest answer was to let the owner press the same
+// button they press for anything else once they have fixed the cause.
+//
 // fresh retires the steps completed so far, so the attempt starts from the
 // beginning: the right choice when the earlier reasoning was based on something
 // that has since been corrected. Otherwise the attempt resumes from them.
@@ -654,7 +661,7 @@ func (s *Store) RequeueAgentTask(ctx context.Context, taskID, ownerID string, fr
 		checkpoint = `checkpoint_after=now()`
 	}
 	query := `UPDATE agent_tasks SET status='queued',attempts=0,scheduled_at=now(),last_error='',waiting_reason='',claimed_by='',claimed_until=NULL,` + checkpoint + `,updated_at=now()
-		WHERE id=$1 AND owner_id=$2 AND status IN ('failed','dead_letter','cancelled') RETURNING id`
+		WHERE id=$1 AND owner_id=$2 AND status IN ('failed','dead_letter','cancelled','blocked') RETURNING id`
 	var id string
 	if err := s.pool.QueryRow(ctx, query, taskID, ownerID).Scan(&id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -686,7 +693,10 @@ func retryRefusal(status string) string {
 	case "waiting_approval":
 		return "승인을 기다리는 작업입니다. 검토 화면에서 승인하거나 반려해 주세요."
 	case "blocked":
-		return "차단된 작업입니다. 차단을 해제하면 다시 대기열에 들어갑니다."
+		// Unreachable now that a blocked task may be requeued, and kept because
+		// the state can be reached two ways and a future third might not be
+		// releasable by hand.
+		return "차단된 작업입니다. 막고 있는 것을 해제한 뒤 다시 실행할 수 있습니다."
 	case "handoff":
 		return "사람이 이어받은 작업입니다. 런타임에서 마무리하고 완료 처리해 주세요."
 	}

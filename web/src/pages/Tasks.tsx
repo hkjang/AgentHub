@@ -232,7 +232,10 @@ export function Tasks() {
                   <button title="완료 처리 — 사람이 마무리했음을 기록합니다" onClick={() => setResolving(task)}><Check size={15} /></button>
                 </>}
                 {task.currentRunId && <button title={t('runs')} onClick={() => setOpenRun(task.currentRunId!)}><ExternalLink size={15} /></button>}
-                {['failed', 'dead_letter', 'cancelled'].includes(task.status) && <button title="다시 실행" onClick={() => setRetrying(task)}><RotateCcw size={15} /></button>}
+                {/* A blocked task is here too: the block is lifted by fixing what
+                    caused it, and until now only a promotion had a way back —
+                    which is no help at all to a task a policy rule stopped. */}
+                {['failed', 'dead_letter', 'cancelled', 'blocked'].includes(task.status) && <button title={task.status === 'blocked' ? '막은 것을 해제한 뒤 다시 실행' : '다시 실행'} onClick={() => setRetrying(task)}><RotateCcw size={15} /></button>}
                 {ACTIVE.includes(task.status) && <button className="danger" title="취소" onClick={() => setCancelling(task)}><Square size={14} /></button>}
               </div></td>
             </tr>)}</tbody>

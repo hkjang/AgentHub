@@ -1306,6 +1306,24 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## A held task needs a way back
+
+Holding a task rather than failing it was argued for on the grounds that
+releasing held tasks is already something this platform does. That was true of
+the promotion gate and of nothing else: the release ran only when an agent
+version was promoted, and manual requeue accepted failed, dead-lettered and
+cancelled tasks but not held ones.
+
+So a task stopped by a policy rule could be released only by promoting the agent
+— an unrelated action that may not even be available — or by cancelling the work.
+The reasoning had been checked against the mechanism it came from and not against
+the one it was being extended to.
+
+A held task can be requeued now, which is the button its owner already knows:
+fix what is holding it, press the same thing they press for anything else. The
+platform still holds rather than fails, and now that is a claim with a path
+behind it.
+
 ## Waiting behind yourself
 
 Two releases ago the runtime quota started applying to tasks as well as to
