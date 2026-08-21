@@ -146,6 +146,11 @@ type SessionUpdate struct {
 	Title      string `json:"title,omitempty"`
 	Kind       string `json:"kind,omitempty"`
 	Status     string `json:"status,omitempty"`
+	// RawInput is what the agent is about to run, in the tool's own shape. It is
+	// kept because the title is usually the tool's *name* — `browser_execute`,
+	// `developer__shell` — and the thing an operator wants to allow or refuse is
+	// the command inside it.
+	RawInput json.RawMessage `json:"rawInput,omitempty"`
 	// Token accounting, when the agent reports it. `used` and `size` are the
 	// protocol's own context occupancy — how full the window is, not what was
 	// bought. Usage is the real spend, which agents report in their own extension

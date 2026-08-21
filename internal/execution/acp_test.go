@@ -325,18 +325,25 @@ func TestWhoAnswersTheAgent(t *testing.T) {
 func TestANamedToolRuleDecidesBeforeTheMode(t *testing.T) {
 	policy := store.ACPToolPolicy{Deny: []string{"rm -rf", "git push"}, Allow: []string{"npm test"}}
 	for _, tc := range []struct {
-		title   string
-		allowed bool
-		decided bool
+		title     string
+		arguments string
+		allowed   bool
+		decided   bool
 	}{
-		{"Run `npm test` in /workspace", true, true},
-		{"rm -rf /workspace/build", false, true},
-		{"Force-push with git push --force", false, true},
-		{"Write /workspace/main.go", false, false}, // no rule: the mode still answers
+		{"Run `npm test` in /workspace", "", true, true},
+		{"rm -rf /workspace/build", "", false, true},
+		{"Force-push with git push --force", "", false, true},
+		{"Write /workspace/main.go", "", false, false}, // no rule: the mode still answers
+		// The shape a real agent actually sends: the title is the tool's name and
+		// the command is in the arguments. A policy that read only the title would
+		// decide nothing here, which is the same as having no policy at all.
+		{"developer__shell", `{"command":"rm -rf /workspace/build"}`, false, true},
+		{"browser_execute", `{"code":"await page.goto('/'); npm test"}`, true, true},
+		{"developer__shell", `{"command":"ls -la"}`, false, false},
 	} {
-		allowed, decided := namedToolDecision(policy, tc.title)
+		allowed, decided := namedToolDecision(policy, tc.title, tc.arguments)
 		if allowed != tc.allowed || decided != tc.decided {
-			t.Errorf("%q → allowed=%v decided=%v, want %v/%v", tc.title, allowed, decided, tc.allowed, tc.decided)
+			t.Errorf("%q %s → allowed=%v decided=%v, want %v/%v", tc.title, tc.arguments, allowed, decided, tc.allowed, tc.decided)
 		}
 	}
 }
@@ -345,7 +352,7 @@ func TestANamedToolRuleDecidesBeforeTheMode(t *testing.T) {
 // setting people actually change.
 func TestDenyHoldsAgainstEveryApprovalMode(t *testing.T) {
 	goal := store.AgentGoal{ApprovalMode: "yolo", ToolPolicy: store.ACPToolPolicy{Deny: []string{"rm -rf"}}}
-	if allowed, decided := namedToolDecision(goal.ToolPolicy, "rm -rf build"); decided && allowed {
+	if allowed, decided := namedToolDecision(goal.ToolPolicy, "rm -rf build", ""); decided && allowed {
 		t.Error("yolo overruled a deny rule")
 	}
 	if !acpAllows("yolo", "execute") {
@@ -357,7 +364,7 @@ func TestDenyHoldsAgainstEveryApprovalMode(t *testing.T) {
 // which list an operator happened to type it into first.
 func TestDenyWinsOverAllow(t *testing.T) {
 	policy := store.ACPToolPolicy{Deny: []string{"push"}, Allow: []string{"git"}}
-	allowed, decided := namedToolDecision(policy, "git push origin main")
+	allowed, decided := namedToolDecision(policy, "git push origin main", "")
 	if !decided || allowed {
 		t.Errorf("allowed=%v decided=%v; deny must win", allowed, decided)
 	}
@@ -368,14 +375,14 @@ func TestDenyWinsOverAllow(t *testing.T) {
 // every rule fire at once.
 func TestAToolWithNoTitleIsLeftToTheMode(t *testing.T) {
 	policy := store.ACPToolPolicy{Deny: []string{"rm"}, Allow: []string{"test"}}
-	if _, decided := namedToolDecision(policy, "   "); decided {
+	if _, decided := namedToolDecision(policy, "   ", ""); decided {
 		t.Error("an untitled tool call was decided by a name-matching policy")
 	}
 }
 
 // A goal with no policy has to take exactly the path it took before this existed.
 func TestNoPolicyChangesNothing(t *testing.T) {
-	if _, decided := namedToolDecision(store.ACPToolPolicy{}, "anything at all"); decided {
+	if _, decided := namedToolDecision(store.ACPToolPolicy{}, "anything at all", ""); decided {
 		t.Error("an empty policy decided a request")
 	}
 }
@@ -391,11 +398,11 @@ func TestThePermissionPathConsultsTheToolPolicyFirst(t *testing.T) {
 		ToolPolicy: store.ACPToolPolicy{Deny: []string{"rm -rf"}, Allow: []string{"npm test"}},
 	}
 	run, agent := &store.AgentRun{}, store.Agent{}
-	if allowed, by := o.answerPermission(context.Background(), run, agent, goal, "rt", permissionFor("t1", "rm -rf /workspace", "other"), "other"); allowed || by != "toolPolicy" {
+	if allowed, by := o.answerPermission(context.Background(), run, agent, goal, "rt", permissionFor("t1", "rm -rf /workspace", "other"), "other", ""); allowed || by != "toolPolicy" {
 		t.Errorf("deny: allowed=%v by=%q", allowed, by)
 	}
 	// approvalRequired would otherwise send this to a person, which needs a store.
-	if allowed, by := o.answerPermission(context.Background(), run, agent, goal, "rt", permissionFor("t2", "Run `npm test`", "other"), "other"); !allowed || by != "toolPolicy" {
+	if allowed, by := o.answerPermission(context.Background(), run, agent, goal, "rt", permissionFor("t2", "Run `npm test`", "other"), "other", ""); !allowed || by != "toolPolicy" {
 		t.Errorf("allow: allowed=%v by=%q", allowed, by)
 	}
 }
@@ -454,5 +461,36 @@ func TestARunSaysWhoCountedItsTokens(t *testing.T) {
 		if got := acpMetering(tc.turn); got != tc.want {
 			t.Errorf("%s → %q, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+// The arguments a tool call carries are remembered from the announcement, which
+// arrives before the permission request. A real agent announces the call with an
+// empty rawInput first and fills it in on the update that follows, so the empty
+// one must not overwrite what came after it.
+func TestTheArgumentsSurviveTheAnnouncement(t *testing.T) {
+	turn := &acpTurn{}
+	turn.update(acp.SessionUpdate{SessionUpdate: "tool_call", ToolCallID: "t1", Title: "developer__shell",
+		Kind: "other", Status: "pending", RawInput: []byte(`{}`)})
+	turn.update(acp.SessionUpdate{SessionUpdate: "tool_call_update", ToolCallID: "t1", Status: "in_progress",
+		RawInput: []byte(`{"command":"rm -rf build"}`)})
+	turn.update(acp.SessionUpdate{SessionUpdate: "tool_call_update", ToolCallID: "t1", Status: "completed",
+		RawInput: []byte(`{}`)})
+	if got := turn.inputFor("t1"); !strings.Contains(got, "rm -rf build") {
+		t.Fatalf("arguments = %q", got)
+	}
+	if turn.inputFor("nobody") != "" {
+		t.Error("a tool call nobody announced returned arguments")
+	}
+}
+
+// An agent that sends a megabyte of context does not make a short rule more
+// likely to match, only the memory larger.
+func TestRememberedArgumentsAreBounded(t *testing.T) {
+	turn := &acpTurn{}
+	turn.update(acp.SessionUpdate{SessionUpdate: "tool_call", ToolCallID: "t1", Title: "shell",
+		RawInput: []byte(`{"command":"` + strings.Repeat("x", 40_000) + `"}`)})
+	if got := len(turn.inputFor("t1")); got != acpInputLimit {
+		t.Errorf("kept %d bytes, want %d", got, acpInputLimit)
 	}
 }

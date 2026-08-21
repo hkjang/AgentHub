@@ -115,9 +115,9 @@ var qwenCodeCommands = map[string][]string{
 // and the PATH an exec does not have.
 var gooseCommands = map[string][]string{RunnerACP: {"/usr/local/bin/agenthub-goose-run", "acp"}}
 
-// browserCodeACP starts BrowserCode as a protocol peer. It asks before using a
-// tool without being told to, which is the third of three agents and the first
-// that needed no persuading.
+// browserCodeACP starts BrowserCode as a protocol peer. Like Goose, it has to be
+// told to ask — its generated configuration carries a permission block, without
+// which it runs commands and edits files without consulting the client at all.
 var browserCodeCommands = map[string][]string{RunnerACP: {"/usr/local/bin/agenthub-browsercode-run", "acp"}}
 
 // holmesCommands starts one investigation. The wrapper is what makes stdout

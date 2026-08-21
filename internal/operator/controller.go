@@ -682,6 +682,16 @@ func runtimeConfigs(ns, runtimeName string, value spec) map[string]string {
 		"$schema": "https://bcode.sh/config.json", "autoupdate": false,
 		"mcp":          map[string]any{},
 		"instructions": []any{browserCodeInstructions},
+		// Told to ask, this agent sends the client a session/request_permission
+		// before it runs a command; left alone, it does not — verified against the
+		// real binary, which deleted a path under /workspace without a word while
+		// the platform sat waiting to be consulted. Everything the Goal says about
+		// approval, and every tool rule an operator writes, is answered on that
+		// request, so without this the whole policy is decoration.
+		//
+		// The person working in a terminal is deliberately not covered: they are
+		// there to answer, which is what an interactive session is.
+		"permission": map[string]any{"bash": "ask", "edit": "ask", "webfetch": "ask", "browser_execute": "ask"},
 	}
 	if value.Model.BaseURL != "" && value.Model.Name != "" {
 		// One provider entry named after the platform, not after whichever backend

@@ -195,6 +195,9 @@ type acpTurn struct {
 	// progresses, and appending would store the same screenshot several times.
 	images     map[string][]acp.Image
 	imageOrder []string
+	// What each tool call was asked to run, as text. The title is usually the
+	// tool's name; the command is in here.
+	inputs map[string]string
 }
 
 // acpToolRecord is one thing the agent did, and what the platform said about it.
@@ -230,6 +233,7 @@ func (t *acpTurn) update(u acp.SessionUpdate) {
 	case "tool_call":
 		t.toolCalls++
 		t.tools = append(t.tools, acpToolRecord{ID: u.ToolCallID, Title: u.Title, Kind: u.Kind, Status: u.Status})
+		t.keepInput(u)
 		t.keepImages(u)
 	case "tool_call_update":
 		for index := range t.tools {
@@ -237,10 +241,52 @@ func (t *acpTurn) update(u acp.SessionUpdate) {
 				t.tools[index].Status = u.Status
 			}
 		}
+		t.keepInput(u)
 		t.keepImages(u)
 	case "usage_update":
 		t.contextUsed, t.contextSize = u.Used, u.Size
 	}
+}
+
+// acpInputLimit bounds what is remembered of one tool call's arguments. A rule
+// is a short phrase; an agent that sends a megabyte of context does not make the
+// rule more likely to match, only the memory larger.
+const acpInputLimit = 8 * 1024
+
+// keepInput remembers what a tool call was asked to run.
+//
+// An agent announces the call before it asks permission, and the permission
+// request carries only an id, a title and a kind. The title is usually the
+// tool's *name* — BrowserCode says `browser_execute`, Goose says
+// `developer__shell` — while the command an operator actually wants to allow or
+// refuse is in the arguments. A policy that could only read the title would
+// never match a rule anybody would think to write.
+//
+// The caller already holds the lock.
+func (t *acpTurn) keepInput(u acp.SessionUpdate) {
+	if u.ToolCallID == "" || len(u.RawInput) == 0 {
+		return
+	}
+	text := string(u.RawInput)
+	if text == "{}" || text == "null" {
+		// The announcement arrives before the arguments are filled in; keeping the
+		// empty one would overwrite the real arguments that follow.
+		return
+	}
+	if len(text) > acpInputLimit {
+		text = text[:acpInputLimit]
+	}
+	if t.inputs == nil {
+		t.inputs = map[string]string{}
+	}
+	t.inputs[u.ToolCallID] = text
+}
+
+// inputFor is what the platform judges by, alongside the title.
+func (t *acpTurn) inputFor(id string) string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.inputs[id]
 }
 
 // keepImages holds on to what a tool call produced as a picture. A browser agent
@@ -359,7 +405,7 @@ func (o *Orchestrator) acpTurn(ctx context.Context, run *store.AgentRun, agent s
 	client.Update = turn.update
 	client.Permission = func(request acp.PermissionRequest) acp.PermissionOutcome {
 		kind := acpKind(request, turn)
-		allowed, by := o.answerPermission(ctx, run, agent, goal, acquired.runtimeID, request, kind)
+		allowed, by := o.answerPermission(ctx, run, agent, goal, acquired.runtimeID, request, kind, turn.inputFor(request.ToolCall.ToolCallID))
 		turn.decide(request, kind, allowed)
 		o.event(ctx, *run, "acp.permission", acpPermissionMessage(request, allowed), map[string]any{
 			"tool": request.ToolCall.Title, "kind": kind,
@@ -525,10 +571,10 @@ func acpAllows(mode, kind string) bool {
 // So when the Goal requires approval, anything that is not read-only goes to a
 // person. The approval mode still decides everything else, and still decides
 // alone when nobody asked to be consulted.
-func (o *Orchestrator) answerPermission(ctx context.Context, run *store.AgentRun, agent store.Agent, goal store.AgentGoal, runtimeID string, request acp.PermissionRequest, kind string) (bool, string) {
+func (o *Orchestrator) answerPermission(ctx context.Context, run *store.AgentRun, agent store.Agent, goal store.AgentGoal, runtimeID string, request acp.PermissionRequest, kind, arguments string) (bool, string) {
 	// A named rule is read before anything else, because it was written about
 	// this tool while the mode was written about tools in general.
-	if named, decided := namedToolDecision(goal.ToolPolicy, request.ToolCall.Title); decided {
+	if named, decided := namedToolDecision(goal.ToolPolicy, request.ToolCall.Title, arguments); decided {
 		return named, "toolPolicy"
 	}
 	asksPerson, allowed := permissionRoute(goal, kind)
@@ -559,12 +605,12 @@ func (o *Orchestrator) answerPermission(ctx context.Context, run *store.AgentRun
 // is prose the agent wrote — "Run `npm test` in /workspace", not a symbol. An
 // exact match would silently never fire, which is the worst way for a security
 // rule to fail: it looks configured.
-func namedToolDecision(policy store.ACPToolPolicy, title string) (allowed, decided bool) {
+func namedToolDecision(policy store.ACPToolPolicy, title, arguments string) (allowed, decided bool) {
 	if policy.Empty() {
 		return false, false
 	}
-	subject := strings.ToLower(strings.TrimSpace(title))
-	if subject == "" {
+	subject := strings.ToLower(strings.TrimSpace(title + " " + arguments))
+	if strings.TrimSpace(subject) == "" {
 		// Nothing to match against. The mode still gets to answer; refusing here
 		// would turn any agent that omits titles into an agent that can do nothing.
 		return false, false

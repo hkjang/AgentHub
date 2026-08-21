@@ -1306,6 +1306,31 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## An agent that never asks
+
+The approval mode, the human-approval route and the tool rules are all answered
+on one message: `session/request_permission`. An agent that does not send it is
+governed by none of them, and nothing about the deployment looks wrong — the
+runtime starts, the agent works, the run record fills in. Only the policy quietly
+applies to nothing.
+
+BrowserCode was in that state. Asked to delete a directory it ran `rm -rf` under
+the workspace and never consulted the client, while the console offered an
+approval mode and a deny list for it. Goose had needed persuading in the same way
+and been given `GOOSE_MODE=approve`; this one had been recorded as the agent that
+needed none, on the strength of a session where it happened to ask.
+
+Its generated configuration now carries a permission block covering the shell,
+file edits, network fetches and the browser tool itself, and a live test drives
+the real binary at a real deletion and fails if no request arrives — and refuses
+when one does, because a platform that asks and then always allows has not asked.
+
+That test also settled how the rules should match. The title on a permission
+request is often the tool's own name — `browser_execute` — while the command an
+operator wants to allow or refuse is in the arguments, which the agent announces
+separately before it asks. So the rules read both, remembered per tool call and
+bounded, and the documentation no longer suggests titles are prose.
+
 ## Naming the tools a run may use
 
 The approval mode judges a permission request by the kind of tool the agent
