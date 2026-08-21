@@ -1308,6 +1308,24 @@ fails if what arrives is a sentence about a screenshot rather than a PNG.
 
 ## The way around the rules
 
+The policy engine was consulted when a person queued a task from the console, and
+nowhere else. A schedule, a webhook, an event or another agent went straight to
+the store — so a nightly job created by somebody whose permission was later
+withdrawn kept firing, unread, against an agent the policy forbade. The promotion
+gate and the quota were already checked by the worker, which is the one place
+every task passes through whatever created it; the policy was not, and the
+asymmetry was an accident rather than a decision.
+
+It is checked there now, for both refusing effects: a rule asking for approval on
+a path with nowhere to wait is a refusal, and reading it as an allow would be the
+worst possible reading of a rule that asked for review. A refused task is held
+rather than failed, the way the gate holds one — a policy is something an
+administrator can change, and releasing blocked tasks afterwards is already
+something this platform can do, while failing them would mean re-creating by hand
+the work a corrected rule should simply let through.
+
+
+
 A workflow calls the same agents a task would, through the same models, and it
 did so under none of the same rules. A person over their token budget was refused
 at the task queue and welcome in the workflow screen. An agent held behind a

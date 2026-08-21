@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/hkjang/AgentHub/internal/policy"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -173,6 +175,10 @@ func (w *Worker) execute(ctx context.Context, task store.AgentTask) {
 	// Quotas are checked after the claim rather than before it, because the claim
 	// is what makes the count meaningful: two workers deciding at the same moment
 	// would otherwise both see a free slot.
+	if !w.permittedByPolicy(ctx, task, logger) {
+		return
+	}
+
 	if !w.promoted(ctx, task, logger) {
 		return
 	}
@@ -293,6 +299,72 @@ func (w *Worker) paused(ctx context.Context) bool {
 	w.pausedNow = settings.Paused
 	w.pausedUntil = time.Now().Add(5 * time.Second)
 	return w.pausedNow
+}
+
+// permittedByPolicy applies the platform's policy to a task the moment before it
+// runs, whoever queued it.
+//
+// The policy engine was consulted when a person queued a task from the console
+// and nowhere else, so a schedule, a webhook, an event or another agent could run
+// an agent that policy forbids — and a nightly job created by somebody whose
+// permission was later withdrawn went on firing, unread, until somebody noticed.
+// The check belongs here because this is the one place every task passes through.
+//
+// A refusal holds the task rather than failing it, the way the promotion gate
+// does: a policy is something an administrator can change, and releasing blocked
+// tasks afterwards is already a thing this platform can do. Failing them would
+// mean re-creating by hand the work that a corrected rule should simply let
+// through.
+//
+// A policy that cannot be read does not stop the work — the same rule the quota
+// and the gate follow, for the same reason: a transient query error must not
+// become an outage.
+func (w *Worker) permittedByPolicy(ctx context.Context, task store.AgentTask, logger *slog.Logger) bool {
+	finish := context.WithoutCancel(ctx)
+	var document policy.Document
+	if err := w.store.Setting(finish, policy.SettingKey, &document); err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			logger.Warn("policy document is unreadable; running the task", "error", err)
+		}
+		return true
+	}
+	if len(document.Rules) == 0 {
+		return true
+	}
+	owner, err := w.store.UserByID(finish, task.OwnerID)
+	if err != nil {
+		logger.Warn("task owner is unreadable; running the task", "error", err)
+		return true
+	}
+	agent, err := w.store.AgentByID(finish, task.AgentID, task.OwnerID, true)
+	if err != nil {
+		logger.Warn("agent is unreadable; running the task", "error", err)
+		return true
+	}
+	decision := policy.Evaluate(document, policy.Request{
+		Action: policy.ActionTaskCreate, Role: owner.Role, User: owner.Username, UserID: owner.ID,
+		Agent: agent.Name, AgentID: agent.ID,
+	})
+	if decision.Allowed() {
+		return true
+	}
+	// The same two sentences the console shows, so a person who is refused in one
+	// place and reads about it in the other is reading about the same thing.
+	reason := strings.TrimSpace(decision.Reason)
+	if reason == "" {
+		reason = "플랫폼 정책에 의해 차단되었습니다."
+		if decision.Effect == policy.RequireApproval {
+			reason = "플랫폼 정책이 사전 승인을 요구하는 요청입니다. 이 작업에는 승인 경로가 없어 차단되었습니다."
+		}
+	}
+	if err := w.store.BlockAgentTask(finish, task.ID, reason); err != nil {
+		logger.Error("task block not recorded", "error", err)
+	}
+	w.store.Audit(finish, &owner, "policy."+policy.ActionTaskCreate, "policy", decision.RuleID, "denied", "",
+		map[string]any{"effect": decision.Effect, "agent": agent.Name, "taskId": task.ID, "source": task.Source})
+	w.notify(finish, task, "정책이 실행을 막았습니다", task.Title+" — "+reason)
+	logger.Warn("task blocked by policy", "rule", decision.RuleID, "effect", decision.Effect, "source", task.Source)
+	return false
 }
 
 // promoted enforces the agent's promotion gate.
