@@ -501,7 +501,18 @@ export function RunDrawer({ runId, close }: { runId: string; close: () => void }
     </section>
 
     {artifacts.length > 0 && <section className="detail-section"><h4>산출물</h4>
-      <div className="tool-links">{artifacts.map((artifact) => <a key={artifact.id} className="artifact-link"
+      {/* A screenshot is shown rather than listed: an agent that says "the page
+          shows an error" is making a claim, and the picture is the evidence for
+          it. A link somebody has to open is evidence nobody looks at. */}
+      {artifacts.some((v) => v.type === 'image') && <div className="artifact-shots">
+        {artifacts.filter((v) => v.type === 'image').map((artifact) => <figure key={artifact.id}>
+          <a href={`/api/v1/artifacts/${artifact.id}/content`} target="_blank" rel="noopener noreferrer">
+            <img src={`/api/v1/artifacts/${artifact.id}/content`} alt={artifact.name} loading="lazy"/>
+          </a>
+          <figcaption>{artifact.name}</figcaption>
+        </figure>)}
+      </div>}
+      <div className="tool-links">{artifacts.filter((v) => v.type !== 'image').map((artifact) => <a key={artifact.id} className="artifact-link"
         href={`/api/v1/artifacts/${artifact.id}/content`} target="_blank" rel="noopener noreferrer">
         <ClipboardList size={17} />{artifact.name}<small>{artifact.type} · {artifact.sizeBytes.toLocaleString('ko-KR')}B</small>
       </a>)}</div>

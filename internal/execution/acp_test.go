@@ -399,3 +399,39 @@ func TestThePermissionPathConsultsTheToolPolicyFirst(t *testing.T) {
 		t.Errorf("allow: allowed=%v by=%q", allowed, by)
 	}
 }
+
+// A tool call reports its content again as it progresses. Appending each report
+// would store the same screenshot several times and fill a run's artifact list
+// with copies of one picture.
+func TestAToolCallsPictureIsKeptOnceHoweverOftenItIsReported(t *testing.T) {
+	turn := &acpTurn{}
+	shot := acp.ContentBlock{Images: []acp.Image{{MimeType: "image/png", Data: "aGVsbG8="}}}
+	turn.update(acp.SessionUpdate{SessionUpdate: "tool_call", ToolCallID: "t1", Title: "Take a screenshot", Kind: "other", Content: shot})
+	turn.update(acp.SessionUpdate{SessionUpdate: "tool_call_update", ToolCallID: "t1", Status: "in_progress", Content: shot})
+	turn.update(acp.SessionUpdate{SessionUpdate: "tool_call_update", ToolCallID: "t1", Status: "completed", Content: shot})
+	turn.update(acp.SessionUpdate{SessionUpdate: "tool_call", ToolCallID: "t2", Title: "Open the page", Kind: "other",
+		Content: acp.ContentBlock{Images: []acp.Image{{MimeType: "image/png", Data: "d29ybGQ="}}}})
+
+	pictures := turn.pictures()
+	if len(pictures) != 2 {
+		t.Fatalf("kept %d pictures: %#v", len(pictures), pictures)
+	}
+	if pictures[0].Title != "Take a screenshot" || pictures[1].Title != "Open the page" {
+		t.Errorf("titles = %q, %q", pictures[0].Title, pictures[1].Title)
+	}
+}
+
+// The file name says which step produced it, so a run with several screenshots
+// is readable without opening each one.
+func TestAPictureIsNamedAfterTheToolThatMadeIt(t *testing.T) {
+	for _, tc := range []struct{ title, want string }{
+		{"Take a screenshot of /login", "01-take-a-screenshot-of-login.png"},
+		{"", "01-screenshot.png"},
+		{"페이지 열기", "01-screenshot.png"}, // nothing survives slugging; still named
+	} {
+		got := acpPictureName(acpPicture{Title: tc.title}, 0, ".png")
+		if got != tc.want {
+			t.Errorf("%q → %q, want %q", tc.title, got, tc.want)
+		}
+	}
+}

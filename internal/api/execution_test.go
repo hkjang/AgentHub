@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"testing"
 
@@ -94,5 +95,40 @@ func TestExecutionModeAllowsOnlyKnownValues(t *testing.T) {
 		if validExecutionMode(mode) {
 			t.Errorf("%q must be rejected", mode)
 		}
+	}
+}
+
+// A screenshot stored as base64 has to come back as an image somebody can look
+// at. Served the way every other artifact is served, it downloads a file of
+// letters with a .png name — which looks like the feature works right up until
+// somebody opens it.
+func TestAStoredScreenshotIsServedAsAPicture(t *testing.T) {
+	png := []byte("\x89PNG\r\n\x1a\nfake but binary")
+	item := store.AgentArtifact{Type: "image", ContentType: "image/png", Content: base64.StdEncoding.EncodeToString(png)}
+	raw, ok := decodedImage(item)
+	if !ok || string(raw) != string(png) {
+		t.Fatalf("decoded = %q, ok = %v", raw, ok)
+	}
+}
+
+// SVG is a document that can carry script. Serving one inline in the portal's
+// origin is exactly what the download rule exists to prevent, and it must not
+// become an exception because somebody labelled it an image.
+func TestAnSVGIsNeverServedInline(t *testing.T) {
+	item := store.AgentArtifact{Type: "image", ContentType: "image/svg+xml",
+		Content: base64.StdEncoding.EncodeToString([]byte(`<svg onload="alert(1)"/>`))}
+	if _, ok := decodedImage(item); ok {
+		t.Error("an SVG would have been served inline")
+	}
+}
+
+// An older 'image' artifact was written as text, not base64. It must fall back to
+// the download path rather than being served as a picture that does not decode.
+func TestAnImageThatIsNotBase64FallsBackToDownload(t *testing.T) {
+	if _, ok := decodedImage(store.AgentArtifact{Type: "image", ContentType: "image/png", Content: "not base64 at all!"}); ok {
+		t.Error("non-base64 content was served as a picture")
+	}
+	if _, ok := decodedImage(store.AgentArtifact{Type: "report", ContentType: "text/markdown", Content: "aGk="}); ok {
+		t.Error("a report was served as a picture")
 	}
 }

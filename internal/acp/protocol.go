@@ -61,6 +61,18 @@ type MCPServer struct {
 type ContentBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`
+	// Images the block carried. A tool call is where they appear in practice —
+	// a browser agent's screenshot is the evidence for what it says it saw, and
+	// keeping only the sentence next to it throws the evidence away.
+	Images []Image `json:"-"`
+}
+
+// Image is a picture the agent produced, as the wire carries it: base64 with its
+// media type. It is not decoded here because whoever stores it has to decide what
+// is too large, and that is not a decision the protocol layer can make.
+type Image struct {
+	MimeType string
+	Data     string
 }
 
 func (b *ContentBlock) UnmarshalJSON(raw []byte) error {
@@ -68,34 +80,59 @@ func (b *ContentBlock) UnmarshalJSON(raw []byte) error {
 	if len(trimmed) == 0 || string(trimmed) == "null" {
 		return nil
 	}
-	type plain ContentBlock
-	if trimmed[0] == '{' {
-		var one plain
-		if err := json.Unmarshal(trimmed, &one); err != nil {
-			return err
-		}
-		*b = ContentBlock(one)
+	if trimmed[0] != '{' && trimmed[0] != '[' {
 		return nil
 	}
-	if trimmed[0] != '[' {
-		return nil
-	}
-	var many []plain
-	if err := json.Unmarshal(trimmed, &many); err != nil {
-		return err
-	}
-	// The blocks are joined rather than the first one taken: an agent that splits
-	// its answer across blocks means all of them, and keeping one would quietly
-	// truncate it.
-	var text strings.Builder
-	for _, item := range many {
-		text.WriteString(item.Text)
-		if b.Type == "" {
-			b.Type = item.Type
-		}
-	}
-	b.Text = text.String()
+	b.absorb(trimmed, 0)
 	return nil
+}
+
+// wireBlock is every shape a block arrives in. A tool call's content is a union —
+// `{"type":"content","content":{…}}` wrapping the block that matters — so the
+// nested field is followed rather than assuming the outer object is the content.
+type wireBlock struct {
+	Type     string          `json:"type"`
+	Text     string          `json:"text,omitempty"`
+	Data     string          `json:"data,omitempty"`
+	MimeType string          `json:"mimeType,omitempty"`
+	Content  json.RawMessage `json:"content,omitempty"`
+}
+
+// absorb reads one block, or a list of them, into this one.
+//
+// The blocks are joined rather than the first one taken: an agent that splits its
+// answer across blocks means all of them, and keeping one would quietly truncate
+// it. The depth bound is not defensive tidiness — the nested field is read from
+// whatever the agent sent, and an agent that nests content in itself would
+// otherwise take the process down with it.
+func (b *ContentBlock) absorb(raw []byte, depth int) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || depth > 4 {
+		return
+	}
+	switch trimmed[0] {
+	case '[':
+		var many []json.RawMessage
+		if json.Unmarshal(trimmed, &many) != nil {
+			return
+		}
+		for _, item := range many {
+			b.absorb(item, depth+1)
+		}
+	case '{':
+		var one wireBlock
+		if json.Unmarshal(trimmed, &one) != nil {
+			return
+		}
+		if b.Type == "" && (one.Text != "" || one.Data != "") {
+			b.Type = one.Type
+		}
+		b.Text += one.Text
+		if one.Data != "" {
+			b.Images = append(b.Images, Image{MimeType: one.MimeType, Data: one.Data})
+		}
+		b.absorb(one.Content, depth+1)
+	}
 }
 
 // SessionUpdate is one thing the agent said while working.

@@ -304,3 +304,51 @@ func TestAnUnfamiliarUpdateIsStillDelivered(t *testing.T) {
 		t.Fatal("an update with an unfamiliar body was dropped")
 	}
 }
+
+// A browser agent's screenshot arrives inside a tool call's content, wrapped in
+// the protocol's own union — `{"type":"content","content":{…}}`. Reading only the
+// outer object finds a block with no text and no data and concludes the tool
+// produced nothing, which is what the run record then says.
+func TestAToolCallsImageSurvivesItsWrapper(t *testing.T) {
+	var block ContentBlock
+	raw := `[{"type":"content","content":{"type":"image","mimeType":"image/png","data":"aGVsbG8="}},
+	         {"type":"content","content":{"type":"text","text":"the page loaded"}}]`
+	if err := json.Unmarshal([]byte(raw), &block); err != nil {
+		t.Fatal(err)
+	}
+	if len(block.Images) != 1 || block.Images[0].MimeType != "image/png" || block.Images[0].Data != "aGVsbG8=" {
+		t.Fatalf("images = %#v", block.Images)
+	}
+	if block.Text != "the page loaded" {
+		t.Errorf("text = %q", block.Text)
+	}
+}
+
+// The plain shapes still read the way they did.
+func TestTheOldContentShapesStillRead(t *testing.T) {
+	var one ContentBlock
+	if err := json.Unmarshal([]byte(`{"type":"text","text":"안녕"}`), &one); err != nil || one.Text != "안녕" || one.Type != "text" {
+		t.Fatalf("single block = %#v (%v)", one, err)
+	}
+	var many ContentBlock
+	if err := json.Unmarshal([]byte(`[{"type":"text","text":"a"},{"type":"text","text":"b"}]`), &many); err != nil || many.Text != "ab" {
+		t.Fatalf("joined blocks = %#v (%v)", many, err)
+	}
+	var empty ContentBlock
+	if err := json.Unmarshal([]byte(`[]`), &empty); err != nil || empty.Text != "" || len(empty.Images) != 0 {
+		t.Fatalf("empty list = %#v (%v)", empty, err)
+	}
+}
+
+// Content that nests itself must not take the process down. The nesting is read
+// from whatever the agent sent, so the bound is the only thing stopping it.
+func TestNestedContentCannotRecurseForever(t *testing.T) {
+	raw := `{"type":"content","content":` + strings.Repeat(`{"type":"content","content":`, 40) + `{"type":"text","text":"deep"}` + strings.Repeat(`}`, 40) + `}`
+	var block ContentBlock
+	if err := json.Unmarshal([]byte(raw), &block); err != nil {
+		t.Fatal(err)
+	}
+	if block.Text != "" {
+		t.Logf("read %d levels deep: %q", 40, block.Text)
+	}
+}

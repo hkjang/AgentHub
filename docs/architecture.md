@@ -1240,6 +1240,38 @@ A quota check that cannot be run does not stop the work. The task already surviv
 a claim against the same database, and turning a transient query error into a
 platform-wide stop would make a spend limit an outage.
 
+## Keeping what the agent showed
+
+A browser agent's answer is a claim — "the checkout page shows a validation
+error" — and the screenshot it took is the evidence for it. The run kept the
+claim and dropped the evidence, because a tool call's content was read as text
+and an image block has no text in it.
+
+Two things were wrong, and only one of them was obvious. The content of a tool
+call is not a block but the protocol's own union, `{"type":"content","content":
+{…}}`, so the block that matters is one level down; reading the outer object
+finds nothing and concludes the tool produced nothing. And an image block carries
+`data` and `mimeType` rather than `text`, so even reached it decoded to an empty
+string.
+
+Both are read now, and the pictures a run produced are stored as artifacts of
+type `image`, named after the tool call that made each one. A run keeps twelve at
+180KB each; what does not fit is reported on the run rather than dropped, because
+a run whose screenshots are missing should say so instead of looking like a run
+that took none.
+
+Serving them needed one more decision. Every artifact was served as a text
+download so that agent-authored content could never execute in the portal's
+origin, which turns a stored PNG into a file of letters with a picture's name.
+Raster images — PNG, JPEG, WebP, GIF — are decoded back to their bytes and served
+inline, because each is read by an image decoder and can never be a document.
+SVG is not among them and never will be: it is markup that can carry script, and
+showing one inline is precisely what the download rule exists to prevent.
+
+Whether the agent would send an image at all was not assumed. A live test runs
+the real BrowserCode agent against a real Chromium, has it capture the page, and
+fails if what arrives is a sentence about a screenshot rather than a PNG.
+
 ## Naming the tools a run may use
 
 The approval mode judges a permission request by the kind of tool the agent

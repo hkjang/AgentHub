@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -629,13 +630,51 @@ func (s *Server) artifactContent(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	// Agent-authored content is served as a download so a stored document can
-	// never execute in the portal's origin.
+	filename := strings.ReplaceAll(item.Name, `"`, "")
+	// A picture the agent produced is stored as base64 because the column holds
+	// text. Served as text it would download a file of letters named .png, so it
+	// is decoded back into the bytes it was, and shown rather than downloaded —
+	// a screenshot nobody can look at is not evidence of anything.
+	//
+	// Only raster types, and only when the stored text really is base64. SVG is a
+	// document that can carry script, so it is never among them: showing one in
+	// the portal's origin is the thing the download rule exists to prevent.
+	if raw, ok := decodedImage(item); ok {
+		w.Header().Set("Content-Type", item.ContentType)
+		w.Header().Set("Content-Disposition", "inline; filename=\""+filename+"\"")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(raw)
+		return
+	}
+	// Everything else is a download so a stored document can never execute in the
+	// portal's origin.
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+strings.ReplaceAll(item.Name, `"`, "")+"\"")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(item.Content))
+}
+
+// viewableImageTypes is the set that may be served inline. Raster only: each of
+// these is decoded by an image decoder and can never be a document.
+var viewableImageTypes = map[string]bool{
+	"image/png": true, "image/jpeg": true, "image/webp": true, "image/gif": true,
+}
+
+// decodedImage returns the bytes of a stored picture, and false for anything that
+// is not one. A stored 'image' artifact whose content is not base64 — an older
+// one written as text — falls back to the download path rather than being served
+// as a broken picture.
+func decodedImage(item store.AgentArtifact) ([]byte, bool) {
+	if item.Type != "image" || !viewableImageTypes[strings.ToLower(item.ContentType)] {
+		return nil, false
+	}
+	raw, err := base64.StdEncoding.DecodeString(item.Content)
+	if err != nil || len(raw) == 0 {
+		return nil, false
+	}
+	return raw, true
 }
 
 // --- Triggers ---

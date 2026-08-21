@@ -2,6 +2,7 @@ package execution
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -136,6 +137,7 @@ func (o *Orchestrator) runACP(ctx context.Context, run *store.AgentRun, task sto
 	// behalf, goes on the run's timeline. This is the reason to prefer this runner:
 	// under the CLI runner the same work happens and leaves no such record.
 	o.recordACPTools(ctx, run, turn)
+	o.saveACPPictures(ctx, run, task, agent, turn)
 
 	if runErr != nil {
 		o.event(ctx, *run, "acp.failed", runErr.Error(), map[string]any{
@@ -187,6 +189,11 @@ type acpTurn struct {
 	totalTokens  int
 	stopReason   string
 	retryable    bool
+	// Pictures the agent produced, by the tool call that produced them. Keyed
+	// rather than appended because a tool call reports its content again as it
+	// progresses, and appending would store the same screenshot several times.
+	images     map[string][]acp.Image
+	imageOrder []string
 }
 
 // acpToolRecord is one thing the agent did, and what the platform said about it.
@@ -222,15 +229,63 @@ func (t *acpTurn) update(u acp.SessionUpdate) {
 	case "tool_call":
 		t.toolCalls++
 		t.tools = append(t.tools, acpToolRecord{ID: u.ToolCallID, Title: u.Title, Kind: u.Kind, Status: u.Status})
+		t.keepImages(u)
 	case "tool_call_update":
 		for index := range t.tools {
 			if t.tools[index].ID == u.ToolCallID && u.Status != "" {
 				t.tools[index].Status = u.Status
 			}
 		}
+		t.keepImages(u)
 	case "usage_update":
 		t.contextUsed, t.contextSize = u.Used, u.Size
 	}
+}
+
+// keepImages holds on to what a tool call produced as a picture. A browser agent
+// says "the page shows an error" and attaches the page; keeping only the sentence
+// keeps the claim and throws away the evidence for it.
+//
+// The caller already holds the lock.
+func (t *acpTurn) keepImages(u acp.SessionUpdate) {
+	if len(u.Content.Images) == 0 {
+		return
+	}
+	if t.images == nil {
+		t.images = map[string][]acp.Image{}
+	}
+	id := u.ToolCallID
+	if id == "" {
+		id = fmt.Sprintf("untitled-%d", len(t.imageOrder))
+	}
+	if _, seen := t.images[id]; !seen {
+		t.imageOrder = append(t.imageOrder, id)
+	}
+	t.images[id] = u.Content.Images
+}
+
+// pictures is what the turn produced, in the order the calls happened, with the
+// title of the call that made each one.
+func (t *acpTurn) pictures() []acpPicture {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	titles := map[string]string{}
+	for _, record := range t.tools {
+		titles[record.ID] = record.Title
+	}
+	out := []acpPicture{}
+	for _, id := range t.imageOrder {
+		for _, image := range t.images[id] {
+			out = append(out, acpPicture{ToolCallID: id, Title: titles[id], Image: image})
+		}
+	}
+	return out
+}
+
+type acpPicture struct {
+	ToolCallID string
+	Title      string
+	Image      acp.Image
 }
 
 // decide records the answer against the tool call it belongs to. The kind is the
@@ -695,4 +750,95 @@ func acpToolOutcome(tool acpToolRecord) string {
 		parts = append(parts, "상태: "+tool.Status)
 	}
 	return strings.Join(parts, " · ")
+}
+
+// How many pictures one run may keep, and what a single one may weigh. A browser
+// agent takes a screenshot at every step, and a run that ran for an hour would
+// otherwise put a hundred of them in the database.
+const (
+	acpPictureLimit = 12
+	acpPictureBytes = 180 * 1024
+)
+
+// acpImageTypes is what may be stored. A screenshot is a raster image; an SVG is
+// a document that can carry script, and storing one as a picture would put
+// agent-authored markup where a person expects to look at a picture.
+var acpImageTypes = map[string]string{
+	"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif",
+}
+
+// saveACPPictures stores what the agent showed. A failure to store one is
+// reported on the run and never fails it: the work was still done, and losing the
+// evidence is not a reason to throw away the result too.
+func (o *Orchestrator) saveACPPictures(ctx context.Context, run *store.AgentRun, task store.AgentTask, agent store.Agent, turn *acpTurn) {
+	pictures := turn.pictures()
+	if len(pictures) == 0 {
+		return
+	}
+	kept, skipped := 0, 0
+	for _, picture := range pictures {
+		if kept >= acpPictureLimit {
+			skipped += len(pictures) - kept
+			break
+		}
+		extension, ok := acpImageTypes[strings.ToLower(strings.TrimSpace(picture.Image.MimeType))]
+		if !ok {
+			skipped++
+			continue
+		}
+		// The wire carries base64 and the column holds text, so what is stored is
+		// what arrived. Decoding here is only to know the real size and to refuse
+		// something that is not an image at all.
+		decoded, err := base64.StdEncoding.DecodeString(picture.Image.Data)
+		if err != nil || len(decoded) == 0 || len(decoded) > acpPictureBytes {
+			skipped++
+			continue
+		}
+		saved, err := o.store.CreateArtifact(ctx, store.AgentArtifact{
+			RunID: run.ID, TaskID: task.ID, AgentID: agent.ID, OwnerID: task.OwnerID,
+			Name: acpPictureName(picture, kept, extension), Type: "image",
+			ContentType: strings.ToLower(strings.TrimSpace(picture.Image.MimeType)),
+			Content:     picture.Image.Data,
+		})
+		if err != nil {
+			o.logger.Warn("acp picture could not be stored", "run", run.ID, "error", err)
+			skipped++
+			continue
+		}
+		kept++
+		o.event(ctx, *run, "artifact.created", saved.Name, map[string]any{
+			"artifactId": saved.ID, "type": saved.Type, "sizeBytes": saved.SizeBytes,
+			"toolCallId": picture.ToolCallID,
+		})
+	}
+	if skipped > 0 {
+		// Said out loud rather than dropped quietly: a run whose screenshots are
+		// missing should say they were, not look like a run that took none.
+		o.event(ctx, *run, "acp.pictures.skipped",
+			fmt.Sprintf("에이전트가 만든 이미지 %d개를 보관하지 않았습니다(한 실행당 %d개, 개당 %dKB 제한).", skipped, acpPictureLimit, acpPictureBytes/1024),
+			map[string]any{"kept": kept, "skipped": skipped})
+	}
+}
+
+// acpPictureName names the file after the tool call that produced it, so a run
+// with several screenshots says which step each one is from.
+func acpPictureName(picture acpPicture, index int, extension string) string {
+	slug := strings.ToLower(strings.TrimSpace(picture.Title))
+	slug = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			return r
+		case r == ' ', r == '-', r == '_', r == '/', r == '.':
+			return '-'
+		}
+		return -1
+	}, slug)
+	slug = strings.Trim(strings.ReplaceAll(slug, "--", "-"), "-")
+	if len(slug) > 48 {
+		slug = strings.Trim(slug[:48], "-")
+	}
+	if slug == "" {
+		slug = "screenshot"
+	}
+	return fmt.Sprintf("%02d-%s%s", index+1, slug, extension)
 }
