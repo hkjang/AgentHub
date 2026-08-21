@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -31,6 +32,28 @@ func (s *Store) ExecutionPolicy(ctx context.Context) (quota.Policy, error) {
 		return quota.Policy{}, err
 	}
 	return policy, nil
+}
+
+// ExecutionPolicyFor is the policy that applies to one person, after their
+// department's per-member limits and their own override. The platform-wide
+// policy above is what everybody gets when neither is set.
+//
+// It exists so the enqueue path stops asking a question the platform can no
+// longer answer on its own: "how many tasks may a user run" now depends on which
+// user.
+func (s *Store) ExecutionPolicyFor(ctx context.Context, userID string) (quota.Policy, error) {
+	resolved, err := s.ResolveQuota(ctx, userID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return s.ExecutionPolicy(ctx)
+		}
+		return quota.Policy{}, err
+	}
+	return quota.Policy{
+		MaxRunningTasksPerUser: resolved.Effective.MaxRunningTasks,
+		TokenBudgetPerUser:     resolved.Effective.TokenBudget,
+		CostBudgetPerUser:      resolved.Effective.CostBudget,
+	}, nil
 }
 
 // ExecutionUsage measures one owner against those limits: how many of their tasks

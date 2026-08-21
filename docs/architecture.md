@@ -1240,6 +1240,38 @@ A quota check that cannot be run does not stop the work. The task already surviv
 a claim against the same database, and turning a transient query error into a
 platform-wide stop would make a spend limit an outage.
 
+## Departments, and one limit per person
+
+Every limit above applied to everybody equally, which is not how capacity is
+bought. A team that paid for a rack of GPUs and a team running a pilot got the
+same per-user ceiling, so the only ways to give one team more were to raise it for
+everybody or to leave it unenforced. Neither is a decision anybody made on
+purpose.
+
+Limits now resolve through three levels — the platform's default, the department a
+person belongs to, and an exception written for that one person — merged field by
+field, with the lower level winning and zero meaning inherit. Field by field is
+the part that matters: a department that raises a runtime count should not
+silently hand out unlimited memory, which is what replacing the whole set would
+do. `internal/quota.Resolve` is that merge, and it is a pure function over
+`Limits` values so the rule can be tested without a database.
+
+A department carries two limits, not one. *Per member* is the default each of its
+people gets. *Total* is the capacity the department was given, checked against
+everything its members hold together. Both can refuse the same request, and they
+need different answers from whoever reads the refusal: a person over their own
+limit stops one of their own runtimes, while a person refused by the total has to
+talk to a colleague or ask for more capacity. So the message names the scope —
+사용자 or 부서 — rather than reporting a number and letting the reader guess.
+
+The console shows the same thing from the other side. A limit displayed alone is
+not actionable, because an administrator cannot tell whether to edit the person,
+the department, or the platform default, and editing the wrong one saves
+successfully while changing nothing. So every row of the effective-quota table
+carries the level that set it, and the person's own home screen shows their limits
+with the same attribution — and shows nothing at all when no limit applies, since
+an empty panel would read as a limit of zero.
+
 ## Tracing
 
 The platform carried a trace id from the request that started a task through to

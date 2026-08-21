@@ -100,3 +100,10 @@ export type AgentRunStep = {
 }
 export type AgentRunEvent = { id: number; runId: string; taskId: string; type: string; message: string; details: Record<string, unknown>; occurredAt: string }
 export type AgentArtifact = { id: string; runId: string; taskId: string; agentId: string; name: string; type: string; contentType: string; sizeBytes: number; createdAt: string }
+
+export type Limits = { maxRuntimes?: number; maxCpuMillis?: number; maxMemoryMb?: number; maxStorageGb?: number; maxRunningTasks?: number; tokenBudget?: number; costBudget?: number }
+export type Held = { runtimes: number; cpuMillis: number; memoryMb: number; storageGb: number }
+export type Department = { id: string; name: string; description: string; quota: { perMember: Limits; total: Limits }; members: number; held: Held; createdAt: string; updatedAt: string }
+export type UserQuota = { ownerId: string; username: string; quota: Limits; note: string; updatedAt: string }
+export type EffectiveQuota = { ownerId: string; departmentId?: string; department?: string; platform: Limits; inherited: Limits; personal: Limits; effective: Limits; held: Held; departmentQuota: { perMember: Limits; total: Limits }; departmentHeld: Held }
+export type ManagedUser = User & { status: string; managerId?: string; departmentId?: string; lastLoginAt?: string; createdAt: string }

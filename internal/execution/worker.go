@@ -339,7 +339,7 @@ func (w *Worker) promoted(ctx context.Context, task store.AgentTask, logger *slo
 // error would turn a spend limit into an outage.
 func (w *Worker) withinQuota(ctx context.Context, task store.AgentTask, logger *slog.Logger) bool {
 	finish := context.WithoutCancel(ctx)
-	policy, err := w.store.ExecutionPolicy(finish)
+	policy, err := w.store.ExecutionPolicyFor(finish, task.OwnerID)
 	if err != nil {
 		logger.Warn("execution quota policy is unreadable; running the task", "error", err)
 		return true

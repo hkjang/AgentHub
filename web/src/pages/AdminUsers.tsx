@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react'
 import { Shield, UserCog, UsersRound } from 'lucide-react'
 import { api } from '../api'
 import { Drawer, Empty, ErrorBanner, Loading, PageHeader, StatusBadge } from '../components/UI'
-import type { User } from '../types'
+import type { ManagedUser, User } from '../types'
 
-type ManagedUser=User&{status:string;managerId?:string;lastLoginAt?:string;createdAt:string}
+
 /** What the account has been doing lately, so the list answers "is this still used". */
 type Activity={agents:number;tasks:number;failed:number;running:number;runs:number;inputTokens:number;outputTokens:number;cost:number}
 const NO_ACTIVITY:Activity={agents:0,tasks:0,failed:0,running:0,runs:0,inputTokens:0,outputTokens:0,cost:0}

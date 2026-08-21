@@ -599,3 +599,40 @@ tr.rule-off { opacity: .55; }
 .inject-badge.failed { background: #fdecee; color: #b42318; }
 .inject-badge.stale, .inject-badge.partial { background: #fff6e6; color: #96610a; }
 .inject-badge.unverified, .inject-badge.pending_start, .inject-badge.none { background: #f1f4f8; color: #667085; }
+
+/* Department and personal quota. A limit reads as a number and a bar: the number
+   says what was set, the bar says how close it already is. */
+.quota-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 13px; }
+.quota-card { display: flex; flex-direction: column; gap: 13px; padding: 17px; border: 1px solid #e2e7ee; border-radius: 11px; background: #fff; }
+.quota-card header { display: flex; align-items: flex-start; gap: 11px; }
+.quota-card header > div:nth-child(2) { flex: 1; min-width: 0; }
+.quota-card h3 { margin: 0; font-size: 15px; color: #101828; }
+.quota-card header p { margin: 3px 0 0; font-size: 12px; color: #8a95a5; }
+.quota-facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; padding-top: 11px; border-top: 1px solid #edf0f4; }
+.quota-facts span { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.quota-facts small { color: #98a2b3; font-size: 10px; }
+.quota-facts strong { font-size: 11px; color: #475467; line-height: 1.4; }
+.quota-usage { display: flex; flex-direction: column; gap: 9px; }
+.quota-usage > div { display: flex; flex-direction: column; gap: 5px; }
+.quota-usage span { display: flex; justify-content: space-between; font-size: 12px; color: #667085; }
+.quota-usage span b { color: #344054; font-variant-numeric: tabular-nums; }
+.quota-usage i { display: block; height: 6px; border-radius: 999px; background: #eef1f6; overflow: hidden; }
+.quota-usage u { display: block; height: 100%; border-radius: 999px; background: var(--primary); text-decoration: none; transition: width .25s ease; }
+.quota-usage u.warn { background: #f2a93b; }
+.quota-usage u.full { background: #e0576f; }
+.quota-unlimited { margin: 0; font-size: 12px; color: #98a2b3; }
+.quota-panel .quota-usage { padding: 4px 0 0; }
+.quota-panel .quota-usage small { font-size: 11px; }
+.quota-source { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 6px; font-size: 11px; font-weight: 600; background: #f1f4f8; color: #667085; }
+.quota-source.personal { background: #efe9ff; color: #5b3ec8; }
+.quota-source.department { background: #e6f1ff; color: #1c5fb8; }
+.quota-source.platform { background: #eef2f6; color: #52606f; }
+.quota-fields { margin: 0; padding: 13px 15px; border: 1px solid #e6eaf1; border-radius: 10px; }
+.quota-fields legend { padding: 0 6px; font-size: 12px; font-weight: 650; color: #344054; }
+.quota-fields .form-grid { margin-top: 9px; }
+.quota-effective { padding-top: 5px; }
+.quota-effective h4 { margin: 0 0 8px; font-size: 13px; color: #344054; }
+.quota-effective table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.quota-effective th { padding: 5px 7px; text-align: left; font-size: 11px; color: #98a2b3; font-weight: 600; border-bottom: 1px solid #edf0f4; }
+.quota-effective td { padding: 6px 7px; border-bottom: 1px solid #f4f6f9; color: #475467; }
+.quota-effective p { margin: 9px 0 0; font-size: 12px; }

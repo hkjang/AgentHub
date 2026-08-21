@@ -313,7 +313,9 @@ func contains(values []string, value string) bool {
 // budget that is already spent would only be discovered by the worker minutes
 // later, so the person who asked is told now.
 func (s *Server) budgetRefusal(r *http.Request, ownerID, agentID string) string {
-	policy, err := s.store.ExecutionPolicy(r.Context())
+	// The owner's policy rather than the platform's: their department, or an
+	// override set for them, may allow more or less than everybody else.
+	policy, err := s.store.ExecutionPolicyFor(r.Context(), ownerID)
 	if err != nil {
 		s.logger.Warn("execution quota policy is unreadable; accepting the task", "error", err)
 		return ""
@@ -872,7 +874,9 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 // budgetStatus is one user's standing against the configured limits. It is best
 // effort: a report that cannot show a budget is still a useful report.
 func (s *Server) budgetStatus(r *http.Request, ownerID string) map[string]any {
-	policy, err := s.store.ExecutionPolicy(r.Context())
+	// This person's own limits, so the report shows the budget they are actually
+	// measured against rather than the platform-wide one they may not be on.
+	policy, err := s.store.ExecutionPolicyFor(r.Context(), ownerID)
 	if err != nil {
 		return nil
 	}

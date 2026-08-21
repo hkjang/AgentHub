@@ -21,6 +21,7 @@ import { AdminOperations } from './pages/AdminOperations'
 import { Reviews } from './pages/Reviews'
 import { AdminResources } from './pages/AdminResources'
 import { AdminUsers } from './pages/AdminUsers'
+import { AdminQuota } from './pages/AdminQuota'
 import { Snapshots } from './pages/Snapshots'
 import { MCPFabric } from './pages/MCPFabric'
 import { AdminSecurity } from './pages/AdminSecurity'
@@ -105,6 +106,7 @@ export function App() {
         <Route path="admin/mcp" element={<AdminResources kind="mcp" />} />
         <Route path="admin/mcp-bundles" element={<AdminResources kind="bundles" />} />
         <Route path="admin/users" element={<AdminUsers />} />
+        <Route path="admin/quotas" element={<AdminQuota />} />
         <Route path="admin/security" element={<AdminSecurity />} />
         <Route path="admin/*" element={<Navigate to="/admin/settings" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />

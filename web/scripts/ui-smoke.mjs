@@ -39,11 +39,11 @@ try {
   if ((await nameInput.inputValue()) !== 'UI Input Verification') throw new Error('agent name input is not editable')
   await drawer.getByRole('button', { name: '닫기' }).click()
 
-  await page.getByRole('link', { name: '운영 센터', exact: true }).click()
-  await page.getByRole('heading', { name: /운영 센터/ }).waitFor()
+  await page.getByRole('link', { name: '로그 · 감사', exact: true }).click()
+  await page.getByRole('heading', { name: /로그 · 감사/ }).waitFor()
   // The active menu has to follow the route rather than stay on the last one.
   const highlighted = await page.locator('.nav-link.active').allInnerTexts()
-  if (highlighted.length !== 1 || highlighted[0].trim() !== '운영 센터') {
+  if (highlighted.length !== 1 || highlighted[0].trim() !== '로그 · 감사') {
     throw new Error(`unexpected active menu: ${highlighted.map((t) => t.trim()).join(', ') || 'none'}`)
   }
 

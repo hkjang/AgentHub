@@ -209,7 +209,7 @@ func (s *Store) UserByAPIKey(ctx context.Context, token string) (User, error) {
 func (s *Store) UserAndScopesByAPIKey(ctx context.Context, token string) (User, []string, error) {
 	var user User
 	var scopes []string
-	err := s.pool.QueryRow(ctx, `SELECT `+prefixColumns("u", userColumns)+`,k.scopes FROM api_keys k JOIN users u ON u.id=k.user_id WHERE k.token_hash=$1 AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>now()) AND u.status='active'`, cryptox.TokenHash(token)).Scan(&user.ID, &user.Username, &user.Email, &user.DisplayName, &user.Role, &user.Status, &user.ManagerID, &user.LastLoginAt, &user.CreatedAt, &scopes)
+	err := s.pool.QueryRow(ctx, `SELECT `+prefixColumns("u", userColumns)+`,k.scopes FROM api_keys k JOIN users u ON u.id=k.user_id WHERE k.token_hash=$1 AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>now()) AND u.status='active'`, cryptox.TokenHash(token)).Scan(append(user.scanTargets(), &scopes)...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, nil, ErrNotFound
 	}

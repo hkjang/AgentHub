@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/hkjang/AgentHub/internal/quota"
 	"strings"
 	"time"
 
@@ -133,42 +134,42 @@ type governanceSettings struct {
 	MaxStorageGBPerUser int `json:"maxStorageGbPerUser"`
 }
 
+// CheckRuntimeQuota refuses a runtime that would put its owner, or their whole
+// department, over a limit.
+//
+// Both are asked because they are different questions with different answers: a
+// person inside their own allowance can still be refused because the capacity
+// their department was given is full, and telling them to raise their personal
+// limit would not help. The refusal names which one it was.
 func (s *Store) CheckRuntimeQuota(ctx context.Context, userID, profileID string) error {
-	var policy governanceSettings
-	if err := s.Setting(ctx, "governance", &policy); err != nil {
-		return err
-	}
-	var count, cpu, memory int
-	if err := s.pool.QueryRow(ctx, `SELECT count(*),COALESCE(sum(p.cpu_millis),0),COALESCE(sum(p.memory_mb),0) FROM agent_runtimes r JOIN agent_definitions a ON a.id=r.agent_id LEFT JOIN runtime_profiles p ON p.id=a.runtime_profile_id WHERE r.owner_id=$1 AND r.desired_state='running'`, userID).Scan(&count, &cpu, &memory); err != nil {
+	resolved, err := s.ResolveQuota(ctx, userID)
+	if err != nil {
 		return err
 	}
 	var addCPU, addMemory int
 	if err := s.pool.QueryRow(ctx, `SELECT cpu_millis,memory_mb FROM runtime_profiles WHERE id=$1 AND enabled`, profileID).Scan(&addCPU, &addMemory); err != nil {
 		return err
 	}
-	if policy.MaxRuntimesPerUser > 0 && count+1 > policy.MaxRuntimesPerUser {
-		return fmt.Errorf("사용자 Runtime Quota(%d개)를 초과합니다", policy.MaxRuntimesPerUser)
+	if err := quota.CheckHeld(quota.ScopeUser, resolved.Effective, resolved.Held, addCPU, addMemory); err != nil {
+		return err
 	}
-	if policy.MaxCPUMillisPerUser > 0 && cpu+addCPU > policy.MaxCPUMillisPerUser {
-		return fmt.Errorf("사용자 CPU Quota(%dm)를 초과합니다", policy.MaxCPUMillisPerUser)
-	}
-	if policy.MaxMemoryMBPerUser > 0 && memory+addMemory > policy.MaxMemoryMBPerUser {
-		return fmt.Errorf("사용자 Memory Quota(%dMB)를 초과합니다", policy.MaxMemoryMBPerUser)
+	if resolved.DepartmentID != "" {
+		return quota.CheckHeld(quota.ScopeDepartment, resolved.DepartmentQ.Total, resolved.DepartmentHeld, addCPU, addMemory)
 	}
 	return nil
 }
 
+// CheckWorkspaceQuota asks the same two questions about storage.
 func (s *Store) CheckWorkspaceQuota(ctx context.Context, userID string, addGB int) error {
-	var policy governanceSettings
-	if err := s.Setting(ctx, "governance", &policy); err != nil {
+	resolved, err := s.ResolveQuota(ctx, userID)
+	if err != nil {
 		return err
 	}
-	var used int
-	if err := s.pool.QueryRow(ctx, `SELECT COALESCE(sum(size_gb),0) FROM workspaces WHERE owner_id=$1`, userID).Scan(&used); err != nil {
+	if err := quota.CheckStorage(quota.ScopeUser, resolved.Effective, resolved.Held.StorageGB, addGB); err != nil {
 		return err
 	}
-	if policy.MaxStorageGBPerUser > 0 && used+addGB > policy.MaxStorageGBPerUser {
-		return fmt.Errorf("사용자 Storage Quota(%dGB)를 초과합니다", policy.MaxStorageGBPerUser)
+	if resolved.DepartmentID != "" {
+		return quota.CheckStorage(quota.ScopeDepartment, resolved.DepartmentQ.Total, resolved.DepartmentHeld.StorageGB, addGB)
 	}
 	return nil
 }

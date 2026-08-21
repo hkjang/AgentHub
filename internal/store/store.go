@@ -49,15 +49,18 @@ func (s *Store) Close() { s.pool.Close() }
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
 type User struct {
-	ID          string     `json:"id"`
-	Username    string     `json:"username"`
-	Email       string     `json:"email"`
-	DisplayName string     `json:"displayName"`
-	Role        string     `json:"role"`
-	Status      string     `json:"status"`
-	ManagerID   *string    `json:"managerId,omitempty"`
-	LastLoginAt *time.Time `json:"lastLoginAt,omitempty"`
-	CreatedAt   time.Time  `json:"createdAt"`
+	ID          string  `json:"id"`
+	Username    string  `json:"username"`
+	Email       string  `json:"email"`
+	DisplayName string  `json:"displayName"`
+	Role        string  `json:"role"`
+	Status      string  `json:"status"`
+	ManagerID   *string `json:"managerId,omitempty"`
+	// DepartmentID is nil for somebody who belongs to no department; they get
+	// the platform's own limits, the same as a deployment with no departments.
+	DepartmentID *string    `json:"departmentId,omitempty"`
+	LastLoginAt  *time.Time `json:"lastLoginAt,omitempty"`
+	CreatedAt    time.Time  `json:"createdAt"`
 }
 
 func (s *Store) BootstrapAdmin(ctx context.Context, username, password string) error {
@@ -80,16 +83,25 @@ func (s *Store) BootstrapAdmin(ctx context.Context, username, password string) e
 	return s.EnsureUserKeyring(ctx, id)
 }
 
+// userTargets is where userColumns lands, in that order. Two queries read the
+// user columns alongside something else and cannot use scanUser; they go through
+// here so that adding a column stays one edit. A column added to userColumns and
+// forgotten in one of those scans does not fail loudly — the row simply does not
+// decode, and for the login query that reads as a wrong password.
+func (u *User) scanTargets() []any {
+	return []any{&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.Role, &u.Status, &u.ManagerID, &u.DepartmentID, &u.LastLoginAt, &u.CreatedAt}
+}
+
 func scanUser(row pgx.Row) (User, error) {
 	var u User
-	err := row.Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.Role, &u.Status, &u.ManagerID, &u.LastLoginAt, &u.CreatedAt)
+	err := row.Scan(u.scanTargets()...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
 	return u, err
 }
 
-const userColumns = `id, username, email, display_name, role, status, manager_id, last_login_at, created_at`
+const userColumns = `id, username, email, display_name, role, status, manager_id, department_id, last_login_at, created_at`
 
 func (s *Store) UserByID(ctx context.Context, id string) (User, error) {
 	return scanUser(s.pool.QueryRow(ctx, `SELECT `+userColumns+` FROM users WHERE id=$1`, id))
@@ -99,7 +111,7 @@ func (s *Store) AuthenticateLocal(ctx context.Context, username, password string
 	var hash *string
 	var user User
 	err := s.pool.QueryRow(ctx, `SELECT `+userColumns+`, password_hash FROM users WHERE lower(username)=lower($1) AND status='active'`, strings.TrimSpace(username)).Scan(
-		&user.ID, &user.Username, &user.Email, &user.DisplayName, &user.Role, &user.Status, &user.ManagerID, &user.LastLoginAt, &user.CreatedAt, &hash,
+		append(user.scanTargets(), &hash)...,
 	)
 	if errors.Is(err, pgx.ErrNoRows) || hash == nil || bcrypt.CompareHashAndPassword([]byte(*hash), []byte(password)) != nil {
 		return User{}, errors.New("invalid username or password")

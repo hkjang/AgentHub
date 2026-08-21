@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
-  Activity, Bell, Boxes, Bot, Braces, Check, ChevronDown, ChevronRight, CircleUserRound, Command,
+  Activity, Bell, Boxes, Bot, Braces, Building2, Check, ChevronDown, ChevronRight, CircleUserRound, Command,
   Database, FileClock, FileCode2, FileCog, Gauge, KeyRound, LayoutDashboard, Library, LogOut, Menu, Network,
   ListChecks, Palette, Search, Settings, ShieldAlert, ShieldCheck, Sparkles, UsersRound, Workflow, X
 } from 'lucide-react'
@@ -55,6 +55,7 @@ const groups: NavGroup[] = [
     { to: '/admin/mcp', label: 'MCP 서버', icon: Network, keywords: 'mcp server 서버' , term: 'mcpServers' },
     { to: '/admin/mcp-bundles', label: 'MCP 번들 관리', icon: Boxes, keywords: 'mcp bundle 번들' , term: 'mcpBundlesAdmin' },
     { to: '/admin/users', label: '사용자 · 팀', icon: UsersRound, keywords: 'user team role 권한 사용자' },
+    { to: '/admin/quotas', label: '부서 · 개인 Quota', icon: Building2, keywords: 'quota department limit budget 부서 개인 한도 자원 예산 할당' },
     { to: '/admin/security', label: '보안 · 네트워크', icon: ShieldCheck, keywords: 'security network policy 정책 보안' },
     { to: '/admin/settings', label: '시스템 설정', icon: Settings, keywords: 'system settings config 설정' }
   ]}

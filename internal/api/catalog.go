@@ -292,6 +292,17 @@ func (s *Server) apiRoutes() []Route {
 		admin(http.MethodGet, "/admin/mcp-bundles", "Administration", "List MCP bundles", s.adminMCPBundles),
 		admin(http.MethodPost, "/admin/mcp-bundles", "Administration", "Create or update an MCP bundle", s.saveMCPBundle),
 		admin(http.MethodDelete, "/admin/mcp-bundles/{id}", "Administration", "Delete an MCP bundle", s.deleteAdminResource("mcp-bundles")),
+		// Departments and per-person quotas. The platform-wide limits stay in the
+		// governance settings; these are the two levels above it.
+		admin(http.MethodGet, "/admin/departments", "Administration", "List departments and their quotas", s.departments),
+		admin(http.MethodPost, "/admin/departments", "Administration", "Create or update a department quota", s.saveDepartment),
+		admin(http.MethodDelete, "/admin/departments/{id}", "Administration", "Delete a department", s.deleteDepartment),
+		admin(http.MethodPost, "/admin/users/{id}/department", "Administration", "Assign a user to a department", s.assignDepartment),
+		admin(http.MethodGet, "/admin/user-quotas", "Administration", "List per-user quota overrides", s.userQuotas),
+		admin(http.MethodPost, "/admin/users/{id}/quota", "Administration", "Set one user's quota override", s.saveUserQuota),
+		admin(http.MethodGet, "/admin/users/{id}/quota", "Administration", "What quota applies to a user, and from where", s.effectiveQuota),
+		// Anybody may ask what applies to them.
+		read("/quota", "Administration", "What quota applies to me, and from where", s.effectiveQuota),
 		admin(http.MethodGet, "/admin/security-profiles", "Administration", "List security profiles", s.adminPolicyProfiles("security")),
 		admin(http.MethodPost, "/admin/security-profiles", "Administration", "Create or update a security profile", s.savePolicyProfile("security")),
 		admin(http.MethodDelete, "/admin/security-profiles/{id}", "Administration", "Delete a security profile", s.deleteAdminResource("security-profiles")),
