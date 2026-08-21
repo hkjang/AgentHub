@@ -251,6 +251,19 @@ Model Context Protocol(MCP)을 엔터프라이즈 환경에 맞게 중앙 집중
 ![새 시크릿 등록 드로어](screenshots/21_developer_secret_drawer.png)
 
 ### 9.2 Scoped API Keys
+
+**AgentHub 자신도 MCP 서버입니다.** 외부 에이전트(예: IDE의 Claude)가 API 키로 접속해 이 플랫폼을 도구처럼 쓸 수 있습니다. 제공하는 도구는 **키가 가진 스코프에 따라 목록에서부터 달라집니다** — 부를 수 없는 도구를 목록에 보여 주는 것은 막는 문제가 아니라 **읽는 쪽에게 거짓말**이기 때문입니다(불러 보고 실패해도 그게 구조적 거절인지 알 방법이 없습니다).
+
+| 도구 | 필요한 스코프 | 하는 일 |
+| --- | --- | --- |
+| `agenthub_list_agents` | `mcp:read` | 내 에이전트와 런타임 상태 |
+| `agenthub_list_workspaces` | `mcp:read` | 내 작업공간 |
+| `agenthub_task_status` | `mcp:read` | 작업 하나의 상태·시도 횟수·대기 사유·실패 이유 |
+| `agenthub_queue_task` | `agent:write` | 내 에이전트에게 일 맡기기 |
+| `agenthub_runtime_action` | `runtime:manage` | 런타임 시작·중지 |
+
+`agenthub_queue_task` 로 들어온 작업에도 **콘솔과 똑같은 규칙**이 적용됩니다 — 정책 엔진, 승격 게이트, 모델 연결 여부, 소유자와 부서의 예산. 규칙을 다시 구현하지 않고 콘솔이 쓰는 경로를 그대로 통과시키기 때문입니다(입구마다 규칙 사본을 두면 사본 쪽이 낡습니다). 이렇게 등록된 작업은 목록에서 출처가 **외부 에이전트 (MCP)** 로 표시됩니다.
+
 Cursor, Claude Desktop, Antigravity CLI 등 외부 AI 도구와 연동할 수 있는 최소 권한 API 토큰을 발급합니다.
 
 발급 화면에서 권한 범위를 **여러 개 선택** 할 수 있고, 각 범위가 실제로 호출할 수 있는 REST 엔드포인트 수와 예시가 함께 표시됩니다. 이 숫자는 서버가 실제로 강제하는 경로 목록에서 그대로 계산되므로 화면 설명과 실제 권한이 어긋나지 않습니다.

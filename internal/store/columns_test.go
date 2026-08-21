@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -117,5 +118,21 @@ func TestTheGovernanceIdleDefaultIsReadable(t *testing.T) {
 	}
 	if settings.DefaultIdleTimeoutSeconds != 900 {
 		t.Errorf("the console's own key does not reach the struct: %#v", settings)
+	}
+}
+
+// A source the database refuses is a task nobody can queue, and the refusal
+// arrives as a constraint name — which is how the MCP entry point failed the
+// first time it was tried. Every source this platform writes has to be one the
+// migration allows.
+func TestEveryTaskSourceIsOneTheDatabaseAllows(t *testing.T) {
+	migration, err := os.ReadFile(filepath.Join("migrations", "042_task_source_mcp.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []string{"manual", "cron", "webhook", "agent", "event", "mcp"} {
+		if !strings.Contains(string(migration), "'"+source+"'") {
+			t.Errorf("the platform writes source %q and the constraint does not allow it", source)
+		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 
@@ -106,7 +107,7 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 			s.rpcErrorFor(w, request.ID, -32001, "API Key requires mcp:read scope", nil, modern)
 			return
 		}
-		result := map[string]any{"tools": mcpTools(), "ttlMs": 30000, "cacheScope": "private"}
+		result := map[string]any{"tools": mcpTools(scopes), "ttlMs": 30000, "cacheScope": "private"}
 		if modern {
 			s.rpcResultModern(w, request.ID, result)
 		} else {
@@ -121,6 +122,16 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 		}
 		s.rpcErrorStatus(w, status, request.ID, -32601, "Method not found", nil)
 	}
+}
+
+// refusalMessage reads the error the console path wrote, so the protocol caller
+// is told the same thing a person would have been.
+func refusalMessage(recorder *httptest.ResponseRecorder) string {
+	var body errorBody
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err == nil && body.Error.Message != "" {
+		return body.Error.Message
+	}
+	return "작업을 등록하지 못했습니다."
 }
 
 func hasScope(scopes []string, scope string) bool {
@@ -155,12 +166,33 @@ func (s *Server) rpcErrorFor(w http.ResponseWriter, id json.RawMessage, code int
 	s.rpcError(w, id, code, message, data)
 }
 
-func mcpTools() []map[string]any {
-	return []map[string]any{
-		{"name": "agenthub_list_agents", "title": "List AgentHub agents", "description": "List the authenticated user's persistent Agent definitions and latest Runtime state.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false}, "annotations": map[string]any{"readOnlyHint": true, "idempotentHint": true}},
-		{"name": "agenthub_list_workspaces", "title": "List AgentHub workspaces", "description": "List persistent Workspaces owned by the authenticated user.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false}, "annotations": map[string]any{"readOnlyHint": true, "idempotentHint": true}},
-		{"name": "agenthub_runtime_action", "title": "Manage an Agent Runtime", "description": "Start or stop a Runtime owned by the authenticated user. State-changing calls require runtime:manage scope.", "inputSchema": map[string]any{"type": "object", "required": []string{"runtimeId", "action"}, "properties": map[string]any{"runtimeId": map[string]any{"type": "string", "format": "uuid"}, "action": map[string]any{"type": "string", "enum": []string{"start", "stop"}}}, "additionalProperties": false}, "annotations": map[string]any{"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true}},
+// mcpTools is what this platform offers over the protocol, filtered to what the
+// caller's key may actually call.
+//
+// Listing a tool a key will be refused for is not a security problem — the
+// refusal still happens — but it is a lie to the agent reading the list, which
+// will try, fail, and have no way to know the failure was structural. The
+// platform's own gateway already filters the tool lists it forwards by policy;
+// this is the same courtesy for its own.
+func mcpTools(scopes []string) []map[string]any {
+	readable := hasScope(scopes, ScopeMCP) || hasScope(scopes, ScopeRead)
+	all := []struct {
+		allowed bool
+		tool    map[string]any
+	}{
+		{readable, map[string]any{"name": "agenthub_list_agents", "title": "List AgentHub agents", "description": "List the authenticated user's persistent Agent definitions and latest Runtime state.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false}, "annotations": map[string]any{"readOnlyHint": true, "idempotentHint": true}}},
+		{readable, map[string]any{"name": "agenthub_list_workspaces", "title": "List AgentHub workspaces", "description": "List persistent Workspaces owned by the authenticated user.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false}, "annotations": map[string]any{"readOnlyHint": true, "idempotentHint": true}}},
+		{hasScope(scopes, ScopeRuntime), map[string]any{"name": "agenthub_runtime_action", "title": "Manage an Agent Runtime", "description": "Start or stop a Runtime owned by the authenticated user. State-changing calls require runtime:manage scope.", "inputSchema": map[string]any{"type": "object", "required": []string{"runtimeId", "action"}, "properties": map[string]any{"runtimeId": map[string]any{"type": "string", "format": "uuid"}, "action": map[string]any{"type": "string", "enum": []string{"start", "stop"}}}, "additionalProperties": false}, "annotations": map[string]any{"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true}}},
+		{hasScope(scopes, ScopeWrite), map[string]any{"name": "agenthub_queue_task", "title": "Give an agent a job", "description": "Queue a task for one of the authenticated user's agents. The same policy, promotion gate and quota rules apply as from the console. Requires agent:write scope.", "inputSchema": map[string]any{"type": "object", "required": []string{"agentId", "input"}, "properties": map[string]any{"agentId": map[string]any{"type": "string", "format": "uuid"}, "input": map[string]any{"type": "string", "description": "What the agent should do."}, "title": map[string]any{"type": "string"}, "priority": map[string]any{"type": "string", "enum": []string{"critical", "high", "normal", "low", "background"}}}, "additionalProperties": false}, "annotations": map[string]any{"readOnlyHint": false, "destructiveHint": false, "idempotentHint": false}}},
+		{readable, map[string]any{"name": "agenthub_task_status", "title": "Read how a task is going", "description": "Read one queued task: its status, attempts, why it is waiting, and what went wrong if it failed.", "inputSchema": map[string]any{"type": "object", "required": []string{"taskId"}, "properties": map[string]any{"taskId": map[string]any{"type": "string", "format": "uuid"}}, "additionalProperties": false}, "annotations": map[string]any{"readOnlyHint": true, "idempotentHint": true}}},
 	}
+	tools := []map[string]any{}
+	for _, item := range all {
+		if item.allowed {
+			tools = append(tools, item.tool)
+		}
+	}
+	return tools
 }
 
 func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, request rpcRequest, user store.User, scopes []string, modern bool) {
@@ -187,6 +219,53 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, request rpcRequ
 			return
 		}
 		value, err = s.store.Workspaces(r.Context(), user.ID, false)
+	case "agenthub_queue_task":
+		if !hasScope(scopes, ScopeWrite) {
+			s.rpcErrorFor(w, request.ID, -32001, "API Key requires agent:write scope", nil, modern)
+			return
+		}
+		agentID, _ := params.Arguments["agentId"].(string)
+		taskInput, _ := params.Arguments["input"].(string)
+		title, _ := params.Arguments["title"].(string)
+		priority, _ := params.Arguments["priority"].(string)
+		if strings.TrimSpace(agentID) == "" || strings.TrimSpace(taskInput) == "" {
+			s.rpcErrorFor(w, request.ID, -32602, "agentId and input are required", nil, modern)
+			return
+		}
+		// Every rule the console's own path applies — the policy engine, the
+		// promotion gate, the model binding, the owner's and their department's
+		// budgets — applies here, by running that path rather than by restating
+		// it. A second entry point with its own copy of the rules is a second set
+		// of rules, and the copy is the one that goes stale.
+		recorder := httptest.NewRecorder()
+		task, enqueueErr := s.enqueueTask(recorder, r, user, agentID, title, taskInput, priority, "mcp", nil)
+		if enqueueErr != nil {
+			s.rpcErrorFor(w, request.ID, -32003, refusalMessage(recorder), nil, modern)
+			return
+		}
+		value = map[string]any{"taskId": task.ID, "status": task.Status, "title": task.Title}
+	case "agenthub_task_status":
+		if !hasScope(scopes, ScopeMCP) && !hasScope(scopes, ScopeRead) {
+			s.rpcErrorFor(w, request.ID, -32001, "API Key requires mcp:read scope", nil, modern)
+			return
+		}
+		taskID, _ := params.Arguments["taskId"].(string)
+		if strings.TrimSpace(taskID) == "" {
+			s.rpcErrorFor(w, request.ID, -32602, "taskId is required", nil, modern)
+			return
+		}
+		task, taskErr := s.store.AgentTaskByID(r.Context(), taskID, user.ID, user.Role == "admin")
+		if taskErr != nil {
+			s.rpcErrorFor(w, request.ID, -32004, "task not found", nil, modern)
+			return
+		}
+		// Waiting and failing are different facts about a task, and an agent
+		// polling this needs to tell them apart as much as a person does.
+		value = map[string]any{
+			"taskId": task.ID, "status": task.Status, "attempts": task.Attempts,
+			"waitingReason": task.WaitingReason, "lastError": task.LastError,
+			"runId": task.CurrentRunID, "updatedAt": task.UpdatedAt,
+		}
 	case "agenthub_runtime_action":
 		if !hasScope(scopes, "runtime:manage") {
 			s.rpcErrorFor(w, request.ID, -32001, "API Key requires runtime:manage scope", nil, modern)

@@ -17,7 +17,7 @@ const PRIORITY_LABELS: Record<string, string> = {
 }
 
 const SOURCE_LABELS: Record<string, string> = {
-  manual: '직접 실행', cron: '예약', webhook: 'Webhook', agent: '다른 에이전트', event: '이벤트',
+  manual: '직접 실행', cron: '예약', webhook: 'Webhook', agent: '다른 에이전트', event: '이벤트', mcp: '외부 에이전트 (MCP)',
 }
 
 /** What a status means for the person reading it, not what the worker calls it. */

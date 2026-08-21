@@ -1306,6 +1306,32 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Being driven from outside
+
+This platform is an MCP server as well as a host for them, which is how another
+agent — one in somebody's editor — reaches it. It could list agents and
+workspaces and start or stop a runtime, and it could not do the one thing the
+platform exists for: give an agent a job.
+
+It can now, along with reading how that job is going. The rules are not restated
+for the new entry point; the request runs the same path the console's own button
+runs, through the policy engine, the promotion gate, the model binding and both
+budgets. A second entry point with its own copy of the rules is a second set of
+rules, and the copy is the one that goes stale.
+
+The tool list is filtered by what the caller's key may actually call. Listing a
+tool that will be refused is not a security hole — the refusal still happens —
+but it is a lie to the agent reading the list, which will try, fail, and have no
+way to tell a structural refusal from a transient one. The platform's own gateway
+already filters the tool lists it forwards on behalf of policy; this is the same
+courtesy for its own.
+
+Tasks arriving this way are recorded as coming from MCP rather than as manual
+runs. "Somebody clicked" and "another agent asked" answer different questions
+when an operator is working out why a queue is full — and the first attempt at
+this wrote a source the database's own constraint refused, which is now covered
+by a test that reads the migration.
+
 ## The setting that can lock everybody out
 
 Single sign-on is the one configuration whose failure removes the way back in.
