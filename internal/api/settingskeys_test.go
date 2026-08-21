@@ -18,7 +18,10 @@ import (
 // None of them looked broken — a settings screen that saves is a settings screen
 // that works, until somebody checks what happens next.
 //
-// They were found by hand, once. This is the same sweep, run every time.
+// They were found by hand, once. This is the same sweep, run every time — and it
+// spent a while unable to fail: it also accepted a bare quoted key, which words
+// like "enabled", "mode" and "level" match all over a codebase this size. Proved
+// now by renaming one real setting's struct tag and watching the test name it.
 func TestEverySettingTheConsoleSavesIsReadSomewhere(t *testing.T) {
 	console, err := os.ReadFile(filepath.Join("..", "..", "web", "src", "pages", "AdminSettings.tsx"))
 	if err != nil {
@@ -51,8 +54,12 @@ func TestEverySettingTheConsoleSavesIsReadSomewhere(t *testing.T) {
 		if _, allowed := displayOnly[key]; allowed {
 			continue
 		}
-		// A setting is read either through a struct tag or by name.
-		if strings.Contains(body, `json:"`+key+`"`) || strings.Contains(body, `"`+key+`"`) {
+		// Only a struct tag counts. Settings are read by decoding the blob into a
+		// struct, so that is what reading one looks like — while a bare quoted
+		// string matches any unrelated use of a common word, and keys like
+		// "enabled", "mode" and "level" appear all over a codebase this size. The
+		// policy-action guard had the same hole and could not fail because of it.
+		if strings.Contains(body, `json:"`+key+`"`) {
 			continue
 		}
 		dead = append(dead, key)

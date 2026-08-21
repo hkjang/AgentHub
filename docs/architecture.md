@@ -1306,6 +1306,28 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Whether the guards can fail
+
+Several tests here read the repository and assert that something is used
+somewhere — a setting, a goal field, a policy action, a task source. They are the
+cheapest way to catch a control that stops being consulted, and they share one
+failure mode: a search loose enough to match something unrelated passes forever,
+and a test that cannot fail is worse than no test, because it is counted as
+coverage.
+
+Two of them were in that state. Both accepted a bare quoted value as evidence of
+use. `agent.update` matched an audit event name of the same spelling; settings
+keys like "enabled", "mode" and "level" matched anything at all. Both now accept
+only the distinctive form that using the thing actually produces — `policy.ActionX`
+for an action, `json:"key"` for a setting.
+
+Each of these guards has since been proved by mutation: rename one real setting's
+struct tag, delete one policy evaluation, remove every reader of one goal field,
+take a source out of the migration, put an operator's resource back in the
+cluster check. Each named exactly the thing that had gone missing. The one that
+had to be tried twice is recorded in its own comment, because the first attempt
+looked like a pass and was not.
+
 ## The way around the rules
 
 Every action the policy engine defines now has to be evaluated somewhere, and a
