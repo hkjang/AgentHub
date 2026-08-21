@@ -1306,6 +1306,27 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Settings that save and do nothing
+
+A settings screen that saves is a settings screen that works, until somebody
+checks what happens next. Four switches did not: runtime log access was refused
+by nothing, an audit retention period was owned by a different screen, two
+toggles governed behaviour with no off, and a default idle timeout sat beside a
+culler using a constant. None of them looked broken from any angle a person
+normally looks from.
+
+They were found by sweeping every key the console writes against every key the
+platform reads, once, by hand. That sweep is now a test, and so is its twin for
+Goal fields — where the stakes are higher, because a Goal is where somebody
+writes the limits they intend to be bound by, and nobody checks whether a limit
+held until the day it did not. Both read the repository rather than the types: a
+key read anywhere at all counts, so a failure means genuinely nowhere. Both were
+proved by adding a dead switch and watching the test name it.
+
+Keeping something unread is still allowed. It takes a line in an allowlist with
+the reason written next to it, which is a decision somebody defends in review
+rather than an omission nobody notices.
+
 ## A policy the cluster may not be keeping
 
 NetworkPolicy is enforced by the CNI, not by the API server. A cluster running a
