@@ -87,11 +87,16 @@ type AgentGoal struct {
 	// that takes named inputs rather than a prompt. Empty uses the product's
 	// default for that kind.
 	ExternalInputKey string `json:"externalInputKey"`
-	// CLIApprovalMode is how much the runtime's own agent may do without asking
+	// ApprovalMode is how much a run may do without asking.
 	// when it runs a task unattended. It is stored rather than defaulted at the
 	// call site because the difference between "plan" and "yolo" is the difference
 	// between a report and a changed repository.
-	CLIApprovalMode string `json:"cliApprovalMode"`
+	ApprovalMode string `json:"approvalMode"`
+	// The name it had when it served only the headless runner, still written so a
+	// client reading that field keeps working. Ignored on the way in — the API
+	// reads the old name from the request itself — and due to be dropped once the
+	// documented deprecation has passed.
+	LegacyApprovalMode string `json:"cliApprovalMode"`
 }
 
 // The kinds of step a run's timeline can hold. They are constants rather than
@@ -152,7 +157,7 @@ func DefaultAgentGoal(agentID string) AgentGoal {
 		CompletionStrategy: "agent", ConcurrencyPolicy: "queue", MaxConcurrentRuns: 1,
 		PlannerMode: "native", ApprovalRequired: false, MaxDelegationDepth: 0,
 		WarmupSeconds: 0, KeepWarmSeconds: 0, ResumeFromCheckpoint: true,
-		Runner: RunnerProse, CLIApprovalMode: "default",
+		Runner: RunnerProse, ApprovalMode: "default",
 	}
 }
 
@@ -278,10 +283,10 @@ type AgentArtifact struct {
 func (s *Store) AgentGoalByID(ctx context.Context, agentID string) (AgentGoal, error) {
 	item := AgentGoal{AgentID: agentID}
 	var success, failure []byte
-	err := s.pool.QueryRow(ctx, `SELECT description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint,token_budget,runner,flow_id,flow_output_component,cli_approval_mode,COALESCE(external_app_id,''),external_input_key FROM agent_goals WHERE agent_id=$1`, agentID).
-		Scan(&item.Description, &success, &failure, &item.Constraints, &item.MaxSteps, &item.MaxToolCalls, &item.MaxDurationSeconds, &item.MaxRetries, &item.StartOnDemand, &item.StopAfterTask, &item.CompletionStrategy, &item.ConcurrencyPolicy, &item.MaxConcurrentRuns, &item.PlannerMode, &item.ApprovalRequired, &item.MaxDelegationDepth, &item.WarmupSeconds, &item.KeepWarmSeconds, &item.ResumeFromCheckpoint, &item.TokenBudget, &item.Runner, &item.FlowID, &item.FlowOutputComponent, &item.CLIApprovalMode, &item.ExternalAppID, &item.ExternalInputKey)
+	err := s.pool.QueryRow(ctx, `SELECT description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint,token_budget,runner,flow_id,flow_output_component,approval_mode,COALESCE(external_app_id,''),external_input_key FROM agent_goals WHERE agent_id=$1`, agentID).
+		Scan(&item.Description, &success, &failure, &item.Constraints, &item.MaxSteps, &item.MaxToolCalls, &item.MaxDurationSeconds, &item.MaxRetries, &item.StartOnDemand, &item.StopAfterTask, &item.CompletionStrategy, &item.ConcurrencyPolicy, &item.MaxConcurrentRuns, &item.PlannerMode, &item.ApprovalRequired, &item.MaxDelegationDepth, &item.WarmupSeconds, &item.KeepWarmSeconds, &item.ResumeFromCheckpoint, &item.TokenBudget, &item.Runner, &item.FlowID, &item.FlowOutputComponent, &item.ApprovalMode, &item.ExternalAppID, &item.ExternalInputKey)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return DefaultAgentGoal(agentID), nil
+		return WithLegacyNames(DefaultAgentGoal(agentID)), nil
 	}
 	if err != nil {
 		return AgentGoal{}, err
@@ -294,16 +299,16 @@ func (s *Store) AgentGoalByID(ctx context.Context, agentID string) (AgentGoal, e
 	if item.FailureCriteria == nil {
 		item.FailureCriteria = []string{}
 	}
-	return item, nil
+	return WithLegacyNames(item), nil
 }
 
 func (s *Store) PutAgentGoal(ctx context.Context, item AgentGoal) (AgentGoal, error) {
 	success, _ := json.Marshal(item.SuccessCriteria)
 	failure, _ := json.Marshal(item.FailureCriteria)
-	_, err := s.pool.Exec(ctx, `INSERT INTO agent_goals(agent_id,description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint,token_budget,runner,flow_id,flow_output_component,cli_approval_mode,external_app_id,external_input_key)
+	_, err := s.pool.Exec(ctx, `INSERT INTO agent_goals(agent_id,description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint,token_budget,runner,flow_id,flow_output_component,approval_mode,external_app_id,external_input_key)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
-		ON CONFLICT(agent_id) DO UPDATE SET description=excluded.description,success_criteria=excluded.success_criteria,failure_criteria=excluded.failure_criteria,constraints=excluded.constraints,max_steps=excluded.max_steps,max_tool_calls=excluded.max_tool_calls,max_duration_seconds=excluded.max_duration_seconds,max_retries=excluded.max_retries,start_on_demand=excluded.start_on_demand,stop_after_task=excluded.stop_after_task,completion_strategy=excluded.completion_strategy,concurrency_policy=excluded.concurrency_policy,max_concurrent_runs=excluded.max_concurrent_runs,planner_mode=excluded.planner_mode,approval_required=excluded.approval_required,max_delegation_depth=excluded.max_delegation_depth,warmup_seconds=excluded.warmup_seconds,keep_warm_seconds=excluded.keep_warm_seconds,resume_from_checkpoint=excluded.resume_from_checkpoint,token_budget=excluded.token_budget,runner=excluded.runner,flow_id=excluded.flow_id,flow_output_component=excluded.flow_output_component,cli_approval_mode=excluded.cli_approval_mode,external_app_id=excluded.external_app_id,external_input_key=excluded.external_input_key,updated_at=now()`,
-		item.AgentID, item.Description, success, failure, item.Constraints, item.MaxSteps, item.MaxToolCalls, item.MaxDurationSeconds, item.MaxRetries, item.StartOnDemand, item.StopAfterTask, item.CompletionStrategy, item.ConcurrencyPolicy, item.MaxConcurrentRuns, item.PlannerMode, item.ApprovalRequired, item.MaxDelegationDepth, item.WarmupSeconds, item.KeepWarmSeconds, item.ResumeFromCheckpoint, item.TokenBudget, runnerOrDefault(item.Runner), item.FlowID, item.FlowOutputComponent, cliApprovalOrDefault(item.CLIApprovalMode), nullText(item.ExternalAppID), item.ExternalInputKey)
+		ON CONFLICT(agent_id) DO UPDATE SET description=excluded.description,success_criteria=excluded.success_criteria,failure_criteria=excluded.failure_criteria,constraints=excluded.constraints,max_steps=excluded.max_steps,max_tool_calls=excluded.max_tool_calls,max_duration_seconds=excluded.max_duration_seconds,max_retries=excluded.max_retries,start_on_demand=excluded.start_on_demand,stop_after_task=excluded.stop_after_task,completion_strategy=excluded.completion_strategy,concurrency_policy=excluded.concurrency_policy,max_concurrent_runs=excluded.max_concurrent_runs,planner_mode=excluded.planner_mode,approval_required=excluded.approval_required,max_delegation_depth=excluded.max_delegation_depth,warmup_seconds=excluded.warmup_seconds,keep_warm_seconds=excluded.keep_warm_seconds,resume_from_checkpoint=excluded.resume_from_checkpoint,token_budget=excluded.token_budget,runner=excluded.runner,flow_id=excluded.flow_id,flow_output_component=excluded.flow_output_component,approval_mode=excluded.approval_mode,external_app_id=excluded.external_app_id,external_input_key=excluded.external_input_key,updated_at=now()`,
+		item.AgentID, item.Description, success, failure, item.Constraints, item.MaxSteps, item.MaxToolCalls, item.MaxDurationSeconds, item.MaxRetries, item.StartOnDemand, item.StopAfterTask, item.CompletionStrategy, item.ConcurrencyPolicy, item.MaxConcurrentRuns, item.PlannerMode, item.ApprovalRequired, item.MaxDelegationDepth, item.WarmupSeconds, item.KeepWarmSeconds, item.ResumeFromCheckpoint, item.TokenBudget, runnerOrDefault(item.Runner), item.FlowID, item.FlowOutputComponent, approvalModeOrDefault(item.ApprovalMode), nullText(item.ExternalAppID), item.ExternalInputKey)
 	if err != nil {
 		return AgentGoal{}, err
 	}
@@ -313,6 +318,14 @@ func (s *Store) PutAgentGoal(ctx context.Context, item AgentGoal) (AgentGoal, er
 // runnerOrDefault keeps a goal written by an older client — or by a test that
 // only sets the fields it cares about — on the prose loop rather than failing the
 // CHECK constraint with an empty string.
+// withLegacyNames mirrors renamed fields under the names they used to have, so
+// a client written against the old API keeps reading a value rather than an
+// empty string.
+func WithLegacyNames(item AgentGoal) AgentGoal {
+	item.LegacyApprovalMode = item.ApprovalMode
+	return item
+}
+
 func runnerOrDefault(value string) string {
 	switch value {
 	case RunnerFlow, RunnerCLI, RunnerDify, RunnerACP, RunnerInvestigate:
@@ -321,10 +334,10 @@ func runnerOrDefault(value string) string {
 	return RunnerProse
 }
 
-// cliApprovalOrDefault keeps a goal written without one on the runtime's own
+// approvalModeOrDefault keeps a goal written without one on the runtime's own
 // default, which asks before it changes anything. Defaulting the other way would
 // make an unattended agent edit a repository because a field was omitted.
-func cliApprovalOrDefault(value string) string {
+func approvalModeOrDefault(value string) string {
 	switch value {
 	case "plan", "default", "auto-edit", "auto", "yolo":
 		return value

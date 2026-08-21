@@ -223,7 +223,7 @@ export function Tasks() {
                   <button title="런타임 열기 — 같은 작업공간에서 이어서 작업합니다" onClick={() => void openRuntime(task)}><Terminal size={15} /></button>
                   <button title="완료 처리 — 사람이 마무리했음을 기록합니다" onClick={() => setResolving(task)}><Check size={15} /></button>
                 </>}
-                {task.currentRunId && <button title="실행 기록" onClick={() => setOpenRun(task.currentRunId!)}><ExternalLink size={15} /></button>}
+                {task.currentRunId && <button title={t('runs')} onClick={() => setOpenRun(task.currentRunId!)}><ExternalLink size={15} /></button>}
                 {['failed', 'dead_letter', 'cancelled'].includes(task.status) && <button title="다시 실행" onClick={() => setRetrying(task)}><RotateCcw size={15} /></button>}
                 {ACTIVE.includes(task.status) && <button className="danger" title="취소" onClick={() => setCancelling(task)}><Square size={14} /></button>}
               </div></td>
@@ -444,6 +444,7 @@ function CreateTaskDrawer({ agents, close, done }: { agents: Agent[]; close: () 
 
 /** The full picture of one attempt: timeline, per-step reasoning and artifacts. */
 export function RunDrawer({ runId, close }: { runId: string; close: () => void }) {
+  const t = useTerms()
   const [data, setData] = useState<{ run: AgentRun; steps: AgentRunStep[]; events: AgentRunEvent[]; artifacts: AgentArtifact[]; plan?: AgentPlan }>()
   const [error, setError] = useState('')
   const load = useCallback(async () => {
@@ -465,12 +466,12 @@ export function RunDrawer({ runId, close }: { runId: string; close: () => void }
     return () => window.clearInterval(timer)
   }, [load, finished])
 
-  if (error) return <Drawer title="실행 기록" close={close}><ErrorBanner message={error} /></Drawer>
-  if (!data) return <Drawer title="실행 기록" close={close}><Loading /></Drawer>
+  if (error) return <Drawer title={t('runs')} close={close}><ErrorBanner message={error} /></Drawer>
+  if (!data) return <Drawer title={t('runs')} close={close}><Loading /></Drawer>
 
   const { run, steps, events, artifacts, plan } = data
   const verdict = run.completion ?? {}
-  return <Drawer title={`실행 기록 #${run.id.slice(0, 8)}`} subtitle={`시도 ${run.attempt} · ${run.modelName || '모델 미지정'}`} close={close}>
+  return <Drawer title={`${t('runs')} #${run.id.slice(0, 8)}`} subtitle={`시도 ${run.attempt} · ${run.modelName || '모델 미지정'}`} close={close}>
     <div className="detail-hero">
       <div className="runtime-logo xlarge custom"><ClipboardList size={22} /></div>
       <div><StatusBadge status={run.status} /><h3>{run.durationMs}ms · {run.stepCount}단계{run.resumedSteps > 0 ? ` (이전 시도 ${run.resumedSteps}단계 이어받음)` : ''}</h3>
@@ -506,7 +507,7 @@ export function RunDrawer({ runId, close }: { runId: string; close: () => void }
       </a>)}</div>
     </section>}
 
-    <section className="detail-section"><h4>단계별 기록</h4>
+    <section className="detail-section"><h4>{t('runSteps')}</h4>
       <div className="run-trace">{steps.map((step) => <article key={step.id} className={step.status}>
         <header><strong>{step.title || step.type}</strong><StatusBadge status={step.status} />
           <small>{step.durationMs}ms · {step.promptTokens + step.completionTokens} 토큰</small></header>

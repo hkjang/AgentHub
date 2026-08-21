@@ -31,7 +31,7 @@ func TestLiveInvestigationProducesTheRecordThisParserReads(t *testing.T) {
 	// The argv the runner builds, with the wrapper the image ships at the front of
 	// it — read from the same function rather than repeated, so a command that
 	// drifted from the one production uses would prove the wrong thing.
-	goal := store.AgentGoal{MaxSteps: 3, CLIApprovalMode: "default"}
+	goal := store.AgentGoal{MaxSteps: 3, ApprovalMode: "default"}
 	argv := investigateCommand(runtimetype.Holmes, goal, resolvedModel{ModelName: "stand-in"}, "why is the checkout service failing?")
 
 	script := `printf '%s' "$STAND_IN_MODEL" > /tmp/model.py && python3 /tmp/model.py & ` +

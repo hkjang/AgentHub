@@ -63,10 +63,17 @@ func (s *Server) saveAgentGoal(w http.ResponseWriter, r *http.Request) {
 		// portal, a GitOps document written before it existed — must not silently
 		// turn it off.
 		ResumeFromCheckpoint *bool `json:"resumeFromCheckpoint"`
+		// The name this setting had when it served one backend. It is still
+		// accepted, because a GitOps document written last month says it and
+		// dropping the value silently is worse than any name.
+		LegacyApprovalMode string `json:"cliApprovalMode"`
 		store.AgentGoal
 	}
 	if !decodeJSON(w, r, &input) {
 		return
+	}
+	if input.ApprovalMode == "" {
+		input.ApprovalMode = input.LegacyApprovalMode
 	}
 	if input.ExecutionMode == "" {
 		input.ExecutionMode = "interactive"
@@ -119,10 +126,10 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 	// not lose a flow or an approval mode somebody already picked.
 	goal.FlowID = strings.TrimSpace(goal.FlowID)
 	goal.FlowOutputComponent = strings.TrimSpace(goal.FlowOutputComponent)
-	if goal.CLIApprovalMode == "" {
-		goal.CLIApprovalMode = "default"
+	if goal.ApprovalMode == "" {
+		goal.ApprovalMode = "default"
 	}
-	if !contains(execution.CLIApprovalModes, goal.CLIApprovalMode) {
+	if !contains(execution.ApprovalModes, goal.ApprovalMode) {
 		return errors.New("에이전트 승인 모드를 확인해 주세요")
 	}
 	goal.ExternalAppID = strings.TrimSpace(goal.ExternalAppID)
@@ -159,7 +166,7 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 		// modes that were chosen deliberately, so the same conflict applies: a Goal
 		// that wants a person to approve state-changing work cannot also hand the
 		// agent a blanket yes.
-		if goal.ApprovalRequired && cliApprovalAllowsShell(goal.CLIApprovalMode) {
+		if goal.ApprovalRequired && approvalModeAllowsShell(goal.ApprovalMode) {
 			return errors.New("사람 승인을 요구하는 목표에서는 승인 모드 auto·yolo 를 쓸 수 없습니다. 승인 모드를 낮추거나 승인 요구를 끄세요")
 		}
 		return nil
@@ -176,7 +183,7 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 		// and reads the result, so a Goal that wants a person to approve
 		// state-changing work cannot also tell the agent to approve everything
 		// itself — nothing would be left to stop it.
-		if goal.ApprovalRequired && goal.CLIApprovalMode == "yolo" {
+		if goal.ApprovalRequired && goal.ApprovalMode == "yolo" {
 			return errors.New("사람 승인을 요구하는 목표에서는 승인 모드 yolo 를 쓸 수 없습니다. 승인 모드를 낮추거나 승인 요구를 끄세요. (ACP 실행에서는 플랫폼이 대신 물어볼 수 있어 함께 쓸 수 있습니다)")
 		}
 		return nil
@@ -190,10 +197,10 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 	return nil
 }
 
-// cliApprovalAllowsShell reports whether this mode lets an agent run shell
+// approvalModeAllowsShell reports whether this mode lets an agent run shell
 // commands without asking. It is named for the question rather than the two
 // values so the answer stays in one place when a mode is added.
-func cliApprovalAllowsShell(mode string) bool {
+func approvalModeAllowsShell(mode string) bool {
 	return mode == "auto" || mode == "yolo"
 }
 

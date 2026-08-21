@@ -128,6 +128,19 @@ func TestLiveAgentRefusesWithoutCredentials(t *testing.T) {
 // client that insisted on numbers ignored — leaving the agent waiting for an
 // answer to a permission request that was never coming.
 func TestLiveAgentAsksBeforeUsingATool(t *testing.T) {
+	// Skipped as a whole when there is no agent to drive, rather than passing with
+	// every subtest skipped inside it. Go reports a parent whose children all
+	// skipped as PASS, so a nightly run whose images failed to build looked
+	// exactly like one that had proved something.
+	configured := 0
+	for _, under := range liveAgents {
+		if os.Getenv(under.imageEnv) != "" {
+			configured++
+		}
+	}
+	if configured == 0 {
+		t.Skip("set AGENTHUB_ACP_IMAGE or AGENTHUB_ACP_GOOSE_IMAGE to run this against a real agent")
+	}
 	for index, under := range liveAgents {
 		t.Run(under.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)

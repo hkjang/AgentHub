@@ -1,0 +1,96 @@
+# The tests that talk to the real agents.
+#
+# Everything the platform knows about an agent it learned by driving one, and
+# every one of those lessons arrived as a surprise: an agent that approves its own
+# tool calls unless told to ask, JSON-RPC ids that are strings rather than
+# numbers, a traceback drawn in a box so its last line is a border, a tool call
+# that declares one kind and then asks permission with another. None of that is in
+# anybody's documentation, and none of it is visible to a unit test.
+#
+# Those tests exist, and until now they never ran here: each skips unless an
+# image is named, so CI has been running the half of the suite that cannot
+# discover anything new. They build large images and take minutes, which is why
+# they are not in the pull-request path — but a vendor changing a flag should be
+# something this repository finds out the next morning rather than the next time
+# somebody happens to look.
+name: Live agents
+on:
+  schedule:
+    # Nightly, well outside working hours in Asia/Seoul.
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+    inputs:
+      agents:
+        description: 'Which images to build and drive (comma separated: qwencode,goose,holmes,browsercode)'
+        default: 'qwencode,goose,holmes,browsercode'
+permissions:
+  contents: read
+jobs:
+  drive:
+    runs-on: ubuntu-latest
+    # Each image is built from an upstream release, so a slow mirror must not
+    # hold the runner all night.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Reclaim runner disk
+        shell: bash
+        run: |
+          # These images are large, and the hosted runner ships with toolchains
+          # this job never uses.
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+          df -h /
+      - name: Build the agent images
+        id: images
+        shell: bash
+        env:
+          WANTED: ${{ github.event.inputs.agents || 'qwencode,goose,holmes,browsercode' }}
+        run: |
+          set -euo pipefail
+          declare -A files=(
+            [qwencode]=Dockerfile.qwencode
+            [goose]=Dockerfile.goose
+            [holmes]=Dockerfile.holmes
+            [browsercode]=Dockerfile.browsercode
+          )
+          for name in ${WANTED//,/ }; do
+            file="${files[$name]:-}"
+            if [ -z "${file}" ]; then echo "::error::unknown agent ${name}" >&2; exit 1; fi
+            echo "::group::${name}"
+            docker build -f "${file}" -t "agenthub-${name}:live" .
+            echo "::endgroup::"
+            echo "${name}=agenthub-${name}:live" >> "$GITHUB_OUTPUT"
+          done
+      # The three suites that drive a real agent. Each is skipped when its image
+      # was not built, so a dispatch naming one agent runs only what it can.
+      - name: Drive the agents over ACP
+        env:
+          AGENTHUB_ACP_IMAGE: ${{ steps.images.outputs.qwencode }}
+          AGENTHUB_ACP_GOOSE_IMAGE: ${{ steps.images.outputs.goose }}
+        run: go test ./internal/acp/ -run Live -v -count=1
+      - name: Run an investigation
+        env:
+          AGENTHUB_HOLMES_IMAGE: ${{ steps.images.outputs.holmes }}
+        run: go test ./internal/execution/ -run Live -v -count=1
+      - name: Drive a browser, and load the generated configuration
+        env:
+          AGENTHUB_HOLMES_IMAGE: ${{ steps.images.outputs.holmes }}
+          AGENTHUB_BROWSERCODE_IMAGE: ${{ steps.images.outputs.browsercode }}
+        run: go test ./internal/operator/ -run Live -v -count=1
+      - name: Say what ran
+        if: always()
+        shell: bash
+        run: |
+          # A green run that skipped everything looks exactly like a green run
+          # that proved something, so the summary says which it was.
+          {
+            echo '### Live agents'
+            echo ''
+            echo 'Images built: `${{ github.event.inputs.agents || 'qwencode,goose,holmes,browsercode' }}`'
+            echo ''
+            echo 'A skipped test here means its image was not built, not that the agent behaved.'
+          } >> "$GITHUB_STEP_SUMMARY"

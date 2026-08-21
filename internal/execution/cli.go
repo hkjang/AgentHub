@@ -32,12 +32,12 @@ import (
 // flow runner is that this one reports real token usage, so a CLI run is metered
 // like any other work rather than described as unmetered.
 
-// CLIApprovalModes are what the runtime accepts. `yolo` is the only one that
+// ApprovalModes are what the runtime accepts. `yolo` is the only one that
 // changes files without asking, which is why it is a deliberate choice on the
 // Goal rather than a default. It is exported because the API validates against
 // the same list, and two copies would drift into a mode that saves and then is
 // rejected by the agent at three in the morning.
-var CLIApprovalModes = []string{"plan", "default", "auto-edit", "auto", "yolo"}
+var ApprovalModes = []string{"plan", "default", "auto-edit", "auto", "yolo"}
 
 // Exit codes the agent uses to say which guardrail stopped it. They are the
 // runtime's own contract, and they are the difference between "try again" and
@@ -77,12 +77,12 @@ func (o *Orchestrator) runCLI(ctx context.Context, run *store.AgentRun, task sto
 	command := cliCommand(agent.RuntimeType, goal, model, prompt)
 	ctx, span := telemetry.Start(ctx, "cli.run",
 		attribute.String("agenthub.runtime.id", acquired.runtimeID),
-		attribute.String("agenthub.cli.approval_mode", cliApprovalMode(goal)))
+		attribute.String("agenthub.cli.approval_mode", approvalMode(goal)))
 	defer span.End()
 
 	startedAt := time.Now()
 	o.event(ctx, *run, "cli.started", "Runtime의 에이전트를 실행합니다.", map[string]any{
-		"runtimeId": acquired.runtimeID, "approvalMode": cliApprovalMode(goal),
+		"runtimeId": acquired.runtimeID, "approvalMode": approvalMode(goal),
 		"maxTurns": goal.MaxSteps, "maxToolCalls": goal.MaxToolCalls, "maxDurationSeconds": goal.MaxDurationSeconds,
 	})
 	result, execErr := o.spawner.Exec(ctx, spec, appRuntime.ExecRequest{Command: command})
@@ -145,9 +145,9 @@ func (o *Orchestrator) runCLI(ctx context.Context, run *store.AgentRun, task sto
 
 // cliApprovalMode is the mode this Goal runs with, defaulting to the runtime's
 // own default rather than to the one that changes files without asking.
-func cliApprovalMode(goal store.AgentGoal) string {
-	for _, mode := range CLIApprovalModes {
-		if goal.CLIApprovalMode == mode {
+func approvalMode(goal store.AgentGoal) string {
+	for _, mode := range ApprovalModes {
+		if goal.ApprovalMode == mode {
 			return mode
 		}
 	}
@@ -161,7 +161,7 @@ func cliCommand(runtimeType string, goal store.AgentGoal, model resolvedModel, p
 	// The wrapper the image ships, named by the descriptor: an exec has no shell
 	// and no working directory, and the wrapper supplies both.
 	command := append(runtimetype.RunnerCommand(runtimeType, runtimetype.RunnerCLI),
-		"-p", prompt, "--approval-mode", cliApprovalMode(goal), "--output-format", "json")
+		"-p", prompt, "--approval-mode", approvalMode(goal), "--output-format", "json")
 	if goal.MaxSteps > 0 {
 		command = append(command, "--max-session-turns", strconv.Itoa(goal.MaxSteps))
 	}

@@ -106,23 +106,23 @@ try {
       maxConcurrentRuns: 1, plannerMode: 'native', approvalRequired: false, maxDelegationDepth: 0,
       warmupSeconds: 0, keepWarmSeconds: 0, resumeFromCheckpoint: true, tokenBudget: 0, executionMode: 'task',
     }
-    const saved = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'cli', cliApprovalMode: 'auto-edit' })
-    check('에이전트 실행 목표 저장', saved.status === 200 && saved.body?.goal?.runner === 'cli' && saved.body?.goal?.cliApprovalMode === 'auto-edit',
+    const saved = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'cli', approvalMode: 'auto-edit' })
+    check('에이전트 실행 목표 저장', saved.status === 200 && saved.body?.goal?.runner === 'cli' && saved.body?.goal?.approvalMode === 'auto-edit',
       `HTTP ${saved.status} ${JSON.stringify(saved.body?.error?.message ?? saved.body?.goal?.runner)}`)
 
     const defaulted = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'cli' })
-    check('승인 모드를 비우면 확인하는 모드로 저장', defaulted.body?.goal?.cliApprovalMode === 'default',
-      JSON.stringify(defaulted.body?.goal?.cliApprovalMode))
+    check('승인 모드를 비우면 확인하는 모드로 저장', defaulted.body?.goal?.approvalMode === 'default',
+      JSON.stringify(defaulted.body?.goal?.approvalMode))
 
-    const badMode = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'cli', cliApprovalMode: 'reckless' })
+    const badMode = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'cli', approvalMode: 'reckless' })
     check('알 수 없는 승인 모드 거절', badMode.status === 400, `HTTP ${badMode.status}`)
 
     // The approval gate parks a task and waits for a person; an agent told to
     // approve everything itself would sail straight past it.
-    const conflict = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'cli', cliApprovalMode: 'yolo', approvalRequired: true })
+    const conflict = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'cli', approvalMode: 'yolo', approvalRequired: true })
     check('사람 승인 + yolo 조합 거절', conflict.status === 400 && /yolo/.test(conflict.body?.error?.message ?? ''),
       `HTTP ${conflict.status} ${JSON.stringify(conflict.body?.error?.message ?? '')}`)
-    const yoloAlone = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'cli', cliApprovalMode: 'yolo' })
+    const yoloAlone = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'cli', approvalMode: 'yolo' })
     check('승인 요구가 없으면 yolo 저장 가능', yoloAlone.status === 200, `HTTP ${yoloAlone.status}`)
 
     const noRuntime = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'cli', startOnDemand: false })

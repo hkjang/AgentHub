@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -59,7 +60,7 @@ func TestValidateRunner(t *testing.T) {
 			// whatever the mode says.
 			name: "an ACP goal may ask a person to approve and still be permissive",
 			goal: store.AgentGoal{Runner: store.RunnerACP, StartOnDemand: true,
-				CLIApprovalMode: "yolo", ApprovalRequired: true},
+				ApprovalMode: "yolo", ApprovalRequired: true},
 			runtimeType: runtimetype.QwenCode, wantRunner: store.RunnerACP,
 		},
 		{
@@ -67,7 +68,7 @@ func TestValidateRunner(t *testing.T) {
 			// reads the result, so there would be nothing left to stop it.
 			name: "a headless goal that asks a person to approve cannot also approve everything itself",
 			goal: store.AgentGoal{Runner: store.RunnerCLI, StartOnDemand: true,
-				CLIApprovalMode: "yolo", ApprovalRequired: true},
+				ApprovalMode: "yolo", ApprovalRequired: true},
 			runtimeType: runtimetype.QwenCode, wantErr: "yolo",
 		},
 		{
@@ -108,5 +109,57 @@ func TestValidateRunnerKeepsTheFlowWhenSwitchingBack(t *testing.T) {
 	}
 	if goal.FlowID != "kept" {
 		t.Errorf("flow id = %q, want it kept", goal.FlowID)
+	}
+}
+
+// The setting was renamed when it stopped belonging to one backend. A document
+// written against the old name has to keep working: a GitOps file from last
+// month says cliApprovalMode, and dropping its value silently would be a worse
+// outcome than any name.
+func TestTheOldApprovalModeNameIsStillAccepted(t *testing.T) {
+	body := `{"executionMode":"task","runner":"acp","startOnDemand":true,"cliApprovalMode":"auto-edit"}`
+	var input struct {
+		LegacyApprovalMode string `json:"cliApprovalMode"`
+		store.AgentGoal
+	}
+	if err := json.Unmarshal([]byte(body), &input); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if input.ApprovalMode == "" {
+		input.ApprovalMode = input.LegacyApprovalMode
+	}
+	if input.ApprovalMode != "auto-edit" {
+		t.Errorf("approval mode = %q, want the value the old name carried", input.ApprovalMode)
+	}
+	// And the new name wins when both are present, so a client that sends both
+	// gets what it asked for most recently rather than what it used to ask for.
+	both := `{"approvalMode":"auto","cliApprovalMode":"plan"}`
+	input.ApprovalMode, input.LegacyApprovalMode = "", ""
+	if err := json.Unmarshal([]byte(both), &input); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if input.ApprovalMode == "" {
+		input.ApprovalMode = input.LegacyApprovalMode
+	}
+	if input.ApprovalMode != "auto" {
+		t.Errorf("approval mode = %q, want the new name to win", input.ApprovalMode)
+	}
+}
+
+// And a goal read back carries both names, so a client still reading the old one
+// sees a value rather than an empty string.
+func TestAGoalIsReadableUnderBothNames(t *testing.T) {
+	goal := store.DefaultAgentGoal("agent-1")
+	goal.ApprovalMode = "auto"
+	raw, err := json.Marshal(store.WithLegacyNames(goal))
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	var seen map[string]any
+	if err := json.Unmarshal(raw, &seen); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if seen["approvalMode"] != "auto" || seen["cliApprovalMode"] != "auto" {
+		t.Errorf("names = %v / %v", seen["approvalMode"], seen["cliApprovalMode"])
 	}
 }

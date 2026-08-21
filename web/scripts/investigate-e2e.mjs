@@ -96,14 +96,14 @@ try {
     check('조사 실행 목표 저장', saved.status === 200 && saved.body?.goal?.runner === 'investigate',
       `HTTP ${saved.status} ${JSON.stringify(saved.body?.error?.message ?? '')}`)
     // Reading is the default; running commands is not.
-    check('셸 실행은 기본으로 꺼짐', saved.body?.goal?.cliApprovalMode === 'default',
-      JSON.stringify(saved.body?.goal?.cliApprovalMode))
+    check('셸 실행은 기본으로 꺼짐', saved.body?.goal?.approvalMode === 'default',
+      JSON.stringify(saved.body?.goal?.approvalMode))
 
-    const shell = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'investigate', cliApprovalMode: 'auto' })
+    const shell = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'investigate', approvalMode: 'auto' })
     check('셸 실행을 명시적으로 켤 수 있음', shell.status === 200, `HTTP ${shell.status}`)
 
     const conflict = await put(`/api/v1/agents/${agent.id}/goal`, {
-      ...goalBase, runner: 'investigate', cliApprovalMode: 'auto', approvalRequired: true,
+      ...goalBase, runner: 'investigate', approvalMode: 'auto', approvalRequired: true,
     })
     check('사람 승인 + 셸 자동 허용 거절', conflict.status === 400,
       `HTTP ${conflict.status} ${JSON.stringify(conflict.body?.error?.message ?? '')}`)

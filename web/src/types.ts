@@ -51,7 +51,7 @@ export type AgentGoal = {
   runner: 'prose' | 'flow' | 'cli' | 'dify' | 'acp' | 'investigate'
   flowId: string
   flowOutputComponent: string
-  cliApprovalMode: 'plan' | 'default' | 'auto-edit' | 'auto' | 'yolo'
+  approvalMode: 'plan' | 'default' | 'auto-edit' | 'auto' | 'yolo'
   externalAppId: string
   externalInputKey: string
 }

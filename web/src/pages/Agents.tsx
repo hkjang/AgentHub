@@ -410,20 +410,20 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
         </>}
         {goal.runner==='investigate'&&<>
           <label><span>셸 실행 허용</span>
-            <select value={goal.cliApprovalMode??'default'} onChange={(e)=>update({cliApprovalMode:e.target.value as AgentGoal['cliApprovalMode']})}>
+            <select value={goal.approvalMode??'default'} onChange={(e)=>update({approvalMode:e.target.value as AgentGoal['approvalMode']})}>
               <option value="default">조회만 — 셸 명령은 거절합니다(권장)</option>
               <option value="auto">auto — 조사 중 셸 명령도 허용</option>
               <option value="yolo">yolo — 조사 중 셸 명령도 허용</option>
             </select>
-            <small>{['auto','yolo'].includes(goal.cliApprovalMode??'default')
+            <small>{['auto','yolo'].includes(goal.approvalMode??'default')
               ?'조사 중 셸 명령이 확인 없이 실행됩니다. 읽기만으로 부족한 조사에 필요할 수 있지만, 작업공간과 네트워크 정책으로 범위를 먼저 좁히세요.'
               :'메트릭·로그·알림 조회만 하고 셸 명령은 거절합니다. 조사는 대개 이것으로 충분합니다.'}</small>
           </label>
-          {goal.approvalRequired&&['auto','yolo'].includes(goal.cliApprovalMode??'default')&&<div className="info-box"><ShieldAlert size={17}/><div><strong>같이 켤 수 없습니다</strong><p>사람 승인을 요구하는 목표에서는 셸 실행을 자동 허용할 수 없습니다. 조회만으로 낮추거나 아래 자율성의 승인 요구를 끄세요.</p></div></div>}
+          {goal.approvalRequired&&['auto','yolo'].includes(goal.approvalMode??'default')&&<div className="info-box"><ShieldAlert size={17}/><div><strong>같이 켤 수 없습니다</strong><p>사람 승인을 요구하는 목표에서는 셸 실행을 자동 허용할 수 없습니다. 조회만으로 낮추거나 아래 자율성의 승인 요구를 끄세요.</p></div></div>}
         </>}
         {(goal.runner==='cli'||goal.runner==='acp')&&<>
           <label><span>에이전트 승인 모드</span>
-            <select value={goal.cliApprovalMode??'default'} onChange={(e)=>update({cliApprovalMode:e.target.value as AgentGoal['cliApprovalMode']})}>
+            <select value={goal.approvalMode??'default'} onChange={(e)=>update({approvalMode:e.target.value as AgentGoal['approvalMode']})}>
               <option value="plan">plan — 계획만 세우고 바꾸지 않음</option>
               <option value="default">default — 변경 전마다 확인(무인 실행에서는 사실상 멈춤)</option>
               <option value="auto-edit">auto-edit — 파일 편집만 자동 승인</option>
@@ -431,20 +431,20 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
               <option value="yolo">yolo — 모두 자동 승인</option>
             </select>
             <small>{goal.runner==='acp'
-              ?goal.cliApprovalMode==='yolo'
+              ?goal.approvalMode==='yolo'
                 ?'에이전트의 모든 요청을 플랫폼이 승인합니다. 무엇을 승인했는지는 실행 기록에 남지만, 막지는 않습니다.'
-                :goal.cliApprovalMode==='auto-edit'
+                :goal.approvalMode==='auto-edit'
                 ?'읽기와 작업공간 파일 편집은 승인하고, 명령 실행·삭제는 거절합니다.'
                 :'읽기·검색만 승인하고 바꾸는 요청은 모두 거절합니다. ACP에서는 사람 대신 플랫폼이 답하므로, 확인을 요구하는 모드는 곧 거절입니다.'
-              :goal.cliApprovalMode==='yolo'
+              :goal.approvalMode==='yolo'
               ?'모든 도구 실행이 확인 없이 진행됩니다. 작업공간과 MCP 도구 정책으로 범위를 먼저 좁히세요.'
-              :goal.cliApprovalMode==='plan'
+              :goal.approvalMode==='plan'
               ?'파일을 바꾸지 않고 계획만 남깁니다. 무인 실행 결과를 먼저 검토하고 싶을 때 적합합니다.'
               :'무인 실행은 사람이 없으므로, 확인을 요구하는 모드에서는 변경이 필요한 순간 진행되지 않을 수 있습니다.'}</small>
           </label>
-          {goal.approvalRequired&&goal.cliApprovalMode==='yolo'&&<div className="info-box"><ShieldAlert size={17}/><div><strong>같이 켤 수 없습니다</strong><p>사람 승인을 요구하는 목표에서는 yolo 를 쓸 수 없습니다. 승인 모드를 낮추거나 아래 자율성의 승인 요구를 끄세요.</p></div></div>}
+          {goal.approvalRequired&&goal.approvalMode==='yolo'&&<div className="info-box"><ShieldAlert size={17}/><div><strong>같이 켤 수 없습니다</strong><p>사람 승인을 요구하는 목표에서는 yolo 를 쓸 수 없습니다. 승인 모드를 낮추거나 아래 자율성의 승인 요구를 끄세요.</p></div></div>}
           {goal.runner==='acp'&&goal.approvalRequired&&<div className="info-box"><ShieldAlert size={17}/><div><strong>사람이 답합니다</strong><p>이 목표는 승인을 요구하므로, 읽기가 아닌 도구 요청은 승인 모드와 상관없이 <b>사람에게 전달</b>됩니다. 에이전트는 답을 기다리고, 실행 시간 안에 답이 없으면 거절로 처리합니다.</p></div></div>}
-          {goal.runner==='acp'&&!goal.approvalRequired&&descriptor(agent.runtimeType).coarseToolKinds&&!['auto','yolo'].includes(goal.cliApprovalMode??'default')&&<div className="info-box"><ShieldAlert size={17}/><div><strong>이 모드에서는 거의 아무것도 못 합니다</strong><p>{runtimeLabel(agent.runtimeType)}는 도구의 종류를 <code>other</code> 로 알려주기 때문에, 종류로 판단하는 이 모드에서는 대부분의 요청이 거절됩니다. 무인 실행에는 <b>auto</b> 를 고르세요 — 무엇을 승인했는지는 그대로 기록에 남습니다.</p></div></div>}
+          {goal.runner==='acp'&&!goal.approvalRequired&&descriptor(agent.runtimeType).coarseToolKinds&&!['auto','yolo'].includes(goal.approvalMode??'default')&&<div className="info-box"><ShieldAlert size={17}/><div><strong>이 모드에서는 거의 아무것도 못 합니다</strong><p>{runtimeLabel(agent.runtimeType)}는 도구의 종류를 <code>other</code> 로 알려주기 때문에, 종류로 판단하는 이 모드에서는 대부분의 요청이 거절됩니다. 무인 실행에는 <b>auto</b> 를 고르세요 — 무엇을 승인했는지는 그대로 기록에 남습니다.</p></div></div>}
         </>}
         {goal.runner==='flow'&&<>
           <label><span>실행할 흐름</span>

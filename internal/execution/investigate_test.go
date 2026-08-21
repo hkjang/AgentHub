@@ -143,7 +143,7 @@ func TestShellStaysBehindADeliberateChoice(t *testing.T) {
 		"": "deny", "plan": "deny", "default": "deny", "auto-edit": "deny",
 		"auto": "allow", "yolo": "allow",
 	} {
-		goal := store.AgentGoal{CLIApprovalMode: mode}
+		goal := store.AgentGoal{ApprovalMode: mode}
 		if got := investigateShellPolicy(goal); got != want {
 			t.Errorf("mode %q = %q, want %q", mode, got, want)
 		}
@@ -161,7 +161,7 @@ func TestShellStaysBehindADeliberateChoice(t *testing.T) {
 // The question is a positional argument, so a question that begins with a dash
 // must not be read as a flag. Everything the Goal sets has to arrive too.
 func TestTheQuestionCannotBecomeAFlag(t *testing.T) {
-	goal := store.AgentGoal{MaxSteps: 12, CLIApprovalMode: "default"}
+	goal := store.AgentGoal{MaxSteps: 12, ApprovalMode: "default"}
 	command := investigateCommand(runtimetype.Holmes, goal, resolvedModel{ModelName: "gpt-5"}, "--verbose is not a flag here")
 
 	separator := -1

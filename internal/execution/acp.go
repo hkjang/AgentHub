@@ -102,12 +102,12 @@ func (o *Orchestrator) runACP(ctx context.Context, run *store.AgentRun, task sto
 
 	ctx, span := telemetry.Start(ctx, "acp.run",
 		attribute.String("agenthub.runtime.id", acquired.runtimeID),
-		attribute.String("agenthub.acp.approval_mode", cliApprovalMode(goal)))
+		attribute.String("agenthub.acp.approval_mode", approvalMode(goal)))
 	defer span.End()
 
 	startedAt := time.Now()
 	o.event(ctx, *run, "acp.started", "런타임의 에이전트와 ACP로 연결합니다.", map[string]any{
-		"runtimeId": acquired.runtimeID, "approvalMode": cliApprovalMode(goal),
+		"runtimeId": acquired.runtimeID, "approvalMode": approvalMode(goal),
 		"maxToolCalls": goal.MaxToolCalls,
 	})
 
@@ -308,7 +308,7 @@ func (o *Orchestrator) acpTurn(ctx context.Context, run *store.AgentRun, agent s
 		o.event(ctx, *run, "acp.permission", acpPermissionMessage(request, allowed), map[string]any{
 			"tool": request.ToolCall.Title, "kind": kind,
 			"decision": map[bool]string{true: "granted", false: "denied"}[allowed],
-			"mode":     cliApprovalMode(goal), "answeredBy": by,
+			"mode":     approvalMode(goal), "answeredBy": by,
 		})
 		if allowed {
 			return acp.Allow(request.Options)
@@ -498,7 +498,7 @@ func permissionRoute(goal store.AgentGoal, kind string) (asksPerson bool, allowe
 		return false, true
 	}
 	if !goal.ApprovalRequired {
-		return false, acpAllows(cliApprovalMode(goal), kind)
+		return false, acpAllows(approvalMode(goal), kind)
 	}
 	return true, false
 }

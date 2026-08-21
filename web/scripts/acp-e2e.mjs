@@ -103,30 +103,30 @@ try {
       warmupSeconds: 0, keepWarmSeconds: 0, resumeFromCheckpoint: true, tokenBudget: 0, executionMode: 'task',
     }
 
-    const saved = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'acp', cliApprovalMode: 'auto-edit' })
-    check('ACP 실행 목표 저장', saved.status === 200 && saved.body?.goal?.runner === 'acp' && saved.body?.goal?.cliApprovalMode === 'auto-edit',
+    const saved = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'acp', approvalMode: 'auto-edit' })
+    check('ACP 실행 목표 저장', saved.status === 200 && saved.body?.goal?.runner === 'acp' && saved.body?.goal?.approvalMode === 'auto-edit',
       `HTTP ${saved.status} ${JSON.stringify(saved.body?.error?.message ?? saved.body?.goal?.runner)}`)
 
     // The same approval mode as the headless runner, on purpose: it is the same
     // question, and a second setting would only be a second place to get it wrong.
     const defaulted = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'acp' })
-    check('승인 모드를 비우면 가장 엄격한 쪽으로 저장', defaulted.body?.goal?.cliApprovalMode === 'default',
-      JSON.stringify(defaulted.body?.goal?.cliApprovalMode))
+    check('승인 모드를 비우면 가장 엄격한 쪽으로 저장', defaulted.body?.goal?.approvalMode === 'default',
+      JSON.stringify(defaulted.body?.goal?.approvalMode))
 
     // Under ACP the platform is the one answering the agent's permission
     // requests, so yolo is the platform saying yes to all of them — which cannot
     // coexist with a Goal that says a person must approve.
     // No longer refused: under ACP the platform can put the question to a person,
     // so a permissive mode and human approval are no longer in conflict.
-    const escalating = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'acp', cliApprovalMode: 'yolo', approvalRequired: true })
+    const escalating = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'acp', approvalMode: 'yolo', approvalRequired: true })
     check('사람 승인 + 관대한 모드 조합 허용', escalating.status === 200,
       `HTTP ${escalating.status} ${JSON.stringify(escalating.body?.error?.message ?? '')}`)
     // The headless runner still cannot ask, so there it stays refused.
-    const headless = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'cli', cliApprovalMode: 'yolo', approvalRequired: true })
+    const headless = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'cli', approvalMode: 'yolo', approvalRequired: true })
     check('헤드리스 실행에서는 같은 조합을 여전히 거절', headless.status === 400 && /yolo/.test(headless.body?.error?.message ?? ''),
       `HTTP ${headless.status}`)
 
-    const badMode = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'acp', cliApprovalMode: 'reckless' })
+    const badMode = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'acp', approvalMode: 'reckless' })
     check('알 수 없는 승인 모드 거절', badMode.status === 400, `HTTP ${badMode.status}`)
 
     const noRuntime = await put(`/api/v1/agents/${agent.id}/goal`, { ...goalBase, runner: 'acp', startOnDemand: false })
@@ -183,7 +183,7 @@ try {
       })
       const gooseAgent = gooseCreated.body?.agent ?? gooseCreated.body
       if (gooseAgent?.id) {
-        const gooseGoal = await put(`/api/v1/agents/${gooseAgent.id}/goal`, { ...goalBase, runner: 'acp', cliApprovalMode: 'auto' })
+        const gooseGoal = await put(`/api/v1/agents/${gooseAgent.id}/goal`, { ...goalBase, runner: 'acp', approvalMode: 'auto' })
         check('Goose 에이전트에 ACP 목표 저장', gooseGoal.status === 200 && gooseGoal.body?.goal?.runner === 'acp',
           `HTTP ${gooseGoal.status} ${JSON.stringify(gooseGoal.body?.error?.message ?? '')}`)
         // The console has to say why a strict mode does nothing on this runtime,

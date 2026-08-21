@@ -143,7 +143,7 @@ func (o *Orchestrator) runInvestigate(ctx context.Context, run *store.AgentRun, 
 // more is a different kind of act, and it stays behind the modes that were
 // chosen deliberately.
 func investigateShellPolicy(goal store.AgentGoal) string {
-	switch cliApprovalMode(goal) {
+	switch approvalMode(goal) {
 	case "auto", "yolo":
 		return "allow"
 	}

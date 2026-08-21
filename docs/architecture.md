@@ -298,7 +298,7 @@ and the duration becomes `--max-wall-time`, set slightly under the platform's ow
 deadline so the agent stops itself and says why instead of being cut off.
 
 The Goal carries `runner: 'cli'` and one more setting that matters more than any
-other: `cli_approval_mode`. `plan` changes nothing, `default` asks before every
+other: `approval_mode`. `plan` changes nothing, `default` asks before every
 change (which unattended means it stops), `auto-edit` and `auto` widen that, and
 `yolo` approves everything. It defaults to `default` rather than to the
 convenient one, and it is refused outright when the Goal also demands human
@@ -364,7 +364,7 @@ compose — the person decides, and the mode decides everything the person is no
 asked about. The headless runner still refuses that pair, because it hands the
 mode to the agent and reads the result: there would be nothing left to stop it.
 
-What the platform answers comes from the same `cli_approval_mode` the CLI runner
+What the platform answers comes from the same `approval_mode` the CLI runner
 uses, because it is the same question and a second setting would only be a second
 place to get it wrong. What differs is who enforces it. `plan` and `default`
 allow only the protocol's read-only tool kinds — `read`, `search`, `fetch`,

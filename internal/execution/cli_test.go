@@ -93,7 +93,7 @@ func TestParseCLIRunRejectsAnErrorResult(t *testing.T) {
 // timeout that cuts it off mid-sentence.
 func TestCLICommandCarriesTheGoalsGuardrails(t *testing.T) {
 	goal := store.AgentGoal{
-		MaxSteps: 12, MaxToolCalls: 40, MaxDurationSeconds: 600, CLIApprovalMode: "auto-edit",
+		MaxSteps: 12, MaxToolCalls: 40, MaxDurationSeconds: 600, ApprovalMode: "auto-edit",
 	}
 	command := cliCommand(runtimetype.QwenCode, goal, resolvedModel{ModelName: "qwen3-coder"}, "작업 내용")
 	joined := strings.Join(command, " ")
@@ -120,14 +120,14 @@ func TestCLICommandCarriesTheGoalsGuardrails(t *testing.T) {
 
 // An omitted or unknown approval mode must not become the one that changes files
 // without asking.
-func TestCLIApprovalModeDefaultsToAsking(t *testing.T) {
+func TestApprovalModeDefaultsToAsking(t *testing.T) {
 	for _, value := range []string{"", "unknown", "YOLO"} {
-		if got := cliApprovalMode(store.AgentGoal{CLIApprovalMode: value}); got != "default" {
+		if got := approvalMode(store.AgentGoal{ApprovalMode: value}); got != "default" {
 			t.Errorf("approval mode for %q = %q", value, got)
 		}
 	}
-	for _, value := range CLIApprovalModes {
-		if got := cliApprovalMode(store.AgentGoal{CLIApprovalMode: value}); got != value {
+	for _, value := range ApprovalModes {
+		if got := approvalMode(store.AgentGoal{ApprovalMode: value}); got != value {
 			t.Errorf("approval mode %q was rewritten to %q", value, got)
 		}
 	}

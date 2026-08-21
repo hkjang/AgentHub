@@ -86,7 +86,18 @@ try {
   await page.goto(`${baseURL}/tasks`, { waitUntil: 'networkidle' })
   check('페이지 제목도 바뀜', (await page.locator('.page-header h1').innerText()).includes('일감'))
 
+  // The home screen, where a person meets the vocabulary first.
+  await page.goto(baseURL, { waitUntil: 'networkidle' })
+  const home = await page.locator('main').innerText()
+  check('홈 화면도 공방 말로 읽힘', /내 작업대/.test(home) && /작업대 차리기/.test(home),
+    /내 작업대/.test(home) ? '' : '지표 라벨이 그대로')
+  check('홈 화면 3단계도 바뀜', /서랍 연결/.test(home) && /전원 넣기/.test(home))
+
   // --- and it stays chosen ---------------------------------------------------
+  // Named explicitly rather than reloading whatever the previous check left on
+  // screen: a check added above once changed the page this one was standing on,
+  // and it failed for a reason that had nothing to do with what it tests.
+  await page.goto(`${baseURL}/tasks`, { waitUntil: 'networkidle' })
   await page.reload({ waitUntil: 'networkidle' })
   check('새로고침해도 유지됨', (await page.locator('.page-header h1').innerText()).includes('일감'))
 

@@ -278,29 +278,29 @@ func TestWhoAnswersTheAgent(t *testing.T) {
 			// Reading is why the agent was started. Nobody is woken for it, even
 			// when the Goal wants a person for everything else.
 			name: "reading never wakes anybody",
-			goal: store.AgentGoal{ApprovalRequired: true, CLIApprovalMode: "default"},
+			goal: store.AgentGoal{ApprovalRequired: true, ApprovalMode: "default"},
 			kind: "read", wantAllow: true,
 		},
 		{
 			name: "a change goes to a person when the Goal asks for one",
-			goal: store.AgentGoal{ApprovalRequired: true, CLIApprovalMode: "default"},
+			goal: store.AgentGoal{ApprovalRequired: true, ApprovalMode: "default"},
 			kind: "edit", wantAsk: true,
 		},
 		{
 			// The combination that used to be refused outright: permissive mode and
 			// human approval together. The person wins.
 			name: "even a permissive mode still asks when the Goal asks",
-			goal: store.AgentGoal{ApprovalRequired: true, CLIApprovalMode: "yolo"},
+			goal: store.AgentGoal{ApprovalRequired: true, ApprovalMode: "yolo"},
 			kind: "execute", wantAsk: true,
 		},
 		{
 			name: "without the Goal asking, the mode decides alone",
-			goal: store.AgentGoal{CLIApprovalMode: "auto-edit"},
+			goal: store.AgentGoal{ApprovalMode: "auto-edit"},
 			kind: "edit", wantAllow: true,
 		},
 		{
 			name: "and refuses alone",
-			goal: store.AgentGoal{CLIApprovalMode: "default"},
+			goal: store.AgentGoal{ApprovalMode: "default"},
 			kind: "execute", wantAllow: false,
 		},
 	}

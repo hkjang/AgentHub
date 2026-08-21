@@ -48,6 +48,31 @@ const TERMS = {
   tasks: { standard: '작업 대기열', workshop: '일감 대기열' },
   taskSingular: { standard: '작업', workshop: '일감' },
   runs: { standard: '실행 기록', workshop: '작업 일지' },
+  // The record of one run. This is where the metaphor earns its keep: a list of
+  // steps is a list, and a 작업 일지 with 손댄 내역 is a record somebody kept.
+  runSteps: { standard: '단계별 기록', workshop: '손댄 내역' },
+  // The home screen. Its metric labels and the three-step opener are where a
+  // person meets the vocabulary first, so they carry it too.
+  homeHint: {
+    standard: '에이전트 런타임과 작업공간 상태를 한눈에 확인하세요.',
+    workshop: '어느 작업대가 돌아가고 있고, 서랍에 무엇이 있는지 한눈에 봅니다.',
+  },
+  recentAgents: { standard: '최근 에이전트', workshop: '최근 작업대' },
+  recentAgentsHint: { standard: '현재 런타임 상태와 마지막 활동', workshop: '지금 가동 상태와 마지막 손댄 시각' },
+  emptyAgents: {
+    standard: '아직 생성한 에이전트가 없습니다. 카탈로그에서 시작해 보세요.',
+    workshop: '아직 꾸린 작업대가 없습니다. 작업대 종류에서 하나 골라 시작해 보세요.',
+  },
+  metricAgents: { standard: '내 에이전트', workshop: '내 작업대' },
+  metricAgentsNote: { standard: '정의된 에이전트', workshop: '꾸려 둔 작업대' },
+  metricRunning: { standard: '실행 중', workshop: '가동 중' },
+  metricWorkspaces: { standard: '작업공간', workshop: '자료 서랍' },
+  quickStart: { standard: '빠른 시작', workshop: '작업대 차리기' },
+  quickStartHint: { standard: '첫 런타임을 준비하는 3단계', workshop: '첫 작업대를 차리는 3단계' },
+  quickStep1: { standard: '템플릿 선택', workshop: '작업대 종류 고르기' },
+  quickStep2: { standard: '작업공간 연결', workshop: '서랍 연결' },
+  quickStep3: { standard: '런타임 시작', workshop: '전원 넣기' },
+  openCatalog: { standard: '에이전트 카탈로그 열기', workshop: '작업대 종류 보기' },
   runtime: { standard: '런타임', workshop: '가동 중인 작업대' },
   // The page titles are separate entries from the menu ones on purpose: the menu
   // says 런타임 and the page says 내 런타임, and a single key for both quietly
