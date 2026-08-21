@@ -22,7 +22,7 @@ type Overview = {
   execution: { tasks: Record<string, number>; runs: number; completed: number; failed: number; deadLetter: number; blocked: number; retried: number; successRate: number; medianDurationMs: number; p95DurationMs: number }
   queue: { ready: number; running: number; workers: number; status: Record<string, number> }
   events: { pending: number; retrying: number; deadLetter: number; delivered: number; oldestPendingSeconds: number }
-  spend: { currency: string; inputTokens: number; outputTokens: number; cost: number; unpricedTokens: number; users: SpendRow[]; agents: SpendRow[]; models: SpendRow[]; daily: UsagePoint[] }
+  spend: { currency: string; inputTokens: number; outputTokens: number; cost: number; unpricedTokens: number; runs: number; unmeteredRuns: number; users: SpendRow[]; agents: SpendRow[]; models: SpendRow[]; daily: UsagePoint[] }
   oldestQueuedSeconds: number
   quota: { windowDays: number; maxRunning: number; tokenBudget: number; costBudget: number }
   paused: { paused: boolean; reason: string; by: string; at?: string }
@@ -72,6 +72,8 @@ function attention(overview: Overview) {
   else if (overview.oldestQueuedSeconds > 900) items.push({ level: 'warn', to: '/tasks', text: `가장 오래된 대기 작업이 ${waited(overview.oldestQueuedSeconds)}째 기다리고 있습니다.` })
   if (agents.failed > 0) items.push({ level: 'danger', to: '/runtime', text: `런타임 ${agents.failed}개가 실패 상태입니다.` })
   if (overview.spend.unpricedTokens > 0) items.push({ level: 'warn', to: '/admin/models', text: `단가가 없는 모델에서 ${number(overview.spend.unpricedTokens)} 토큰을 사용해 금액에 반영되지 않았습니다.` })
+  // A bill is not evidence unless it says what it could not see.
+  if (overview.spend.unmeteredRuns > 0) items.push({ level: 'warn', to: '/tasks', text: `실행 ${number(overview.spend.runs)}건 중 ${number(overview.spend.unmeteredRuns)}건은 에이전트가 사용량을 알려주지 않아 이 금액에 들어 있지 않습니다.` })
   return items
 }
 
@@ -132,7 +134,7 @@ export function AdminInsights() {
       <article><span>대기열</span><strong>{number(queue.ready)}</strong><small>실행 중 {number(queue.running)} · 워커 {number(overview.workers.live)}{overview.workers.stale > 0 ? ` (응답 없음 ${number(overview.workers.stale)})` : ''}</small></article>
       <article><span>대기 시간</span><strong>{waited(overview.oldestQueuedSeconds)}</strong><small>가장 오래 기다린 작업</small></article>
       <article><span>토큰</span><strong>{number(spend.inputTokens + spend.outputTokens)}</strong><small>입력 {number(spend.inputTokens)} · 출력 {number(spend.outputTokens)}</small></article>
-      <article><span>비용</span><strong>{money(spend.cost, spend.currency)}</strong><small>{spend.unpricedTokens > 0 ? `미산정 ${number(spend.unpricedTokens)} 토큰` : '전 구간 단가 적용'}</small></article>
+      <article><span>비용</span><strong>{money(spend.cost, spend.currency)}</strong><small>{spend.unpricedTokens > 0 ? `미산정 ${number(spend.unpricedTokens)} 토큰` : spend.unmeteredRuns > 0 ? `집계 안 된 실행 ${number(spend.unmeteredRuns)}건` : '전 구간 단가 적용'}</small></article>
     </section>
 
     {alerts.length > 0 && <section className="attention-list">

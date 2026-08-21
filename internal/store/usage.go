@@ -48,9 +48,15 @@ type UsageReport struct {
 	Cost         float64   `json:"cost"`
 	// Unpriced counts the tokens spent on endpoints with no price configured;
 	// reporting them separately keeps the total honest.
-	UnpricedTokens int64        `json:"unpricedTokens"`
-	Agents         []UsageRow   `json:"agents"`
-	Daily          []UsagePoint `json:"daily"`
+	UnpricedTokens int64 `json:"unpricedTokens"`
+	// Runs and UnmeteredRuns say how much of the window this report actually
+	// covers. A total is not evidence unless it says what it could not see: an
+	// agent that spends in its own process and reports nothing leaves a run whose
+	// real cost is absent from every number above.
+	Runs          int          `json:"runs"`
+	UnmeteredRuns int          `json:"unmeteredRuns"`
+	Agents        []UsageRow   `json:"agents"`
+	Daily         []UsagePoint `json:"daily"`
 }
 
 // usageCostSQL prices one row. Prices are per million tokens.
@@ -103,6 +109,19 @@ func (s *Store) Usage(ctx context.Context, ownerID, agentID string, from, to tim
 		report.Agents = append(report.Agents, row)
 	}
 	if err := rows.Err(); err != nil {
+		return UsageReport{}, err
+	}
+
+	// Counted from the runs themselves rather than from their steps: a run that
+	// reported nothing has nothing to join to, which is exactly the run this
+	// number exists to make visible.
+	if err := s.pool.QueryRow(ctx, `
+		SELECT count(*), count(*) FILTER (WHERE r.metering IN ('unmetered', 'context_only'))
+		FROM agent_runs r
+		WHERE r.started_at >= $1 AND r.started_at < $2
+		  AND ($3 = '' OR r.owner_id = $3)
+		  AND ($4 = '' OR r.agent_id = $4)`, from, to, ownerID, agentID).
+		Scan(&report.Runs, &report.UnmeteredRuns); err != nil {
 		return UsageReport{}, err
 	}
 

@@ -142,7 +142,24 @@ func (o *Orchestrator) Execute(ctx context.Context, task store.AgentTask, traceI
 		run.Status = "failed"
 	}
 	run.Result, run.FailureReason = outcome.Result, outcome.Failure
-	if err := o.store.FinishAgentRun(ctx, run); err != nil {
+	if run.Metering == "" {
+		// Nothing claimed the accounting. On the platform's own reasoning loop that
+		// means every model call went through the gateway and was counted there. On
+		// any other backend it means the run ended before the agent reported
+		// anything — which is the conservative label, not the flattering one.
+		run.Metering = store.MeteringUnmetered
+		if goal.Runner == store.RunnerProse || goal.Runner == "" {
+			run.Metering = store.MeteringGateway
+		}
+	}
+	// The run is over, and one of the ways it ends is by running out of the time
+	// the goal gave it — which cancels the very context the ending would be
+	// written with. Recorded on the run's own context, a task that hit its
+	// duration limit failed to write its outcome and stayed "running" in every
+	// list forever, which is the one state it certainly was not in.
+	finish, endFinish := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer endFinish()
+	if err := o.store.FinishAgentRun(finish, run); err != nil {
 		o.logger.Error("run could not be recorded", "run", run.ID, "error", err)
 	}
 	// The attributes an operator sorts by when a nightly agent got slow or
@@ -158,8 +175,9 @@ func (o *Orchestrator) Execute(ctx context.Context, task store.AgentTask, traceI
 	if run.Status == "failed" {
 		span.SetStatus(codes.Error, outcome.Failure)
 	}
-	o.event(ctx, run, "task."+outcome.Status, outcome.Failure, map[string]any{
+	o.event(finish, run, "task."+outcome.Status, outcome.Failure, map[string]any{
 		"durationMs": run.DurationMs, "steps": run.StepCount, "totalTokens": run.TotalTokens,
+		"metering": run.Metering,
 	})
 	return outcome, nil
 }

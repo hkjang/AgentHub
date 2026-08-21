@@ -107,6 +107,7 @@ func (o *Orchestrator) runExternalApp(ctx context.Context, run *store.AgentRun, 
 	// app reported it and kept out of the platform's own metering, because those
 	// tokens were bought against that deployment's model provider rather than the
 	// endpoint this platform holds.
+	run.Metering = store.MeteringUnmetered
 	details := map[string]any{"app": app.Name, "durationMs": elapsed, "chars": len(answer)}
 	if len(usage) > 0 {
 		details["appReportedUsage"] = usage

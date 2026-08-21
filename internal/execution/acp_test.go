@@ -435,3 +435,24 @@ func TestAPictureIsNamedAfterTheToolThatMadeIt(t *testing.T) {
 		}
 	}
 }
+
+// A run with zero tokens reads as free work. Usually it means the agent did the
+// work in its own process and never said what it spent, and the two need
+// different answers from whoever reads the usage report. Context occupancy is
+// not spend: an agent that says how full its window is has said nothing about
+// what was bought.
+func TestARunSaysWhoCountedItsTokens(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		turn *acpTurn
+		want string
+	}{
+		{"agent reported spend", &acpTurn{totalTokens: 1200}, store.MeteringAgent},
+		{"only context occupancy", &acpTurn{contextUsed: 9000, contextSize: 128000}, store.MeteringContextOnly},
+		{"nothing at all", &acpTurn{}, store.MeteringUnmetered},
+	} {
+		if got := acpMetering(tc.turn); got != tc.want {
+			t.Errorf("%s → %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

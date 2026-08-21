@@ -1240,6 +1240,32 @@ A quota check that cannot be run does not stop the work. The task already surviv
 a claim against the same database, and turning a transient query error into a
 platform-wide stop would make a spend limit an outage.
 
+## Saying who counted
+
+A run showing zero tokens reads as free work. Sometimes it was — the platform
+made no model calls of its own. Usually it means the agent did the work inside
+its own process and never said what it spent, which is a different fact needing a
+different answer, and the two were indistinguishable in every report.
+
+Each run now records who counted: the platform at its own gateway, the agent
+reporting its own spend, only the agent's context occupancy, or nothing at all.
+The distinction between the last two is one the protocol forces — ACP's
+`usage_update` says how full the context window is, which is not what was bought
+— and collapsing them would credit a run with a number that is not its cost.
+
+The usage report and the platform bill carry the coverage alongside the totals:
+how many runs the window held, and how many of them contributed nothing because
+nobody counted. A total is not evidence unless it says what it could not see.
+
+Runs that finished before this existed are left blank rather than relabelled.
+Filling in history with a guess is how a report stops being one.
+
+Finding this out required fixing something else first. A run's ending was written
+on the run's own context, and one of the ways a run ends is by exhausting the
+duration its goal allowed — which cancels that context. The final write failed,
+and the run stayed "running" in every list forever: the one state it certainly
+was not in. The ending is now written on a context the deadline cannot cancel.
+
 ## Keeping what the agent showed
 
 A browser agent's answer is a claim — "the checkout page shows a validation

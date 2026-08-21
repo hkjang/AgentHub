@@ -106,6 +106,11 @@ func (o *Orchestrator) runInvestigate(ctx context.Context, run *store.AgentRun, 
 	// Real usage, reported by the agent itself, so an investigation is metered
 	// like any other work.
 	run.TotalTokens += report.TotalTokens
+	if report.TotalTokens > 0 {
+		run.Metering = store.MeteringAgent
+	} else {
+		run.Metering = store.MeteringUnmetered
+	}
 	run.ToolCalls += len(report.Evidence)
 	o.recordEvidence(ctx, run, report)
 

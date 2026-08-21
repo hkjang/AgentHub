@@ -6,6 +6,7 @@ import { Link } from 'react-router-dom'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, GuideLegend, GuidePanel, Loading, PageHeader, StatusBadge, statusLabel, useEscape } from '../components/UI'
 import { useTerms } from '../viewmode'
 import { relativeTime, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
+import { metering as meteringOf } from '../metering'
 import type { Agent, AgentArtifact, AgentPlan, AgentRun, AgentRunEvent, AgentRunStep, AgentTask, PlatformEvent, QueueSnapshot, UsageBudget, UsageReport } from '../types'
 
 /** Statuses that are still moving, and therefore worth polling for. */
@@ -332,6 +333,9 @@ function UsagePanel() {
                 {report.unpricedTokens > 0 && <div className="unpriced">
                   <span>미산정</span><strong>{tokens(report.unpricedTokens)} 토큰</strong>
                 </div>}
+                {report.unmeteredRuns > 0 && <div className="unpriced">
+                  <span>집계 안 된 실행</span><strong>{report.unmeteredRuns} / {report.runs}건</strong>
+                </div>}
               </div>
               <div className="table-wrap custom-scroll"><table>
                 <thead><tr><th>에이전트</th><th>모델</th><th>실행</th><th>입력</th><th>출력</th><th>금액</th></tr></thead>
@@ -345,6 +349,8 @@ function UsagePanel() {
                 </tr>)}</tbody>
               </table></div>
               {report.unpricedTokens > 0 && <small>단가가 등록되지 않은 모델의 토큰은 금액에 포함되지 않습니다. 관리자 · 리소스 · 모델 엔드포인트에서 단가를 입력하세요.</small>}
+              {/* A total is not evidence unless it says what it could not see. */}
+              {report.unmeteredRuns > 0 && <small>실행 {report.runs}건 중 {report.unmeteredRuns}건은 에이전트가 사용량을 알려주지 않아 위 숫자에 들어 있지 않습니다. 실행 상세에서 어떤 실행인지 확인할 수 있습니다.</small>}
             </>)}
   </section>
 }
@@ -471,11 +477,14 @@ export function RunDrawer({ runId, close }: { runId: string; close: () => void }
 
   const { run, steps, events, artifacts, plan } = data
   const verdict = run.completion ?? {}
+  // Who counted this run's tokens, shown beside the number: zero can mean the
+  // platform made no model calls, or that the agent never said what it spent.
+  const meter = meteringOf(run.metering)
   return <Drawer title={`${t('runs')} #${run.id.slice(0, 8)}`} subtitle={`시도 ${run.attempt} · ${run.modelName || '모델 미지정'}`} close={close}>
     <div className="detail-hero">
       <div className="runtime-logo xlarge custom"><ClipboardList size={22} /></div>
       <div><StatusBadge status={run.status} /><h3>{run.durationMs}ms · {run.stepCount}단계{run.resumedSteps > 0 ? ` (이전 시도 ${run.resumedSteps}단계 이어받음)` : ''}</h3>
-        <p>토큰 {run.totalTokens.toLocaleString('ko-KR')} · trace <code>{run.traceId || '—'}</code></p></div>
+        <p>토큰 {run.totalTokens.toLocaleString('ko-KR')}{meter && <span className={`metering-tag ${meter.tone}`} title={meter.hint}>{meter.label}</span>} · trace <code>{run.traceId || '—'}</code></p></div>
     </div>
 
     {run.failureReason && <ErrorBanner message={run.failureReason} />}

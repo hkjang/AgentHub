@@ -247,10 +247,16 @@ type AgentRun struct {
 	WorkerID        string  `json:"workerId"`
 	// ResumedSteps is how many completed steps this run inherited from the task's
 	// earlier attempts. Zero means it started from the beginning.
-	ResumedSteps  int             `json:"resumedSteps"`
-	StepCount     int             `json:"stepCount"`
-	ToolCalls     int             `json:"toolCalls"`
-	TotalTokens   int             `json:"totalTokens"`
+	ResumedSteps int `json:"resumedSteps"`
+	StepCount    int `json:"stepCount"`
+	ToolCalls    int `json:"toolCalls"`
+	TotalTokens  int `json:"totalTokens"`
+	// Metering says who counted those tokens: the platform at its own model
+	// gateway, the agent reporting its own spend, only the agent's context
+	// occupancy, or nothing at all. Empty on runs that finished before this was
+	// recorded — they are not relabelled, because guessing at history is how a
+	// report stops being evidence.
+	Metering      string          `json:"metering,omitempty"`
 	DurationMs    int64           `json:"durationMs"`
 	Result        string          `json:"result"`
 	FailureReason string          `json:"failureReason"`
@@ -299,6 +305,21 @@ type AgentArtifact struct {
 	StorageRef  string    `json:"storageRef,omitempty"`
 	CreatedAt   time.Time `json:"createdAt"`
 }
+
+// Who counted a run's tokens. The names are values in the database's own CHECK,
+// so a run written with something else is refused rather than quietly stored.
+const (
+	// MeteringGateway: the platform made the model calls, so every token is counted.
+	MeteringGateway = "gateway"
+	// MeteringAgent: the agent reported its own spend and it was taken as given.
+	MeteringAgent = "agent"
+	// MeteringContextOnly: the agent said how full its context was and nothing
+	// about spend. Context occupancy is not what was bought.
+	MeteringContextOnly = "context_only"
+	// MeteringUnmetered: the agent reported nothing. Tokens on such a run are the
+	// platform's own — planning, judging — and not the agent's work.
+	MeteringUnmetered = "unmetered"
+)
 
 // --- Goals ---
 
@@ -654,7 +675,7 @@ func (s *Store) CreateAgentRun(ctx context.Context, run AgentRun) (AgentRun, err
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 		RETURNING `+runColumns,
 		run.ID, run.TaskID, run.AgentID, run.OwnerID, run.Attempt, run.AgentVersion, run.RuntimeID, run.ModelEndpointID, run.ModelName, run.TraceID, run.WorkerID, run.ResumedSteps).
-		Scan(&run.ID, &run.TaskID, &run.AgentID, &run.OwnerID, &run.Attempt, &run.Status, &run.AgentVersion, &run.RuntimeID, &run.ModelEndpointID, &run.ModelName, &run.TraceID, &run.WorkerID, &run.ResumedSteps, &run.StepCount, &run.ToolCalls, &run.TotalTokens, &run.DurationMs, &run.Result, &run.FailureReason, &run.Completion, &run.StartedAt, &run.FinishedAt)
+		Scan(run.scanTargets()...)
 	if err != nil {
 		return AgentRun{}, err
 	}
@@ -667,16 +688,27 @@ func (s *Store) FinishAgentRun(ctx context.Context, run AgentRun) error {
 	if len(completion) == 0 {
 		completion = json.RawMessage(`{}`)
 	}
-	_, err := s.pool.Exec(ctx, `UPDATE agent_runs SET status=$2,step_count=$3,tool_calls=$4,total_tokens=$5,duration_ms=$6,result=$7,failure_reason=$8,completion=$9,runtime_id=COALESCE($10,runtime_id),finished_at=now() WHERE id=$1`,
-		run.ID, run.Status, run.StepCount, run.ToolCalls, run.TotalTokens, run.DurationMs, run.Result, run.FailureReason, completion, run.RuntimeID)
+	_, err := s.pool.Exec(ctx, `UPDATE agent_runs SET status=$2,step_count=$3,tool_calls=$4,total_tokens=$5,duration_ms=$6,result=$7,failure_reason=$8,completion=$9,runtime_id=COALESCE($10,runtime_id),metering=$11,finished_at=now() WHERE id=$1`,
+		run.ID, run.Status, run.StepCount, run.ToolCalls, run.TotalTokens, run.DurationMs, run.Result, run.FailureReason, completion, run.RuntimeID, run.Metering)
 	return err
 }
 
-const runColumns = `id,task_id,agent_id,owner_id,attempt,status,agent_version,runtime_id,model_endpoint_id,model_name,trace_id,worker_id,resumed_steps,step_count,tool_calls,total_tokens,duration_ms,result,failure_reason,completion,started_at,finished_at`
+const runColumns = `id,task_id,agent_id,owner_id,attempt,status,agent_version,runtime_id,model_endpoint_id,model_name,trace_id,worker_id,resumed_steps,step_count,tool_calls,total_tokens,metering,duration_ms,result,failure_reason,completion,started_at,finished_at`
+
+// scanTargets is where runColumns lands, in that order. The insert reads the
+// same columns back and cannot use scanRun, so it goes through here: a column
+// added to runColumns and forgotten in that second scan fails every run on the
+// queue with "number of field descriptions must equal number of destinations",
+// which names neither the column nor the query.
+func (r *AgentRun) scanTargets() []any {
+	return []any{&r.ID, &r.TaskID, &r.AgentID, &r.OwnerID, &r.Attempt, &r.Status, &r.AgentVersion, &r.RuntimeID,
+		&r.ModelEndpointID, &r.ModelName, &r.TraceID, &r.WorkerID, &r.ResumedSteps, &r.StepCount, &r.ToolCalls,
+		&r.TotalTokens, &r.Metering, &r.DurationMs, &r.Result, &r.FailureReason, &r.Completion, &r.StartedAt, &r.FinishedAt}
+}
 
 func scanRun(row pgx.Row) (AgentRun, error) {
 	var item AgentRun
-	err := row.Scan(&item.ID, &item.TaskID, &item.AgentID, &item.OwnerID, &item.Attempt, &item.Status, &item.AgentVersion, &item.RuntimeID, &item.ModelEndpointID, &item.ModelName, &item.TraceID, &item.WorkerID, &item.ResumedSteps, &item.StepCount, &item.ToolCalls, &item.TotalTokens, &item.DurationMs, &item.Result, &item.FailureReason, &item.Completion, &item.StartedAt, &item.FinishedAt)
+	err := row.Scan(item.scanTargets()...)
 	return item, err
 }
 

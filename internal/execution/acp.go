@@ -127,6 +127,7 @@ func (o *Orchestrator) runACP(ctx context.Context, run *store.AgentRun, task sto
 	// nothing leaves this at zero, and the run says so rather than implying the
 	// work was free.
 	run.TotalTokens += turn.totalTokens
+	run.Metering = acpMetering(turn)
 	if runErr != nil {
 		record.Status, record.Error = "failed", runErr.Error()
 	}
@@ -750,6 +751,20 @@ func acpToolOutcome(tool acpToolRecord) string {
 		parts = append(parts, "상태: "+tool.Status)
 	}
 	return strings.Join(parts, " · ")
+}
+
+// acpMetering says who counted this run's tokens. The distinction the protocol
+// forces is between spend and occupancy: `usage_update` says how full the context
+// is, which is not what was bought, so a run that reported only that is recorded
+// as knowing the shape of the work and not its cost.
+func acpMetering(turn *acpTurn) string {
+	switch {
+	case turn.totalTokens > 0:
+		return store.MeteringAgent
+	case turn.contextSize > 0 || turn.contextUsed > 0:
+		return store.MeteringContextOnly
+	}
+	return store.MeteringUnmetered
 }
 
 // How many pictures one run may keep, and what a single one may weigh. A browser

@@ -115,8 +115,15 @@ func (o *Orchestrator) runCLI(ctx context.Context, run *store.AgentRun, task sto
 	if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
 		o.logger.Error("cli step could not be recorded", "run", run.ID, "error", storeErr)
 	}
-	// Unlike a flow, this reports real usage, so it is metered like any other work.
+	// Unlike a flow, this reports real usage, so it is metered like any other work
+	// — when the agent actually filled the field. An agent that ran and reported
+	// nothing leaves the run unmetered rather than looking free.
 	run.TotalTokens += parsed.TotalTokens
+	if parsed.TotalTokens > 0 {
+		run.Metering = store.MeteringAgent
+	} else {
+		run.Metering = store.MeteringUnmetered
+	}
 
 	if parseErr != nil {
 		o.event(ctx, *run, "cli.failed", parseErr.Error(), map[string]any{

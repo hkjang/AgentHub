@@ -11,7 +11,7 @@ export type MCPBundle = { id: string; name: string; description: string; serverI
 export type ModelEndpoint = { id: string; name: string; provider: string; baseUrl: string; defaultModel: string; secretConfigured?: boolean; enabled: boolean; inputPricePerMTok?: number; outputPricePerMTok?: number; currency?: string }
 export type UsageRow = { agentId:string; agentName:string; modelName:string; currency:string; runs:number; steps:number; inputTokens:number; outputTokens:number; cost:number; priced:boolean }
 export type UsagePoint = { day:string; inputTokens:number; outputTokens:number; cost:number }
-export type UsageReport = { from:string; to:string; currency:string; inputTokens:number; outputTokens:number; cost:number; unpricedTokens:number; agents:UsageRow[]; daily:UsagePoint[] }
+export type UsageReport = { from:string; to:string; currency:string; inputTokens:number; outputTokens:number; cost:number; unpricedTokens:number; runs:number; unmeteredRuns:number; agents:UsageRow[]; daily:UsagePoint[] }
 export type RuntimeSession = { id: string; runtimeId: string; agentId: string; agentName: string; runtimeType: string; title: string; status: string; trace: unknown[]; createdAt: string; updatedAt: string }
 export type Workflow = { id:string; name:string; description:string; mode:string; maxDepth:number; maxAgentCalls:number; maxToolCalls:number; maxDurationSeconds:number; maxParallelAgents:number; definition:{steps:{id:string;agentId:string;dependsOn:string[]}[]}; enabled:boolean; updatedAt:string }
 export type EvaluationTestSet = { id:string; name:string; description:string; passThreshold:number; cases:{name:string;expectedRuntime?:string;requiresProfile?:boolean;requiresModel?:boolean;requiresMcp?:boolean;requiresWorkspace?:boolean;requiresRunning?:boolean;requiresSecurity?:boolean}[]; updatedAt:string }
@@ -86,11 +86,12 @@ export type AgentTask = {
   parentTaskId?: string; delegationDepth: number; approvalId?: string
   currentRunId?: string; lastError: string; createdAt: string; updatedAt: string
 }
+export type Metering = '' | 'gateway' | 'agent' | 'context_only' | 'unmetered'
 export type AgentRun = {
   id: string; taskId: string; agentId: string; attempt: number; status: string; agentVersion: number
   runtimeId?: string; modelName: string; traceId: string; workerId: string
   resumedSteps: number
-  stepCount: number; toolCalls: number; totalTokens: number; durationMs: number
+  stepCount: number; toolCalls: number; totalTokens: number; metering?: Metering; durationMs: number
   result: string; failureReason: string
   completion: { strategy?: string; passed?: boolean; reason?: string; met?: string[]; unmet?: string[] }
   startedAt: string; finishedAt?: string

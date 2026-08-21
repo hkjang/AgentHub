@@ -127,6 +127,9 @@ func (o *Orchestrator) runFlow(ctx context.Context, run *store.AgentRun, task st
 	// platform does not meter a flow's model calls — they happen inside the flow,
 	// against whatever endpoint its own components point at — and turning an
 	// unverified field into a billed number would be worse than reporting none.
+	// Nothing the platform counted, and nothing it is willing to bill from an
+	// unverified field, so the run says so rather than reporting zero as a fact.
+	run.Metering = store.MeteringUnmetered
 	details := map[string]any{"flowId": goal.FlowID, "durationMs": elapsed, "chars": len(answer)}
 	if len(usage) > 0 {
 		details["runtimeReportedUsage"] = usage

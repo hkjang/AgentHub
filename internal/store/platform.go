@@ -89,15 +89,20 @@ type SpendRow struct {
 
 // PlatformSpend is the bill, and where it came from.
 type PlatformSpend struct {
-	Currency       string       `json:"currency"`
-	InputTokens    int64        `json:"inputTokens"`
-	OutputTokens   int64        `json:"outputTokens"`
-	Cost           float64      `json:"cost"`
-	UnpricedTokens int64        `json:"unpricedTokens"`
-	Users          []SpendRow   `json:"users"`
-	Agents         []SpendRow   `json:"agents"`
-	Models         []SpendRow   `json:"models"`
-	Daily          []UsagePoint `json:"daily"`
+	Currency       string  `json:"currency"`
+	InputTokens    int64   `json:"inputTokens"`
+	OutputTokens   int64   `json:"outputTokens"`
+	Cost           float64 `json:"cost"`
+	UnpricedTokens int64   `json:"unpricedTokens"`
+	// How much of the window the bill actually covers. A run whose agent reported
+	// nothing contributes no tokens to any figure above, so a total without this
+	// number reads as a complete bill when it is not.
+	Runs          int          `json:"runs"`
+	UnmeteredRuns int          `json:"unmeteredRuns"`
+	Users         []SpendRow   `json:"users"`
+	Agents        []SpendRow   `json:"agents"`
+	Models        []SpendRow   `json:"models"`
+	Daily         []UsagePoint `json:"daily"`
 }
 
 // PlatformOverview is the whole picture for one window.
@@ -339,6 +344,13 @@ func (s *Store) PlatformSpend(ctx context.Context, from, to time.Time, limit int
 	}
 	if spend.Currency == "" {
 		spend.Currency = "KRW"
+	}
+	// From the runs, not their steps: a run that reported nothing has no steps to
+	// join to, which is the very run this counts.
+	if err := s.pool.QueryRow(ctx, `SELECT count(*), count(*) FILTER (WHERE metering IN ('unmetered', 'context_only'))
+		FROM agent_runs WHERE started_at >= $1 AND started_at < $2`, from, to).
+		Scan(&spend.Runs, &spend.UnmeteredRuns); err != nil {
+		return PlatformSpend{}, err
 	}
 
 	daily, err := s.pool.Query(ctx, `SELECT date_trunc('day', s.created_at) AS day,
