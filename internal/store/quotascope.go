@@ -65,6 +65,13 @@ type EffectiveQuota struct {
 }
 
 func (s *Store) Departments(ctx context.Context) ([]Department, error) {
+	// What every department is holding, in two queries rather than two per
+	// department. The listing is the screen an administrator opens to see whether
+	// anybody is near a limit, and it fired 2N round trips to build one table.
+	held, err := s.departmentsHeld(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT d.id, d.name, d.description, d.quota, d.created_at, d.updated_at,
 		       (SELECT count(*) FROM users u WHERE u.department_id = d.id)
@@ -81,14 +88,61 @@ func (s *Store) Departments(ctx context.Context) ([]Department, error) {
 			return nil, err
 		}
 		_ = json.Unmarshal(raw, &item.Quota)
-		held, heldErr := s.DepartmentHeld(ctx, item.ID)
-		if heldErr != nil {
-			return nil, heldErr
-		}
-		item.Held = held
+		item.Held = held[item.ID]
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+// departmentsHeld totals what each department's members hold right now. A
+// department nobody has joined is absent from the map, which reads back as a
+// zero Held — the same answer the per-department query gave.
+func (s *Store) departmentsHeld(ctx context.Context) (map[string]quota.Held, error) {
+	out := map[string]quota.Held{}
+	rows, err := s.pool.Query(ctx, `
+		SELECT u.department_id, count(*), COALESCE(sum(p.cpu_millis),0), COALESCE(sum(p.memory_mb),0)
+		FROM agent_runtimes r
+		JOIN agent_definitions a ON a.id = r.agent_id
+		JOIN users u ON u.id = r.owner_id
+		LEFT JOIN runtime_profiles p ON p.id = a.runtime_profile_id
+		WHERE r.desired_state = 'running' AND u.department_id IS NOT NULL
+		GROUP BY u.department_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var held quota.Held
+		if err := rows.Scan(&id, &held.Runtimes, &held.CPUMillis, &held.MemoryMB); err != nil {
+			return nil, err
+		}
+		out[id] = held
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	storage, err := s.pool.Query(ctx, `
+		SELECT u.department_id, COALESCE(sum(w.size_gb),0)
+		FROM workspaces w JOIN users u ON u.id = w.owner_id
+		WHERE u.department_id IS NOT NULL
+		GROUP BY u.department_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer storage.Close()
+	for storage.Next() {
+		var id string
+		var size int
+		if err := storage.Scan(&id, &size); err != nil {
+			return nil, err
+		}
+		entry := out[id]
+		entry.StorageGB = size
+		out[id] = entry
+	}
+	return out, storage.Err()
 }
 
 func (s *Store) SaveDepartment(ctx context.Context, item Department) (Department, error) {

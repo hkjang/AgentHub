@@ -650,3 +650,12 @@ tr.rule-off { opacity: .55; }
    cannot distinguish "spent nothing" from "spent, unreported". */
 .metering-tag { display: inline-flex; align-items: center; margin-left: 7px; padding: 1px 7px; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: help; background: #eef2f6; color: #52606f; }
 .metering-tag.warn { background: #fff6e6; color: #96610a; }
+
+/* Who is in a department, on the screen where its limits are set. "구성원 5명" is
+   a number; the names are what an administrator is actually deciding about. */
+.quota-members { margin: 0; }
+.quota-members h4 { margin: 0 0 7px; font-size: 13px; color: #344054; }
+.quota-members ul { display: flex; flex-direction: column; gap: 5px; margin: 0; padding: 0; list-style: none; max-height: 190px; overflow-y: auto; }
+.quota-members li { display: flex; align-items: baseline; justify-content: space-between; gap: 9px; padding: 5px 9px; border: 1px solid #eef1f6; border-radius: 8px; font-size: 12px; color: #475467; }
+.quota-members li small { color: #98a2b3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quota-members p { margin: 0; font-size: 12px; }

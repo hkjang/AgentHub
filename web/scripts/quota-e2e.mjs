@@ -91,6 +91,18 @@ try {
   await row.getByRole('button', { name: /Quota$/ }).click()
   await page.locator('.quota-effective').waitFor({ timeout: 10000 })
   const memoryRow = page.locator('.quota-effective tr', { hasText: 'Memory' }).first()
+  // "구성원 1명" is a number; the name is what an administrator is deciding about.
+  await page.getByRole('button', { name: '취소' }).click()
+  await page.getByRole('button', { name: /^부서/ }).click()
+  await page.locator('.quota-card', { hasText: DEPARTMENT }).getByRole('button', { name: '한도 수정' }).click()
+  const roster = page.locator('.quota-members')
+  await roster.waitFor({ timeout: 5000 })
+  const rosterText = await roster.innerText()
+  check('부서 화면에서 구성원 이름이 보임', rosterText.includes(username), JSON.stringify(rosterText))
+  await page.getByRole('button', { name: '취소' }).click()
+  await page.getByRole('button', { name: /^개인/ }).click()
+  await row.getByRole('button', { name: /Quota$/ }).click()
+  await page.locator('.quota-effective').waitFor({ timeout: 10000 })
   check('부서가 정한 한도의 출처가 부서로 표시됨', (await memoryRow.innerText()).includes('부서'), await memoryRow.innerText())
   check('부서 이름까지 함께 표시됨', (await memoryRow.innerText()).includes(DEPARTMENT))
 

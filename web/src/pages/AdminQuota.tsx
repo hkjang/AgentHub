@@ -58,7 +58,7 @@ export function AdminQuota() {
             <td><button className="icon-button" onClick={() => setPerson(item)} aria-label={`${item.displayName} Quota`}><UserCog size={17}/></button></td>
           </tr> })}</tbody>
         </table></div></section>}
-    {department!==undefined&&<DepartmentDrawer item={department} close={() => setDepartment(undefined)} done={() => {setDepartment(undefined);void load()}}/>}
+    {department!==undefined&&<DepartmentDrawer item={department} members={department?users.filter((v) => v.departmentId===department.id):[]} close={() => setDepartment(undefined)} done={() => {setDepartment(undefined);void load()}}/>}
     {person&&<PersonDrawer person={person} departments={departments} override={overrides.find((v) => v.ownerId===person.id)} close={() => setPerson(undefined)} done={() => {setPerson(undefined);void load()}}/>}
   </div>
 }
@@ -78,7 +78,7 @@ function Usage({limits,held}:{limits:Limits;held:{runtimes:number;cpuMillis:numb
 // A save that fails has to say so inside the drawer. Reported to the page behind
 // it, the banner renders under the scrim and the person is told nothing at all —
 // which is what a refused duplicate name looked like.
-function DepartmentDrawer({item,close,done}:{item:Department|null;close:()=>void;done:()=>void}) {
+function DepartmentDrawer({item,members,close,done}:{item:Department|null;members:ManagedUser[];close:()=>void;done:()=>void}) {
   const [name,setName] = useState(item?.name ?? '')
   const [description,setDescription] = useState(item?.description ?? '')
   const [perMember,setPerMember] = useState<Limits>(item?.quota.perMember ?? {})
@@ -96,6 +96,12 @@ function DepartmentDrawer({item,close,done}:{item:Department|null;close:()=>void
       <label><span>부서 이름</span><input required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} placeholder="플랫폼팀"/></label>
       <label><span>설명</span><textarea rows={2} maxLength={300} value={description} onChange={(e) => setDescription(e.target.value)}/></label>
       <LimitFields title="구성원 1인 기본" hint="이 부서에 속한 사람 한 명에게 적용됩니다. 비워 두면 플랫폼 기본값을 따릅니다." value={perMember} change={setPerMember}/>
+      {item&&<section className="quota-members">
+        <h4>구성원 {members.length}명</h4>
+        {members.length===0
+          ? <p className="muted-cell">아직 아무도 이 부서에 속해 있지 않습니다. 개인 탭에서 지정하세요.</p>
+          : <ul>{members.map((member) => <li key={member.id}><span>{member.displayName}</span><small>{member.email||member.username}</small></li>)}</ul>}
+      </section>}
       <LimitFields title="부서 총량" hint="구성원 전체가 함께 쓰는 상한입니다. 한 사람이 자기 한도 안에 있어도 부서가 가득 차면 시작할 수 없습니다. 토큰·비용 예산은 최근 30일 기준이며, 동시 실행 한도에 걸린 작업은 실패가 아니라 대기합니다." value={total} change={setTotal}/>
     </form>
   </Drawer>
