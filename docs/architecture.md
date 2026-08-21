@@ -1257,6 +1257,14 @@ The usage report and the platform bill carry the coverage alongside the totals:
 how many runs the window held, and how many of them contributed nothing because
 nobody counted. A total is not evidence unless it says what it could not see.
 
+The per-agent breakdown carries it too, which is what makes the coverage
+actionable rather than merely honest — the deployment-wide count says something
+is missing, the column says which agent is silent. That breakdown is built from
+run steps, so an agent that ran and wrote no step at all used to be absent from
+it entirely: the report showed nothing where the answer is "it ran, and nobody
+counted". Those agents are appended now, with zeroes and the count that explains
+them.
+
 Runs that finished before this existed are left blank rather than relabelled.
 Filling in history with a guess is how a report stops being one.
 

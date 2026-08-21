@@ -28,6 +28,11 @@ type UsageRow struct {
 	// Priced is false when the model endpoint has no price set, so the console
 	// can say "not priced" instead of showing a confident zero.
 	Priced bool `json:"priced"`
+	// UnmeteredRuns is how many of this agent's runs contributed nothing to the
+	// numbers beside them, because the agent never reported what it spent. It is
+	// what makes a row of zeroes readable: the report says which agent is silent
+	// rather than leaving somebody to open runs one at a time looking for it.
+	UnmeteredRuns int `json:"unmeteredRuns"`
 }
 
 // UsagePoint is one day of spend across everything in scope.
@@ -57,6 +62,54 @@ type UsageReport struct {
 	UnmeteredRuns int          `json:"unmeteredRuns"`
 	Agents        []UsageRow   `json:"agents"`
 	Daily         []UsagePoint `json:"daily"`
+}
+
+// attachUnmetered marks the rows whose numbers are incomplete, and adds a row for
+// an agent that has none.
+//
+// The breakdown above is built from run steps, so an agent that ran and wrote no
+// step at all is simply absent — the report showed nothing where the honest
+// answer is "it ran, and nobody counted". Those agents are appended with zeroes
+// and the count that explains them.
+//
+// The model name is spelled exactly as the breakdown spells it, falling back to
+// the endpoint's default. A near-miss here does not lose a number: it appends a
+// second row for the same agent under a name that looks almost right.
+func (s *Store) attachUnmetered(ctx context.Context, report *UsageReport, ownerID, agentID string, from, to time.Time) error {
+	rows, err := s.pool.Query(ctx, `
+		SELECT r.agent_id, a.name, COALESCE(NULLIF(r.model_name, ''), COALESCE(m.default_model, '')), count(*)
+		FROM agent_runs r
+		JOIN agent_definitions a ON a.id = r.agent_id
+		LEFT JOIN model_endpoints m ON m.id = r.model_endpoint_id
+		WHERE r.started_at >= $1 AND r.started_at < $2
+		  AND ($3 = '' OR r.owner_id = $3)
+		  AND ($4 = '' OR r.agent_id = $4)
+		  AND r.metering IN ('unmetered', 'context_only')
+		GROUP BY r.agent_id, a.name, COALESCE(NULLIF(r.model_name, ''), COALESCE(m.default_model, ''))`, from, to, ownerID, agentID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, name, model string
+		var count int
+		if err := rows.Scan(&id, &name, &model, &count); err != nil {
+			return err
+		}
+		matched := false
+		for index := range report.Agents {
+			if report.Agents[index].AgentID == id && report.Agents[index].ModelName == model {
+				report.Agents[index].UnmeteredRuns += count
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			report.Agents = append(report.Agents,
+				UsageRow{AgentID: id, AgentName: name, ModelName: model, Currency: report.Currency, Runs: count, UnmeteredRuns: count})
+		}
+	}
+	return rows.Err()
 }
 
 // usageCostSQL prices one row. Prices are per million tokens.
@@ -122,6 +175,9 @@ func (s *Store) Usage(ctx context.Context, ownerID, agentID string, from, to tim
 		  AND ($3 = '' OR r.owner_id = $3)
 		  AND ($4 = '' OR r.agent_id = $4)`, from, to, ownerID, agentID).
 		Scan(&report.Runs, &report.UnmeteredRuns); err != nil {
+		return UsageReport{}, err
+	}
+	if err := s.attachUnmetered(ctx, &report, ownerID, agentID, from, to); err != nil {
 		return UsageReport{}, err
 	}
 

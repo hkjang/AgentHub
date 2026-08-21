@@ -343,7 +343,7 @@ function UsagePanel() {
                 </div>}
               </div>
               <div className="table-wrap custom-scroll"><table>
-                <thead><tr><th>에이전트</th><th>모델</th><th>실행</th><th>입력</th><th>출력</th><th>금액</th></tr></thead>
+                <thead><tr><th>에이전트</th><th>모델</th><th>실행</th><th>입력</th><th>출력</th><th>금액</th><th title="에이전트가 사용량을 알려주지 않아 왼쪽 숫자에 들어 있지 않은 실행">집계 안 됨</th></tr></thead>
                 <tbody>{report.agents.map((row) => <tr key={`${row.agentId}-${row.modelName}`}>
                   <td>{row.agentName}</td>
                   <td>{row.modelName || '—'}</td>
@@ -351,6 +351,11 @@ function UsagePanel() {
                   <td>{tokens(row.inputTokens)}</td>
                   <td>{tokens(row.outputTokens)}</td>
                   <td>{row.priced ? money(row.cost, row.currency) : <span className="row-time">미산정</span>}</td>
+                  {/* A row of zeroes is unreadable without this: it says whether the
+                      agent spent nothing or simply never said. */}
+                  <td>{row.unmeteredRuns > 0
+                    ? <span className="metering-tag warn" title="이 에이전트는 사용량을 보고하지 않습니다. 계량되는 런타임을 쓰거나 에이전트 토큰 예산을 지정하세요.">{row.unmeteredRuns}건</span>
+                    : <span className="row-time">—</span>}</td>
                 </tr>)}</tbody>
               </table></div>
               {report.unpricedTokens > 0 && <small>단가가 등록되지 않은 모델의 토큰은 금액에 포함되지 않습니다. 관리자 · 리소스 · 모델 엔드포인트에서 단가를 입력하세요.</small>}
