@@ -373,6 +373,28 @@ func (s *Server) runtimeSpec(r *http.Request, rt store.Runtime, agent store.Agen
 func (s *Server) runtimeSpecContext(ctx context.Context, rt store.Runtime, agent store.Agent) (runtime.Spec, error) {
 	return runtimespec.New(s.store, s.logger).Build(ctx, rt, agent)
 }
+
+// loggingSettings is read for the one switch that governs who may read what a
+// runtime printed.
+//
+// IncludeRuntimeLogs is a pointer because absent and false are different facts
+// here. Every deployment that predates this reading had the key unset while the
+// endpoint served logs, so treating unset as "off" would take the feature away
+// from all of them in the name of honouring a switch they never touched.
+type loggingSettings struct {
+	IncludeRuntimeLogs *bool `json:"includeRuntimeLogs"`
+}
+
+// runtimeLogsAllowed reports whether an administrator has turned runtime log
+// reading off. Only an explicit false counts.
+func (s *Server) runtimeLogsAllowed(ctx context.Context) bool {
+	var settings loggingSettings
+	if err := s.store.Setting(ctx, "logging", &settings); err != nil {
+		return true
+	}
+	return settings.IncludeRuntimeLogs == nil || *settings.IncludeRuntimeLogs
+}
+
 func (s *Server) runtimeLogs(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	rt, err := s.store.RuntimeByID(r.Context(), chi.URLParam(r, "id"), u.ID, u.Role == "admin")
@@ -383,6 +405,14 @@ func (s *Server) runtimeLogs(w http.ResponseWriter, r *http.Request) {
 	agent, err := s.store.AgentByID(r.Context(), rt.AgentID, u.ID, u.Role == "admin")
 	if err != nil {
 		writeStoreError(w, err)
+		return
+	}
+	// The switch in Logging settings meant nothing until now: it was saved,
+	// validated and never read, so an administrator who turned runtime logs off
+	// went on serving them to everybody who asked.
+	if !s.runtimeLogsAllowed(r.Context()) {
+		writeError(w, http.StatusForbidden, "runtime_logs_disabled",
+			"관리자가 Runtime 로그 조회를 꺼 두었습니다. 시스템 설정 ▸ Logging에서 다시 켤 수 있습니다.")
 		return
 	}
 	data, err := s.spawner.Logs(r.Context(), runtime.Spec{Runtime: rt, Agent: agent}, 200)

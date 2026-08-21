@@ -202,3 +202,32 @@ func TestTheNetworkVerdictKeepsItsThreeAnswers(t *testing.T) {
 		t.Errorf("the unenforced answer hedges: %q", detail)
 	}
 }
+
+// Absent and false are different facts about this switch. Every deployment that
+// predates the platform reading it has the key unset while the endpoint serves
+// logs, so treating unset as "off" would take the feature away from all of them
+// in the name of honouring a switch nobody touched.
+func TestRuntimeLogsAreOnUntilSomebodyTurnsThemOff(t *testing.T) {
+	on, off := true, false
+	for _, tc := range []struct {
+		name    string
+		value   *bool
+		allowed bool
+	}{
+		{"never configured", nil, true},
+		{"turned on", &on, true},
+		{"turned off", &off, false},
+	} {
+		settings := loggingSettings{IncludeRuntimeLogs: tc.value}
+		got := settings.IncludeRuntimeLogs == nil || *settings.IncludeRuntimeLogs
+		if got != tc.allowed {
+			t.Errorf("%s → allowed=%v, want %v", tc.name, got, tc.allowed)
+		}
+	}
+	// A settings blob written before this key existed must leave it unset rather
+	// than decoding to false.
+	var decoded loggingSettings
+	if err := json.Unmarshal([]byte(`{"level":"info"}`), &decoded); err != nil || decoded.IncludeRuntimeLogs != nil {
+		t.Errorf("a settings blob without the key should leave it unset: %#v (%v)", decoded, err)
+	}
+}
