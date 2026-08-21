@@ -1379,6 +1379,14 @@ Members see their department's budget next to their own. Being refused by a limi
 the console never displayed is how a quota becomes a mystery, and the mystery is
 more expensive than the limit.
 
+There is now a cheap net under all the console suites: sign in once, open all
+thirty screens, and insist each renders a heading and content with no uncaught
+error and no 5xx. The feature suites each drive one screen deeply, so none of
+them would notice a screen that throws on render — a renamed field, an unguarded
+null, a route left behind by a refactor. A screen nobody tests is the screen
+nobody opens until a customer does. It was proved by breaking one on purpose:
+`/admin/quotas — TypeError: Cannot read properties of undefined`.
+
 A refused request says what was wrong with it. Every write endpoint answered
 "입력 형식이 올바르지 않습니다" to a mistyped field, an unknown one, a truncated
 body and an empty one alike — true of all four and useful for none, leaving

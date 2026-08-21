@@ -33,7 +33,8 @@
     "test:investigate": "node scripts/investigate-e2e.mjs",
     "test:platform-path": "node scripts/platform-path-e2e.mjs",
     "test:viewmode": "node scripts/viewmode-e2e.mjs",
-    "test:quota": "node scripts/quota-e2e.mjs"
+    "test:quota": "node scripts/quota-e2e.mjs",
+    "test:screens": "node scripts/screens-e2e.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
