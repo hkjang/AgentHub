@@ -867,10 +867,7 @@ func (o *Orchestrator) saveACPPictures(ctx context.Context, run *store.AgentRun,
 			continue
 		}
 		kept++
-		o.event(ctx, *run, "artifact.created", saved.Name, map[string]any{
-			"artifactId": saved.ID, "type": saved.Type, "sizeBytes": saved.SizeBytes,
-			"toolCallId": picture.ToolCallID,
-		})
+		o.artifactSaved(ctx, *run, task, agent, saved, map[string]any{"toolCallId": picture.ToolCallID})
 	}
 	if skipped > 0 {
 		// Said out loud rather than dropped quietly: a run whose screenshots are

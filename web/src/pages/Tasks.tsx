@@ -45,6 +45,7 @@ const TASK_EXAMPLES = [
 
 const EVENT_LABELS: Record<string, string> = {
   'task.completed': '작업 완료', 'task.failed': '작업 실패', 'task.dead_lettered': '재시도 소진',
+  'task.handoff': '작업 인계',
   'approval.decided': '승인 처리', 'runtime.failed': '런타임 장애', 'artifact.created': '산출물 생성',
 }
 

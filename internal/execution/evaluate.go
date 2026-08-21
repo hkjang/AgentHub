@@ -307,16 +307,35 @@ func (o *Orchestrator) saveArtifacts(ctx context.Context, run *store.AgentRun, t
 				o.logger.Warn("artifact could not be stored", "run", run.ID, "name", artifact.Name, "error", err)
 				continue
 			}
-			o.event(ctx, *run, "artifact.created", saved.Name, map[string]any{"artifactId": saved.ID, "type": saved.Type, "sizeBytes": saved.SizeBytes})
-			// A run event is only visible inside this run; the platform event is
-			// what another agent can subscribe to.
-			payload, _ := json.Marshal(map[string]any{"name": saved.Name, "type": saved.Type, "agentId": agent.ID, "taskId": task.ID})
-			if err := o.store.PublishEvent(ctx, store.PlatformEvent{
-				Type: store.EventArtifactCreated, OwnerID: task.OwnerID,
-				SubjectType: "artifact", SubjectID: saved.ID, Payload: payload, CauseTriggerID: task.TriggerID,
-			}); err != nil {
-				o.logger.Warn("artifact event could not be published", "run", run.ID, "artifact", saved.ID, "error", err)
-			}
+			o.artifactSaved(ctx, *run, task, agent, saved, nil)
 		}
+	}
+}
+
+// artifactSaved announces one stored artifact in both of the places it has to
+// appear, because there are two and only one of them is obvious.
+//
+// The run event is the artifact showing up in this run's own timeline. The
+// platform event is the one a trigger subscribes to — "산출물 생성" in the console —
+// and it is what lets one agent's output start another agent's work. An artifact
+// that records only the first is visible to whoever opens the run and invisible
+// to everything the operator set up to react to it.
+//
+// This was written as a function because it had already been got wrong once: the
+// pictures an ACP agent takes were stored and shown in the run, and every
+// artifact.created trigger stayed silent for them — screenshots being, by some
+// distance, the artifact people most want routed somewhere.
+func (o *Orchestrator) artifactSaved(ctx context.Context, run store.AgentRun, task store.AgentTask, agent store.Agent, saved store.AgentArtifact, extra map[string]any) {
+	details := map[string]any{"artifactId": saved.ID, "type": saved.Type, "sizeBytes": saved.SizeBytes}
+	for key, value := range extra {
+		details[key] = value
+	}
+	o.event(ctx, run, "artifact.created", saved.Name, details)
+	payload, _ := json.Marshal(map[string]any{"name": saved.Name, "type": saved.Type, "agentId": agent.ID, "taskId": task.ID})
+	if err := o.store.PublishEvent(ctx, store.PlatformEvent{
+		Type: store.EventArtifactCreated, OwnerID: task.OwnerID,
+		SubjectType: "artifact", SubjectID: saved.ID, Payload: payload, CauseTriggerID: task.TriggerID,
+	}); err != nil {
+		o.logger.Warn("artifact event could not be published", "run", run.ID, "artifact", saved.ID, "error", err)
 	}
 }

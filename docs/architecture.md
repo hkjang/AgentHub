@@ -1306,6 +1306,23 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## An artifact has to be announced twice
+
+A stored artifact appears in two places, and only one of them is obvious. The run
+event puts it in that run's timeline, where whoever opens the run will see it. The
+platform event is what a trigger subscribes to — "산출물 생성" in the console — and it
+is what lets one agent's output start another agent's work.
+
+The pictures an ACP agent takes recorded only the first. They were stored, they
+were shown in the run, and every trigger subscribed to artifact creation stayed
+silent for them: screenshots being, by some distance, the artifact people most
+want routed somewhere. The code that saves them was written next to a comment
+explaining precisely this distinction, in the function it did not call.
+
+Both paths go through one announcement now, and two guards keep them there: an
+artifact writer that does not use it fails, and an announcement that reaches only
+one of the two places fails.
+
 ## A hold is not a failed attempt, and now it is not charged as one
 
 Claiming a task increments its attempt count, before anything has decided whether
