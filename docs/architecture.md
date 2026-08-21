@@ -1306,6 +1306,26 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## The list that asked once per row
+
+The agent list is the screen the console reloads most, and rendering it read each
+runtime's status separately — and "separately" meant more than an extra round
+trip. Every call re-read the Kubernetes settings from the database, built a fresh
+client from them, and then asked the API server about one object. Thirty agents
+were ninety operations to draw one table, and the cost grew with the deployment
+rather than with the request.
+
+These objects all live in one namespace, so the API server will list them in a
+single call. It does now, with the per-agent read kept as the fallback for a
+spawner that cannot list or a listing that failed. A runtime the listing does not
+contain is answered as Stopped from the listing itself rather than sent back to
+the API server to be told the same thing — which would have restored the per-row
+round trip for exactly the rows that need it least.
+
+Measured on the test deployment with twelve runtimes: 67ms to 36ms. The number
+matters less than its shape — the old path had a term per agent and the new one
+does not.
+
 ## Whether the guards can fail
 
 Several tests here read the repository and assert that something is used

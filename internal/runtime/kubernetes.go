@@ -637,6 +637,38 @@ func (k *KubernetesSpawner) Status(ctx context.Context, spec Spec) (Status, erro
 	_ = json.Unmarshal(payload, &status)
 	return status, nil
 }
+
+// StatusAll reads every runtime's status in the namespace at once.
+//
+// The console asks for the agent list constantly, and answering it used to cost
+// one settings read, one client construction and one API request per agent —
+// thirty agents meant ninety round trips to render one table. The information is
+// the same either way: these objects all live in one namespace and the API server
+// will list them in a single call.
+func (k *KubernetesSpawner) StatusAll(ctx context.Context) (map[string]Status, error) {
+	client, _, _, settings, err := k.clients(ctx)
+	if err != nil {
+		return nil, err
+	}
+	namespace := settings.Namespace
+	if namespace == "" {
+		namespace = "agent-runtime-dev"
+	}
+	list, err := client.Resource(runtimeGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]Status, len(list.Items))
+	for _, object := range list.Items {
+		raw, _, _ := unstructured.NestedMap(object.Object, "status")
+		payload, _ := json.Marshal(raw)
+		var status Status
+		_ = json.Unmarshal(payload, &status)
+		out[object.GetName()] = status
+	}
+	return out, nil
+}
+
 func (k *KubernetesSpawner) Logs(ctx context.Context, spec Spec, tail int64) ([]byte, error) {
 	ensureCRDName(&spec)
 	if spec.Runtime.PodName == "" {

@@ -253,19 +253,54 @@ func (s *Server) spawnNow(r *http.Request, agent store.Agent) (store.Runtime, er
 // saw a runtime that never started.
 func (s *Server) observeRuntimes(ctx context.Context, agents []store.Agent) bool {
 	changed := false
+	// One request for the whole namespace when the spawner can do it. Asking per
+	// agent cost a settings read, a client construction and an API round trip each
+	// — on the screen the console reloads most often, and for a list that is
+	// already being fetched whole.
+	var batch map[string]runtime.Status
+	if reader, ok := s.spawner.(runtime.BatchStatus); ok {
+		if all, err := reader.StatusAll(ctx); err == nil {
+			batch = all
+		} else {
+			s.logger.Warn("runtime statuses could not be read together; asking one at a time", "error", err)
+		}
+	}
 	for _, agent := range agents {
 		if agent.Runtime == nil {
 			continue
 		}
-		status, err := s.spawner.Status(ctx, runtime.Spec{Runtime: *agent.Runtime, Agent: agent})
-		if err != nil {
-			continue
+		status, ok := statusFor(batch, agent)
+		if !ok {
+			observed, err := s.spawner.Status(ctx, runtime.Spec{Runtime: *agent.Runtime, Agent: agent})
+			if err != nil {
+				continue
+			}
+			status = observed
 		}
 		if err := s.store.UpdateRuntimeObserved(ctx, agent.Runtime.ID, status.Phase, status.PodName, status.NodeName, status.Endpoint, status.RestartCount, status.FailureReason); err == nil {
 			changed = true
 		}
 	}
 	return changed
+}
+
+// statusFor reads one agent's runtime out of the batch.
+//
+// A runtime the listing did not include is a runtime whose object is gone, which
+// is the same thing the single-object read reports as Stopped — so it is answered
+// here rather than sent back to the API server to be told the same thing.
+func statusFor(batch map[string]runtime.Status, agent store.Agent) (runtime.Status, bool) {
+	if batch == nil || agent.Runtime == nil {
+		return runtime.Status{}, false
+	}
+	name := agent.Runtime.CRDName
+	if name == "" {
+		return runtime.Status{}, false
+	}
+	if status, ok := batch[name]; ok {
+		return status, true
+	}
+	return runtime.Status{Phase: "Stopped"}, true
 }
 
 func (s *Server) runtimes(w http.ResponseWriter, r *http.Request) {

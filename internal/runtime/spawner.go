@@ -372,3 +372,13 @@ func (DisabledSpawner) Snapshot(context.Context, SnapshotSpec) error { return Er
 func (DisabledSpawner) SnapshotStatus(context.Context, SnapshotSpec) (string, int64, error) {
 	return "", 0, ErrNotConfigured
 }
+
+// BatchStatus is implemented by a spawner that can report every runtime's status
+// in one request instead of one per runtime.
+//
+// It is separate from Spawner so that a deployment without Kubernetes keeps a
+// spawner that cannot pretend to have it, and so the caller falls back to asking
+// one at a time rather than failing when it is absent.
+type BatchStatus interface {
+	StatusAll(ctx context.Context) (map[string]Status, error)
+}
