@@ -1308,6 +1308,27 @@ fails if what arrives is a sentence about a screenshot rather than a PNG.
 
 ## The way around the rules
 
+Every action the policy engine defines now has to be evaluated somewhere, and a
+test says so. `agent.update` was not: it appeared in the rule editor, an
+administrator could forbid a role from editing agents, the rule saved, and that
+role went on editing them. A rule in the engine that nothing consults is worse
+than no rule, because the screen says it is in force.
+
+The test took two attempts, and the first one is the more useful story. It
+accepted either the constant or the bare action value, and the value `agent.update`
+also happens to be an audit event name — so with the evaluation deleted the test
+still passed. A guard that cannot fail is worse than no guard, so it now accepts
+only the constant, which is what evaluating code actually writes, and it was
+proved by deleting an evaluation and watching the test name the action.
+
+The same first draft also reported `tool.call` as dead, and it is not: those rules
+are compiled into the in-Pod gateway by a dedicated function, because a rule that
+had to ask the control plane on every tool call would be a rule nobody could
+afford to write. That path is recorded in the test with the reason, rather than
+being 'fixed'.
+
+
+
 Three more of the same shape turned up by asking, of each control, which paths
 actually consult it.
 

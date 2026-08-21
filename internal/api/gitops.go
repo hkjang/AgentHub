@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"sigs.k8s.io/yaml"
 
+	"github.com/hkjang/AgentHub/internal/policy"
 	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
 )
@@ -243,7 +244,20 @@ func (s *Server) importAgent(w http.ResponseWriter, r *http.Request) {
 				"같은 이름의 Agent가 다른 런타임 유형으로 존재합니다. 런타임 유형은 변경할 수 없습니다.")
 			return
 		}
+		// Importing a YAML is editing an agent, so the rule that governs editing one
+		// governs this too. A policy that applies to the button and not to the file
+		// is a policy with a documented way around it.
+		if refusal := policyRefusal(s.decide(r, u, policy.Request{
+			Action: policy.ActionAgentUpdate, Agent: existing.Name, AgentID: existing.ID,
+		})); refusal != "" {
+			writeError(w, http.StatusForbidden, "policy_denied", refusal)
+			return
+		}
 		saved, err := s.store.UpdateAgent(r.Context(), existing.ID, u.ID, u.Role == "admin", input)
+		if errors.Is(err, store.ErrConflict) {
+			writeStoreError(w, err)
+			return
+		}
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "agent_import_failed", err.Error())
 			return
