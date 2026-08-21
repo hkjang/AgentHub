@@ -576,12 +576,18 @@ func (s *Store) FinishAgentTask(ctx context.Context, taskID, status, lastError s
 // RetryAgentTask puts a failed task back on the queue after a backoff.
 // BlockAgentTask holds a task until the thing standing in its way is resolved.
 //
-// The attempt count is left alone. Waiting for a person to promote a version is
-// not a failed attempt, and spending the retry budget on it would leave the task
-// out of attempts by the time it was allowed to run.
+// The attempt the claim charged for is given back. Waiting for a person to
+// promote a version is not a failed attempt, and spending the retry budget on it
+// would leave the task out of attempts by the time it was allowed to run — which
+// is what this comment claimed to prevent while the code did nothing about it.
+// Claiming a task increments its attempt count before anything decides whether it
+// may run, so a hold that leaves the count alone charges for the wait. The defer
+// path next door hands the attempt back for exactly this reason; a hold is the
+// same situation with a person rather than a free slot at the end of it.
 func (s *Store) BlockAgentTask(ctx context.Context, taskID, reason string) error {
 	_, err := s.pool.Exec(ctx, `UPDATE agent_tasks
-		SET status='blocked', last_error=$2, claimed_by='', claimed_until=NULL, updated_at=now()
+		SET status='blocked', last_error=$2, attempts=GREATEST(attempts - 1, 0),
+		    claimed_by='', claimed_until=NULL, updated_at=now()
 		WHERE id=$1`, taskID, reason)
 	return err
 }

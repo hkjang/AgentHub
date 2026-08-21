@@ -1306,6 +1306,22 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## A hold is not a failed attempt, and now it is not charged as one
+
+Claiming a task increments its attempt count, before anything has decided whether
+the task may run. The defer path knew that and handed the attempt back — waiting
+for a free runtime slot is not a failed attempt, and a busy hour would otherwise
+spend a task's whole retry budget before it ever ran. The hold path said the same
+thing in a comment and did nothing about it.
+
+So a task held by the promotion gate or a policy rule was charged for waiting. A
+task held twice reached its first real failure with one retry left of the three it
+was configured for, and a task held three times had none: it dead-lettered on the
+first genuinely transient error, having never been retried at all. The number was
+wrong in the direction that looks like a flaky agent.
+
+The hold gives the attempt back, the same way the defer beside it does.
+
 ## A held task needs a way back
 
 Holding a task rather than failing it was argued for on the grounds that
