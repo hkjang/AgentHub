@@ -144,7 +144,17 @@ func departmentExecutionUsage(ctx context.Context, db querier, departmentID, exc
 		LEFT JOIN model_endpoints m ON m.id = r.model_endpoint_id
 		WHERE u.department_id = $1 AND s.created_at >= $2`,
 		departmentID, since).Scan(&usage.Tokens, &usage.Cost)
-	return usage, err
+	if err != nil {
+		return usage, err
+	}
+	var workflowTokens int64
+	if err := db.QueryRow(ctx, `SELECT COALESCE(sum(w.total_tokens), 0) FROM workflow_runs w
+		JOIN users u ON u.id = w.owner_id
+		WHERE u.department_id = $1 AND w.created_at >= $2`, departmentID, since).Scan(&workflowTokens); err != nil {
+		return usage, err
+	}
+	usage.Tokens += workflowTokens
+	return usage, nil
 }
 
 func executionUsage(ctx context.Context, db querier, ownerID, agentID, exceptTaskID string) (quota.Usage, error) {
@@ -164,7 +174,22 @@ func executionUsage(ctx context.Context, db querier, ownerID, agentID, exceptTas
 		LEFT JOIN model_endpoints m ON m.id = r.model_endpoint_id
 		WHERE r.owner_id = $1 AND s.created_at >= $2`,
 		ownerID, since, agentID).Scan(&usage.Tokens, &usage.Cost, &usage.AgentTokens)
-	return usage, err
+	if err != nil {
+		return usage, err
+	}
+	// Workflows call the same models through the same endpoints and were counted
+	// by nothing. A budget that a person can walk around by putting the agent in
+	// a graph is a suggestion, so their spend joins the same total. There is no
+	// cost figure for it: a workflow step's model is resolved per agent at run
+	// time and the run does not record which endpoint priced it, so counting the
+	// tokens and leaving the money uncounted is the honest half.
+	var workflowTokens int64
+	if err := db.QueryRow(ctx, `SELECT COALESCE(sum(total_tokens), 0) FROM workflow_runs
+		WHERE owner_id = $1 AND created_at >= $2`, ownerID, since).Scan(&workflowTokens); err != nil {
+		return usage, err
+	}
+	usage.Tokens += workflowTokens
+	return usage, nil
 }
 
 // ReserveExecutionSlot decides whether one claimed task may run, and puts it back

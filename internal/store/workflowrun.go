@@ -36,13 +36,20 @@ func (s *Store) CreateWorkflowRun(ctx context.Context, workflowID, ownerID strin
 
 // FinishWorkflowRun records the terminal state. The output carries the per-step
 // trace so a completed run stays auditable without re-running it.
-func (s *Store) FinishWorkflowRun(ctx context.Context, id, status string, output any) (WorkflowRun, error) {
+// FinishWorkflowRun records the outcome and what it cost.
+//
+// The spend is written to its own columns as well as into the output document.
+// Inside the document it is readable by whoever opens that one run; in columns it
+// is countable by the usage report and by the budgets that now refuse a workflow
+// when they are spent — which they could not do while the only record of a
+// workflow's cost was a field in a JSON blob.
+func (s *Store) FinishWorkflowRun(ctx context.Context, id, status string, output any, totalTokens, agentCalls int) (WorkflowRun, error) {
 	payload, err := json.Marshal(output)
 	if err != nil {
 		return WorkflowRun{}, err
 	}
 	var item WorkflowRun
-	err = s.pool.QueryRow(ctx, `UPDATE workflow_runs SET status=$2,output=$3,finished_at=now() WHERE id=$1 RETURNING id,workflow_id,owner_id,status,input,output,started_at,finished_at,created_at`, id, status, payload).
+	err = s.pool.QueryRow(ctx, `UPDATE workflow_runs SET status=$2,output=$3,total_tokens=$4,agent_calls=$5,finished_at=now() WHERE id=$1 RETURNING id,workflow_id,owner_id,status,input,output,started_at,finished_at,created_at`, id, status, payload, totalTokens, agentCalls).
 		Scan(&item.ID, &item.WorkflowID, &item.OwnerID, &item.Status, &item.Input, &item.Output, &item.StartedAt, &item.FinishedAt, &item.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WorkflowRun{}, ErrNotFound

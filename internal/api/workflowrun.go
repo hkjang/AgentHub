@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/hkjang/AgentHub/internal/policy"
 	"net/http"
 	"strings"
 	"time"
@@ -55,6 +56,17 @@ func (s *Server) runWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A workflow calls the same agents a task would, through the same models, and
+	// until now it did so under none of the same rules: a person over their token
+	// budget, or forbidden by policy from running an agent, or holding an agent
+	// behind a promotion gate, could go around all three by putting that agent in
+	// a graph. Whatever a workflow is, it is not a way out of the governance the
+	// deployment configured.
+	if refusal := s.workflowRefusal(r, u, steps); refusal != "" {
+		writeError(w, http.StatusConflict, "workflow_refused", refusal)
+		return
+	}
+
 	run, err := s.store.CreateWorkflowRun(r.Context(), item.ID, u.ID, map[string]any{"input": input.Input, "mode": item.Mode})
 	if err != nil {
 		writeStoreError(w, err)
@@ -77,7 +89,7 @@ func (s *Server) runWorkflow(w http.ResponseWriter, r *http.Request) {
 		status = "failed"
 		result = workflow.Result{Mode: item.Mode, Status: status, Output: runErr.Error()}
 	}
-	stored, storeErr := s.store.FinishWorkflowRun(r.Context(), run.ID, status, result)
+	stored, storeErr := s.store.FinishWorkflowRun(r.Context(), run.ID, status, result, result.TotalTokens, result.AgentCall)
 	if storeErr != nil {
 		s.logger.Error("workflow run could not be recorded", "run", run.ID, "error", storeErr)
 	}
@@ -165,4 +177,36 @@ func agentSystemPrompt(agent store.Agent) string {
 		return spec.SystemPrompt
 	}
 	return "당신은 " + agent.Name + " 역할을 맡은 엔터프라이즈 에이전트입니다. 요청과 이전 단계 결과를 바탕으로 정확하게 답하세요."
+}
+
+// workflowRefusal applies to a workflow the rules a task is already held to,
+// once per agent the graph will actually call.
+//
+// It reuses the same helpers rather than restating them: a second copy of a
+// policy decision is a second policy, and the copy is the one that stops
+// matching the screen an administrator configured.
+func (s *Server) workflowRefusal(r *http.Request, u store.User, steps []workflow.Step) string {
+	seen := map[string]bool{}
+	for _, step := range steps {
+		if step.AgentID == "" || seen[step.AgentID] {
+			continue
+		}
+		seen[step.AgentID] = true
+		if refusal := policyRefusal(s.decide(r, u, policy.Request{
+			Action: policy.ActionTaskCreate, Agent: step.AgentName, AgentID: step.AgentID,
+		})); refusal != "" {
+			return step.AgentName + ": " + refusal
+		}
+		if reason, err := s.store.PromotionBlock(r.Context(), step.AgentID); err != nil {
+			s.logger.Warn("promotion gate is unreadable; running the workflow", "agent", step.AgentID, "error", err)
+		} else if reason != "" {
+			return step.AgentName + ": " + reason
+		}
+		// The owner's and their department's budgets, measured the same way the
+		// task queue measures them.
+		if refusal := s.budgetRefusal(r, u.ID, step.AgentID); refusal != "" {
+			return step.AgentName + ": " + refusal
+		}
+	}
+	return ""
 }

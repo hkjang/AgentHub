@@ -1306,6 +1306,28 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## The way around the rules
+
+A workflow calls the same agents a task would, through the same models, and it
+did so under none of the same rules. A person over their token budget was refused
+at the task queue and welcome in the workflow screen. An agent held behind a
+promotion gate could be reached by putting it in a graph. A policy forbidding
+somebody from running an agent applied to one button and not the other. None of
+this was a decision — the two paths simply grew apart, and the newer one never
+picked up the governance the older one accumulated.
+
+The refusals now apply, per agent the graph will actually call, through the same
+helpers rather than a second copy of the reasoning. And a workflow's spend counts
+toward the budgets that refuse it, which required giving it somewhere to be
+counted from: the tokens were recorded inside the run's JSON output, where the
+usage report cannot see them and no budget could ever bound them. They have
+columns now.
+
+The money is still uncounted, deliberately. A workflow step's model is resolved
+per agent at run time and the run does not record which endpoint priced it, so
+counting the tokens and leaving the cost alone is the honest half of the job
+rather than a guess dressed as a total.
+
 ## Being driven from outside
 
 This platform is an MCP server as well as a host for them, which is how another

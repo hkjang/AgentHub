@@ -111,7 +111,12 @@ try {
   await page.locator('label', { hasText: '메모' }).locator('input').fill('E2E 예외')
   await page.getByRole('button', { name: '저장', exact: true }).click()
   await page.locator('#person-quota-form').waitFor({ state: 'detached', timeout: 10000 })
-  check('개인 예외가 목록에 보임', (await row.innerText()).includes('E2E 예외'), await row.innerText())
+  // Read once, after the table has actually caught up. Reading twice — once for
+  // the assertion and once for the message — straddled the reload that follows a
+  // save, so the check failed while its own evidence showed the value there.
+  await row.locator('td', { hasText: 'E2E 예외' }).waitFor({ timeout: 10000 }).catch(() => {})
+  const overrideRow = (await row.innerText()).replace(/\n/g, ' · ')
+  check('개인 예외가 목록에 보임', overrideRow.includes('E2E 예외'), overrideRow)
   await row.getByRole('button', { name: /Quota$/ }).click()
   await page.locator('.quota-effective').waitFor({ timeout: 10000 })
   const runtimeRow = page.locator('.quota-effective tr', { hasText: 'Runtime 수' }).first()
