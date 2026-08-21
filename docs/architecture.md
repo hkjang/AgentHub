@@ -1306,6 +1306,24 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## An event nobody can filter is an event nobody can subscribe to
+
+A trigger picks its events by payload containment, and the guide offers
+`{"agentId":"…"}` as the way to watch one agent rather than every agent in the
+deployment. That makes the payload part of the interface, not decoration: a field
+that is absent is a filter that never matches.
+
+approval.decided carried the decision, the action and the reason. All three are
+worth reading and none of them is worth filtering on, so a subscription to 승인
+처리 for one agent was accepted, saved, shown as enabled, and silent. Every other
+publisher already carried the agent, which is exactly why nobody noticed this one
+did not.
+
+The approval record knew all along — its own payload names the agent, task and run
+that asked for it, and a runtime spawn approval is about the agent named in its
+resource id — so the event carries them now. A guard reads every publishing site
+in the tree and fails one whose payload cannot be filtered by agent.
+
 ## An artifact has to be announced twice
 
 A stored artifact appears in two places, and only one of them is obvious. The run

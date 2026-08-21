@@ -1607,6 +1607,37 @@ func (s *Server) reviewerApprovals(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
+
+// approvalEventPayload says which agent the decision was about.
+//
+// A trigger filters events by payload containment, and the guide offers
+// `{"agentId":"…"}` as the way to watch one agent — so an event that never
+// carries an agent id can never match such a filter. This one carried the
+// decision, the action and the reason: enough to read, and nothing to filter on.
+// A subscription to 승인 처리 for one agent was accepted, saved, and silent.
+//
+// The approval already knows. Its own payload carries the agent, task and run
+// that asked for it, and a runtime spawn approval is about the agent named in its
+// resource id. Both are put back into the event.
+func approvalEventPayload(item store.Approval, decision string) json.RawMessage {
+	fields := map[string]any{
+		"decision": decision, "action": item.Action, "reason": item.Reason,
+		"approvalId": item.ID, "resourceType": item.ResourceType, "resourceId": item.ResourceID,
+	}
+	var asked map[string]any
+	if err := json.Unmarshal(item.Payload, &asked); err == nil {
+		for _, key := range []string{"agentId", "taskId", "runId"} {
+			if value, ok := asked[key]; ok {
+				fields[key] = value
+			}
+		}
+	}
+	if item.ResourceType == "agent" {
+		fields["agentId"] = item.ResourceID
+	}
+	return eventPayload(fields)
+}
+
 func (s *Server) decideApproval(decision string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		u, _ := userFromContext(r.Context())
@@ -1644,7 +1675,7 @@ func (s *Server) decideApproval(decision string) http.HandlerFunc {
 		s.publishEvent(r.Context(), store.PlatformEvent{
 			Type: store.EventApprovalDecided, OwnerID: item.RequesterID,
 			SubjectType: item.ResourceType, SubjectID: item.ResourceID,
-			Payload: eventPayload(map[string]any{"decision": decision, "action": item.Action, "reason": item.Reason}),
+			Payload: approvalEventPayload(item, decision),
 		})
 		_ = s.store.CreateNotification(r.Context(), item.RequesterID, "approval", "승인 요청 "+decision, item.Reason, resourceURL)
 		writeJSON(w, 200, item)
