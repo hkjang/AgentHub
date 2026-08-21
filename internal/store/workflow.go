@@ -59,6 +59,7 @@ func (s *Store) UpsertWorkflow(ctx context.Context, ownerID string, item Workflo
 	}
 	item.OwnerID = ownerID
 	err := s.pool.QueryRow(ctx, `INSERT INTO agent_workflows(id,owner_id,name,description,mode,max_depth,max_agent_calls,max_tool_calls,max_duration_seconds,max_parallel_agents,definition,enabled) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(id) DO UPDATE SET name=excluded.name,description=excluded.description,mode=excluded.mode,max_depth=excluded.max_depth,max_agent_calls=excluded.max_agent_calls,max_tool_calls=excluded.max_tool_calls,max_duration_seconds=excluded.max_duration_seconds,max_parallel_agents=excluded.max_parallel_agents,definition=excluded.definition,enabled=excluded.enabled,updated_at=now() WHERE agent_workflows.owner_id=excluded.owner_id RETURNING id,owner_id,name,description,mode,max_depth,max_agent_calls,max_tool_calls,max_duration_seconds,max_parallel_agents,definition,enabled,created_at,updated_at`, item.ID, ownerID, item.Name, item.Description, item.Mode, item.MaxDepth, item.MaxAgentCalls, item.MaxToolCalls, item.MaxDurationSeconds, item.MaxParallelAgents, item.Definition, item.Enabled).Scan(&item.ID, &item.OwnerID, &item.Name, &item.Description, &item.Mode, &item.MaxDepth, &item.MaxAgentCalls, &item.MaxToolCalls, &item.MaxDurationSeconds, &item.MaxParallelAgents, &item.Definition, &item.Enabled, &item.CreatedAt, &item.UpdatedAt)
+	err = conflictIfTaken(err, "같은 이름의 워크플로가 이미 있습니다. 다른 이름을 쓰세요")
 	if errors.Is(err, pgx.ErrNoRows) {
 		return item, ErrNotFound
 	}

@@ -1,9 +1,12 @@
 package store
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // A column added to userColumns and forgotten in one of the scans does not fail
@@ -46,5 +49,29 @@ func TestNobodyScansASharedColumnListByHand(t *testing.T) {
 				t.Errorf("%s scans a shared column list by hand (%s…); use scanTargets() so a new column reaches it", name, byHand[:24])
 			}
 		}
+	}
+}
+
+// Postgres reports a reused name as `duplicate key value violates unique
+// constraint "agent_definitions_owner_id_name_key" (SQLSTATE 23505)`, and that
+// string went to the person who had simply picked a name somebody else's agent
+// already had — a schema detail, in English, presented as a platform failure.
+func TestAReusedNameIsAConflictAndNotAServerError(t *testing.T) {
+	taken := &pgconn.PgError{Code: "23505", Message: `duplicate key value violates unique constraint "agent_definitions_owner_id_name_key"`}
+	err := conflictIfTaken(taken, "같은 이름의 에이전트가 이미 있습니다")
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("a unique violation was not recognised: %v", err)
+	}
+	if strings.Contains(err.Error(), "23505") || strings.Contains(err.Error(), "unique constraint") {
+		t.Errorf("the database's own words reached the message: %q", err.Error())
+	}
+	// Everything else has to pass through untouched, including nil: a caller that
+	// wrapped every failure as a name collision would hide real ones.
+	other := errors.New("connection refused")
+	if got := conflictIfTaken(other, "이름 중복"); !errors.Is(got, other) || errors.Is(got, ErrConflict) {
+		t.Errorf("an unrelated failure was relabelled: %v", got)
+	}
+	if conflictIfTaken(nil, "이름 중복") != nil {
+		t.Error("success was turned into a failure")
 	}
 }

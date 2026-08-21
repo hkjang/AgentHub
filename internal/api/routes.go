@@ -136,6 +136,12 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item, err := s.store.CreateAgent(r.Context(), u.ID, input)
+	if errors.Is(err, store.ErrConflict) {
+		// A reused name is the person's to fix, and the database's own words for it
+		// are not something anybody can act on.
+		writeStoreError(w, err)
+		return
+	}
 	if err != nil {
 		s.logger.Warn("create agent failed", "error", err, "user", u.ID)
 		writeError(w, 400, "agent_create_failed", err.Error())

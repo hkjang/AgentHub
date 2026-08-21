@@ -74,7 +74,7 @@ func (s *Store) PutPersonalSecret(ctx context.Context, userID, name, kind, value
 	err = s.pool.QueryRow(ctx, `INSERT INTO personal_secrets(id,user_id,name,kind,encrypted_value,key_version) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,name,kind,key_version,last_used_at,created_at,updated_at`, id, userID, name, kind, encrypted, version).Scan(
 		&item.ID, &item.Name, &item.Kind, &item.KeyVersion, &item.LastUsedAt, &item.CreatedAt, &item.UpdatedAt,
 	)
-	return item, err
+	return item, conflictIfTaken(err, "같은 이름의 개인 시크릿이 이미 있습니다. 다른 이름을 쓰세요")
 }
 
 func (s *Store) DeletePersonalSecret(ctx context.Context, userID, id string) error {

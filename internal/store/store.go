@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5/pgconn"
 	"strings"
 	"time"
 
@@ -24,6 +25,22 @@ var ErrNotFound = errors.New("not found")
 // caller's mistake to fix, and answering 500 for it both misleads the caller and
 // logs a server fault that never happened.
 var ErrConflict = errors.New("conflict")
+
+// conflictIfTaken turns a unique-constraint violation into ErrConflict with a
+// message somebody can act on.
+//
+// Postgres reports it as `duplicate key value violates unique constraint
+// "agent_definitions_owner_id_name_key" (SQLSTATE 23505)`, and that string went
+// to the person who had simply reused a name — a database schema detail, in
+// English, presented as a failure of the platform rather than as a choice they
+// could change.
+func conflictIfTaken(err error, message string) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return fmt.Errorf("%w: %s", ErrConflict, message)
+	}
+	return err
+}
 
 type Store struct {
 	pool   *pgxpool.Pool

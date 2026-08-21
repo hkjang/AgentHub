@@ -1371,6 +1371,14 @@ Members see their department's budget next to their own. Being refused by a limi
 the console never displayed is how a quota becomes a mystery, and the mystery is
 more expensive than the limit.
 
+A reused name is the same kind of answer everywhere else too. Postgres reports it
+as `duplicate key value violates unique constraint
+"agent_definitions_owner_id_name_key" (SQLSTATE 23505)`, and that string went
+straight to the person who had simply picked a name one of their agents already
+had — a schema detail, in English, presented as a failure of the platform rather
+than as a choice they could change. Agents, workspaces, workflows, test sets and
+personal secrets all answer 409 with a sentence naming what is taken.
+
 Department ids are derived from names, which means two names can slug to one id.
 An upsert would have let a newly created department silently rewrite an existing
 one's limits while its members went on pointing at it, so a create that collides

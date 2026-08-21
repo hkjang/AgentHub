@@ -290,6 +290,7 @@ func (s *Store) CreateWorkspace(ctx context.Context, ownerID string, item Worksp
 		item.GitCredentialKind = "token"
 	}
 	err := s.pool.QueryRow(ctx, `INSERT INTO workspaces(id,owner_id,name,type,size_gb,repository_url,branch,pvc_name,status,git_credential_secret_id,git_credential_kind,git_credential_username) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'ready',$9,$10,$11) RETURNING status,created_at,updated_at`, item.ID, item.OwnerID, item.Name, item.Type, item.SizeGB, item.RepositoryURL, item.Branch, item.PVCName, item.GitCredentialSecretID, item.GitCredentialKind, item.GitCredentialUsername).Scan(&item.Status, &item.CreatedAt, &item.UpdatedAt)
+	err = conflictIfTaken(err, "같은 이름의 작업공간이 이미 있습니다. 다른 이름을 쓰세요")
 	return item, err
 }
 
@@ -365,6 +366,7 @@ func (s *Store) RestoreWorkspaceSnapshot(ctx context.Context, ownerID, snapshotI
 	}
 	item := Workspace{ID: uuid.NewString(), OwnerID: ownerID, Name: name, Type: "snapshot", SizeGB: source.SizeGB, PVCName: "workspace-" + uuid.NewString()[:8], SourceSnapshotID: &snapshot.ID, Status: "ready"}
 	err = s.pool.QueryRow(ctx, `INSERT INTO workspaces(id,owner_id,name,type,size_gb,pvc_name,source_snapshot_id,status) VALUES($1,$2,$3,'snapshot',$4,$5,$6,'ready') RETURNING created_at,updated_at`, item.ID, item.OwnerID, item.Name, item.SizeGB, item.PVCName, snapshot.ID).Scan(&item.CreatedAt, &item.UpdatedAt)
+	err = conflictIfTaken(err, "같은 이름의 작업공간이 이미 있습니다. 다른 이름을 쓰세요")
 	return item, err
 }
 
@@ -627,7 +629,7 @@ func (s *Store) CreateAgent(ctx context.Context, ownerID string, input CreateAge
 	}
 	var item Agent
 	err := s.pool.QueryRow(ctx, `INSERT INTO agent_definitions(id,owner_id,template_id,name,description,runtime_type,runtime_profile_id,workspace_id,mcp_bundle_id,model_endpoint_id,security_profile_id,network_profile_id,system_prompt,spec,runtime_image_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id,owner_id,name,description,runtime_type,runtime_profile_id,runtime_image_id,security_profile_id,network_profile_id,mcp_bundle_id,model_endpoint_id,workspace_id,version,spec,created_at,updated_at`, id, ownerID, nullText(input.TemplateID), input.Name, input.Description, input.RuntimeType, nullText(input.RuntimeProfileID), nullText(input.WorkspaceID), nullText(input.MCPBundleID), nullText(input.ModelEndpointID), input.SecurityProfileID, input.NetworkProfileID, input.SystemPrompt, spec, nullText(input.RuntimeImageID)).Scan(&item.ID, &item.OwnerID, &item.Name, &item.Description, &item.RuntimeType, &item.RuntimeProfileID, &item.RuntimeImageID, &item.SecurityProfileID, &item.NetworkProfileID, &item.MCPBundleID, &item.ModelEndpointID, &item.WorkspaceID, &item.Version, &item.Spec, &item.CreatedAt, &item.UpdatedAt)
-	return item, err
+	return item, conflictIfTaken(err, "같은 이름의 에이전트가 이미 있습니다. 다른 이름을 쓰세요")
 }
 
 // UpdateAgent rewrites an agent definition and bumps its version. The runtime

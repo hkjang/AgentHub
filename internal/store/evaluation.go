@@ -61,6 +61,7 @@ func (s *Store) UpsertEvaluationTestSet(ctx context.Context, ownerID string, ite
 	}
 	item.OwnerID = ownerID
 	err := s.pool.QueryRow(ctx, `INSERT INTO evaluation_test_sets(id,owner_id,name,description,pass_threshold,cases) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(id) DO UPDATE SET name=excluded.name,description=excluded.description,pass_threshold=excluded.pass_threshold,cases=excluded.cases,updated_at=now() WHERE evaluation_test_sets.owner_id=excluded.owner_id RETURNING id,owner_id,name,description,pass_threshold,cases,created_at,updated_at`, item.ID, ownerID, item.Name, item.Description, item.PassThreshold, item.Cases).Scan(&item.ID, &item.OwnerID, &item.Name, &item.Description, &item.PassThreshold, &item.Cases, &item.CreatedAt, &item.UpdatedAt)
+	err = conflictIfTaken(err, "같은 이름의 테스트 세트가 이미 있습니다. 다른 이름을 쓰세요")
 	if errors.Is(err, pgx.ErrNoRows) {
 		return item, ErrNotFound
 	}
