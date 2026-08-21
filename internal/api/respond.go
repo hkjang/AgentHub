@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/hkjang/AgentHub/internal/quota"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -41,6 +42,13 @@ func writeStoreError(w http.ResponseWriter, err error) {
 	}
 	if errors.Is(err, store.ErrConflict) {
 		writeError(w, http.StatusConflict, "conflict", err.Error())
+		return
+	}
+	// A limit that says no is an answer, not a fault. Reporting it as a server
+	// error told the person their request had broken something and told the
+	// operator to go looking for a bug that was not there.
+	if errors.Is(err, quota.ErrExceeded) {
+		writeError(w, http.StatusConflict, "quota_exceeded", err.Error())
 		return
 	}
 	slog.Error("store or runtime operation failed", "error", err)

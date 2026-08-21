@@ -1,6 +1,31 @@
 package quota
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
+
+// ErrExceeded marks a refusal by a limit rather than a failure to evaluate one.
+//
+// Callers have to tell the two apart: a limit that says no is the answer and
+// belongs in front of the person, while a database that could not be read is not
+// an answer at all and must not be turned into one. Without a sentinel every
+// caller was left comparing message text, or treating both the same.
+var ErrExceeded = errors.New("quota exceeded")
+
+// Exceeded carries the sentence somebody reads. It answers errors.Is for
+// ErrExceeded without putting the sentinel's own words in front of the message —
+// err.Error() is printed by more places than the one that classifies it, and
+// "quota exceeded: 사용자 Runtime Quota…" is the sentinel leaking into the console.
+type Exceeded struct{ Message string }
+
+func (e Exceeded) Error() string { return e.Message }
+
+func (e Exceeded) Is(target error) bool { return target == ErrExceeded }
+
+func exceeded(format string, args ...any) error {
+	return Exceeded{Message: fmt.Sprintf(format, args...)}
+}
 
 // Who a limit applies to.
 //
@@ -99,13 +124,13 @@ type Held struct {
 func CheckHeld(scope string, limits Limits, held Held, addCPU, addMemory int) error {
 	who := scopeName(scope)
 	if limits.MaxRuntimes > 0 && held.Runtimes+1 > limits.MaxRuntimes {
-		return fmt.Errorf("%s Runtime Quota(%d개)를 초과합니다", who, limits.MaxRuntimes)
+		return exceeded("%s Runtime Quota(%d개)를 초과합니다", who, limits.MaxRuntimes)
 	}
 	if limits.MaxCPUMillis > 0 && held.CPUMillis+addCPU > limits.MaxCPUMillis {
-		return fmt.Errorf("%s CPU Quota(%dm)를 초과합니다", who, limits.MaxCPUMillis)
+		return exceeded("%s CPU Quota(%dm)를 초과합니다", who, limits.MaxCPUMillis)
 	}
 	if limits.MaxMemoryMB > 0 && held.MemoryMB+addMemory > limits.MaxMemoryMB {
-		return fmt.Errorf("%s Memory Quota(%dMB)를 초과합니다", who, limits.MaxMemoryMB)
+		return exceeded("%s Memory Quota(%dMB)를 초과합니다", who, limits.MaxMemoryMB)
 	}
 	return nil
 }

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hkjang/AgentHub/internal/policy"
+	"github.com/hkjang/AgentHub/internal/quota"
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/store"
 )
@@ -50,6 +52,15 @@ func (o *Orchestrator) acquireRuntime(ctx context.Context, run store.AgentRun, a
 	spec, instance, err := o.runtimeSpec(ctx, agent, existing, errors.Is(err, store.ErrNotFound))
 	if err != nil {
 		return nil, err
+	}
+	// Starting a runtime from a task went around both the limits and the rules
+	// that govern starting one from the console. A person held to three runtimes
+	// could hold thirty by scheduling them, and an agent a policy forbids anyone
+	// from starting could be started by its own nightly job. Neither was decided;
+	// the interactive path grew the checks and this one never picked them up.
+	if refusal := o.runtimeRefusal(ctx, agent, spec.Profile.ID); refusal != "" {
+		o.event(ctx, run, "runtime.refused", refusal, map[string]any{"agentId": agent.ID})
+		return nil, errors.New(refusal)
 	}
 	o.event(ctx, run, "runtime.acquiring", "Runtime을 시작합니다.", map[string]any{"runtimeId": instance.ID, "runtimeType": agent.RuntimeType})
 
@@ -169,4 +180,54 @@ func isReady(phase string) bool {
 		return true
 	}
 	return false
+}
+
+// runtimeRefusal applies to a task's runtime the same two questions the console
+// asks before starting one: is the owner (and their department) within the
+// limits they were given, and does the platform's policy allow this agent to
+// start at all.
+//
+// A refusal that cannot be evaluated is not a refusal. Both checks follow the
+// rule the quota and the promotion gate already follow — a transient failure to
+// read them lets the work through, because turning a query error into a blocked
+// deployment is worse than the thing being guarded against.
+func (o *Orchestrator) runtimeRefusal(ctx context.Context, agent store.Agent, profileID string) string {
+	if err := o.store.CheckRuntimeQuota(ctx, agent.OwnerID, profileID); err != nil {
+		if errors.Is(err, quota.ErrExceeded) {
+			// The message already names the scope that refused — 사용자 or 부서 — which
+			// is the part that decides what somebody does about it.
+			return err.Error()
+		}
+		o.logger.Warn("runtime quota is unreadable; starting the runtime", "agent", agent.ID, "error", err)
+		return ""
+	}
+	var document policy.Document
+	if err := o.store.Setting(ctx, policy.SettingKey, &document); err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			o.logger.Warn("policy document is unreadable; starting the runtime", "agent", agent.ID, "error", err)
+		}
+		return ""
+	}
+	if len(document.Rules) == 0 {
+		return ""
+	}
+	owner, err := o.store.UserByID(ctx, agent.OwnerID)
+	if err != nil {
+		o.logger.Warn("runtime owner is unreadable; starting the runtime", "agent", agent.ID, "error", err)
+		return ""
+	}
+	decision := policy.Evaluate(document, policy.Request{
+		Action: policy.ActionRuntimeStart, Role: owner.Role, User: owner.Username, UserID: owner.ID,
+		Agent: agent.Name, AgentID: agent.ID,
+	})
+	if decision.Allowed() {
+		return ""
+	}
+	reason := strings.TrimSpace(decision.Reason)
+	if reason == "" {
+		reason = "플랫폼 정책이 이 Agent의 Runtime 시작을 허용하지 않습니다."
+	}
+	o.store.Audit(ctx, &owner, "policy."+policy.ActionRuntimeStart, "policy", decision.RuleID, "denied", "",
+		map[string]any{"effect": decision.Effect, "agent": agent.Name, "agentId": agent.ID})
+	return reason
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/hkjang/AgentHub/internal/policy"
 	"github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/store"
 )
@@ -33,7 +34,22 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_name", "Agent 이름은 1~80자여야 합니다.")
 		return
 	}
+	// `agent.update` is one of the actions the policy screen offers, and it was
+	// evaluated nowhere: an administrator could write "이 역할은 에이전트를 수정할 수
+	// 없다", see it saved, and watch that role go on editing agents. A rule in the
+	// engine that no code asks about is worse than no rule, because the screen
+	// says it is in force.
+	if refusal := policyRefusal(s.decide(r, u, policy.Request{
+		Action: policy.ActionAgentUpdate, Agent: input.Name, AgentID: chi.URLParam(r, "id"),
+	})); refusal != "" {
+		writeError(w, http.StatusForbidden, "policy_denied", refusal)
+		return
+	}
 	item, err := s.store.UpdateAgent(r.Context(), chi.URLParam(r, "id"), u.ID, u.Role == "admin", input)
+	if errors.Is(err, store.ErrConflict) {
+		writeStoreError(w, err)
+		return
+	}
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeStoreError(w, err)

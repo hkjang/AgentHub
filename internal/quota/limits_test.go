@@ -1,6 +1,7 @@
 package quota
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -102,5 +103,30 @@ func TestADepartmentHoldsTwoDifferentLimits(t *testing.T) {
 	member := Resolve(Limits{MaxRuntimes: 2}, department.PerMember, Limits{})
 	if member.MaxRuntimes != 4 {
 		t.Errorf("member limit = %d, want the department's per-member value", member.MaxRuntimes)
+	}
+}
+
+// A limit that says no and a database that could not be read are different
+// answers, and only one of them belongs in front of a person. Callers were left
+// comparing message text until this could be asked directly.
+func TestARefusalIsDistinguishableFromAFailureToCheck(t *testing.T) {
+	refusal := CheckHeld(ScopeUser, Limits{MaxRuntimes: 1}, Held{Runtimes: 1}, 0, 0)
+	if !errors.Is(refusal, ErrExceeded) {
+		t.Fatalf("a limit's refusal is not recognisable: %v", refusal)
+	}
+	// And the sentence stays the sentence: err.Error() is printed by more places
+	// than the one that classifies it, so the sentinel must not appear in it.
+	if strings.Contains(refusal.Error(), "quota exceeded") {
+		t.Errorf("the sentinel leaked into the message: %q", refusal.Error())
+	}
+	if !strings.Contains(refusal.Error(), "사용자") {
+		t.Errorf("the refusal no longer names the scope: %q", refusal.Error())
+	}
+	// Something that is not a refusal must not answer to the sentinel.
+	if errors.Is(errors.New("connection refused"), ErrExceeded) {
+		t.Error("an unrelated error was recognised as a quota refusal")
+	}
+	if err := CheckHeld(ScopeUser, Limits{MaxRuntimes: 5}, Held{Runtimes: 1}, 0, 0); err != nil {
+		t.Errorf("a request inside the limit was refused: %v", err)
 	}
 }

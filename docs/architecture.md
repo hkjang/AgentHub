@@ -1308,6 +1308,29 @@ fails if what arrives is a sentence about a screenshot rather than a PNG.
 
 ## The way around the rules
 
+Three more of the same shape turned up by asking, of each control, which paths
+actually consult it.
+
+Starting a runtime from a task consulted neither the runtime quota nor the
+`runtime.start` policy, both of which the console applies before starting one. A
+person limited to three runtimes could hold thirty by scheduling them. Neither
+omission was a decision: the interactive path accumulated the checks and the
+autonomous one never picked them up.
+
+`agent.update` was offered by the policy screen and evaluated nowhere. An
+administrator could write a rule forbidding a role from editing agents, watch it
+save, and watch that role go on editing them. A rule in the engine that no code
+asks about is worse than no rule, because the screen says it is in force.
+
+And a quota refusal was reported as a server error. It was indistinguishable from
+a database failure — the same string, the same 500 — so the platform told the
+person their request had broken something and told the operator to look for a bug
+that was not there. Refusals now carry a sentinel that answers `errors.Is`
+without putting its own words in the sentence, the way conflicts already did, and
+arrive as 409 with the limit that refused.
+
+
+
 The policy engine was consulted when a person queued a task from the console, and
 nowhere else. A schedule, a webhook, an event or another agent went straight to
 the store — so a nightly job created by somebody whose permission was later
