@@ -88,7 +88,11 @@ export type AgentTask = {
   id: string; agentId: string; agentName?: string; title: string; input: string; priority: string
   status: string; source: string; triggerId?: string; attempts: number; scheduledAt: string
   parentTaskId?: string; delegationDepth: number; approvalId?: string
-  currentRunId?: string; lastError: string; createdAt: string; updatedAt: string
+  currentRunId?: string; lastError: string
+  // Why the task is queued rather than running — a quota it is waiting behind.
+  // Separate from lastError because waiting is not failing.
+  waitingReason?: string
+  createdAt: string; updatedAt: string
 }
 export type Metering = '' | 'gateway' | 'agent' | 'context_only' | 'unmetered'
 export type AgentRun = {

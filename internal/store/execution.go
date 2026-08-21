@@ -228,8 +228,12 @@ type AgentTask struct {
 	Delegation   int        `json:"delegationDepth"`
 	ApprovalID   *string    `json:"approvalId,omitempty"`
 	LastError    string     `json:"lastError"`
-	CreatedAt    time.Time  `json:"createdAt"`
-	UpdatedAt    time.Time  `json:"updatedAt"`
+	// WaitingReason is why the task is queued rather than running — a quota it is
+	// waiting behind. Kept apart from LastError because waiting is not failing,
+	// and because a defer must not erase the message from an attempt that did.
+	WaitingReason string    `json:"waitingReason,omitempty"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
 }
 
 type AgentRun struct {
@@ -447,21 +451,34 @@ func (s *Store) CreateAgentTask(ctx context.Context, input CreateTaskInput) (Age
 	var item AgentTask
 	err := s.pool.QueryRow(ctx, `INSERT INTO agent_tasks(id,agent_id,owner_id,title,input,priority,source,trigger_id,created_by,scheduled_at,deadline_at,parent_task_id,delegation_depth)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-		RETURNING id,agent_id,owner_id,title,input,priority,status,source,trigger_id,attempts,scheduled_at,deadline_at,current_run_id,parent_task_id,delegation_depth,approval_id,last_error,created_at,updated_at`,
+		RETURNING `+taskOwnColumns,
 		uuid.NewString(), input.AgentID, input.OwnerID, input.Title, input.Input, input.Priority, input.Source, input.TriggerID, nullText(input.CreatedBy), scheduled, input.DeadlineAt, input.ParentTaskID, input.Delegation).
-		Scan(&item.ID, &item.AgentID, &item.OwnerID, &item.Title, &item.Input, &item.Priority, &item.Status, &item.Source, &item.TriggerID, &item.Attempts, &item.ScheduledAt, &item.DeadlineAt, &item.CurrentRunID, &item.ParentTaskID, &item.Delegation, &item.ApprovalID, &item.LastError, &item.CreatedAt, &item.UpdatedAt)
+		Scan(item.scanTargets()...)
 	return item, err
 }
 
-// taskCoreColumns are the task's own fields; scanTask additionally expects the
-// agent name, which the listing joins and the claim query sub-selects.
-const taskCoreColumns = `t.id,t.agent_id,t.owner_id,t.title,t.input,t.priority,t.status,t.source,t.trigger_id,t.attempts,t.scheduled_at,t.deadline_at,t.current_run_id,t.parent_task_id,t.delegation_depth,t.approval_id,t.last_error,t.created_at,t.updated_at`
+// taskOwnColumns are the task's own fields, unprefixed, as the insert returns
+// them; taskCoreColumns is the same list qualified for the queries that join the
+// agent. scanTask additionally expects the agent name.
+const taskOwnColumns = `id,agent_id,owner_id,title,input,priority,status,source,trigger_id,attempts,scheduled_at,deadline_at,current_run_id,parent_task_id,delegation_depth,approval_id,last_error,waiting_reason,created_at,updated_at`
 
-const taskColumns = taskCoreColumns + `,a.name`
+var taskCoreColumns = prefixColumns("t", taskOwnColumns)
+
+var taskColumns = taskCoreColumns + `, a.name`
+
+// scanTargets is where taskOwnColumns lands, in that order. The insert reads the
+// same columns back and cannot use scanTask, so it goes through here — the third
+// column list in this package to have been spelled out twice, and the second to
+// have broken something when one copy was updated and the other was not.
+func (t *AgentTask) scanTargets() []any {
+	return []any{&t.ID, &t.AgentID, &t.OwnerID, &t.Title, &t.Input, &t.Priority, &t.Status, &t.Source,
+		&t.TriggerID, &t.Attempts, &t.ScheduledAt, &t.DeadlineAt, &t.CurrentRunID, &t.ParentTaskID,
+		&t.Delegation, &t.ApprovalID, &t.LastError, &t.WaitingReason, &t.CreatedAt, &t.UpdatedAt}
+}
 
 func scanTask(row pgx.Row) (AgentTask, error) {
 	var item AgentTask
-	err := row.Scan(&item.ID, &item.AgentID, &item.OwnerID, &item.Title, &item.Input, &item.Priority, &item.Status, &item.Source, &item.TriggerID, &item.Attempts, &item.ScheduledAt, &item.DeadlineAt, &item.CurrentRunID, &item.ParentTaskID, &item.Delegation, &item.ApprovalID, &item.LastError, &item.CreatedAt, &item.UpdatedAt, &item.AgentName)
+	err := row.Scan(append(item.scanTargets(), &item.AgentName)...)
 	return item, err
 }
 
@@ -529,7 +546,8 @@ func (s *Store) ClaimAgentTask(ctx context.Context, workerID string, lease time.
 			LIMIT 1
 		)
 		UPDATE agent_tasks t
-		SET status='running', claimed_by=$1, claimed_until=now() + $2::interval, attempts=t.attempts+1, updated_at=now()
+		SET status='running', claimed_by=$1, claimed_until=now() + $2::interval, attempts=t.attempts+1,
+		    waiting_reason='', updated_at=now()
 		FROM claimed
 		WHERE t.id = claimed.id
 		RETURNING ` + taskCoreColumns + `, (SELECT name FROM agent_definitions WHERE id=t.agent_id)`
@@ -608,7 +626,7 @@ func (s *Store) ResolveHandoffTask(ctx context.Context, taskID, ownerID, status,
 // how many moved, so the person who lifted the block is told what it started.
 func (s *Store) ReleaseBlockedTasks(ctx context.Context, agentID string) (int, error) {
 	tag, err := s.pool.Exec(ctx, `UPDATE agent_tasks
-		SET status='queued', last_error='', scheduled_at=now(), updated_at=now()
+		SET status='queued', last_error='', waiting_reason='', scheduled_at=now(), updated_at=now()
 		WHERE agent_id=$1 AND status='blocked'`, agentID)
 	if err != nil {
 		return 0, err
@@ -632,7 +650,7 @@ func (s *Store) RequeueAgentTask(ctx context.Context, taskID, ownerID string, fr
 	if fresh {
 		checkpoint = `checkpoint_after=now()`
 	}
-	query := `UPDATE agent_tasks SET status='queued',attempts=0,scheduled_at=now(),last_error='',claimed_by='',claimed_until=NULL,` + checkpoint + `,updated_at=now()
+	query := `UPDATE agent_tasks SET status='queued',attempts=0,scheduled_at=now(),last_error='',waiting_reason='',claimed_by='',claimed_until=NULL,` + checkpoint + `,updated_at=now()
 		WHERE id=$1 AND owner_id=$2 AND status IN ('failed','dead_letter','cancelled') RETURNING id`
 	var id string
 	if err := s.pool.QueryRow(ctx, query, taskID, ownerID).Scan(&id); err != nil {

@@ -222,9 +222,14 @@ func (s *Store) ReserveExecutionSlot(ctx context.Context, task AgentTask, scope 
 }
 
 // deferTaskSQL is shared by the reservation and the standalone defer.
+//
+// The reason goes in waiting_reason rather than last_error. Waiting is not
+// failing: written to the same column, a task queued behind a colleague's work
+// appeared in the console styled as a failure, and a task that really had failed
+// once lost that message the moment a later attempt was deferred.
 const deferTaskSQL = `UPDATE agent_tasks
 	SET status='queued', scheduled_at=now() + $2::interval, attempts=GREATEST(attempts - 1, 0),
-	    claimed_by='', claimed_until=NULL, last_error=$3, updated_at=now()
+	    claimed_by='', claimed_until=NULL, waiting_reason=$3, updated_at=now()
 	WHERE id=$1`
 
 // DeferAgentTask puts a claimed task back on the queue without spending an

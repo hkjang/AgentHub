@@ -1367,6 +1367,14 @@ owner's, always in that order — because two members claiming in the same insta
 would each see the other absent, which is the race the per-owner lock already
 existed to close, one level up.
 
+Waiting and failing are kept in different columns. A deferred task wrote its
+reason into `last_error`, which said two wrong things at once: a task queued
+behind a colleague's work appeared among the failures, and a task that had
+genuinely failed lost that message the moment a later attempt was deferred. They
+are separate fields now, shown separately — and the failure note, which had been
+losing a specificity contest with the row's own styling since the markup was
+written, is finally the colour it was always meant to be.
+
 Members see their department's budget next to their own. Being refused by a limit
 the console never displayed is how a quota becomes a mystery, and the mystery is
 more expensive than the limit.

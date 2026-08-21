@@ -206,6 +206,9 @@ export function Tasks() {
               <td>
                 <div className="agent-main">
                   <strong>{task.title}</strong>
+                  {/* Waiting and failing read differently because they are
+                      different: one clears by itself, the other needs somebody. */}
+                  {task.waitingReason && <span className="task-waiting" title={task.waitingReason}>{task.waitingReason}</span>}
                   {task.lastError && <span className="task-error" title={task.lastError}>{task.lastError}</span>}
                 </div>
               </td>
