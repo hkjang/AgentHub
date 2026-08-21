@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { AlertTriangle, Coins, Download, Gauge, RefreshCw, ShieldAlert, Users } from 'lucide-react'
+import { AlertTriangle, Coins, Download, Gauge, RefreshCw, ShieldAlert, Stethoscope, Users } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { ErrorBanner, Loading, PageHeader, statusLabel } from '../components/UI'
@@ -137,6 +137,8 @@ export function AdminInsights() {
       <ShieldAlert size={16} /><span>실행이 중지되어 있습니다{overview.paused.reason ? ` — ${overview.paused.reason}` : ''}{overview.paused.by ? ` (${overview.paused.by})` : ''}. 대기 중인 작업은 재개할 때까지 실행되지 않습니다.</span>
     </Link>}
 
+    <Readiness />
+
     <section className="kpi-row">
       <article><span>실행 성공률</span><strong>{execution.completed + execution.failed + execution.deadLetter > 0 ? `${execution.successRate.toFixed(1)}%` : '—'}</strong><small>완료 {number(execution.completed)} · 실패 {number(execution.failed + execution.deadLetter)}</small></article>
       <article><span>실행 소요</span><strong>{duration(execution.medianDurationMs)}</strong><small>중앙값 · p95 {duration(execution.p95DurationMs)}</small></article>
@@ -224,4 +226,50 @@ export function AdminInsights() {
       </div>
     </section>
   </div>
+}
+
+type ReadinessItem = { area: string; name: string; verdict: string; detail: string; fix: string }
+
+/**
+ * Everything this deployment depends on, asked at once.
+ *
+ * Each of these can be asked on the screen where it is configured, which is the
+ * right place to fix one and the wrong place to discover that three are broken.
+ * It runs on a button rather than on arrival: every row is a network call to
+ * somebody else's service, and a screen that quietly probes five external
+ * systems on every load is a screen that gets blamed for their outages.
+ */
+function Readiness() {
+  const [items, setItems] = useState<ReadinessItem[]>()
+  const [problems, setProblems] = useState(0)
+  const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState('')
+  const ask = async () => {
+    setBusy(true); setFailed('')
+    try {
+      const result = await api.post<{ items: ReadinessItem[]; problems: number }>('/api/v1/admin/readiness')
+      setItems(result.items); setProblems(result.problems)
+    } catch (e) { setFailed(e instanceof Error ? e.message : '점검하지 못했습니다.') }
+    finally { setBusy(false) }
+  }
+  return <section className="panel readiness">
+    <div className="panel-header">
+      <div><h2>배포 점검</h2><p>클러스터, SSO, 모델 엔드포인트, MCP 서버에게 지금 동작하는지 직접 물어봅니다.</p></div>
+      <button className="button ghost" disabled={busy} onClick={() => void ask()}>
+        <Stethoscope size={16} />{busy ? '점검 중…' : '지금 점검'}
+      </button>
+    </div>
+    {failed && <p className="readiness-empty">{failed}</p>}
+    {items && (items.length === 0
+      ? <p className="readiness-empty">점검할 의존성이 아직 없습니다. Kubernetes 연결과 모델 엔드포인트를 먼저 등록하세요.</p>
+      : <>
+        <p className="readiness-summary">{problems === 0 ? `${items.length}가지 모두 정상입니다.` : `${items.length}가지 중 ${problems}가지에 문제가 있습니다.`}</p>
+        <ul className="readiness-list">{items.map((item) => (
+          <li key={`${item.area}-${item.name}`} className={item.verdict === 'ok' ? 'ok' : 'bad'}>
+            <Link to={item.fix}><b>{item.area}</b> {item.name}</Link>
+            <span>{item.detail}</span>
+          </li>
+        ))}</ul>
+      </>)}
+  </section>
 }

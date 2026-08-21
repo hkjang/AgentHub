@@ -714,3 +714,16 @@ tr.clickable:hover { background: #f7f9fc; }
 .cluster-check.warn { border-color: #f0dcae; background: #fffaf0; }
 .cluster-check.danger { border-color: #f0b6c2; background: #fff5f7; }
 .cluster-check.danger .cluster-check-detail { color: #a3283f; }
+
+/* Everything the deployment depends on, asked at once. */
+.readiness .panel-header { align-items: flex-start; }
+.readiness-summary { margin: 0 0 9px; font-size: 13px; font-weight: 600; color: #344054; }
+.readiness-empty { margin: 0; font-size: 12px; color: #8a95a5; }
+.readiness-list { display: flex; flex-direction: column; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.readiness-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 9px; padding: 9px 11px; border-radius: 9px; border: 1px solid #eef1f6; background: #fbfcfe; }
+.readiness-list li.ok { border-color: #d6efe1; background: #f8fdfa; }
+.readiness-list li.bad { border-color: #f0c3ce; background: #fff7f9; }
+.readiness-list a { flex: none; font-size: 12px; color: #344054; }
+.readiness-list a b { color: #101828; }
+.readiness-list span { flex: 1; min-width: 220px; font-size: 12px; color: #667085; }
+.readiness-list li.bad span { color: #a3283f; }

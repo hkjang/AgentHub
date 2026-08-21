@@ -261,6 +261,7 @@ func (s *Server) apiRoutes() []Route {
 		admin(http.MethodPost, "/admin/execution/pause", "Administration", "Pause or resume task execution", s.pauseExecution),
 		admin(http.MethodPut, "/admin/execution/retention", "Administration", "Set how long operational history is kept", s.putRetention),
 		admin(http.MethodPost, "/admin/execution/cleanup", "Administration", "Remove history past its retention, or count what would go", s.cleanupHistory),
+		admin(http.MethodPost, "/admin/readiness", "Administration", "Ask every dependency this deployment has whether it is working", s.readiness),
 		admin(http.MethodPost, "/admin/authentication/check", "Administration", "Ask the identity provider whether single sign-on is configured to work", s.authenticationCheck),
 		admin(http.MethodPost, "/admin/kubernetes/check", "Administration", "Ask the cluster whether it answers, holds the namespace and CRD, and permits what the platform does", s.clusterCheck),
 		admin(http.MethodPost, "/admin/mcp-servers/{id}/check", "Administration", "Ask an MCP server whether it answers, and what tools it offers", s.mcpServerCheck),
