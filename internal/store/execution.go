@@ -255,6 +255,9 @@ type AgentRun struct {
 	StepCount    int `json:"stepCount"`
 	ToolCalls    int `json:"toolCalls"`
 	TotalTokens  int `json:"totalTokens"`
+	// AgentName is filled in by listings, which join it so a page of runs reads
+	// as "which agent" rather than as a page of identifiers.
+	AgentName string `json:"agentName,omitempty"`
 	// Metering says who counted those tokens: the platform at its own model
 	// gateway, the agent reporting its own spend, only the agent's context
 	// occupancy, or nothing at all. Empty on runs that finished before this was
@@ -744,22 +747,60 @@ func (s *Store) AgentRunByID(ctx context.Context, id, ownerID string, admin bool
 	return item, err
 }
 
-func (s *Store) AgentRuns(ctx context.Context, ownerID, agentID, taskID string, limit int) ([]AgentRun, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 50
+// RunFilter narrows a run listing. Every field is optional; the zero value lists
+// the owner's most recent runs, which is what the screen opens on.
+type RunFilter struct {
+	AgentID  string
+	TaskID   string
+	Status   string
+	Metering string
+	// Since bounds how far back to look. Zero means no bound.
+	Since time.Time
+	Limit int
+	// AllOwners lists across the deployment. Only an administrator may ask.
+	AllOwners bool
+}
+
+// runListColumns qualifies the run's own columns and adds the agent's name, so a
+// listing reads as "which agent" rather than as a page of identifiers.
+var runListColumns = prefixColumns("r", runColumns) + ", a.name"
+
+// AgentRuns lists runs, most recent first.
+func (s *Store) AgentRuns(ctx context.Context, ownerID string, filter RunFilter) ([]AgentRun, error) {
+	if filter.Limit <= 0 || filter.Limit > 200 {
+		filter.Limit = 50
 	}
-	query := `SELECT ` + runColumns + ` FROM agent_runs WHERE owner_id=$1`
-	args := []any{ownerID}
-	if agentID != "" {
-		args = append(args, agentID)
-		query += fmt.Sprintf(` AND agent_id=$%d`, len(args))
+	query := `SELECT ` + runListColumns + ` FROM agent_runs r JOIN agent_definitions a ON a.id = r.agent_id WHERE true`
+	args := []any{}
+	add := func(clause string, value any) {
+		args = append(args, value)
+		query += fmt.Sprintf(clause, len(args))
 	}
-	if taskID != "" {
-		args = append(args, taskID)
-		query += fmt.Sprintf(` AND task_id=$%d`, len(args))
+	if !filter.AllOwners {
+		add(` AND r.owner_id=$%d`, ownerID)
 	}
-	args = append(args, limit)
-	query += fmt.Sprintf(` ORDER BY started_at DESC LIMIT $%d`, len(args))
+	if filter.AgentID != "" {
+		add(` AND r.agent_id=$%d`, filter.AgentID)
+	}
+	if filter.TaskID != "" {
+		add(` AND r.task_id=$%d`, filter.TaskID)
+	}
+	if filter.Status != "" {
+		add(` AND r.status=$%d`, filter.Status)
+	}
+	if filter.Metering != "" {
+		// "unmetered" in the console means "nothing of this run's cost is in any
+		// total", which is both of the values that mean nobody counted.
+		if filter.Metering == "unmetered" {
+			query += ` AND r.metering IN ('unmetered','context_only')`
+		} else {
+			add(` AND r.metering=$%d`, filter.Metering)
+		}
+	}
+	if !filter.Since.IsZero() {
+		add(` AND r.started_at >= $%d`, filter.Since)
+	}
+	add(` ORDER BY r.started_at DESC LIMIT $%d`, filter.Limit)
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -767,8 +808,8 @@ func (s *Store) AgentRuns(ctx context.Context, ownerID, agentID, taskID string, 
 	defer rows.Close()
 	items := []AgentRun{}
 	for rows.Next() {
-		item, err := scanRun(rows)
-		if err != nil {
+		var item AgentRun
+		if err := rows.Scan(append(item.scanTargets(), &item.AgentName)...); err != nil {
 			return nil, err
 		}
 		items = append(items, item)

@@ -19,6 +19,7 @@ const screens = [
   ['/agents', /에이전트|작업대/],
   ['/catalog', /카탈로그/],
   ['/tasks', /작업|일감/],
+  ['/runs', /실행 기록|작업 일지/],
   ['/workflows', /워크플로/],
   ['/workspaces', /작업공간|자료/],
   ['/workspaces/snapshots', /스냅샷/],

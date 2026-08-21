@@ -504,7 +504,7 @@ func (s *Server) task(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	runs, err := s.store.AgentRuns(r.Context(), item.OwnerID, "", item.ID, 20)
+	runs, err := s.store.AgentRuns(r.Context(), item.OwnerID, store.RunFilter{TaskID: item.ID, Limit: 20})
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -585,7 +585,18 @@ func (s *Server) taskCheckpoint(w http.ResponseWriter, r *http.Request) {
 func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	items, err := s.store.AgentRuns(r.Context(), u.ID, r.URL.Query().Get("agentId"), r.URL.Query().Get("taskId"), limit)
+	query := r.URL.Query()
+	filter := store.RunFilter{
+		AgentID: query.Get("agentId"), TaskID: query.Get("taskId"),
+		Status: query.Get("status"), Metering: query.Get("metering"), Limit: limit,
+		// Looking across the deployment is an administrator's view of somebody
+		// else's work, so it is asked for explicitly rather than implied by role.
+		AllOwners: u.Role == "admin" && query.Get("scope") == "all",
+	}
+	if days, _ := strconv.Atoi(query.Get("days")); days > 0 {
+		filter.Since = time.Now().UTC().AddDate(0, 0, -days)
+	}
+	items, err := s.store.AgentRuns(r.Context(), u.ID, filter)
 	if err != nil {
 		writeStoreError(w, err)
 		return

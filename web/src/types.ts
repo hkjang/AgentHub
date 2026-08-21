@@ -96,7 +96,7 @@ export type AgentTask = {
 }
 export type Metering = '' | 'gateway' | 'agent' | 'context_only' | 'unmetered'
 export type AgentRun = {
-  id: string; taskId: string; agentId: string; attempt: number; status: string; agentVersion: number
+  id: string; taskId: string; agentId: string; agentName?: string; attempt: number; status: string; agentVersion: number
   runtimeId?: string; modelName: string; traceId: string; workerId: string
   resumedSteps: number
   stepCount: number; toolCalls: number; totalTokens: number; metering?: Metering; durationMs: number

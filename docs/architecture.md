@@ -1379,6 +1379,15 @@ Members see their department's budget next to their own. Being refused by a limi
 the console never displayed is how a quota becomes a mystery, and the mystery is
 more expensive than the limit.
 
+Runs could only be reached one at a time, through the task that produced them.
+That answers "how did this task go" and nothing else, while the questions an
+operator actually arrives with are about the set: what failed today, which agent
+is spending, which runs nobody counted. Those are filters, and a filter needs a
+list, so there is one — status, metering, window and agent, composing, over the
+same run detail the task screen opens. Looking across other people's runs is an
+administrator's view of somebody else's work, so it is asked for explicitly
+rather than implied by the role.
+
 There is now a cheap net under all the console suites: sign in once, open all
 thirty screens, and insist each renders a heading and content with no uncaught
 error and no 5xx. The feature suites each drive one screen deeply, so none of

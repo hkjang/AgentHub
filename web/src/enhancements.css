@@ -665,3 +665,10 @@ tr.rule-off { opacity: .55; }
    failure note had been rendering in the same grey as everything else since the
    markup was introduced, and neither state was distinguishable from the other. */
 .agent-main .task-waiting,.task-waiting{color:#96610a;font-size:12px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* The filter bar over a run listing, and rows that open something. */
+.filter-row { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-bottom: 13px; }
+.filter-row select { padding: 7px 11px; border: 1px solid #dfe5ed; border-radius: 8px; background: #fff; color: #344054; font-size: 13px; }
+.filter-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #667085; }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover { background: #f7f9fc; }
