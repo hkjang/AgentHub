@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { Boxes, Bot, Network, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
+import { Boxes, Bot, Network, Pencil, Plus, Sparkles, Stethoscope, Trash2 } from "lucide-react";
 import { api } from "../api";
 import {
   ConfirmDialog,
@@ -72,6 +72,25 @@ export function AdminResources({ kind }: { kind: Kind }) {
   const [removing, setRemoving] = useState<Item | null>(null);
   const [removeBusy, setRemoveBusy] = useState(false);
   const [removeError, setRemoveError] = useState("");
+  // Whether each model endpoint is actually there. An address and a model name
+  // are otherwise only checked at the moment a task runs, which is usually at
+  // night, on somebody else's agent, as a failure that reads like the agent's.
+  const [checks, setChecks] = useState<Record<string, { verdict: string; detail: string }>>({});
+  const [checking, setChecking] = useState("");
+  const check = async (id: string) => {
+    setChecking(id);
+    try {
+      const result = await api.post<{ verdict: string; detail: string }>(`/api/v1/admin/models/${id}/check`);
+      setChecks((current) => ({ ...current, [id]: result }));
+    } catch (e) {
+      setChecks((current) => ({
+        ...current,
+        [id]: { verdict: "error", detail: e instanceof Error ? e.message : "확인하지 못했습니다." },
+      }));
+    } finally {
+      setChecking("");
+    }
+  };
   const load = useCallback(() =>
     api
       .get<{ items?: Item[] }>(`/api/v1/admin/${config.endpoint}`)
@@ -148,7 +167,22 @@ export function AdminResources({ kind }: { kind: Kind }) {
                   </div>
                 ))}
               </dl>
+              {kind === "models" && checks[String(item.id)] && (
+                <p className={`model-check ${checks[String(item.id)].verdict}`}>
+                  {checks[String(item.id)].detail}
+                </p>
+              )}
               <div className="card-actions">
+                {kind === "models" && (
+                  <button
+                    title="이 엔드포인트가 실제로 응답하는지, 지정한 모델을 제공하는지 확인합니다"
+                    disabled={checking === String(item.id)}
+                    onClick={() => void check(String(item.id))}
+                  >
+                    <Stethoscope size={15} />
+                    {checking === String(item.id) ? "확인 중…" : "연결 확인"}
+                  </button>
+                )}
                 <button title="수정" onClick={() => setSelected(item)}>
                   <Pencil size={15} />수정
                 </button>

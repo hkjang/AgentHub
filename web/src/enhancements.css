@@ -695,3 +695,10 @@ tr.clickable:hover { background: #f7f9fc; }
 .network-truth.warn { border-color: #f0dcae; background: #fffaf0; }
 .network-truth.danger { border-color: #f0b6c2; background: #fff5f7; }
 .network-truth.danger .network-truth-detail { color: #a3283f; }
+
+/* What a model endpoint answered when the platform asked. Named for what to fix
+   rather than coloured for pass or fail — most of these are one wrong field. */
+.model-check { margin: 9px 0 0; padding: 8px 11px; border-radius: 8px; font-size: 12px; line-height: 1.5; background: #f1f4f8; color: #475467; }
+.model-check.ok { background: #f4fbf7; color: #256b45; }
+.model-check.model_missing, .model-check.reachable { background: #fffaf0; color: #96610a; }
+.model-check.unauthorised, .model-check.wrong_path, .model-check.unreachable, .model-check.error, .model-check.unconfigured { background: #fff5f7; color: #a3283f; }

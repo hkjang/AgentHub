@@ -1306,6 +1306,23 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Asking the endpoint instead of the logs
+
+An administrator registers a base URL and a model name, and the platform finds
+out whether either is right at the moment a task runs — at night, on somebody
+else's agent, as a failure that reads like the agent's fault. In one window on
+the test deployment, forty-five of sixty-five failed runs were the same refused
+connection to a gateway that had stopped, and every one was reported as a task
+failure.
+
+The endpoint can be asked directly now, and asked the second question too:
+whether the model list it answers with contains the model somebody typed. A typo
+there is invisible until inference time and then surfaces as a provider error
+naming neither the setting nor the screen. Each answer is named for what to fix —
+the key, the suffix, the address, the model name — because "실패했습니다" is true of
+all of them and sends somebody to read logs instead of to the one field they got
+wrong.
+
 ## Settings that save and do nothing
 
 A settings screen that saves is a settings screen that works, until somebody
