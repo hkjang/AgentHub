@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ClipboardList, RefreshCw, Search } from 'lucide-react'
+import { ClipboardList, RefreshCw, RotateCcw, Search } from 'lucide-react'
 import { api } from '../api'
 import { useAuth } from '../App'
 import { Empty, ErrorBanner, Loading, PageHeader, StatusBadge } from '../components/UI'
-import { RunDrawer } from './Tasks'
+import { RetryDialog, RunDrawer } from './Tasks'
 import { useTerms } from '../viewmode'
 import { relativeTime } from '../runtime'
 import { metering as meteringOf } from '../metering'
-import type { Agent, AgentRun } from '../types'
+import type { Agent, AgentRun, AgentTask } from '../types'
 
 // Every attempt the platform has made, in one place.
 //
@@ -36,6 +36,8 @@ export function Runs() {
   const [searching, setSearching] = useState('')
   const [everyone, setEveryone] = useState(false)
   const [openRun, setOpenRun] = useState<string | null>(null)
+  // Finding the failure is half the job; the other half is running it again.
+  const [retrying, setRetrying] = useState<AgentTask | null>(null)
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
@@ -59,6 +61,19 @@ export function Runs() {
   useEffect(() => { void load() }, [load])
   useEffect(() => { api.get<{ items?: Agent[] }>('/api/v1/agents').then((v) => setAgents(v.items ?? [])).catch(() => setAgents([])) }, [])
 
+  const openRetry = async (run: AgentRun) => {
+    setError('')
+    try {
+      const result = await api.get<{ task: AgentTask }>(`/api/v1/tasks/${run.taskId}`)
+      setRetrying(result.task)
+    } catch (e) { setError(e instanceof Error ? e.message : '작업을 불러오지 못했습니다.') }
+  }
+  const retry = async (task: AgentTask, fresh: boolean) => {
+    setRetrying(null)
+    try { await api.post(`/api/v1/tasks/${task.id}/retry`, { fresh }); await load() }
+    catch (e) { setError(e instanceof Error ? e.message : '작업을 다시 실행하지 못했습니다.') }
+  }
+
   return <div className="page">
     <PageHeader eyebrow="실행" title={t('runs')} description="모든 시도를 한 화면에서 봅니다. 무엇이 실패했는지, 어느 에이전트가 쓰고 있는지, 어떤 실행이 계량되지 않았는지 걸러 볼 수 있습니다."
       actions={<button className="button ghost" onClick={() => void load()}><RefreshCw size={16} />새로고침</button>} />
@@ -80,7 +95,7 @@ export function Runs() {
     {!items ? <Loading /> : items.length === 0
       ? <Empty icon={<ClipboardList />} title="해당하는 실행이 없습니다" description="조건을 넓히거나 기간을 늘려 보세요." />
       : <section className="table-panel"><div className="table-wrap custom-scroll"><table>
-          <thead><tr><th>{t('agentSingular')}</th><th>상태</th><th>시작</th><th>소요</th><th>단계</th><th>도구</th><th>토큰</th><th>결과</th></tr></thead>
+          <thead><tr><th>{t('agentSingular')}</th><th>상태</th><th>시작</th><th>소요</th><th>단계</th><th>도구</th><th>토큰</th><th>결과</th><th aria-label="작업" /></tr></thead>
           <tbody>{items.map((run) => {
             const meterInfo = meteringOf(run.metering)
             return <tr key={run.id} className="clickable" onClick={() => setOpenRun(run.id)}>
@@ -93,10 +108,13 @@ export function Runs() {
               <td>{run.totalTokens.toLocaleString('ko-KR')}
                 {meterInfo && <span className={`metering-tag ${meterInfo.tone}`} title={meterInfo.hint}>{meterInfo.label}</span>}</td>
               <td className="muted-cell">{run.failureReason || run.result || '—'}</td>
+              <td><div className="row-actions">{run.status === 'failed' &&
+                <button title="이 실행의 작업을 다시 실행" onClick={(e) => { e.stopPropagation(); void openRetry(run) }}><RotateCcw size={15} /></button>}</div></td>
             </tr>
           })}</tbody>
         </table></div></section>}
     {openRun && <RunDrawer runId={openRun} close={() => setOpenRun(null)} />}
+    {retrying && <RetryDialog task={retrying} close={() => setRetrying(null)} retry={(fresh) => void retry(retrying, fresh)} />}
   </div>
 }
 

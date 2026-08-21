@@ -539,10 +539,9 @@ func (s *Server) retryTask(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.store.RequeueAgentTask(r.Context(), chi.URLParam(r, "id"), u.ID, input.Fresh)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusConflict, "task_not_retryable", "실패했거나 취소된 Task만 다시 실행할 수 있습니다.")
-			return
-		}
+		// A task in the wrong state answers with the state it is in; only a task
+		// that is genuinely somebody else's or gone is a 404. Answering "not found"
+		// to the first is how somebody comes to believe their task disappeared.
 		writeStoreError(w, err)
 		return
 	}

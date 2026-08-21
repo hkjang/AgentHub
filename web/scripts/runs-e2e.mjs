@@ -80,6 +80,24 @@ try {
   await page.getByLabel('검색').fill('')
   await rows()
 
+  // Finding the failure is half the job. A failed run offers to run its task
+  // again, with the same choice — from the beginning, or from where it stopped —
+  // that the task screen offers.
+  await select('상태', 'failed')
+  const retryButtons = await page.locator('tbody tr .row-actions button').count()
+  check('실패한 실행마다 다시 실행 단추가 있음', retryButtons > 0, `${retryButtons}개`)
+  if (retryButtons > 0) {
+    await page.locator('tbody tr .row-actions button').first().click()
+    const dialog = page.locator('.drawer-layer')
+    await dialog.waitFor({ timeout: 10000 })
+    const dialogText = (await dialog.innerText()).replace(/\n/g, ' ')
+    check('다시 실행 방식을 묻는 대화가 열림', /다시 실행할까요/.test(dialogText), dialogText.slice(0, 60))
+    check('처음부터와 이어서를 모두 제시', /처음부터/.test(dialogText) && /이어서/.test(dialogText))
+    await page.getByRole('button', { name: '취소' }).click()
+    await dialog.waitFor({ state: 'detached', timeout: 10000 })
+  }
+  await select('상태', '')
+
   // The same detail the task screen opens, reached from here.
   await page.locator('tbody tr').first().click()
   const drawer = page.locator('.drawer')

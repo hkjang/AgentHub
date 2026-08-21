@@ -1388,6 +1388,14 @@ same run detail the task screen opens. Looking across other people's runs is an
 administrator's view of somebody else's work, so it is asked for explicitly
 rather than implied by the role.
 
+Finding the failure is half the job, so a failed run offers to run its task again
+from where it was found, with the same from-the-beginning or from-here choice the
+task screen offers. And a task that cannot be retried now says which state it is
+in rather than answering "not found": the update matched nothing in two very
+different situations — the task is somebody else's or gone, or it is theirs and
+simply finished — and collapsing them is how somebody comes to believe their task
+disappeared.
+
 The listing counts itself, too: a page of two hundred rows says a lot happened
 and nothing about what, while the same rows grouped say whether one fault is
 repeating — the difference between reading them and fixing them. It is computed

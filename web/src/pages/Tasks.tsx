@@ -254,7 +254,7 @@ export function Tasks() {
  * or starting the task over. The count comes from the server, so the choice is
  * made with the amount of reusable work in view rather than as a guess.
  */
-function RetryDialog({ task, close, retry }: { task: AgentTask; close: () => void; retry: (fresh: boolean) => void }) {
+export function RetryDialog({ task, close, retry }: { task: AgentTask; close: () => void; retry: (fresh: boolean) => void }) {
   const [checkpoint, setCheckpoint] = useState<{ steps: number; enabled: boolean }>()
   const [error, setError] = useState('')
   // Every other overlay closes on Escape; this one is a dialog too.

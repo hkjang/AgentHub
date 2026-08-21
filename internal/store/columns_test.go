@@ -83,3 +83,24 @@ func TestAReusedNameIsAConflictAndNotAServerError(t *testing.T) {
 		t.Error("success was turned into a failure")
 	}
 }
+
+// A task that cannot be retried is not a task that is missing. Answering "찾을 수
+// 없습니다" to somebody whose task simply finished, or is running right now, is
+// how they come to believe it disappeared — so the refusal names the state the
+// task is actually in, and every state this platform can be in has an answer.
+func TestARefusalToRetryNamesTheState(t *testing.T) {
+	for _, status := range []string{"completed", "queued", "retrying", "running", "planning", "ready",
+		"waiting_tool", "waiting_approval", "blocked", "handoff"} {
+		message := retryRefusal(status)
+		if message == "" {
+			t.Errorf("%s has no answer", status)
+		}
+		if strings.Contains(message, status) {
+			t.Errorf("%s answers with the raw status rather than with words: %q", status, message)
+		}
+	}
+	// A state nobody has written an answer for still says something true.
+	if got := retryRefusal("invented_later"); !strings.Contains(got, "invented_later") {
+		t.Errorf("an unknown state lost its own name: %q", got)
+	}
+}

@@ -658,11 +658,39 @@ func (s *Store) RequeueAgentTask(ctx context.Context, taskID, ownerID string, fr
 	var id string
 	if err := s.pool.QueryRow(ctx, query, taskID, ownerID).Scan(&id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			// The update matched nothing, which is two different situations: the
+			// task is somebody else's or gone, or it is theirs and simply not in a
+			// state that can be retried. Answering "찾을 수 없습니다" to the second is
+			// how somebody comes to believe their task disappeared.
+			var status string
+			if lookupErr := s.pool.QueryRow(ctx, `SELECT status FROM agent_tasks WHERE id=$1 AND owner_id=$2`, taskID, ownerID).Scan(&status); lookupErr == nil {
+				return AgentTask{}, Conflict{Message: retryRefusal(status)}
+			}
 			return AgentTask{}, ErrNotFound
 		}
 		return AgentTask{}, err
 	}
 	return s.AgentTaskByID(ctx, taskID, ownerID, false)
+}
+
+// retryRefusal says why this task cannot be put back on the queue, in terms of
+// what it is doing now rather than in terms of the query that matched nothing.
+func retryRefusal(status string) string {
+	switch status {
+	case "completed":
+		return "이미 완료된 작업은 다시 실행할 수 없습니다. 같은 일을 다시 시키려면 새 작업을 만드세요."
+	case "queued", "retrying":
+		return "이 작업은 이미 대기 중입니다. 워커가 가져가면 실행됩니다."
+	case "running", "planning", "ready", "waiting_tool":
+		return "실행 중인 작업은 다시 실행할 수 없습니다. 먼저 취소하거나 끝나기를 기다려 주세요."
+	case "waiting_approval":
+		return "승인을 기다리는 작업입니다. 검토 화면에서 승인하거나 반려해 주세요."
+	case "blocked":
+		return "차단된 작업입니다. 차단을 해제하면 다시 대기열에 들어갑니다."
+	case "handoff":
+		return "사람이 이어받은 작업입니다. 런타임에서 마무리하고 완료 처리해 주세요."
+	}
+	return "지금 상태(" + status + ")에서는 다시 실행할 수 없습니다."
 }
 
 // CancelAgentTask stops a task that has not reached a terminal state.
