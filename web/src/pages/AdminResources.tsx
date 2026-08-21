@@ -75,12 +75,15 @@ export function AdminResources({ kind }: { kind: Kind }) {
   // Whether each model endpoint is actually there. An address and a model name
   // are otherwise only checked at the moment a task runs, which is usually at
   // night, on somebody else's agent, as a failure that reads like the agent's.
-  const [checks, setChecks] = useState<Record<string, { verdict: string; detail: string }>>({});
+  const [checks, setChecks] = useState<Record<string, { verdict: string; detail: string; tools?: string[] }>>({});
   const [checking, setChecking] = useState("");
   const check = async (id: string) => {
     setChecking(id);
+    // The two registries answer the same question — is this thing actually there
+    // — so they share one control and one place to read the answer.
+    const path = kind === "models" ? `/api/v1/admin/models/${id}/check` : `/api/v1/admin/mcp-servers/${id}/check`;
     try {
-      const result = await api.post<{ verdict: string; detail: string }>(`/api/v1/admin/models/${id}/check`);
+      const result = await api.post<{ verdict: string; detail: string; tools?: string[] }>(path);
       setChecks((current) => ({ ...current, [id]: result }));
     } catch (e) {
       setChecks((current) => ({
@@ -167,15 +170,24 @@ export function AdminResources({ kind }: { kind: Kind }) {
                   </div>
                 ))}
               </dl>
-              {kind === "models" && checks[String(item.id)] && (
+              {checks[String(item.id)] && (
                 <p className={`model-check ${checks[String(item.id)].verdict}`}>
                   {checks[String(item.id)].detail}
+                  {/* The names an allow or deny list is written against. Until
+                      now they came from the vendor's documentation or a guess. */}
+                  {(checks[String(item.id)].tools ?? []).length > 0 && (
+                    <span className="model-check-tools">
+                      {(checks[String(item.id)].tools ?? []).join(", ")}
+                    </span>
+                  )}
                 </p>
               )}
               <div className="card-actions">
-                {kind === "models" && (
+                {(kind === "models" || kind === "mcp") && (
                   <button
-                    title="이 엔드포인트가 실제로 응답하는지, 지정한 모델을 제공하는지 확인합니다"
+                    title={kind === "models"
+                      ? "이 엔드포인트가 실제로 응답하는지, 지정한 모델을 제공하는지 확인합니다"
+                      : "이 서버가 실제로 응답하는지, 어떤 도구를 제공하는지 확인합니다"}
                     disabled={checking === String(item.id)}
                     onClick={() => void check(String(item.id))}
                   >

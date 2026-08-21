@@ -1308,6 +1308,18 @@ fails if what arrives is a sentence about a screenshot rather than a PNG.
 
 ## Asking the endpoint instead of the logs
 
+The MCP registry gets the same treatment, and one thing more: the check returns
+the server's tool names. A tool policy is written against those names, and until
+now they came from a vendor's documentation or from a guess — a deny list with a
+misspelled tool in it is the quietest kind of failure, since it refuses nothing
+and looks configured.
+
+Its answer distinguishes a server that cannot be reached from one that cannot be
+reached *from here*: the sidecar and dedicated modes run inside the runtime's own
+Pod, where the control plane has no address to call. Reporting that as a
+connection failure would send somebody to fix an endpoint that was never meant to
+be reachable.
+
 An administrator registers a base URL and a model name, and the platform finds
 out whether either is right at the moment a task runs — at night, on somebody
 else's agent, as a failure that reads like the agent's fault. In one window on

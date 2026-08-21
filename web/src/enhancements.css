@@ -702,3 +702,4 @@ tr.clickable:hover { background: #f7f9fc; }
 .model-check.ok { background: #f4fbf7; color: #256b45; }
 .model-check.model_missing, .model-check.reachable { background: #fffaf0; color: #96610a; }
 .model-check.unauthorised, .model-check.wrong_path, .model-check.unreachable, .model-check.error, .model-check.unconfigured { background: #fff5f7; color: #a3283f; }
+.model-check-tools { display: block; margin-top: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #52606f; word-break: break-all; }
