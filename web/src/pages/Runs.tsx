@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ClipboardList, RefreshCw } from 'lucide-react'
+import { ClipboardList, RefreshCw, Search } from 'lucide-react'
 import { api } from '../api'
 import { useAuth } from '../App'
 import { Empty, ErrorBanner, Loading, PageHeader, StatusBadge } from '../components/UI'
@@ -30,6 +30,10 @@ export function Runs() {
   const [meter, setMeter] = useState('')
   const [days, setDays] = useState('7')
   const [agentId, setAgentId] = useState('')
+  const [text, setText] = useState('')
+  // Typed text is debounced before it becomes a query: reloading on every
+  // keystroke would fire a request per character at a table of two hundred rows.
+  const [searching, setSearching] = useState('')
   const [everyone, setEveryone] = useState(false)
   const [openRun, setOpenRun] = useState<string | null>(null)
   const [error, setError] = useState('')
@@ -41,12 +45,17 @@ export function Runs() {
     if (meter) query.set('metering', meter)
     if (days) query.set('days', days)
     if (agentId) query.set('agentId', agentId)
+    if (searching) query.set('q', searching)
     if (everyone) query.set('scope', 'all')
     try {
       const result = await api.get<{ items: AgentRun[] }>(`/api/v1/runs?${query}`)
       setItems(result.items ?? [])
     } catch (e) { setError(e instanceof Error ? e.message : '실행 기록을 불러오지 못했습니다.') }
-  }, [status, meter, days, agentId, everyone])
+  }, [status, meter, days, agentId, everyone, searching])
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearching(text.trim()), 300)
+    return () => window.clearTimeout(timer)
+  }, [text])
   useEffect(() => { void load() }, [load])
   useEffect(() => { api.get<{ items?: Agent[] }>('/api/v1/agents').then((v) => setAgents(v.items ?? [])).catch(() => setAgents([])) }, [])
 
@@ -55,6 +64,9 @@ export function Runs() {
       actions={<button className="button ghost" onClick={() => void load()}><RefreshCw size={16} />새로고침</button>} />
     {error && <ErrorBanner message={error} />}
     <div className="filter-row">
+      {/* What somebody has in hand when they arrive: an id copied out of a log,
+          or a sentence they remember seeing. */}
+      <div className="search-box"><Search size={16} /><input value={text} onChange={(e) => setText(e.target.value)} placeholder="Trace ID, 실패 메시지, 에이전트 이름" aria-label="검색" /></div>
       <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="상태">{STATUSES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
       <select value={meter} onChange={(e) => setMeter(e.target.value)} aria-label="계량">{METERINGS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
       <select value={days} onChange={(e) => setDays(e.target.value)} aria-label="기간">{WINDOWS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
@@ -64,6 +76,7 @@ export function Runs() {
       </select>
       {user.role === 'admin' && <label className="filter-toggle"><input type="checkbox" checked={everyone} onChange={(e) => setEveryone(e.target.checked)} />모든 사용자</label>}
     </div>
+    {items && items.length > 0 && <RunSummary items={items} />}
     {!items ? <Loading /> : items.length === 0
       ? <Empty icon={<ClipboardList />} title="해당하는 실행이 없습니다" description="조건을 넓히거나 기간을 늘려 보세요." />
       : <section className="table-panel"><div className="table-wrap custom-scroll"><table>
@@ -85,4 +98,35 @@ export function Runs() {
         </table></div></section>}
     {openRun && <RunDrawer runId={openRun} close={() => setOpenRun(null)} />}
   </div>
+}
+
+/**
+ * What the listing adds up to. A page of two hundred rows says a lot happened
+ * and nothing about what; the same rows counted say whether one fault is
+ * repeating, which is the difference between reading them and fixing them.
+ *
+ * Counted from what is on screen rather than from a second query, so the summary
+ * always describes exactly the rows underneath it.
+ */
+function RunSummary({ items }: { items: AgentRun[] }) {
+  const failed = items.filter((run) => run.status === 'failed')
+  const reasons = new Map<string, number>()
+  for (const run of failed) {
+    const reason = (run.failureReason || '이유 없음').split('\n')[0].slice(0, 80)
+    reasons.set(reason, (reasons.get(reason) ?? 0) + 1)
+  }
+  const top = [...reasons.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3)
+  const tokens = items.reduce((sum, run) => sum + run.totalTokens, 0)
+  const unmetered = items.filter((run) => run.metering === 'unmetered' || run.metering === 'context_only').length
+  return <section className="run-summary">
+    <div className="run-summary-counts">
+      <span>실행 <b>{items.length.toLocaleString('ko-KR')}</b></span>
+      <span>실패 <b>{failed.length.toLocaleString('ko-KR')}</b></span>
+      <span>토큰 <b>{tokens.toLocaleString('ko-KR')}</b></span>
+      {unmetered > 0 && <span className="warn">집계 안 됨 <b>{unmetered.toLocaleString('ko-KR')}</b></span>}
+    </div>
+    {top.length > 0 && <ol className="run-summary-reasons">
+      {top.map(([reason, count]) => <li key={reason}><b>{count}회</b><span title={reason}>{reason}</span></li>)}
+    </ol>}
+  </section>
 }

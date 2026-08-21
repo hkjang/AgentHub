@@ -1388,6 +1388,12 @@ same run detail the task screen opens. Looking across other people's runs is an
 administrator's view of somebody else's work, so it is asked for explicitly
 rather than implied by the role.
 
+The listing counts itself, too: a page of two hundred rows says a lot happened
+and nothing about what, while the same rows grouped say whether one fault is
+repeating — the difference between reading them and fixing them. It is computed
+from the rows on screen rather than from a second query, so the summary always
+describes exactly what is underneath it.
+
 There is now a cheap net under all the console suites: sign in once, open all
 thirty screens, and insist each renders a heading and content with no uncaught
 error and no 5xx. The feature suites each drive one screen deeply, so none of

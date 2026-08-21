@@ -754,6 +754,10 @@ type RunFilter struct {
 	TaskID   string
 	Status   string
 	Metering string
+	// Text matches the trace id, the failure reason or the result, which are the
+	// three things somebody has in hand when they arrive looking for one run: an
+	// id copied out of a log, or a sentence they remember seeing.
+	Text string
 	// Since bounds how far back to look. Zero means no bound.
 	Since time.Time
 	Limit int
@@ -796,6 +800,11 @@ func (s *Store) AgentRuns(ctx context.Context, ownerID string, filter RunFilter)
 		} else {
 			add(` AND r.metering=$%d`, filter.Metering)
 		}
+	}
+	if text := strings.TrimSpace(filter.Text); text != "" {
+		args = append(args, "%"+strings.ToLower(text)+"%")
+		query += fmt.Sprintf(` AND (lower(r.trace_id) LIKE $%d OR lower(r.failure_reason) LIKE $%d OR lower(r.result) LIKE $%d OR lower(a.name) LIKE $%d)`,
+			len(args), len(args), len(args), len(args))
 	}
 	if !filter.Since.IsZero() {
 		add(` AND r.started_at >= $%d`, filter.Since)

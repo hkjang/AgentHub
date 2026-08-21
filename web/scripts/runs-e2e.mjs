@@ -46,8 +46,17 @@ try {
   }
   check('전체 실행이 보임', all > 0, `${all}건`)
 
+  // A page of rows says a lot happened; the counts say whether one fault repeats.
+  const summary = page.locator('.run-summary')
+  await summary.waitFor({ timeout: 10000 })
+  const summaryText = (await summary.innerText()).replace(/\n/g, ' · ')
+  check('요약이 실행과 실패 수를 셈', /실행\s*·?\s*\d/.test(summaryText) && /실패/.test(summaryText), summaryText.slice(0, 80))
+
   const failed = await select('상태', 'failed')
   check('상태로 좁혀짐', failed <= all, `${failed} / ${all}건`)
+  check('요약이 좁힌 목록을 따라감',
+    (await summary.innerText()).includes(`실행 ${failed.toLocaleString('ko-KR')}`) || failed === 0,
+    (await summary.innerText()).replace(/\n/g, ' · ').slice(0, 50))
   check('좁힌 목록에 실패만 남음',
     (await page.locator('tbody tr').first().innerText()).includes('실패') || failed === 0)
 
@@ -57,6 +66,19 @@ try {
   await select('상태', '')
   const back = await rows()
   check('조건을 풀면 다시 늘어남', back >= recent, `${back} / ${recent}건`)
+
+  // What somebody has in hand when they arrive is usually a trace id from a log
+  // or a sentence they remember, not a set of dropdown values.
+  const firstAgent = (await page.locator('tbody tr td strong').first().innerText()).trim()
+  await page.getByLabel('검색').fill(firstAgent)
+  const searched = await rows()
+  check('이름으로 검색해 좁혀짐', searched > 0 && searched <= back, `${searched} / ${back}건 · "${firstAgent}"`)
+  check('검색 결과가 모두 그 에이전트', (await page.locator('tbody tr td strong').allInnerTexts()).every((name) => name.includes(firstAgent)))
+  await page.getByLabel('검색').fill('이런문구는아무데도없습니다')
+  await rows()
+  check('없는 문구는 빈 결과', await page.locator('tbody tr').count() === 0)
+  await page.getByLabel('검색').fill('')
+  await rows()
 
   // The same detail the task screen opens, reached from here.
   await page.locator('tbody tr').first().click()

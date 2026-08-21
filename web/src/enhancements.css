@@ -672,3 +672,15 @@ tr.rule-off { opacity: .55; }
 .filter-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #667085; }
 tr.clickable { cursor: pointer; }
 tr.clickable:hover { background: #f7f9fc; }
+
+/* What a page of runs adds up to. A list says a lot happened; the counts say
+   whether one fault is repeating. */
+.run-summary { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 13px; padding: 13px 17px; margin-bottom: 13px; border: 1px solid #e6eaf1; border-radius: 11px; background: #fbfcfe; }
+.run-summary-counts { display: flex; flex-wrap: wrap; gap: 17px; font-size: 12px; color: #667085; }
+.run-summary-counts b { margin-left: 5px; font-size: 14px; color: #101828; font-variant-numeric: tabular-nums; }
+.run-summary-counts .warn { color: #96610a; }
+.run-summary-counts .warn b { color: #96610a; }
+.run-summary-reasons { flex: 1; min-width: 260px; max-width: 620px; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.run-summary-reasons li { display: flex; gap: 9px; font-size: 12px; color: #667085; }
+.run-summary-reasons b { flex: none; color: #c43b52; font-variant-numeric: tabular-nums; }
+.run-summary-reasons span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

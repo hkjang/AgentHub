@@ -588,7 +588,7 @@ func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	filter := store.RunFilter{
 		AgentID: query.Get("agentId"), TaskID: query.Get("taskId"),
-		Status: query.Get("status"), Metering: query.Get("metering"), Limit: limit,
+		Status: query.Get("status"), Metering: query.Get("metering"), Text: query.Get("q"), Limit: limit,
 		// Looking across the deployment is an administrator's view of somebody
 		// else's work, so it is asked for explicitly rather than implied by role.
 		AllOwners: u.Role == "admin" && query.Get("scope") == "all",
