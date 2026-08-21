@@ -684,3 +684,14 @@ tr.clickable:hover { background: #f7f9fc; }
 .run-summary-reasons li { display: flex; gap: 9px; font-size: 12px; color: #667085; }
 .run-summary-reasons b { flex: none; color: #c43b52; font-variant-numeric: tabular-nums; }
 .run-summary-reasons span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Whether the cluster enforces what the network profiles claim. Coloured by the
+   answer, because "your egress rules are decoration" is not a neutral sentence. */
+.network-truth { display: flex; align-items: flex-start; justify-content: space-between; gap: 17px; padding: 15px 17px; margin-bottom: 15px; border: 1px solid #e6eaf1; border-radius: 11px; background: #fbfcfe; }
+.network-truth strong { display: block; font-size: 13px; color: #101828; }
+.network-truth p { margin: 5px 0 0; font-size: 12px; line-height: 1.55; color: #667085; max-width: 760px; }
+.network-truth .network-truth-detail { margin-top: 9px; font-weight: 600; color: #344054; }
+.network-truth.ok { border-color: #b7e3c9; background: #f4fbf7; }
+.network-truth.warn { border-color: #f0dcae; background: #fffaf0; }
+.network-truth.danger { border-color: #f0b6c2; background: #fff5f7; }
+.network-truth.danger .network-truth-detail { color: #a3283f; }

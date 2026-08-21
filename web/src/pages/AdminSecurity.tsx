@@ -1,7 +1,8 @@
 import { FormEvent, useEffect, useState } from 'react'
-import { LockKeyhole, Network, Plus, ShieldCheck } from 'lucide-react'
+import { LockKeyhole, Network, Plus, ShieldCheck, Stethoscope } from 'lucide-react'
 import { api } from '../api'
 import { Drawer, Empty, ErrorBanner, Loading, PageHeader, StatusBadge } from '../components/UI'
+import type { Agent } from '../types'
 
 type Kind = 'security' | 'network'
 type Profile = { id:string; name:string; description:string; spec:Record<string,unknown>; enabled:boolean }
@@ -23,6 +24,7 @@ export function AdminSecurity() {
   return <div className="page">
     <PageHeader eyebrow="관리자" title="보안 · 네트워크 프로파일" description="Kubernetes 세부 옵션을 숨기고 승인된 격리·Egress 정책만 Runtime Template에 제공합니다." actions={<button className="button primary" onClick={() => setSelected(null)}><Plus size={16}/>새 Profile</button>}/>
     {error&&<ErrorBanner message={error}/>}
+    {kind==='network'&&<NetworkTruth/>}
     <div className="tabs"><button className={kind==='security'?'active':''} onClick={() => setKind('security')}><ShieldCheck size={15}/>Security Profiles <span>{security.length}</span></button><button className={kind==='network'?'active':''} onClick={() => setKind('network')}><Network size={15}/>Network Profiles <span>{network.length}</span></button></div>
     {items.length === 0 ? <Empty icon={<Icon/>} title="프로파일이 없습니다" description="첫 운영 표준 Profile을 등록하세요."/> : <section className="policy-grid">{items.map((item) => <button key={item.id} onClick={() => setSelected(item)}><header><div className="list-icon"><Icon/></div><StatusBadge status={item.enabled?'active':'disabled'}/></header><h3>{item.name}</h3><p>{item.description}</p><div className="policy-facts">{facts(kind,item.spec).map(([name,value]) => <span key={name}><small>{name}</small><strong>{value}</strong></span>)}</div></button>)}</section>}
     {selected !== undefined&&<PolicyDrawer kind={kind} item={selected} close={() => setSelected(undefined)} done={() => {setSelected(undefined);void load()}} error={setError}/>}
@@ -50,3 +52,44 @@ function PolicyDrawer({kind,item,close,done,error}:{kind:Kind;item:Profile|null;
 function Toggle({label,value,change}:{label:string;value:boolean;change:(value:boolean)=>void}) { return <label className="toggle-row"><span>{label}</span><input type="checkbox" checked={value} onChange={(e) => change(e.target.checked)}/><i/></label> }
 function LockedToggle({label,value}:{label:string;value:boolean}) { return <label className="toggle-row"><span>{label}</span><input type="checkbox" checked={value} disabled readOnly/><i/></label> }
 function yes(value:unknown) { return value ? 'Enabled' : 'Disabled' }
+
+/**
+ * Whether this cluster actually enforces what the profiles say.
+ *
+ * NetworkPolicy is enforced by the CNI, and a cluster running a plugin with no
+ * policy controller accepts every policy and applies none of them — the screen
+ * says 기본 차단 and the runtime reaches the whole internet. Nothing about the
+ * deployment looks wrong, which is exactly why it has to be asked rather than
+ * assumed.
+ */
+function NetworkTruth() {
+  const [runtimes, setRuntimes] = useState<Agent[]>([])
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<{ verdict: string; detail: string; target: string }>()
+  const [problem, setProblem] = useState('')
+  useEffect(() => {
+    api.get<{items?:Agent[]}>('/api/v1/agents')
+      .then((v) => setRuntimes((v.items ?? []).filter((a) => a.runtime?.status === 'running')))
+      .catch(() => setRuntimes([]))
+  }, [])
+  const check = async () => {
+    const target = runtimes[0]
+    if (!target?.runtime) return
+    setBusy(true); setProblem(''); setResult(undefined)
+    try { setResult(await api.post('/api/v1/admin/network-check', { runtimeId: target.runtime.id })) }
+    catch (e) { setProblem(e instanceof Error ? e.message : '확인하지 못했습니다.') }
+    finally { setBusy(false) }
+  }
+  const tone = result?.verdict === 'unenforced' ? 'danger' : result?.verdict === 'enforced' ? 'ok' : 'warn'
+  return <section className={`network-truth ${result ? tone : ''}`}>
+    <div>
+      <strong>이 클러스터가 정말로 막고 있나요?</strong>
+      <p>NetworkPolicy는 CNI가 적용합니다. 정책 컨트롤러가 없는 클러스터는 정책을 <b>받아들이기만 하고 적용하지 않습니다</b> — 화면에는 차단으로 보이고 런타임은 인터넷에 나갑니다. 실행 중인 런타임 안에서 직접 확인합니다.</p>
+      {result && <p className="network-truth-detail">{result.detail}</p>}
+      {problem && <p className="network-truth-detail">{problem}</p>}
+    </div>
+    <button className="button ghost" disabled={busy || runtimes.length === 0} onClick={() => void check()}>
+      <Stethoscope size={16}/>{busy ? '확인 중…' : runtimes.length === 0 ? '실행 중인 런타임 없음' : '지금 확인'}
+    </button>
+  </section>
+}

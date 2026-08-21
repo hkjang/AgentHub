@@ -1306,6 +1306,27 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## A policy the cluster may not be keeping
+
+NetworkPolicy is enforced by the CNI, not by the API server. A cluster running a
+plugin with no policy controller — and several common ones have none — accepts
+every policy object and applies none of them. The console shows the profile
+attached, the operator writes the object, the API server stores it, and the
+runtime reaches the entire internet. Every part of the deployment looks correct.
+
+This was not a theory: on the cluster these releases were tested against, a pod
+selected by a policy whose egress allowed only DNS fetched a public address on
+the first try.
+
+So the platform asks the runtime instead of assuming. An administrator can have a
+running runtime attempt a connection the profile does not allow — the in-cluster
+Kubernetes API, which exists everywhere and needs no internet — and the answer is
+deliberately three-valued. A connection that succeeds is proof the policy is not
+enforced. A connection that fails is evidence, not proof, because it could have
+failed for its own reasons. An image without the tool to check is neither, and
+rounding that to "enforced" would be the same mistake as trusting the unenforced
+policy to begin with.
+
 ## An agent that never asks
 
 The approval mode, the human-approval route and the tool rules are all answered

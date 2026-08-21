@@ -174,3 +174,31 @@ func TestABadRequestSaysWhatWasWrongWithIt(t *testing.T) {
 		}
 	}
 }
+
+// The three answers are deliberately not two. A policy that turns out to be
+// unenforced is proof; a connection that failed is evidence; an image without
+// the tool to check is neither, and calling that last one "enforced" would be
+// the same mistake as trusting the unenforced policy in the first place.
+func TestTheNetworkVerdictKeepsItsThreeAnswers(t *testing.T) {
+	for _, tc := range []struct{ name, output, want string }{
+		{"connected", "EXIT=0\n", "unenforced"},
+		{"refused", "EXIT=7\n", "enforced"},
+		{"timed out", "EXIT=28\n", "enforced"},
+		{"no curl", "sh: curl: not found\nEXIT=127\n", "unknown"},
+		{"nothing at all", "", "unknown"},
+		{"something new", "EXIT=42\n", "unknown"},
+	} {
+		verdict, detail := networkVerdict(tc.output)
+		if verdict != tc.want {
+			t.Errorf("%s → %q, want %q", tc.name, verdict, tc.want)
+		}
+		if detail == "" {
+			t.Errorf("%s gave a verdict with nothing to read", tc.name)
+		}
+	}
+	// The one that matters most has to say plainly what it found, because an
+	// operator reading it is about to learn their egress rules are decoration.
+	if _, detail := networkVerdict("EXIT=0"); !strings.Contains(detail, "적용하고 있지 않") {
+		t.Errorf("the unenforced answer hedges: %q", detail)
+	}
+}
