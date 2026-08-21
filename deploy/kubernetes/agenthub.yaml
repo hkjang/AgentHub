@@ -31,14 +31,14 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: agenthub
-          image: agenthub:v0.57.0
+          image: agenthub:v0.58.0
           imagePullPolicy: IfNotPresent
           envFrom:
             - secretRef: {name: agenthub-bootstrap}
           env:
             # AgentHub's sidecars run the control plane's own image. Change this
             # together with the image above when deploying from a registry.
-            - {name: AGENTHUB_SIDECAR_IMAGE, value: "agenthub:v0.57.0"}
+            - {name: AGENTHUB_SIDECAR_IMAGE, value: "agenthub:v0.58.0"}
           ports:
             - {name: http, containerPort: 8080}
           readinessProbe:
