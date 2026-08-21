@@ -19,7 +19,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: operator
-          image: agenthub:v0.46.0
+          image: agenthub:v0.47.0
           imagePullPolicy: IfNotPresent
           command: [/app/agenthub-operator]
           env:
