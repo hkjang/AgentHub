@@ -170,7 +170,7 @@ func (s *Store) SaveDepartment(ctx context.Context, item Department) (Department
 			return Department{}, insertErr
 		}
 		if tag.RowsAffected() == 0 {
-			return Department{}, fmt.Errorf("%w: 같은 이름의 부서가 이미 있습니다. 기존 부서를 수정하거나 다른 이름을 쓰세요", ErrConflict)
+			return Department{}, Conflict{Message: "같은 이름의 부서가 이미 있습니다. 기존 부서를 수정하거나 다른 이름을 쓰세요"}
 		}
 		return item, nil
 	}

@@ -1379,6 +1379,16 @@ Members see their department's budget next to their own. Being refused by a limi
 the console never displayed is how a quota becomes a mystery, and the mystery is
 more expensive than the limit.
 
+A refused request says what was wrong with it. Every write endpoint answered
+"입력 형식이 올바르지 않습니다" to a mistyped field, an unknown one, a truncated
+body and an empty one alike — true of all four and useful for none, leaving
+whoever was writing a GitOps document to bisect their own JSON looking for the
+key the platform disliked. The decoder had known all along and the answer was
+being thrown away; it now names the field, in the path the caller wrote, with the
+Go type name the decoder prefixes stripped off — every field this platform
+accepts is lowerCamelCase, so a leading segment starting with a capital is Go's
+and not theirs.
+
 A reused name is the same kind of answer everywhere else too. Postgres reports it
 as `duplicate key value violates unique constraint
 "agent_definitions_owner_id_name_key" (SQLSTATE 23505)`, and that string went

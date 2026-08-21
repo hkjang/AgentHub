@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/hkjang/AgentHub/internal/store"
@@ -130,5 +132,45 @@ func TestAnImageThatIsNotBase64FallsBackToDownload(t *testing.T) {
 	}
 	if _, ok := decodedImage(store.AgentArtifact{Type: "report", ContentType: "text/markdown", Content: "aGk="}); ok {
 		t.Error("a report was served as a picture")
+	}
+}
+
+// Every write endpoint answered the same sentence to a mistyped field, an
+// unknown one, a truncated body and an empty one — true of all four and useful
+// for none. Whoever was writing a GitOps document had to bisect their own JSON to
+// find the key the platform disliked, and the decoder had known all along.
+func TestABadRequestSaysWhatWasWrongWithIt(t *testing.T) {
+	type goal struct {
+		Description string `json:"description"`
+		MaxSteps    int    `json:"maxSteps"`
+	}
+	decode := func(body string) string {
+		var dst goal
+		decoder := json.NewDecoder(strings.NewReader(body))
+		decoder.DisallowUnknownFields()
+		return decodeComplaint(decoder.Decode(&dst))
+	}
+	for _, tc := range []struct{ name, body, want string }{
+		{"wrong type", `{"maxSteps":"여섯"}`, "maxSteps 항목의 형식이 올바르지 않습니다(문자열 값을 받았습니다)."},
+		{"unknown field", `{"maxSteps":6,"maxStepz":7}`, `받지 않는 항목입니다: "maxStepz". 이름을 확인해 주세요.`},
+		{"empty body", ``, "요청 본문이 비어 있습니다."},
+		{"truncated", `{"description":"x"`, "JSON이 중간에 끊겼습니다. 본문이 완전한지 확인해 주세요."},
+		{"not json", `설명만 적었습니다`, "JSON을 해석하지 못했습니다(1번째 문자 부근)."},
+	} {
+		if got := decode(tc.body); got != tc.want {
+			t.Errorf("%s → %q, want %q", tc.name, got, tc.want)
+		}
+	}
+	// The decoder prefixes the path with the Go type it was filling, and that name
+	// appears nowhere in the API anybody is writing against.
+	for field, want := range map[string]string{
+		"AgentGoal.maxSteps":      "maxSteps",
+		"Department.quota.total":  "quota.total",
+		"maxSteps":                "maxSteps",
+		"quota.total.maxRuntimes": "quota.total.maxRuntimes",
+	} {
+		if got := jsonFieldPath(field); got != want {
+			t.Errorf("jsonFieldPath(%q) = %q, want %q", field, got, want)
+		}
 	}
 }

@@ -68,6 +68,11 @@ func TestAReusedNameIsAConflictAndNotAServerError(t *testing.T) {
 	if strings.Contains(err.Error(), "23505") || strings.Contains(err.Error(), "unique constraint") {
 		t.Errorf("the database's own words reached the message: %q", err.Error())
 	}
+	// err.Error() is printed by more places than the one that classifies it, so
+	// the sentinel's own word must not be part of the sentence.
+	if err.Error() != "같은 이름의 에이전트가 이미 있습니다" {
+		t.Errorf("the message carries something besides itself: %q", err.Error())
+	}
 	// Everything else has to pass through untouched, including nil: a caller that
 	// wrapped every failure as a name collision would hide real ones.
 	other := errors.New("connection refused")

@@ -26,7 +26,18 @@ var ErrNotFound = errors.New("not found")
 // logs a server fault that never happened.
 var ErrConflict = errors.New("conflict")
 
-// conflictIfTaken turns a unique-constraint violation into ErrConflict with a
+// Conflict carries the sentence a person should read. It answers errors.Is for
+// ErrConflict without putting the sentinel's own word in front of the message,
+// because err.Error() is printed by more places than the one that classifies it —
+// and a message reading "conflict: 같은 이름의…" is the sentinel leaking into the
+// console.
+type Conflict struct{ Message string }
+
+func (c Conflict) Error() string { return c.Message }
+
+func (c Conflict) Is(target error) bool { return target == ErrConflict }
+
+// conflictIfTaken turns a unique-constraint violation into a Conflict with a
 // message somebody can act on.
 //
 // Postgres reports it as `duplicate key value violates unique constraint
@@ -37,7 +48,7 @@ var ErrConflict = errors.New("conflict")
 func conflictIfTaken(err error, message string) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		return fmt.Errorf("%w: %s", ErrConflict, message)
+		return Conflict{Message: message}
 	}
 	return err
 }
