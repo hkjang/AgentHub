@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -39,22 +40,93 @@ func TestColumnListsAndScanTargetsAgree(t *testing.T) {
 // Spelling the fields out again is how the login query drifted, and then the run
 // insert after it — the same mistake twice, in two different column lists.
 func TestNobodyScansASharedColumnListByHand(t *testing.T) {
-	for _, name := range []string{"store.go", "secrets.go", "admin.go", "execution.go"} {
+	// Every file in the package, not a list of the four that had the problem when
+	// this was written. A guard that names its files is escaped by adding one, and
+	// that is exactly what happened: the event-triggered insert spelled the task
+	// columns out again in events.go, which this test did not read.
+	for _, name := range packageFiles(t) {
 		body, err := os.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, byHand := range []string{
-			"&user.ID, &user.Username, &user.Email",
-			"&run.ID, &run.TaskID, &run.AgentID",
-			"&item.ID, &item.TaskID, &item.AgentID, &item.OwnerID, &item.Attempt, &item.Status",
-			"&item.ID, &item.AgentID, &item.OwnerID, &item.Title, &item.Input",
+		// scanTargets is where these belong; everywhere else is a copy of it.
+		source := withoutScanTargets(string(body))
+		// Any receiver name. The first copy used `item`, the next `user`, the one
+		// that got past this test `task`; the variable is not the point.
+		for _, byHand := range []*regexp.Regexp{
+			regexp.MustCompile(`&\w+\.ID, &\w+\.Username, &\w+\.Email`),
+			regexp.MustCompile(`&\w+\.ID, &\w+\.TaskID, &\w+\.AgentID`),
+			regexp.MustCompile(`&\w+\.ID, &\w+\.AgentID, &\w+\.OwnerID, &\w+\.Title, &\w+\.Input`),
 		} {
-			if strings.Contains(string(body), byHand) {
-				t.Errorf("%s scans a shared column list by hand (%s…); use scanTargets() so a new column reaches it", name, byHand[:24])
+			if byHand.MatchString(source) {
+				t.Errorf("%s scans a shared column list by hand (%s); use scanTargets() so a new column reaches it", name, byHand)
 			}
 		}
 	}
+}
+
+// The other half of the same rule: a query may not re-spell a shared column list
+// either. Scanning by hand and listing the columns by hand are one mistake with
+// two halves, and a copy of the list is what lets the scan drift out of step with
+// it — events.go had both, and its RETURNING was already one column behind.
+func TestNobodyRespellsASharedColumnList(t *testing.T) {
+	lists := map[string]string{"userColumns": userColumns, "runColumns": runColumns, "taskOwnColumns": taskOwnColumns}
+	for _, name := range packageFiles(t) {
+		body, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for listName, columns := range lists {
+			// Enough of the list to be unmistakable, and short enough that a query
+			// selecting three ordinary columns is not accused of anything.
+			// Eight columns, because five is not enough to tell a copy of the list
+			// from an insert that happens to start with the same few names.
+			head := strings.Join(strings.Split(columns, ",")[:8], ",")
+			for _, line := range strings.Split(string(body), "\n") {
+				if !strings.Contains(line, head) || strings.Contains(line, listName+" =") {
+					continue
+				}
+				t.Errorf("%s spells %s out again (%s…); use the constant so one edit reaches every reader", name, listName, head[:20])
+			}
+		}
+	}
+}
+
+// withoutScanTargets removes the one place a column list is legitimately spelled
+// out as scan destinations, so the guard can be blunt about everywhere else.
+func withoutScanTargets(source string) string {
+	for {
+		at := strings.Index(source, "scanTargets() []any {")
+		if at < 0 {
+			return source
+		}
+		end := strings.Index(source[at:], "\n}\n")
+		if end < 0 {
+			return source[:at]
+		}
+		source = source[:at] + source[at+end:]
+	}
+}
+
+// packageFiles is every non-test source file here, so a new one is covered the
+// day it is written rather than the day somebody remembers this list exists.
+func packageFiles(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go") {
+			out = append(out, name)
+		}
+	}
+	if len(out) < 10 {
+		t.Fatalf("only %d source files found; this guard is not reading the package", len(out))
+	}
+	return out
 }
 
 // Postgres reports a reused name as `duplicate key value violates unique

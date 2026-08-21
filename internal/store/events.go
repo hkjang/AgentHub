@@ -188,9 +188,9 @@ func (s *Store) DeliverEventToTrigger(ctx context.Context, eventID string, trigg
 	var task AgentTask
 	err = tx.QueryRow(ctx, `INSERT INTO agent_tasks(id,agent_id,owner_id,title,input,priority,source,trigger_id,created_by,scheduled_at,deadline_at,parent_task_id,delegation_depth)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-		RETURNING id,agent_id,owner_id,title,input,priority,status,source,trigger_id,attempts,scheduled_at,deadline_at,current_run_id,parent_task_id,delegation_depth,approval_id,last_error,created_at,updated_at`,
+		RETURNING `+taskOwnColumns,
 		uuid.NewString(), input.AgentID, input.OwnerID, input.Title, input.Input, input.Priority, input.Source, input.TriggerID, nullText(input.CreatedBy), scheduled, input.DeadlineAt, input.ParentTaskID, input.Delegation).
-		Scan(&task.ID, &task.AgentID, &task.OwnerID, &task.Title, &task.Input, &task.Priority, &task.Status, &task.Source, &task.TriggerID, &task.Attempts, &task.ScheduledAt, &task.DeadlineAt, &task.CurrentRunID, &task.ParentTaskID, &task.Delegation, &task.ApprovalID, &task.LastError, &task.CreatedAt, &task.UpdatedAt)
+		Scan(task.scanTargets()...)
 	if err != nil {
 		return AgentTask{}, false, err
 	}
