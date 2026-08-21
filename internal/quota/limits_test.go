@@ -130,3 +130,22 @@ func TestARefusalIsDistinguishableFromAFailureToCheck(t *testing.T) {
 		t.Errorf("a request inside the limit was refused: %v", err)
 	}
 }
+
+// The runtime being decided about must not be counted as already held.
+//
+// The autonomous path creates the runtime's record before it knows which profile
+// to check against, so by the time the limit is asked the row is there — and the
+// check adds one for the runtime it is about to start, which is that same row. A
+// person allowed one runtime was refused because of the runtime they were asking
+// about, and the task waited behind itself until somebody noticed.
+func TestTheRuntimeBeingStartedIsNotCountedTwice(t *testing.T) {
+	limits := Limits{MaxRuntimes: 1}
+	// Nothing else running: the one being started fits.
+	if err := CheckHeld(ScopeUser, limits, Held{Runtimes: 0}, 0, 0); err != nil {
+		t.Errorf("the first runtime was refused: %v", err)
+	}
+	// Its own record counted as held is what the wedge looked like.
+	if err := CheckHeld(ScopeUser, limits, Held{Runtimes: 1}, 0, 0); err == nil {
+		t.Error("a limit of one allowed a second runtime")
+	}
+}

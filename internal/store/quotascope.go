@@ -253,6 +253,13 @@ func (s *Store) UserQuotas(ctx context.Context) ([]UserQuota, error) {
 // path, the runtime path and the console all answer the same question the same
 // way.
 func (s *Store) ResolveQuota(ctx context.Context, userID string) (EffectiveQuota, error) {
+	return s.ResolveQuotaExcept(ctx, userID, "")
+}
+
+// ResolveQuotaExcept resolves the same three levels while leaving one runtime out
+// of what is currently held — the one the caller is deciding about, whose record
+// may already exist.
+func (s *Store) ResolveQuotaExcept(ctx context.Context, userID, exceptRuntimeID string) (EffectiveQuota, error) {
 	out := EffectiveQuota{OwnerID: userID}
 
 	var governance governanceSettings
@@ -299,11 +306,11 @@ func (s *Store) ResolveQuota(ctx context.Context, userID string) (EffectiveQuota
 	}
 	out.Effective = quota.Resolve(out.Platform, out.Inherited, out.Personal)
 
-	if out.Held, err = s.UserHeld(ctx, userID); err != nil {
+	if out.Held, err = s.userHeldExcept(ctx, userID, exceptRuntimeID); err != nil {
 		return out, err
 	}
 	if out.DepartmentID != "" {
-		if out.DepartmentHeld, err = s.DepartmentHeld(ctx, out.DepartmentID); err != nil {
+		if out.DepartmentHeld, err = s.departmentHeldExcept(ctx, out.DepartmentID, exceptRuntimeID); err != nil {
 			return out, err
 		}
 	}
@@ -313,24 +320,37 @@ func (s *Store) ResolveQuota(ctx context.Context, userID string) (EffectiveQuota
 // UserHeld and DepartmentHeld are the same question asked of one person and of
 // everybody in a department.
 func (s *Store) UserHeld(ctx context.Context, userID string) (quota.Held, error) {
-	return s.heldWhere(ctx, `r.owner_id = $1`, `w.owner_id = $1`, userID)
+	// $2 is referenced even when nothing is excluded, so the two forms of this
+	// query take the same arguments and cannot drift apart.
+	return s.heldWhere(ctx, `r.owner_id = $1 AND r.id <> $2`, `w.owner_id = $1`, userID, "")
+}
+
+func (s *Store) userHeldExcept(ctx context.Context, userID, exceptRuntimeID string) (quota.Held, error) {
+	return s.heldWhere(ctx, `r.owner_id = $1 AND r.id <> $2`, `w.owner_id = $1`, userID, exceptRuntimeID)
 }
 
 func (s *Store) DepartmentHeld(ctx context.Context, departmentID string) (quota.Held, error) {
-	return s.heldWhere(ctx,
-		`r.owner_id IN (SELECT id FROM users WHERE department_id = $1)`,
-		`w.owner_id IN (SELECT id FROM users WHERE department_id = $1)`,
-		departmentID)
+	return s.departmentHeldExcept(ctx, departmentID, "")
 }
 
-func (s *Store) heldWhere(ctx context.Context, runtimeWhere, workspaceWhere, arg string) (quota.Held, error) {
+func (s *Store) departmentHeldExcept(ctx context.Context, departmentID, exceptRuntimeID string) (quota.Held, error) {
+	return s.heldWhere(ctx,
+		`r.owner_id IN (SELECT id FROM users WHERE department_id = $1) AND r.id <> $2`,
+		`w.owner_id IN (SELECT id FROM users WHERE department_id = $1)`,
+		departmentID, exceptRuntimeID)
+}
+
+// heldWhere counts what is held. except is the runtime to leave out — the one the
+// caller is deciding about, whose record may already exist — and is passed as a
+// second parameter that no clause references when it is empty.
+func (s *Store) heldWhere(ctx context.Context, runtimeWhere, workspaceWhere, arg, except string) (quota.Held, error) {
 	var held quota.Held
 	err := s.pool.QueryRow(ctx, fmt.Sprintf(`
 		SELECT count(*), COALESCE(sum(p.cpu_millis),0), COALESCE(sum(p.memory_mb),0)
 		FROM agent_runtimes r
 		JOIN agent_definitions a ON a.id = r.agent_id
 		LEFT JOIN runtime_profiles p ON p.id = a.runtime_profile_id
-		WHERE %s AND r.desired_state = 'running'`, runtimeWhere), arg).
+		WHERE %s AND r.desired_state = 'running'`, runtimeWhere), arg, except).
 		Scan(&held.Runtimes, &held.CPUMillis, &held.MemoryMB)
 	if err != nil {
 		return held, err

@@ -129,6 +129,10 @@ func (o *Orchestrator) Execute(ctx context.Context, task store.AgentTask, traceI
 	outcome := o.run(ctx, &run, task, agent, goal, resume)
 	run.DurationMs = time.Since(started).Milliseconds()
 	switch {
+	case errors.Is(outcome.parked, ErrRuntimeQuota):
+		// The attempt did nothing and will be made again, so recording it as
+		// completed work would put a run in the history that never ran.
+		run.Status = "cancelled"
 	case errors.Is(outcome.parked, ErrAwaitingApproval):
 		// The run ends here but the task has not: a new run is created when the
 		// reviewer decides, so this one is recorded as completed work rather than
@@ -210,6 +214,12 @@ func (o *Orchestrator) run(ctx context.Context, run *store.AgentRun, task store.
 			acquireSpan.SetAttributes(attribute.String("agenthub.runtime.id", acquired.runtimeID))
 		}
 		acquireSpan.End()
+		if errors.Is(err, ErrRuntimeQuota) {
+			// Not a failure and not this task's fault: a limit is full and clears
+			// when a runtime somewhere stops. The worker puts it back on the queue
+			// without spending an attempt.
+			return Outcome{parked: ErrRuntimeQuota, Note: strings.TrimPrefix(err.Error(), ErrRuntimeQuota.Error()+": ")}
+		}
 		if err != nil {
 			// Runtime trouble is infrastructure, not the agent failing its goal.
 			return Outcome{Status: store.TaskFailed, Failure: "Runtime을 확보하지 못했습니다: " + err.Error(), Retryable: true}

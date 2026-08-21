@@ -200,6 +200,17 @@ func (w *Worker) execute(ctx context.Context, task store.AgentTask) {
 		logger.Info("task is waiting for approval")
 		return
 	}
+	if errors.Is(outcome.parked, ErrRuntimeQuota) {
+		// Back on the queue without spending an attempt, the same answer the
+		// execution quota gives: waiting for somebody else's runtime to stop is not
+		// a failed try, and counting it as one would exhaust a retry budget against
+		// a busy afternoon.
+		if err := w.store.DeferAgentTask(finish, task.ID, quotaWait, outcome.Note); err != nil {
+			logger.Error("task defer not recorded", "error", err)
+		}
+		logger.Info("task waiting for a runtime slot", "reason", outcome.Note)
+		return
+	}
 	if errors.Is(outcome.parked, ErrHandedOff) {
 		w.notify(finish, task, "런타임에서 이어받아야 하는 작업입니다", task.Title+" — "+outcome.Note)
 		w.publish(finish, task, store.EventTaskHandoff, map[string]any{"title": task.Title, "agentId": task.AgentID, "note": outcome.Note})

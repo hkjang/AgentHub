@@ -1306,6 +1306,30 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Waiting behind yourself
+
+Two releases ago the runtime quota started applying to tasks as well as to
+people, which was right and shipped with two things wrong with it.
+
+The refusal failed the task. A runtime limit clears when somebody else's runtime
+stops, and the platform had already decided what that means for the execution
+quota: put the task back on the queue without spending an attempt, because
+waiting is not a failed try and a retry budget exhausted against a busy afternoon
+leaves work undone for a reason nobody would defend. The runtime limit now
+answers the same way, while a policy refusal — which does not clear on its own —
+still stops the run.
+
+Worse, the check counted the runtime it was deciding about. The autonomous path
+creates the runtime's record before it knows which profile to check against, so
+the row was already there and the check added one more for the same runtime. With
+a limit of one, a task waited forever behind itself, and freeing the limit did not
+help because its own record was what filled it. The runtime under decision is now
+left out of what is held, which is the only reading of the question that makes
+sense: "would starting this exceed the limit" cannot count this.
+
+It was found by running the thing rather than reading it — the task sat in the
+queue after the limit had been freed, which no test would have thought to check.
+
 ## The list that asked once per row
 
 The agent list is the screen the console reloads most, and rendering it read each

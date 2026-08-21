@@ -3,6 +3,7 @@ package execution
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -58,8 +59,16 @@ func (o *Orchestrator) acquireRuntime(ctx context.Context, run store.AgentRun, a
 	// could hold thirty by scheduling them, and an agent a policy forbids anyone
 	// from starting could be started by its own nightly job. Neither was decided;
 	// the interactive path grew the checks and this one never picked them up.
-	if refusal := o.runtimeRefusal(ctx, agent, spec.Profile.ID); refusal != "" {
-		o.event(ctx, run, "runtime.refused", refusal, map[string]any{"agentId": agent.ID})
+	if refusal, waits := o.runtimeRefusal(ctx, agent, spec.Profile.ID, instance.ID); refusal != "" {
+		o.event(ctx, run, "runtime.refused", refusal, map[string]any{"agentId": agent.ID, "waits": waits})
+		if waits {
+			// A limit clears when somebody else's runtime stops, so this is a wait
+			// rather than a failure. Failing here spent one of the task's attempts
+			// on a number that had nothing to do with the task, and a retry budget
+			// exhausted against a busy afternoon leaves the work undone for a
+			// reason nobody would defend.
+			return nil, fmt.Errorf("%w: %s", ErrRuntimeQuota, refusal)
+		}
 		return nil, errors.New(refusal)
 	}
 	o.event(ctx, run, "runtime.acquiring", "Runtime을 시작합니다.", map[string]any{"runtimeId": instance.ID, "runtimeType": agent.RuntimeType})
@@ -191,37 +200,47 @@ func isReady(phase string) bool {
 // rule the quota and the promotion gate already follow — a transient failure to
 // read them lets the work through, because turning a query error into a blocked
 // deployment is worse than the thing being guarded against.
-func (o *Orchestrator) runtimeRefusal(ctx context.Context, agent store.Agent, profileID string) string {
-	if err := o.store.CheckRuntimeQuota(ctx, agent.OwnerID, profileID); err != nil {
+// ErrRuntimeQuota parks a task whose runtime cannot start yet because a limit is
+// full. It is a sentinel for the same reason the approval one is: the worker has
+// to put the task back on the queue rather than record an attempt against it.
+var ErrRuntimeQuota = errors.New("runtime quota is full")
+
+func (o *Orchestrator) runtimeRefusal(ctx context.Context, agent store.Agent, profileID, runtimeID string) (refusal string, waits bool) {
+	// The record for this runtime already exists — it is created before the
+	// profile is known — so it has to be left out of what is currently held. It
+	// was not, and the check counted the runtime it was deciding about: with a
+	// limit of one, a task waited forever behind itself.
+	if err := o.store.CheckRuntimeQuotaExcept(ctx, agent.OwnerID, profileID, runtimeID); err != nil {
 		if errors.Is(err, quota.ErrExceeded) {
 			// The message already names the scope that refused — 사용자 or 부서 — which
-			// is the part that decides what somebody does about it.
-			return err.Error()
+			// is the part that decides what somebody does about it. And it clears
+			// by itself, which is what makes this a wait.
+			return err.Error(), true
 		}
 		o.logger.Warn("runtime quota is unreadable; starting the runtime", "agent", agent.ID, "error", err)
-		return ""
+		return "", false
 	}
 	var document policy.Document
 	if err := o.store.Setting(ctx, policy.SettingKey, &document); err != nil {
 		if !errors.Is(err, store.ErrNotFound) {
 			o.logger.Warn("policy document is unreadable; starting the runtime", "agent", agent.ID, "error", err)
 		}
-		return ""
+		return "", false
 	}
 	if len(document.Rules) == 0 {
-		return ""
+		return "", false
 	}
 	owner, err := o.store.UserByID(ctx, agent.OwnerID)
 	if err != nil {
 		o.logger.Warn("runtime owner is unreadable; starting the runtime", "agent", agent.ID, "error", err)
-		return ""
+		return "", false
 	}
 	decision := policy.Evaluate(document, policy.Request{
 		Action: policy.ActionRuntimeStart, Role: owner.Role, User: owner.Username, UserID: owner.ID,
 		Agent: agent.Name, AgentID: agent.ID,
 	})
 	if decision.Allowed() {
-		return ""
+		return "", false
 	}
 	reason := strings.TrimSpace(decision.Reason)
 	if reason == "" {
@@ -229,5 +248,6 @@ func (o *Orchestrator) runtimeRefusal(ctx context.Context, agent store.Agent, pr
 	}
 	o.store.Audit(ctx, &owner, "policy."+policy.ActionRuntimeStart, "policy", decision.RuleID, "denied", "",
 		map[string]any{"effect": decision.Effect, "agent": agent.Name, "agentId": agent.ID})
-	return reason
+	// A policy refusal does not clear on its own: somebody has to change a rule.
+	return reason, false
 }

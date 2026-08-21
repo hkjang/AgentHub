@@ -146,7 +146,19 @@ type governanceSettings struct {
 // their department was given is full, and telling them to raise their personal
 // limit would not help. The refusal names which one it was.
 func (s *Store) CheckRuntimeQuota(ctx context.Context, userID, profileID string) error {
-	resolved, err := s.ResolveQuota(ctx, userID)
+	return s.CheckRuntimeQuotaExcept(ctx, userID, profileID, "")
+}
+
+// CheckRuntimeQuotaExcept is the same question asked about a runtime whose record
+// already exists.
+//
+// The autonomous path creates the record before it can know the profile to check
+// against, so by the time the limit is asked the row is already counted as held —
+// and the check adds one for the runtime it is about to start, which is that same
+// row. A person allowed one runtime was refused because of the runtime they were
+// asking about, and the task waited forever behind itself.
+func (s *Store) CheckRuntimeQuotaExcept(ctx context.Context, userID, profileID, exceptRuntimeID string) error {
+	resolved, err := s.ResolveQuotaExcept(ctx, userID, exceptRuntimeID)
 	if err != nil {
 		return err
 	}
