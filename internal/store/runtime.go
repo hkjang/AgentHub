@@ -132,6 +132,10 @@ type governanceSettings struct {
 	MaxCPUMillisPerUser int `json:"maxCpuMillisPerUser"`
 	MaxMemoryMBPerUser  int `json:"maxMemoryMbPerUser"`
 	MaxStorageGBPerUser int `json:"maxStorageGbPerUser"`
+	// DefaultIdleTimeoutSeconds applies to a runtime whose agent has no profile.
+	// Every profile carries its own, so this is the floor under the ones that do
+	// not — and it was, until now, a field the console saved and nothing read.
+	DefaultIdleTimeoutSeconds int `json:"defaultIdleTimeoutSeconds"`
 }
 
 // CheckRuntimeQuota refuses a runtime that would put its owner, or their whole
@@ -799,14 +803,22 @@ func (s *Store) TouchRuntime(ctx context.Context, id string) {
 }
 
 func (s *Store) IdleRuntimeCandidates(ctx context.Context) ([]IdleRuntimeCandidate, error) {
+	// The fallback for a runtime whose agent has no profile. It came from a
+	// constant here while the console offered a field for exactly this and saved
+	// it into a setting nobody read.
+	fallback := 3600
+	var governance governanceSettings
+	if err := s.Setting(ctx, "governance", &governance); err == nil && governance.DefaultIdleTimeoutSeconds > 0 {
+		fallback = governance.DefaultIdleTimeoutSeconds
+	}
 	rows, err := s.pool.Query(ctx, `SELECT r.id,r.agent_id,r.owner_id
 FROM agent_runtimes r
 JOIN agent_definitions a ON a.id=r.agent_id
 LEFT JOIN runtime_profiles p ON p.id=a.runtime_profile_id
 WHERE r.desired_state='running'
   AND r.status IN ('running','ready','idle')
-  AND COALESCE(p.idle_timeout_seconds,3600)>0
-  AND COALESCE(r.last_activity_at,r.started_at,r.created_at) < now() - make_interval(secs => COALESCE(p.idle_timeout_seconds,3600))`)
+  AND COALESCE(p.idle_timeout_seconds,$1)>0
+  AND COALESCE(r.last_activity_at,r.started_at,r.created_at) < now() - make_interval(secs => COALESCE(p.idle_timeout_seconds,$1))`, fallback)
 	if err != nil {
 		return nil, err
 	}

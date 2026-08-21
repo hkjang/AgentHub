@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -102,5 +103,19 @@ func TestARefusalToRetryNamesTheState(t *testing.T) {
 	// A state nobody has written an answer for still says something true.
 	if got := retryRefusal("invented_later"); !strings.Contains(got, "invented_later") {
 		t.Errorf("an unknown state lost its own name: %q", got)
+	}
+}
+
+// The console offered a default idle timeout and saved it into the governance
+// settings, and nothing ever read it: the culler carried its own constant. The
+// setting has to be in the struct the culler reads, or the field is decoration
+// again — which is the whole reason it was found.
+func TestTheGovernanceIdleDefaultIsReadable(t *testing.T) {
+	var settings governanceSettings
+	if err := json.Unmarshal([]byte(`{"defaultIdleTimeoutSeconds":900,"maxRuntimesPerUser":3}`), &settings); err != nil {
+		t.Fatal(err)
+	}
+	if settings.DefaultIdleTimeoutSeconds != 900 {
+		t.Errorf("the console's own key does not reach the struct: %#v", settings)
 	}
 }
