@@ -284,11 +284,17 @@ func holmesHealthCommand(build adapterBuild) []string {
 // is not optional either: a Pod's /dev/shm is 64MB by default, and a browser
 // that runs out of it dies in the middle of a page rather than at startup.
 func browserCodeStart(build adapterBuild) string {
-	return "mkdir -p " + browserProfileDir + "\n" +
-		"chromium --headless --no-sandbox --disable-dev-shm-usage " +
-		"--remote-debugging-address=127.0.0.1 --remote-debugging-port=" + browserDebugPort + " " +
-		"--user-data-dir=" + browserProfileDir + " about:blank >/tmp/chromium.log 2>&1 &\n" +
-		"exec /usr/local/bin/ttyd --port 7681 --interface 127.0.0.1 --writable " +
+	// The browser is started by a script the image ships rather than inline here,
+	// because it needs supervising: its output belongs in the container's log, a
+	// browser that never answers has to fail the container rather than leave it
+	// starting forever, and one that dies later has to come back. Inlining all of
+	// that in a command string is how it ends up not being done.
+	// Under tini, because a Kubernetes `command` replaces the image's ENTRYPOINT:
+	// the init process this image ships was being dropped, leaving ttyd as PID 1
+	// and nothing to reap the processes a browser leaves behind. A container that
+	// accumulates zombies is one that eventually cannot fork.
+	return "exec /usr/bin/tini -- /usr/local/bin/agenthub-browsercode-start " +
+		"/usr/local/bin/ttyd --port 7681 --interface 127.0.0.1 --writable " +
 		"--base-path /" + build.runtimeID() + " " +
 		"--client-option titleFixed=AgentHub " +
 		"/usr/local/bin/agenthub-browsercode-shell"
@@ -545,6 +551,7 @@ var runtimeAdapters = map[string]runtimeAdapter{
 				{Name: "BCODE_CONFIG_HOME", Value: browserCodeConfigHome},
 				{Name: "AGENTHUB_BCODE_CONFIG", Value: "/etc/agenthub/" + configBcode},
 				{Name: "AGENTHUB_BROWSER_PROFILE", Value: browserProfileDir},
+				{Name: "AGENTHUB_BROWSER_DEBUG_PORT", Value: browserDebugPort},
 				// This agent reports usage traces outward by default; an offline site
 				// must not, and a site that is not offline has not agreed to it.
 				{Name: "DO_NOT_TRACK", Value: "1"},

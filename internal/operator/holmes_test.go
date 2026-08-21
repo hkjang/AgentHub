@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/hkjang/AgentHub/internal/runtimecfg"
@@ -399,5 +400,69 @@ func TestTheClusterReadBindingBelongsToTheRuntime(t *testing.T) {
 	}
 	if !strings.HasPrefix(binding.Name, clusterReadBindingPrefix) {
 		t.Errorf("name = %q, want the prefix the sweep matches", binding.Name)
+	}
+}
+
+// A runtime that cannot start has to say why. The operator reads the Pod's own
+// account rather than reporting "starting" until somebody gives up: an image
+// that was never loaded, a container that crashes on start, or a Pod nothing can
+// schedule all look identical from the console otherwise — which is exactly how
+// a BrowserCode runtime "stuck on starting" was reported with nothing to act on.
+func TestAPodThatCannotStartSaysWhy(t *testing.T) {
+	waiting := func(name, reason, message string) corev1.Pod {
+		return corev1.Pod{Status: corev1.PodStatus{
+			Phase: corev1.PodPending,
+			InitContainerStatuses: []corev1.ContainerStatus{{
+				Name: name, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: reason, Message: message}},
+			}},
+		}}
+	}
+	cases := []struct {
+		name string
+		pod  corev1.Pod
+		want string
+	}{
+		{"image never loaded", waiting("browsercode-config-init", "ImagePullBackOff", "pull access denied"), "이미지를 가져오지 못했습니다"},
+		{"image name wrong", waiting("agent", "InvalidImageName", ""), "이미지 이름이 올바르지 않습니다"},
+		{"crashes on start", waiting("agent", "CrashLoopBackOff", "back-off restarting"), "종료되기를 반복합니다"},
+		{"configuration cannot be assembled", waiting("agent", "CreateContainerConfigError", "secret not found"), "컨테이너 설정을 만들지 못했습니다"},
+		// A Pod still pulling is on its way up and says nothing: a reason that
+		// appears during a normal start is a reason nobody will trust.
+		{"still pulling", waiting("agent", "PullImageBackOff-not-a-real-reason", ""), ""},
+		{"nothing wrong", corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodRunning}}, ""},
+	}
+	for _, item := range cases {
+		t.Run(item.name, func(t *testing.T) {
+			got := podBlockedReason(item.pod)
+			if item.want == "" {
+				if got != "" {
+					t.Errorf("reason = %q, want none", got)
+				}
+				return
+			}
+			if !strings.Contains(got, item.want) {
+				t.Errorf("reason = %q, want one mentioning %q", got, item.want)
+			}
+			// The container's name is in it, because a runtime has several and
+			// knowing which one stopped is most of the answer.
+			if !strings.Contains(got, item.pod.Status.InitContainerStatuses[0].Name) {
+				t.Errorf("reason = %q, want the container named", got)
+			}
+		})
+	}
+}
+
+// A Pod nothing can schedule has no container statuses at all, so its reason
+// lives in a condition.
+func TestAnUnschedulablePodSaysSo(t *testing.T) {
+	pod := corev1.Pod{Status: corev1.PodStatus{
+		Phase: corev1.PodPending,
+		Conditions: []corev1.PodCondition{{
+			Type: corev1.PodScheduled, Status: corev1.ConditionFalse,
+			Reason: corev1.PodReasonUnschedulable, Message: "0/1 nodes are available: insufficient memory",
+		}},
+	}}
+	if got := podBlockedReason(pod); !strings.Contains(got, "배치할 노드를 찾지 못했습니다") || !strings.Contains(got, "insufficient memory") {
+		t.Errorf("reason = %q", got)
 	}
 }

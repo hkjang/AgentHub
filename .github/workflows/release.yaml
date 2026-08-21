@@ -130,7 +130,7 @@ jobs:
             "jupyter:JUPYTER_VERSION:Dockerfile.jupyter Dockerfile.qwencode deploy/runtime/agenthub-report-config.sh deploy/runtime/qwencode-configure.sh deploy/runtime/qwencode-shell.sh deploy/runtime/qwencode-run.sh deploy/runtime/qwencode-toolchain.sh"
             "goose:GOOSE_VERSION:Dockerfile.goose deploy/runtime/agenthub-report-config.sh deploy/runtime/goose-configure.sh deploy/runtime/goose-shell.sh deploy/runtime/goose-run.sh deploy/runtime/goose-toolchain.sh"
             "holmes:HOLMES_VERSION:Dockerfile.holmes deploy/runtime/agenthub-report-config.sh deploy/runtime/holmes-configure.sh deploy/runtime/holmes-shell.sh deploy/runtime/holmes-run.sh deploy/runtime/holmes-toolchain.sh"
-            "browsercode:BROWSERCODE_VERSION:Dockerfile.browsercode deploy/runtime/agenthub-report-config.sh deploy/runtime/browsercode-configure.sh deploy/runtime/browsercode-shell.sh deploy/runtime/browsercode-run.sh deploy/runtime/browsercode-toolchain.sh deploy/runtime/browsercode-browser.md"
+            "browsercode:BROWSERCODE_VERSION:Dockerfile.browsercode deploy/runtime/agenthub-report-config.sh deploy/runtime/browsercode-configure.sh deploy/runtime/browsercode-shell.sh deploy/runtime/browsercode-run.sh deploy/runtime/browsercode-start.sh deploy/runtime/browsercode-toolchain.sh deploy/runtime/browsercode-browser.md"
             "nodered:NODERED_VERSION:Dockerfile.nodered deploy/runtime/agenthub-report-config.sh"
             "n8n:N8N_VERSION:Dockerfile.n8n deploy/runtime/agenthub-report-config.sh"
           )

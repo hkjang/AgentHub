@@ -888,6 +888,7 @@ func (c *Controller) Reconcile(ctx context.Context, object *unstructured.Unstruc
 		return err
 	}
 	phase, podName, nodeName, restartCount := "Starting", "", "", int32(0)
+	reason := ""
 	if len(pods.Items) > 0 {
 		pod := pods.Items[0]
 		podName = pod.Name
@@ -903,8 +904,60 @@ func (c *Controller) Reconcile(ctx context.Context, object *unstructured.Unstruc
 		case corev1.PodPending:
 			phase = "Starting"
 		}
+		// Why it is not up, when the Pod itself knows. A runtime whose image was
+		// never loaded, whose container crashes on start, or whose configuration
+		// the kubelet cannot assemble sits in Pending forever, and reporting that
+		// as "starting" with nothing else told an operator to keep waiting for
+		// something that was never going to happen.
+		reason = podBlockedReason(pod)
 	}
-	return c.updateStatus(ctx, object, phase, podName, nodeName, restartCount, "")
+	return c.updateStatus(ctx, object, phase, podName, nodeName, restartCount, reason)
+}
+
+// waitingIsFatal are the reasons a container is waiting that will not resolve on
+// their own. Everything else — pulling an image, a container still being created
+// — is a Pod on its way up and says nothing.
+var waitingIsFatal = map[string]string{
+	"ErrImagePull":               "런타임 이미지를 가져오지 못했습니다",
+	"ImagePullBackOff":           "런타임 이미지를 가져오지 못했습니다",
+	"InvalidImageName":           "런타임 이미지 이름이 올바르지 않습니다",
+	"CreateContainerConfigError": "컨테이너 설정을 만들지 못했습니다",
+	"CreateContainerError":       "컨테이너를 만들지 못했습니다",
+	"CrashLoopBackOff":           "컨테이너가 시작하자마자 종료되기를 반복합니다",
+	"RunContainerError":          "컨테이너를 실행하지 못했습니다",
+}
+
+// podBlockedReason is the Pod's own account of why it is not running, in words
+// an operator can act on. Init containers are checked first: a runtime that
+// cannot prepare itself never reaches its main container, and the reason lives
+// on the init container that stopped.
+func podBlockedReason(pod corev1.Pod) string {
+	for _, status := range append(append([]corev1.ContainerStatus{}, pod.Status.InitContainerStatuses...), pod.Status.ContainerStatuses...) {
+		waiting := status.State.Waiting
+		if waiting == nil {
+			continue
+		}
+		explanation, fatal := waitingIsFatal[waiting.Reason]
+		if !fatal {
+			continue
+		}
+		detail := strings.TrimSpace(waiting.Message)
+		if len(detail) > 300 {
+			detail = detail[:300] + "…"
+		}
+		if detail == "" {
+			return fmt.Sprintf("%s (%s: %s)", explanation, status.Name, waiting.Reason)
+		}
+		return fmt.Sprintf("%s (%s): %s", explanation, status.Name, detail)
+	}
+	// A Pod the scheduler could not place says so in its conditions rather than in
+	// a container status, because it has no containers yet.
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionFalse && condition.Reason == corev1.PodReasonUnschedulable {
+			return "이 Runtime을 배치할 노드를 찾지 못했습니다: " + strings.TrimSpace(condition.Message)
+		}
+	}
+	return ""
 }
 
 func labels(name string, mapLabels map[string]string) map[string]string {

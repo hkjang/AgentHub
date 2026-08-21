@@ -72,6 +72,7 @@ COPY deploy/runtime/agenthub-report-config.sh /usr/local/bin/agenthub-report-con
 COPY deploy/runtime/browsercode-configure.sh /usr/local/bin/agenthub-browsercode-configure
 COPY deploy/runtime/browsercode-shell.sh /usr/local/bin/agenthub-browsercode-shell
 COPY deploy/runtime/browsercode-run.sh /usr/local/bin/agenthub-browsercode-run
+COPY deploy/runtime/browsercode-start.sh /usr/local/bin/agenthub-browsercode-start
 COPY deploy/runtime/browsercode-toolchain.sh /etc/profile.d/agenthub-toolchain.sh
 # How to reach the browser this image runs. It is referenced from the generated
 # configuration rather than copied into it, so it is one file to correct if the
@@ -79,6 +80,7 @@ COPY deploy/runtime/browsercode-toolchain.sh /etc/profile.d/agenthub-toolchain.s
 COPY deploy/runtime/browsercode-browser.md /opt/agenthub/browsercode-browser.md
 RUN chmod 0755 /usr/local/bin/agenthub-report-config /usr/local/bin/agenthub-browsercode-configure \
       /usr/local/bin/agenthub-browsercode-shell /usr/local/bin/agenthub-browsercode-run \
+      /usr/local/bin/agenthub-browsercode-start \
  && chmod 0644 /etc/profile.d/agenthub-toolchain.sh /opt/agenthub/browsercode-browser.md
 
 USER 10000:0
