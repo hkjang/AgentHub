@@ -1306,6 +1306,26 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## The setting that can lock everybody out
+
+Single sign-on is the one configuration whose failure removes the way back in.
+An administrator points the platform at an issuer, turns local login off, saves,
+and learns whether the issuer was right by trying to log in — from an account
+that no longer has another door. The platform already refused to have both
+methods off at once, which stops the obvious mistake and not this one: OIDC
+enabled is not OIDC working.
+
+The provider can be asked now, and it is asked again on the way past when
+somebody turns local login off — the save is refused, with the reason, rather
+than succeeding into a locked building. Two of the questions it asks are ones a
+person cannot easily ask themselves: whether the issuer the provider declares
+matches the one that was typed, since a mismatch fails token validation later
+with an error naming neither field; and whether the provider recognises the
+client id and secret, which is read from *how* it refuses. `invalid_client` means
+the credentials are wrong. Every other refusal is about the grant, which this
+deployment does not use, and treating those as failures would fail a correctly
+configured realm.
+
 ## Asking the cluster instead of waiting for it
 
 The Kubernetes settings are a form: a mode, an address, a token, a namespace.

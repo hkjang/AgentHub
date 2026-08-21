@@ -1424,6 +1424,23 @@ func (s *Server) validateSetting(r *http.Request, key string, value map[string]a
 		if !boolValue("localLoginEnabled") && !boolValue("oidcEnabled") {
 			return errors.New("로컬 로그인과 OIDC를 동시에 비활성화할 수 없습니다")
 		}
+		if !boolValue("localLoginEnabled") {
+			// The other way to lock everybody out: OIDC enabled is not OIDC
+			// working. Turning off the only other door while the new one has never
+			// opened leaves nobody able to get in — including whoever is saving
+			// this. So the provider is asked here, on the way past.
+			issuer, clientID := stringValue("issuerUrl"), stringValue("clientId")
+			key := ""
+			if secret != nil {
+				key = strings.TrimSpace(*secret)
+			}
+			if key == "" {
+				key, _ = s.store.SettingSecret(r.Context(), "authentication")
+			}
+			if result := checkOIDC(r.Context(), issuer, clientID, key); result.Verdict != "ok" {
+				return errors.New("로컬 로그인을 끄기 전에 SSO가 실제로 동작해야 합니다 — " + result.Detail)
+			}
+		}
 	case "kubernetes":
 		if namespace := stringValue("namespace"); namespace == "" || len(namespace) > 63 {
 			return errors.New("Runtime Namespace를 확인해 주세요")
