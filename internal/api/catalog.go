@@ -200,7 +200,7 @@ func (s *Server) apiRoutes() []Route {
 		write(http.MethodPost, "/tasks/{id}/retry", "Tasks", "Retry a failed task", s.retryTask),
 		write(http.MethodPost, "/tasks/{id}/resolve", "Tasks", "Close a task a person took over in the runtime", s.resolveTask),
 		read("/tasks/{id}/checkpoint", "Tasks", "Read a task's checkpoint", s.taskCheckpoint),
-		read("/runs", "Tasks", "List execution runs", s.runs),
+		read("/runs", "Tasks", "List execution runs; filter by agentId, taskId, status, metering, days, and scope=all for administrators", s.runs),
 		read("/runs/{id}", "Tasks", "Read one run with its steps", s.run),
 		read("/artifacts", "Tasks", "List run artifacts", s.artifacts),
 		read("/artifacts/{id}/content", "Tasks", "Download an artifact", s.artifactContent),
