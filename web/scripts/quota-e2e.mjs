@@ -57,6 +57,7 @@ try {
   await fill('구성원 1인 기본', 'Runtime 수', 1)
   await fill('구성원 1인 기본', 'Memory', 2048)
   await fill('부서 총량', 'Runtime 수', 2)
+  await fill('부서 총량', '토큰 예산', 500000)
   await page.getByRole('button', { name: '저장', exact: true }).click()
   const card = page.locator('.quota-card', { hasText: DEPARTMENT })
   await card.waitFor({ timeout: 10000 })
@@ -64,6 +65,20 @@ try {
   check('부서 카드에 1인 기본이 보임', /Runtime 수 1개/.test(cardText), cardText.replace(/\n/g, ' · '))
   check('부서 총량도 함께 보임', /Runtime 수 2개/.test(cardText))
   check('총량 사용량 막대가 그려짐', await card.locator('.quota-usage i').count() > 0)
+  check('부서 총량에 토큰 예산도 담김', /토큰 예산/.test(cardText), cardText.replace(/\n/g, ' · '))
+
+  // Two names can slug to the same id. An upsert would have rewritten the first
+  // department's limits while its members went on pointing at it, so a create
+  // that collides has to be refused — and say so in words somebody can act on.
+  await page.getByRole('button', { name: '새 부서' }).click()
+  await page.locator('#department-form').waitFor({ timeout: 5000 })
+  await page.locator('label', { hasText: '부서 이름' }).locator('input').fill(DEPARTMENT.replace(/ /g, '-'))
+  await page.getByRole('button', { name: '저장', exact: true }).click()
+  const banner = page.locator('.drawer .alert.error').first()
+  await banner.waitFor({ timeout: 10000 })
+  check('같은 이름의 부서를 다시 만들 수 없음', /이미 있습니다/.test(await banner.innerText()), await banner.innerText())
+  await page.getByRole('button', { name: '취소' }).click()
+  check('먼저 만든 부서의 한도가 그대로임', /Runtime 수 1개/.test(await card.innerText()))
 
   // --- a person joins it, and the console says where each limit came from ----
   await page.getByRole('button', { name: /^개인/ }).click()

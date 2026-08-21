@@ -58,7 +58,11 @@ export type AgentGoal = {
 }
 export type RuntimeFlow = { id:string; name:string; description?:string; endpointName?:string; mcpEnabled?:boolean }
 export type ExternalApp = { id:string; name:string; provider:string; baseUrl:string; appKind:'workflow'|'chat'; description?:string; enabled:boolean; secretConfigured?:boolean }
-export type UsageBudget = { windowDays:number; tokenBudget:number; tokensUsed:number; costBudget:number; costUsed:number; currency:string; maxRunning:number; runningNow:number }
+export type UsageBudget = { windowDays:number; tokenBudget:number; tokensUsed:number; costBudget:number; costUsed:number; currency:string; maxRunning:number; runningNow:number
+  // The department's own budget, when the person belongs to one that has any.
+  // Shown alongside because being refused for a limit the console never displayed
+  // is how a quota becomes a mystery.
+  department?: { name:string; tokenBudget:number; tokensUsed:number; costBudget:number; costUsed:number; maxRunning:number; runningNow:number } }
 export type QueueSnapshot = { ready:number; running:number; workers:number; status:Record<string,number> }
 export type WarmRuntime = { runtimeId:string; agentId:string; agentName:string; status:string; warmUntil:string }
 export type AgentMemory = { id: string; scope: string; key: string; value: string; updatedAt: string }

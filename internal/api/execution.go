@@ -342,9 +342,11 @@ func contains(values []string, value string) bool {
 // budget that is already spent would only be discovered by the worker minutes
 // later, so the person who asked is told now.
 func (s *Server) budgetRefusal(r *http.Request, ownerID, agentID string) string {
-	// The owner's policy rather than the platform's: their department, or an
-	// override set for them, may allow more or less than everybody else.
-	policy, err := s.store.ExecutionPolicyFor(r.Context(), ownerID)
+	// The owner's scope rather than the platform's: their department, or an
+	// override set for them, may allow more or less than everybody else — and the
+	// department they belong to has a budget of its own that a colleague may
+	// already have spent.
+	scope, err := s.store.ExecutionScopeFor(r.Context(), ownerID)
 	if err != nil {
 		s.logger.Warn("execution quota policy is unreadable; accepting the task", "error", err)
 		return ""
@@ -353,7 +355,10 @@ func (s *Server) budgetRefusal(r *http.Request, ownerID, agentID string) string 
 	if goalErr != nil {
 		goal = store.DefaultAgentGoal(agentID)
 	}
-	if policy.TokenBudgetPerUser == 0 && policy.CostBudgetPerUser == 0 && goal.TokenBudget == 0 {
+	department := quota.DepartmentScope(scope.Department, quota.Usage{})
+	budgeted := scope.User.TokenBudgetPerUser > 0 || scope.User.CostBudgetPerUser > 0 ||
+		department.TokenBudget > 0 || department.CostBudget > 0
+	if !budgeted && goal.TokenBudget == 0 {
 		return ""
 	}
 	usage, err := s.store.ExecutionUsage(r.Context(), ownerID, agentID, "")
@@ -364,7 +369,19 @@ func (s *Server) budgetRefusal(r *http.Request, ownerID, agentID string) string 
 	// Only the budget rules are applied here: the running-task count is left to
 	// the worker, which is where waiting for a slot belongs.
 	usage.RunningTasks = 0
-	if decision := quota.Evaluate(quota.Policy{TokenBudgetPerUser: policy.TokenBudgetPerUser, CostBudgetPerUser: policy.CostBudgetPerUser}, goal.TokenBudget, usage); !decision.Allowed && !decision.Wait {
+	scopes := []quota.Scoped{quota.UserScope(
+		quota.Policy{TokenBudgetPerUser: scope.User.TokenBudgetPerUser, CostBudgetPerUser: scope.User.CostBudgetPerUser}, usage)}
+	if department.TokenBudget > 0 || department.CostBudget > 0 {
+		departmentUsage, usageErr := s.store.DepartmentExecutionUsage(r.Context(), scope.DepartmentID, "")
+		if usageErr != nil {
+			s.logger.Warn("department usage is unreadable; accepting the task", "error", usageErr)
+			return ""
+		}
+		departmentUsage.RunningTasks = 0
+		scopes = append(scopes, quota.DepartmentScope(
+			quota.Limits{TokenBudget: department.TokenBudget, CostBudget: department.CostBudget}, departmentUsage))
+	}
+	if decision := quota.Evaluate(goal.TokenBudget, scopes...); !decision.Allowed && !decision.Wait {
 		return decision.Reason
 	}
 	return ""
@@ -942,19 +959,23 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 // effort: a report that cannot show a budget is still a useful report.
 func (s *Server) budgetStatus(r *http.Request, ownerID string) map[string]any {
 	// This person's own limits, so the report shows the budget they are actually
-	// measured against rather than the platform-wide one they may not be on.
-	policy, err := s.store.ExecutionPolicyFor(r.Context(), ownerID)
+	// measured against rather than the platform-wide one they may not be on — and
+	// their department's, because being refused for a limit the console never
+	// showed them is how a quota becomes a mystery.
+	scope, err := s.store.ExecutionScopeFor(r.Context(), ownerID)
 	if err != nil {
 		return nil
 	}
-	if policy.TokenBudgetPerUser == 0 && policy.CostBudgetPerUser == 0 && policy.MaxRunningTasksPerUser == 0 {
+	policy := scope.User
+	department := quota.DepartmentScope(scope.Department, quota.Usage{})
+	if policy.TokenBudgetPerUser == 0 && policy.CostBudgetPerUser == 0 && policy.MaxRunningTasksPerUser == 0 && department.Empty() {
 		return nil
 	}
 	usage, err := s.store.ExecutionUsage(r.Context(), ownerID, "", "")
 	if err != nil {
 		return nil
 	}
-	return map[string]any{
+	status := map[string]any{
 		"windowDays":  int(store.QuotaWindow.Hours() / 24),
 		"tokenBudget": policy.TokenBudgetPerUser,
 		"tokensUsed":  usage.Tokens,
@@ -964,6 +985,21 @@ func (s *Server) budgetStatus(r *http.Request, ownerID string) map[string]any {
 		"maxRunning":  policy.MaxRunningTasksPerUser,
 		"runningNow":  usage.RunningTasks,
 	}
+	if !department.Empty() {
+		departmentUsage, usageErr := s.store.DepartmentExecutionUsage(r.Context(), scope.DepartmentID, "")
+		if usageErr == nil {
+			status["department"] = map[string]any{
+				"name":        scope.DepartmentName,
+				"tokenBudget": department.TokenBudget,
+				"tokensUsed":  departmentUsage.Tokens,
+				"costBudget":  department.CostBudget,
+				"costUsed":    departmentUsage.Cost,
+				"maxRunning":  department.MaxRunning,
+				"runningNow":  departmentUsage.RunningTasks,
+			}
+		}
+	}
+	return status
 }
 
 // warmRuntimes reports what the runtime warm pool is currently holding, so the

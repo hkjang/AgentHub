@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/hkjang/AgentHub/internal/store"
 )
@@ -34,6 +35,13 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 func writeStoreError(w http.ResponseWriter, err error) {
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "요청한 리소스를 찾을 수 없습니다.")
+		return
+	}
+	if errors.Is(err, store.ErrConflict) {
+		// The sentinel is how the code recognises the case; the person reading the
+		// message only needs the part that says what to do about it.
+		writeError(w, http.StatusConflict, "conflict",
+			strings.TrimPrefix(err.Error(), store.ErrConflict.Error()+": "))
 		return
 	}
 	slog.Error("store or runtime operation failed", "error", err)

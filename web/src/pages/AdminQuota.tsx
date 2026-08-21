@@ -58,8 +58,8 @@ export function AdminQuota() {
             <td><button className="icon-button" onClick={() => setPerson(item)} aria-label={`${item.displayName} Quota`}><UserCog size={17}/></button></td>
           </tr> })}</tbody>
         </table></div></section>}
-    {department!==undefined&&<DepartmentDrawer item={department} close={() => setDepartment(undefined)} done={() => {setDepartment(undefined);void load()}} error={setError}/>}
-    {person&&<PersonDrawer person={person} departments={departments} override={overrides.find((v) => v.ownerId===person.id)} close={() => setPerson(undefined)} done={() => {setPerson(undefined);void load()}} error={setError}/>}
+    {department!==undefined&&<DepartmentDrawer item={department} close={() => setDepartment(undefined)} done={() => {setDepartment(undefined);void load()}}/>}
+    {person&&<PersonDrawer person={person} departments={departments} override={overrides.find((v) => v.ownerId===person.id)} close={() => setPerson(undefined)} done={() => {setPerson(undefined);void load()}}/>}
   </div>
 }
 
@@ -75,44 +75,51 @@ function Usage({limits,held}:{limits:Limits;held:{runtimes:number;cpuMillis:numb
   </div>)}</div>
 }
 
-function DepartmentDrawer({item,close,done,error}:{item:Department|null;close:()=>void;done:()=>void;error:(v:string)=>void}) {
+// A save that fails has to say so inside the drawer. Reported to the page behind
+// it, the banner renders under the scrim and the person is told nothing at all —
+// which is what a refused duplicate name looked like.
+function DepartmentDrawer({item,close,done}:{item:Department|null;close:()=>void;done:()=>void}) {
   const [name,setName] = useState(item?.name ?? '')
   const [description,setDescription] = useState(item?.description ?? '')
   const [perMember,setPerMember] = useState<Limits>(item?.quota.perMember ?? {})
   const [total,setTotal] = useState<Limits>(item?.quota.total ?? {})
   const [busy,setBusy] = useState(false)
+  const [problem,setProblem] = useState('')
   const submit = async (event:FormEvent) => {
-    event.preventDefault(); setBusy(true)
+    event.preventDefault(); setBusy(true); setProblem('')
     try { await api.post('/api/v1/admin/departments',{id:item?.id,name,description,quota:{perMember,total}}); done() }
-    catch (e) { error(e instanceof Error?e.message:'부서를 저장하지 못했습니다.') } finally { setBusy(false) }
+    catch (e) { setProblem(e instanceof Error?e.message:'부서를 저장하지 못했습니다.') } finally { setBusy(false) }
   }
   return <Drawer title={item?`${item.name} 한도`:'새 부서'} close={close} footer={<><button className="button ghost" onClick={close}>취소</button><button className="button primary" form="department-form" disabled={busy}>{busy?'저장 중…':'저장'}</button></>}>
     <form id="department-form" className="drawer-form" onSubmit={submit}>
+      {problem&&<ErrorBanner message={problem}/>}
       <label><span>부서 이름</span><input required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} placeholder="플랫폼팀"/></label>
       <label><span>설명</span><textarea rows={2} maxLength={300} value={description} onChange={(e) => setDescription(e.target.value)}/></label>
       <LimitFields title="구성원 1인 기본" hint="이 부서에 속한 사람 한 명에게 적용됩니다. 비워 두면 플랫폼 기본값을 따릅니다." value={perMember} change={setPerMember}/>
-      <LimitFields title="부서 총량" hint="구성원 전체가 함께 쓰는 상한입니다. 한 사람이 자기 한도 안에 있어도 부서가 가득 차면 시작할 수 없습니다." value={total} change={setTotal} onlyResources/>
+      <LimitFields title="부서 총량" hint="구성원 전체가 함께 쓰는 상한입니다. 한 사람이 자기 한도 안에 있어도 부서가 가득 차면 시작할 수 없습니다. 토큰·비용 예산은 최근 30일 기준이며, 동시 실행 한도에 걸린 작업은 실패가 아니라 대기합니다." value={total} change={setTotal}/>
     </form>
   </Drawer>
 }
 
-function PersonDrawer({person,departments,override,close,done,error}:{person:ManagedUser;departments:Department[];override?:UserQuota;close:()=>void;done:()=>void;error:(v:string)=>void}) {
+function PersonDrawer({person,departments,override,close,done}:{person:ManagedUser;departments:Department[];override?:UserQuota;close:()=>void;done:()=>void}) {
   const [departmentId,setDepartmentId] = useState(person.departmentId ?? '')
   const [limits,setLimits] = useState<Limits>(override?.quota ?? {})
   const [note,setNote] = useState(override?.note ?? '')
   const [effective,setEffective] = useState<EffectiveQuota>()
   const [busy,setBusy] = useState(false)
+  const [problem,setProblem] = useState('')
   useEffect(() => { api.get<EffectiveQuota>(`/api/v1/admin/users/${person.id}/quota`).then(setEffective).catch(() => setEffective(undefined)) }, [person.id])
   const submit = async (event:FormEvent) => {
-    event.preventDefault(); setBusy(true)
+    event.preventDefault(); setBusy(true); setProblem('')
     try {
       if ((person.departmentId ?? '') !== departmentId) await api.post(`/api/v1/admin/users/${person.id}/department`,{departmentId})
       await api.post(`/api/v1/admin/users/${person.id}/quota`,{quota:limits,note})
       done()
-    } catch (e) { error(e instanceof Error?e.message:'Quota를 저장하지 못했습니다.') } finally { setBusy(false) }
+    } catch (e) { setProblem(e instanceof Error?e.message:'Quota를 저장하지 못했습니다.') } finally { setBusy(false) }
   }
   return <Drawer title={`${person.displayName} · Quota`} close={close} footer={<><button className="button ghost" onClick={close}>취소</button><button className="button primary" form="person-quota-form" disabled={busy}>{busy?'저장 중…':'저장'}</button></>}>
     <form id="person-quota-form" className="drawer-form" onSubmit={submit}>
+      {problem&&<ErrorBanner message={problem}/>}
       <label><span>부서</span><select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}><option value="">부서 없음</option>{departments.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}</select></label>
       <LimitFields title="개인 예외" hint="이 사람에게만 적용되며 부서·플랫폼 설정을 덮어씁니다. 비워 두면 예외가 사라집니다." value={limits} change={setLimits}/>
       <label><span>메모</span><input maxLength={300} value={note} onChange={(e) => setNote(e.target.value)} placeholder="예: 플랫폼 운영자 예외 (2026-09-01 재검토)"/></label>
@@ -141,8 +148,8 @@ export function EffectiveTable({value}:{value:EffectiveQuota}) {
   </div>
 }
 
-function LimitFields({title,hint,value,change,onlyResources}:{title:string;hint:string;value:Limits;change:(v:Limits)=>void;onlyResources?:boolean}) {
-  const fields = onlyResources?LIMIT_FIELDS.filter((v) => v.resource):LIMIT_FIELDS
+function LimitFields({title,hint,value,change}:{title:string;hint:string;value:Limits;change:(v:Limits)=>void}) {
+  const fields = LIMIT_FIELDS
   const update = (key:keyof Limits, raw:string) => { const next = {...value}; const n = Number(raw); if (!raw||n===0||Number.isNaN(n)) delete next[key]; else next[key] = n; change(next) }
   return <fieldset className="quota-fields">
     <legend>{title}</legend>

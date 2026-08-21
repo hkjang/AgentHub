@@ -96,12 +96,29 @@ func (s *Store) SaveDepartment(ctx context.Context, item Department) (Department
 	if item.Name == "" || len(item.Name) > 80 {
 		return Department{}, errors.New("부서 이름은 1~80자여야 합니다")
 	}
-	if item.ID == "" {
+	// A department being created has no id yet and gets one from its name. Two
+	// names can slug to the same id — "플랫폼 팀" and "플랫폼-팀" — and an upsert
+	// would then silently rewrite the existing department's limits while its
+	// members went on pointing at it. So a create refuses the collision and an
+	// update, which carries the id the caller is editing, still writes.
+	creating := item.ID == ""
+	if creating {
 		item.ID = "dept-" + safeIdentifier(item.Name)
 	}
 	raw, err := json.Marshal(item.Quota)
 	if err != nil {
 		return Department{}, err
+	}
+	if creating {
+		tag, insertErr := s.pool.Exec(ctx, `INSERT INTO departments(id,name,description,quota) VALUES($1,$2,$3,$4)
+			ON CONFLICT(id) DO NOTHING`, item.ID, item.Name, item.Description, raw)
+		if insertErr != nil {
+			return Department{}, insertErr
+		}
+		if tag.RowsAffected() == 0 {
+			return Department{}, fmt.Errorf("%w: 같은 이름의 부서가 이미 있습니다. 기존 부서를 수정하거나 다른 이름을 쓰세요", ErrConflict)
+		}
+		return item, nil
 	}
 	_, err = s.pool.Exec(ctx, `INSERT INTO departments(id,name,description,quota) VALUES($1,$2,$3,$4)
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name,description=excluded.description,quota=excluded.quota,updated_at=now()`,

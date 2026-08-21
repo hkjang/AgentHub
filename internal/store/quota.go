@@ -56,6 +56,49 @@ func (s *Store) ExecutionPolicyFor(ctx context.Context, userID string) (quota.Po
 	}, nil
 }
 
+// ExecutionScope is everything one decision needs: what this person may run, and
+// what the department they belong to may run between them. A person with no
+// department gets an empty one, which bounds nothing.
+type ExecutionScope struct {
+	User           quota.Policy
+	DepartmentID   string
+	DepartmentName string
+	Department     quota.Limits
+}
+
+// Empty reports a scope that bounds nothing at all, so the caller can skip both
+// the measuring and the locking.
+func (e ExecutionScope) Empty() bool {
+	return e.User == (quota.Policy{}) && quota.DepartmentScope(e.Department, quota.Usage{}).Empty()
+}
+
+// ExecutionScopeFor resolves both levels for one person.
+//
+// The department's *total* is the one that matters here, not its per-member
+// default: the per-member limits are already inside the person's own resolved
+// policy, and applying them twice would refuse at the department for a limit that
+// belongs to the person.
+func (s *Store) ExecutionScopeFor(ctx context.Context, userID string) (ExecutionScope, error) {
+	resolved, err := s.ResolveQuota(ctx, userID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			policy, policyErr := s.ExecutionPolicy(ctx)
+			return ExecutionScope{User: policy}, policyErr
+		}
+		return ExecutionScope{}, err
+	}
+	return ExecutionScope{
+		User: quota.Policy{
+			MaxRunningTasksPerUser: resolved.Effective.MaxRunningTasks,
+			TokenBudgetPerUser:     resolved.Effective.TokenBudget,
+			CostBudgetPerUser:      resolved.Effective.CostBudget,
+		},
+		DepartmentID:   resolved.DepartmentID,
+		DepartmentName: resolved.Department,
+		Department:     resolved.DepartmentQ.Total,
+	}, nil
+}
+
 // ExecutionUsage measures one owner against those limits: how many of their tasks
 // are running right now, and what their agents have spent in the window.
 //
@@ -68,6 +111,40 @@ func (s *Store) ExecutionUsage(ctx context.Context, ownerID, agentID, exceptTask
 // querier is the part of a pool or a transaction this file needs.
 type querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// DepartmentExecutionUsage measures everything a department's members are
+// running and have spent, over the same window.
+//
+// It is a separate query rather than a wider one because the person's own usage
+// is needed either way, and a department of one would otherwise pay for a join
+// that answers the same thing twice.
+func (s *Store) DepartmentExecutionUsage(ctx context.Context, departmentID, exceptTaskID string) (quota.Usage, error) {
+	return departmentExecutionUsage(ctx, s.pool, departmentID, exceptTaskID)
+}
+
+func departmentExecutionUsage(ctx context.Context, db querier, departmentID, exceptTaskID string) (quota.Usage, error) {
+	usage := quota.Usage{Currency: "KRW"}
+	if departmentID == "" {
+		return usage, nil
+	}
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM agent_tasks t
+		JOIN users u ON u.id = t.owner_id
+		WHERE u.department_id=$1 AND t.status IN ('running','planning','ready','waiting_tool') AND t.id <> $2`,
+		departmentID, exceptTaskID).Scan(&usage.RunningTasks); err != nil {
+		return usage, err
+	}
+	since := time.Now().UTC().Add(-QuotaWindow)
+	err := db.QueryRow(ctx, `
+		SELECT COALESCE(sum(s.prompt_tokens + s.completion_tokens), 0),
+		       COALESCE(sum(`+usageCostSQL+`), 0)
+		FROM agent_run_steps s
+		JOIN agent_runs r ON r.id = s.run_id
+		JOIN users u ON u.id = r.owner_id
+		LEFT JOIN model_endpoints m ON m.id = r.model_endpoint_id
+		WHERE u.department_id = $1 AND s.created_at >= $2`,
+		departmentID, since).Scan(&usage.Tokens, &usage.Cost)
+	return usage, err
 }
 
 func executionUsage(ctx context.Context, db querier, ownerID, agentID, exceptTaskID string) (quota.Usage, error) {
@@ -99,7 +176,7 @@ func executionUsage(ctx context.Context, db querier, ownerID, agentID, exceptTas
 // owner are serialised, and a task that stands down does so in the same
 // transaction it was counted in — so the next decision sees a queued task rather
 // than a running one, and exactly as many tasks run as the limit allows.
-func (s *Store) ReserveExecutionSlot(ctx context.Context, task AgentTask, policy quota.Policy, agentBudget int64, wait time.Duration) (quota.Decision, error) {
+func (s *Store) ReserveExecutionSlot(ctx context.Context, task AgentTask, scope ExecutionScope, agentBudget int64, wait time.Duration) (quota.Decision, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return quota.Decision{}, err
@@ -107,7 +184,16 @@ func (s *Store) ReserveExecutionSlot(ctx context.Context, task AgentTask, policy
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	// hashtext gives one lock per owner; a different owner's decisions never wait
-	// on this one.
+	// on this one. A department limit needs the department's own lock too, or two
+	// members claiming at the same instant would each see the other absent — the
+	// same race the per-owner lock exists to close, one level up. Both are taken
+	// in the same order every time, department first, so two decisions in
+	// different departments cannot deadlock each other.
+	if scope.DepartmentID != "" {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, "department:"+scope.DepartmentID); err != nil {
+			return quota.Decision{}, err
+		}
+	}
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, task.OwnerID); err != nil {
 		return quota.Decision{}, err
 	}
@@ -115,7 +201,15 @@ func (s *Store) ReserveExecutionSlot(ctx context.Context, task AgentTask, policy
 	if err != nil {
 		return quota.Decision{}, err
 	}
-	decision := quota.Evaluate(policy, agentBudget, usage)
+	scopes := []quota.Scoped{quota.UserScope(scope.User, usage)}
+	if department := quota.DepartmentScope(scope.Department, quota.Usage{}); !department.Empty() {
+		departmentUsage, usageErr := departmentExecutionUsage(ctx, tx, scope.DepartmentID, task.ID)
+		if usageErr != nil {
+			return quota.Decision{}, usageErr
+		}
+		scopes = append(scopes, quota.DepartmentScope(scope.Department, departmentUsage))
+	}
+	decision := quota.Evaluate(agentBudget, scopes...)
 	if decision.Wait {
 		if _, err := tx.Exec(ctx, deferTaskSQL, task.ID, wait.String(), decision.Reason); err != nil {
 			return quota.Decision{}, err

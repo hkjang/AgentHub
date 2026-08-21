@@ -1351,6 +1351,25 @@ limit stops one of their own runtimes, while a person refused by the total has t
 talk to a colleague or ask for more capacity. So the message names the scope —
 사용자 or 부서 — rather than reporting a number and letting the reader guess.
 
+The same two-level shape reaches the execution plane. A department's total may
+bound concurrent tasks, tokens and cost as well as held resources, measured across
+everyone in it over the same 30-day window the usage report shows. The decision is
+made under two advisory locks rather than one — the department's, then the
+owner's, always in that order — because two members claiming in the same instant
+would each see the other absent, which is the race the per-owner lock already
+existed to close, one level up.
+
+Members see their department's budget next to their own. Being refused by a limit
+the console never displayed is how a quota becomes a mystery, and the mystery is
+more expensive than the limit.
+
+Department ids are derived from names, which means two names can slug to one id.
+An upsert would have let a newly created department silently rewrite an existing
+one's limits while its members went on pointing at it, so a create that collides
+is refused — as a conflict, not as a server error, because it is the caller's
+mistake to fix and answering 500 both misleads them and logs a fault that never
+happened.
+
 The console shows the same thing from the other side. A limit displayed alone is
 not actionable, because an administrator cannot tell whether to edit the person,
 the department, or the platform default, and editing the wrong one saves

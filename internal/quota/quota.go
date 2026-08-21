@@ -60,36 +60,84 @@ type Decision struct {
 
 var allow = Decision{Allowed: true}
 
-// Evaluate applies the policy to one task's owner and agent.
+// Scoped is one level's limits and the spend measured against them.
 //
-// Concurrency is checked first: it is the limit that clears on its own, and a
-// task that must wait should not be told about a budget it may never reach.
-// A budget that is already spent fails the task instead of queueing it, because a
-// window that resets in days is not something to hold a worker slot for.
-func Evaluate(policy Policy, agentBudget int64, usage Usage) Decision {
-	if policy.MaxRunningTasksPerUser > 0 && usage.RunningTasks >= policy.MaxRunningTasksPerUser {
-		return Decision{Wait: true, Reason: fmt.Sprintf(
-			"동시 실행 한도(%d개)에 도달해 대기 중입니다. 앞선 작업이 끝나면 이어서 실행됩니다.",
-			policy.MaxRunningTasksPerUser)}
+// The fields are named for what they bound rather than for whose settings they
+// came from, because the same three limits now arrive from two places: the
+// person's own resolved quota, and the capacity their department holds together.
+// A department that has spent its month stops its members even when each of them
+// is inside their own budget — and the refusal has to say which, because one of
+// those is fixed by waiting and the other by asking for more.
+type Scoped struct {
+	// Scope is ScopeUser or ScopeDepartment; it names the limit in the refusal.
+	Scope       string
+	MaxRunning  int
+	TokenBudget int64
+	CostBudget  float64
+	Usage       Usage
+}
+
+// UserScope is the person's own level, built from the platform policy shape the
+// governance settings use.
+func UserScope(policy Policy, usage Usage) Scoped {
+	return Scoped{Scope: ScopeUser, MaxRunning: policy.MaxRunningTasksPerUser,
+		TokenBudget: policy.TokenBudgetPerUser, CostBudget: policy.CostBudgetPerUser, Usage: usage}
+}
+
+// DepartmentScope is the department's total, built from the limits an
+// administrator set on the department itself.
+func DepartmentScope(limits Limits, usage Usage) Scoped {
+	return Scoped{Scope: ScopeDepartment, MaxRunning: limits.MaxRunningTasks,
+		TokenBudget: limits.TokenBudget, CostBudget: limits.CostBudget, Usage: usage}
+}
+
+// Empty reports a scope that bounds nothing, so a caller can skip measuring what
+// nobody limited.
+func (s Scoped) Empty() bool {
+	return s.MaxRunning == 0 && s.TokenBudget == 0 && s.CostBudget == 0
+}
+
+// Evaluate applies the agent's own budget and every scope that bounds the task.
+//
+// Concurrency is checked first, across every scope: it is the limit that clears
+// on its own, and a task that must wait should not be told about a budget it may
+// never reach. A budget that is already spent fails the task instead of queueing
+// it, because a window that resets in days is not something to hold a worker slot
+// for.
+//
+// The agent's own budget sits between them. It is the narrowest limit and the one
+// whose owner can act immediately, so a runaway agent is named as the cause
+// rather than the person or the team it belongs to.
+func Evaluate(agentBudget int64, scopes ...Scoped) Decision {
+	for _, scope := range scopes {
+		if scope.MaxRunning > 0 && scope.Usage.RunningTasks >= scope.MaxRunning {
+			return Decision{Wait: true, Reason: fmt.Sprintf(
+				"%s 동시 실행 한도(%d개)에 도달해 대기 중입니다. 앞선 작업이 끝나면 이어서 실행됩니다.",
+				scopeName(scope.Scope), scope.MaxRunning)}
+		}
 	}
-	if agentBudget > 0 && usage.AgentTokens >= agentBudget {
+	// The agent's own spend is the same number whichever scope reports it, so it
+	// is read from the first one that measured anything.
+	if len(scopes) > 0 && agentBudget > 0 && scopes[0].Usage.AgentTokens >= agentBudget {
 		return Decision{Reason: fmt.Sprintf(
 			"이 Agent의 토큰 예산(%s)을 모두 사용했습니다. 최근 사용량 %s 토큰.",
-			number(agentBudget), number(usage.AgentTokens))}
+			number(agentBudget), number(scopes[0].Usage.AgentTokens))}
 	}
-	if policy.TokenBudgetPerUser > 0 && usage.Tokens >= policy.TokenBudgetPerUser {
-		return Decision{Reason: fmt.Sprintf(
-			"사용자 토큰 예산(%s)을 모두 사용했습니다. 최근 사용량 %s 토큰.",
-			number(policy.TokenBudgetPerUser), number(usage.Tokens))}
-	}
-	if policy.CostBudgetPerUser > 0 && usage.Cost >= policy.CostBudgetPerUser {
-		currency := usage.Currency
-		if currency == "" {
-			currency = "KRW"
+	for _, scope := range scopes {
+		if scope.TokenBudget > 0 && scope.Usage.Tokens >= scope.TokenBudget {
+			return Decision{Reason: fmt.Sprintf(
+				"%s 토큰 예산(%s)을 모두 사용했습니다. 최근 사용량 %s 토큰.",
+				scopeName(scope.Scope), number(scope.TokenBudget), number(scope.Usage.Tokens))}
 		}
-		return Decision{Reason: fmt.Sprintf(
-			"사용자 비용 예산(%.2f %s)을 모두 사용했습니다. 최근 사용액 %.2f %s.",
-			policy.CostBudgetPerUser, currency, usage.Cost, currency)}
+		if scope.CostBudget > 0 && scope.Usage.Cost >= scope.CostBudget {
+			currency := scope.Usage.Currency
+			if currency == "" {
+				currency = "KRW"
+			}
+			return Decision{Reason: fmt.Sprintf(
+				"%s 비용 예산(%.2f %s)을 모두 사용했습니다. 최근 사용액 %.2f %s.",
+				scopeName(scope.Scope), scope.CostBudget, currency, scope.Usage.Cost, currency)}
+		}
 	}
 	return allow
 }

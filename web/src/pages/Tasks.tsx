@@ -324,6 +324,11 @@ function UsagePanel() {
                 {budget.tokenBudget > 0 && <span>토큰 예산 <b>{tokens(budget.tokensUsed)} / {tokens(budget.tokenBudget)}</b> (최근 {budget.windowDays}일)</span>}
                 {budget.costBudget > 0 && <span>비용 예산 <b>{money(budget.costUsed, budget.currency)} / {money(budget.costBudget, budget.currency)}</b></span>}
                 {budget.maxRunning > 0 && <span>동시 실행 <b>{budget.runningNow} / {budget.maxRunning}</b></span>}
+                {budget.department && <>
+                  {budget.department.tokenBudget > 0 && <span>{budget.department.name} 토큰 <b>{tokens(budget.department.tokensUsed)} / {tokens(budget.department.tokenBudget)}</b></span>}
+                  {budget.department.costBudget > 0 && <span>{budget.department.name} 비용 <b>{money(budget.department.costUsed, budget.currency)} / {money(budget.department.costBudget, budget.currency)}</b></span>}
+                  {budget.department.maxRunning > 0 && <span>{budget.department.name} 동시 실행 <b>{budget.department.runningNow} / {budget.department.maxRunning}</b></span>}
+                </>}
                 <small>예산을 모두 쓰면 새 작업은 대기가 아니라 실패로 처리되고 알림이 갑니다.</small>
               </div>}
               <div className="usage-summary">

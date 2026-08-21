@@ -19,6 +19,12 @@ import (
 
 var ErrNotFound = errors.New("not found")
 
+// ErrConflict is a request that asks for something already taken — a name, an
+// identifier. It is separated from every other store failure because it is the
+// caller's mistake to fix, and answering 500 for it both misleads the caller and
+// logs a server fault that never happened.
+var ErrConflict = errors.New("conflict")
+
 type Store struct {
 	pool   *pgxpool.Pool
 	cipher *cryptox.Cipher

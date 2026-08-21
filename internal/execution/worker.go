@@ -13,7 +13,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/hkjang/AgentHub/internal/quota"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -339,7 +338,7 @@ func (w *Worker) promoted(ctx context.Context, task store.AgentTask, logger *slo
 // error would turn a spend limit into an outage.
 func (w *Worker) withinQuota(ctx context.Context, task store.AgentTask, logger *slog.Logger) bool {
 	finish := context.WithoutCancel(ctx)
-	policy, err := w.store.ExecutionPolicyFor(finish, task.OwnerID)
+	scope, err := w.store.ExecutionScopeFor(finish, task.OwnerID)
 	if err != nil {
 		logger.Warn("execution quota policy is unreadable; running the task", "error", err)
 		return true
@@ -348,12 +347,12 @@ func (w *Worker) withinQuota(ctx context.Context, task store.AgentTask, logger *
 	if goalErr != nil {
 		goal = store.DefaultAgentGoal(task.AgentID)
 	}
-	if policy == (quota.Policy{}) && goal.TokenBudget == 0 {
+	if scope.Empty() && goal.TokenBudget == 0 {
 		return true
 	}
 	// The reservation counts and stands down in one transaction under a per-owner
 	// lock, so two tasks claimed in the same instant cannot both step aside.
-	decision, err := w.store.ReserveExecutionSlot(finish, task, policy, goal.TokenBudget, quotaWait)
+	decision, err := w.store.ReserveExecutionSlot(finish, task, scope, goal.TokenBudget, quotaWait)
 	if err != nil {
 		logger.Warn("execution quota could not be evaluated; running the task", "error", err)
 		return true
