@@ -117,6 +117,17 @@ try {
   const runtimeRow = page.locator('.quota-effective tr', { hasText: 'Runtime 수' }).first()
   check('개인 예외가 적용값이 됨', (await runtimeRow.innerText()).includes('4개'), await runtimeRow.innerText())
   check('출처가 개인 예외로 표시됨', (await runtimeRow.innerText()).includes('개인 예외'))
+
+  // The three sources have to be told apart at a glance, not only by reading. A
+  // colour that loses a specificity contest still passes every text assertion —
+  // which is how the failure note on the task list stayed grey for months.
+  const colourOf = (tone) => page.locator(`.quota-source.${tone}`).first()
+    .evaluate((el) => getComputedStyle(el).backgroundColor)
+  const [personalTone, departmentTone, platformTone] =
+    await Promise.all([colourOf('personal'), colourOf('department'), colourOf('platform')])
+  check('세 출처가 서로 다른 색으로 보임',
+    new Set([personalTone, departmentTone, platformTone]).size === 3,
+    [personalTone, departmentTone, platformTone].join(' / '))
   check('덮어쓰지 않은 항목은 부서 값을 유지', (await memoryRow.innerText()).includes('2048MB'), await memoryRow.innerText())
 
   // --- the person sees their own limit without asking an administrator ------

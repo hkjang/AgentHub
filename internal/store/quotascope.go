@@ -357,3 +357,60 @@ func safeIdentifier(value string) string {
 	}
 	return strings.Trim(b.String(), "-")
 }
+
+// DepartmentPressure is a department close enough to one of its limits that
+// somebody should hear about it before a colleague is refused.
+type DepartmentPressure struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Limit   string `json:"limit"`
+	Used    int    `json:"used"`
+	Allowed int    `json:"allowed"`
+	Percent int    `json:"percent"`
+}
+
+// PressureThreshold is how full a limit has to be before it is worth saying.
+// Below it the bars on the department screen are enough; at it, the next request
+// is plausibly the one that gets refused.
+const PressureThreshold = 80
+
+// DepartmentsUnderPressure reports the department totals that are nearly spent.
+//
+// It reads the same numbers the department screen shows rather than counting
+// again, so a warning and the screen it sends somebody to cannot disagree. Only
+// held resources are considered: token and cost budgets are measured over a
+// 30-day window, and a warning that a department is 80% through a month is a
+// different, noisier kind of statement than one that it is nearly out of
+// runtimes right now.
+func (s *Store) DepartmentsUnderPressure(ctx context.Context) ([]DepartmentPressure, error) {
+	departments, err := s.Departments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := []DepartmentPressure{}
+	for _, department := range departments {
+		for _, dimension := range []struct {
+			label   string
+			used    int
+			allowed int
+		}{
+			{"Runtime", department.Held.Runtimes, department.Quota.Total.MaxRuntimes},
+			{"CPU", department.Held.CPUMillis, department.Quota.Total.MaxCPUMillis},
+			{"Memory", department.Held.MemoryMB, department.Quota.Total.MaxMemoryMB},
+			{"Storage", department.Held.StorageGB, department.Quota.Total.MaxStorageGB},
+		} {
+			if dimension.allowed <= 0 {
+				continue
+			}
+			percent := dimension.used * 100 / dimension.allowed
+			if percent < PressureThreshold {
+				continue
+			}
+			out = append(out, DepartmentPressure{
+				ID: department.ID, Name: department.Name, Limit: dimension.label,
+				Used: dimension.used, Allowed: dimension.allowed, Percent: percent,
+			})
+		}
+	}
+	return out, nil
+}

@@ -79,12 +79,20 @@ func (s *Server) adminOverview(w http.ResponseWriter, r *http.Request) {
 	if policyErr != nil {
 		s.logger.Warn("execution quota policy is unreadable", "error", policyErr)
 	}
+	// Which departments are nearly full. The bars on the department screen say the
+	// same thing, but only to somebody who went looking; this is the screen an
+	// operator already has open when a colleague is refused.
+	pressure, pressureErr := s.store.DepartmentsUnderPressure(r.Context())
+	if pressureErr != nil {
+		s.logger.Warn("department quota pressure is unreadable", "error", pressureErr)
+	}
 	operations := s.operationsSettings(r)
 	writeJSON(w, http.StatusOK, struct {
 		store.PlatformOverview
-		Quota  any `json:"quota"`
-		Paused any `json:"paused"`
-	}{PlatformOverview: overview, Quota: map[string]any{
+		Quota    any `json:"quota"`
+		Pressure any `json:"quotaPressure"`
+		Paused   any `json:"paused"`
+	}{PlatformOverview: overview, Pressure: pressure, Quota: map[string]any{
 		"windowDays":  int(store.QuotaWindow.Hours() / 24),
 		"maxRunning":  policy.MaxRunningTasksPerUser,
 		"tokenBudget": policy.TokenBudgetPerUser,

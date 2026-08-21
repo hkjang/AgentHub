@@ -25,6 +25,7 @@ type Overview = {
   spend: { currency: string; inputTokens: number; outputTokens: number; cost: number; unpricedTokens: number; runs: number; unmeteredRuns: number; users: SpendRow[]; agents: SpendRow[]; models: SpendRow[]; daily: UsagePoint[] }
   oldestQueuedSeconds: number
   quota: { windowDays: number; maxRunning: number; tokenBudget: number; costBudget: number }
+  quotaPressure?: { id: string; name: string; limit: string; used: number; allowed: number; percent: number }[]
   paused: { paused: boolean; reason: string; by: string; at?: string }
   workers: { live: number; stale: number; paused: number; stopped: number; capacity: number }
 }
@@ -74,6 +75,14 @@ function attention(overview: Overview) {
   if (overview.spend.unpricedTokens > 0) items.push({ level: 'warn', to: '/admin/models', text: `단가가 없는 모델에서 ${number(overview.spend.unpricedTokens)} 토큰을 사용해 금액에 반영되지 않았습니다.` })
   // A bill is not evidence unless it says what it could not see.
   if (overview.spend.unmeteredRuns > 0) items.push({ level: 'warn', to: '/tasks', text: `실행 ${number(overview.spend.runs)}건 중 ${number(overview.spend.unmeteredRuns)}건은 에이전트가 사용량을 알려주지 않아 이 금액에 들어 있지 않습니다.` })
+  // Said before somebody is refused rather than after. The department screen has
+  // the same numbers, but only for whoever went looking at it.
+  for (const pressure of overview.quotaPressure ?? []) {
+    items.push({
+      level: pressure.percent >= 100 ? 'danger' : 'warn', to: '/admin/quotas',
+      text: `${pressure.name} 부서가 ${pressure.limit} 총량의 ${pressure.percent}%를 쓰고 있습니다 (${number(pressure.used)} / ${number(pressure.allowed)}).`
+    })
+  }
   return items
 }
 
