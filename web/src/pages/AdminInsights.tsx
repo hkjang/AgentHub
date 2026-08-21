@@ -160,7 +160,7 @@ export function AdminInsights() {
         <dl className="detail-list">
           <div><dt>실행 수</dt><dd>{number(execution.runs)}</dd></div>
           <div><dt>재시도한 작업</dt><dd>{number(execution.retried)}</dd></div>
-          <div><dt>승격 대기</dt><dd>{number(execution.blocked)}</dd></div>
+          <div><dt title="승격 게이트나 정책이 붙잡고 있는 작업입니다. 실패가 아니라 보류이며, 막은 것이 풀리면 그대로 실행됩니다.">차단됨</dt><dd>{number(execution.blocked)}</dd></div>
           <div><dt>처리 불가</dt><dd>{number(execution.deadLetter)}</dd></div>
         </dl>
         <div className="chip-row">{Object.entries(execution.tasks).sort((a, b) => b[1] - a[1]).map(([status, count]) => (

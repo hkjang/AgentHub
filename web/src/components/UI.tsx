@@ -40,7 +40,7 @@ const STATUS_LABELS: Record<string, string> = {
   failed: '실패', crashed: '비정상 종료', error: '오류', rejected: '거부됨', approved: '승인됨',
   succeeded: '성공', skipped: '건너뜀', validating: '검증 중',
   completed: '완료', queued: '대기 중', planning: '계획 중', retrying: '재시도 대기', dead_letter: '처리 불가',
-  'waiting_tool': '도구 대기', 'waiting_approval': '승인 대기', cancelled: '취소됨', blocked: '승격 대기', handoff: '런타임 인계',
+  'waiting_tool': '도구 대기', 'waiting_approval': '승인 대기', cancelled: '취소됨', blocked: '차단됨', handoff: '런타임 인계',
 }
 export function statusLabel(status: string) { return STATUS_LABELS[status.toLowerCase()] ?? status }
 export function StatusBadge({status}:{status:string}) { const normal=status.toLowerCase().replaceAll('_','-');return <span className={`status-badge status-${normal}`} title={status}><span/>{statusLabel(status)}</span> }

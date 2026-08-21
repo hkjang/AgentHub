@@ -209,7 +209,11 @@ export function Tasks() {
                   {/* Waiting and failing read differently because they are
                       different: one clears by itself, the other needs somebody. */}
                   {task.waitingReason && <span className="task-waiting" title={task.waitingReason}>{task.waitingReason}</span>}
-                  {task.lastError && <span className="task-error" title={task.lastError}>{task.lastError}</span>}
+                  {/* A blocked task did not fail: something is holding it — a
+                      promotion gate, a policy rule — and it runs when that is
+                      lifted. Painting the reason in the failure colour said the
+                      opposite of what the platform will do next. */}
+                  {task.lastError && <span className={task.status === 'blocked' ? 'task-waiting' : 'task-error'} title={task.lastError}>{task.lastError}</span>}
                 </div>
               </td>
               <td><div className="task-agent">
