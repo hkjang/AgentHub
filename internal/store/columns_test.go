@@ -17,6 +17,7 @@ import (
 func TestColumnListsAndScanTargetsAgree(t *testing.T) {
 	var u User
 	var r AgentRun
+	var t2 AgentTask
 	for _, tc := range []struct {
 		name    string
 		columns string
@@ -24,6 +25,7 @@ func TestColumnListsAndScanTargetsAgree(t *testing.T) {
 	}{
 		{"userColumns", userColumns, len(u.scanTargets())},
 		{"runColumns", runColumns, len(r.scanTargets())},
+		{"taskOwnColumns", taskOwnColumns, len(t2.scanTargets())},
 	} {
 		if want := len(strings.Split(tc.columns, ",")); tc.targets != want {
 			t.Errorf("%s has %d columns but its scanTargets reads %d; add the new column to both", tc.name, want, tc.targets)
@@ -44,6 +46,7 @@ func TestNobodyScansASharedColumnListByHand(t *testing.T) {
 			"&user.ID, &user.Username, &user.Email",
 			"&run.ID, &run.TaskID, &run.AgentID",
 			"&item.ID, &item.TaskID, &item.AgentID, &item.OwnerID, &item.Attempt, &item.Status",
+			"&item.ID, &item.AgentID, &item.OwnerID, &item.Title, &item.Input",
 		} {
 			if strings.Contains(string(body), byHand) {
 				t.Errorf("%s scans a shared column list by hand (%s…); use scanTargets() so a new column reaches it", name, byHand[:24])
