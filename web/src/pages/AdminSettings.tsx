@@ -10,7 +10,7 @@ export function AdminSettings(){const [settings,setSettings]=useState<SettingsMa
 function SettingsForm({tab,value,update,secret,setSecret}:{tab:string;value:Record<string,unknown>;update:(key:string,v:unknown)=>void;secret:string;setSecret:(v:string)=>void}){
   if(tab==='general')return <><Section title="서비스" description="사용자에게 표시되는 기본 정보입니다."><Field label="서비스 이름"><input value={String(value.serviceName??'AgentHub')} onChange={e=>update('serviceName',e.target.value)}/></Field><Field label="Public URL" hint="OIDC Callback URL 생성에 사용합니다."><input type="url" value={String(value.publicUrl??'')} onChange={e=>update('publicUrl',e.target.value)} placeholder="https://agenthub.company.local"/></Field><div className="form-grid"><Field label="기본 언어"><select value={String(value.defaultLocale??'ko')} onChange={e=>update('defaultLocale',e.target.value)}><option value="ko">한국어</option><option value="en">English</option></select></Field><Field label="시간대"><input value={String(value.timezone??'Asia/Seoul')} onChange={e=>update('timezone',e.target.value)}/></Field></div></Section></>
   if(tab==='authentication')return <><Section title="로그인 방식" description="Keycloak의 표준 OIDC Discovery 문서를 이용해 자동 연동합니다."><Toggle label="로컬 관리자 로그인" checked={Boolean(value.localLoginEnabled)} change={v=>update('localLoginEnabled',v)}/><Toggle label="Keycloak OIDC 사용" checked={Boolean(value.oidcEnabled)} change={v=>update('oidcEnabled',v)}/></Section><Section title="OIDC Client" description="Keycloak Realm에서 Confidential Client를 만든 뒤 세 항목만 입력하세요."><Field label="Issuer URL"><input type="url" value={String(value.issuerUrl??'')} onChange={e=>update('issuerUrl',e.target.value)} placeholder="https://keycloak.local/realms/company"/></Field><Field label="Client ID"><input value={String(value.clientId??'')} onChange={e=>update('clientId',e.target.value)} placeholder="agenthub"/></Field><Field label="Client Secret" hint={value.clientSecretConfigured?'현재 Secret이 설정되어 있습니다. 변경할 때만 입력하세요.':'Keycloak Client Secret을 입력하세요.'}><input type="password" autoComplete="new-password" value={secret} onChange={e=>setSecret(e.target.value)} placeholder={value.clientSecretConfigured?'••••••••':'Client Secret'}/></Field><div className="form-grid"><Field label="Username Claim"><input value={String(value.usernameClaim??'preferred_username')} onChange={e=>update('usernameClaim',e.target.value)}/></Field><Field label="Groups Claim"><input value={String(value.groupsClaim??'groups')} onChange={e=>update('groupsClaim',e.target.value)}/></Field></div><Field label="Admin Groups" hint="쉼표로 구분합니다."><input value={(value.adminGroups as string[]??[]).join(', ')} onChange={e=>update('adminGroups',e.target.value.split(',').map(v=>v.trim()).filter(Boolean))} placeholder="/agenthub-admins"/></Field></Section></>
-  if(tab==='kubernetes')return <><Section title="Kubernetes Control Plane" description="AgentRuntime CRD를 생성할 클러스터 연결입니다."><Toggle label="Runtime Spawn 사용" checked={Boolean(value.enabled)} change={v=>update('enabled',v)}/><div className="form-grid"><Field label="연결 방식"><select value={String(value.mode??'inCluster')} onChange={e=>update('mode',e.target.value)}><option value="inCluster">In-cluster ServiceAccount</option><option value="token">External API Token</option></select></Field><Field label="Runtime Namespace"><input value={String(value.namespace??'agent-runtime-dev')} onChange={e=>update('namespace',e.target.value)}/></Field></div>{value.mode==='token'&&<><Field label="API Server"><input type="url" value={String(value.apiServer??'')} onChange={e=>update('apiServer',e.target.value)} placeholder="https://kubernetes.default.svc"/></Field><Field label="Bearer Token" hint="현재 토큰을 유지하려면 비워 두세요."><input type="password" value={secret} onChange={e=>setSecret(e.target.value)} placeholder="••••••••"/></Field></>}<Toggle label="TLS 인증서 검증" checked={Boolean(value.verifyTls)} change={v=>update('verifyTls',v)}/><Toggle label="AgentRuntime CRD 사용" checked={Boolean(value.crdEnabled)} change={v=>update('crdEnabled',v)}/></Section></>
+  if(tab==='kubernetes')return <><Section title="Kubernetes Control Plane" description="AgentRuntime CRD를 생성할 클러스터 연결입니다."><Toggle label="Runtime Spawn 사용" checked={Boolean(value.enabled)} change={v=>update('enabled',v)}/><div className="form-grid"><Field label="연결 방식"><select value={String(value.mode??'inCluster')} onChange={e=>update('mode',e.target.value)}><option value="inCluster">In-cluster ServiceAccount</option><option value="token">External API Token</option></select></Field><Field label="Runtime Namespace"><input value={String(value.namespace??'agent-runtime-dev')} onChange={e=>update('namespace',e.target.value)}/></Field></div>{value.mode==='token'&&<><Field label="API Server"><input type="url" value={String(value.apiServer??'')} onChange={e=>update('apiServer',e.target.value)} placeholder="https://kubernetes.default.svc"/></Field><Field label="Bearer Token" hint="현재 토큰을 유지하려면 비워 두세요."><input type="password" value={secret} onChange={e=>setSecret(e.target.value)} placeholder="••••••••"/></Field></>}<Toggle label="TLS 인증서 검증" checked={Boolean(value.verifyTls)} change={v=>update('verifyTls',v)}/><Toggle label="AgentRuntime CRD 사용" checked={Boolean(value.crdEnabled)} change={v=>update('crdEnabled',v)}/><ClusterCheck/></Section></>
   if(tab==='runtimeEnvironment')return <RuntimeEnvironmentForm value={value} update={update}/>
   if(tab==='sessionGateway')return <><Section title="Runtime Browser Session" description="Runtime Base Domain을 설정하면 Runtime마다 전용 Origin(권장)을 사용하고, 비워 두면 Portal 도메인의 /{runtimeId}/ 경로로 같은 세션을 엽니다."><Toggle label="Runtime 전용 서브도메인 사용 (권장)" checked={Boolean(value.enabled)} change={v=>update('enabled',v)}/><div className="form-grid"><Field label="Scheme"><select value={String(value.scheme??'https')} onChange={e=>update('scheme',e.target.value)}><option value="https">HTTPS</option><option value="http">HTTP (localhost 전용)</option></select></Field><Field label="세션 유효시간"><select value={Number(value.sessionHours??8)} onChange={e=>update('sessionHours',Number(e.target.value))}><option value={1}>1시간</option><option value={4}>4시간</option><option value={8}>8시간</option><option value={12}>12시간</option><option value={24}>24시간</option></select></Field></div><Field label="Runtime Base Domain" hint="Wildcard DNS/TLS와 Ingress가 이 서비스로 연결되어야 합니다. 로컬 예: localhost:8080"><input value={String(value.baseDomain??'')} onChange={e=>update('baseDomain',e.target.value)} placeholder="agents.company.local"/></Field><div className="info-box"><ShieldCheck size={17}/><div><strong>One-time Launch Ticket</strong><p>Portal 인증 후 2분짜리 일회용 URL을 발급하고 Runtime 전용 HttpOnly 세션으로 교환합니다. 두 방식 모두 동일하게 적용됩니다.</p></div></div><div className="info-box"><ExternalLink size={17}/><div><strong>도메인을 비워 두면 경로 방식으로 동작합니다</strong><p>Wildcard DNS·인증서가 없어도 <code>https://포털주소/&#123;runtimeId&#125;/</code>로 작업공간을 열 수 있습니다. 다만 Runtime UI가 Portal과 같은 Origin을 공유하므로, 준비가 되면 전용 서브도메인 방식으로 전환하는 것을 권장합니다.</p></div></div></Section></>
   if(tab==='governance')return <><Section title="검토 및 승인" description="팀장 승인 설정이 꺼져 있으면 생성·검토·승인·반려 흐름 자체가 사용자 화면에서 제외됩니다."><Toggle label="팀장 검토 및 승인 사용" checked={Boolean(value.teamApprovalEnabled)} change={v=>update('teamApprovalEnabled',v)}/><Toggle label="고위험 Tool 실행 승인" checked={Boolean(value.highRiskToolApproval)} change={v=>update('highRiskToolApproval',v)}/></Section><Section title="기본 Quota" description="0은 제한 없음입니다."><div className="form-grid"><NumberField label="사용자당 Runtime" name="maxRuntimesPerUser" value={value} update={update}/><NumberField label="CPU (millicores)" name="maxCpuMillisPerUser" value={value} update={update}/><NumberField label="Memory (MB)" name="maxMemoryMbPerUser" value={value} update={update}/><NumberField label="Storage (GB)" name="maxStorageGbPerUser" value={value} update={update}/></div><NumberField label="Idle Timeout (초)" name="defaultIdleTimeoutSeconds" value={value} update={update} hint="런타임 프로파일에 값이 없을 때만 쓰이는 바닥값입니다. 보통은 프로파일마다 정하며, 관리자 ▸ 런타임 프로파일에서 확인·변경합니다."/></Section>
@@ -104,3 +104,57 @@ function Section({title,description='',children}:{title:string;description?:stri
 function Field({label,hint,children}:{label:string;hint?:string;children:React.ReactNode}){return <label><span>{label}</span>{children}{hint&&<small>{hint}</small>}</label>}
 function Toggle({label,checked,change}:{label:string;checked:boolean;change:(v:boolean)=>void}){return <label className="toggle-row"><span>{label}</span><input type="checkbox" checked={checked} onChange={e=>change(e.target.checked)}/><i/></label>}
 function NumberField({label,name,value,update,hint}:{label:string;name:string;value:Record<string,unknown>;update:(key:string,v:unknown)=>void;hint?:string}){return <Field label={label} hint={hint}><input type="number" min="0" value={Number(value[name]??0)} onChange={e=>update(name,Number(e.target.value))}/></Field>}
+
+type ClusterAnswer = {
+  reachable: boolean
+  detail?: string
+  missing?: string[]
+  check?: {
+    serverVersion: string; namespace: string; namespaceFound: boolean
+    crdExpected: boolean; crdInstalled: boolean; snapshotsInstalled: boolean; scope: string
+    permissions: { what: string; allowed: boolean; reason?: string }[]
+  }
+}
+
+/**
+ * The Kubernetes settings, answered by Kubernetes.
+ *
+ * Saving the form proves the form was filled in. Whether the address answers,
+ * the token is accepted, the namespace exists, the CRD is installed and this
+ * account may do what the platform does were five separate questions with one
+ * shared answer: a runtime that failed to start, hours later, for somebody else.
+ */
+function ClusterCheck() {
+  const [answer, setAnswer] = useState<ClusterAnswer>()
+  const [busy, setBusy] = useState(false)
+  const ask = async () => {
+    setBusy(true)
+    try { setAnswer(await api.post<ClusterAnswer>('/api/v1/admin/kubernetes/check')) }
+    catch (e) { setAnswer({ reachable: false, detail: e instanceof Error ? e.message : '확인하지 못했습니다.' }) }
+    finally { setBusy(false) }
+  }
+  const check = answer?.check
+  const missing = answer?.missing ?? []
+  const tone = !answer ? '' : !answer.reachable ? 'danger' : missing.length > 0 ? 'warn' : 'ok'
+  return <div className={`cluster-check ${tone}`}>
+    <div>
+      <strong>이 설정으로 실제로 되는지 확인합니다</strong>
+      <p>주소가 응답하는지, 토큰이 받아들여지는지, 네임스페이스와 CRD가 있는지, 그리고 이 계정이 플랫폼이 하는 일을 할 수 있는지를 <b>클러스터에게 직접</b> 묻습니다.</p>
+      {answer && !answer.reachable && <p className="cluster-check-detail">연결하지 못했습니다: {answer.detail}</p>}
+      {check && <>
+        <p className="cluster-check-detail">
+          Kubernetes {check.serverVersion} · 네임스페이스 {check.namespace}{check.namespaceFound ? '' : ' (없음)'}
+          {check.crdExpected && ` · AgentRuntime CRD ${check.crdInstalled ? '설치됨' : '없음'}`}
+          {` · 작업공간 스냅샷 ${check.snapshotsInstalled ? '가능' : '불가 (클러스터에 VolumeSnapshot API가 없습니다)'}`}
+        </p>
+        {missing.length > 0
+          ? <p className="cluster-check-detail">권한이 없습니다: {missing.join(', ')} — {check.scope} 계정의 Role을 확인해 주세요.</p>
+          : <p className="cluster-check-detail">{check.scope}이 하는 일 {check.permissions.length}가지 모두 허용되어 있습니다.</p>}
+        <p className="cluster-check-note">권한은 <b>{check.scope}</b> 계정 기준입니다. Pod·볼륨·네트워크 정책은 오퍼레이터가 자기 계정으로 만들며, 클러스터는 물어본 계정에 대해서만 답합니다.</p>
+      </>}
+    </div>
+    <button type="button" className="button ghost" disabled={busy} onClick={() => void ask()}>
+      <Activity size={16}/>{busy ? '확인 중…' : '지금 확인'}
+    </button>
+  </div>
+}

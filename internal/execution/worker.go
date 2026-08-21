@@ -35,9 +35,9 @@ type Worker struct {
 
 	// pauseState caches the operational switch. It is read once per poll, and a
 	// short cache keeps a three-second poll from becoming a three-second query.
-	pauseMu    sync.Mutex
-	pausedUnil time.Time
-	pausedNow  bool
+	pauseMu     sync.Mutex
+	pausedUntil time.Time
+	pausedNow   bool
 
 	// running counts tasks actually executing. The slot channel cannot answer
 	// this: a slot is held while the worker asks the queue for work, so an idle
@@ -274,12 +274,12 @@ func (w *Worker) heartbeat(ctx context.Context) {
 func (w *Worker) paused(ctx context.Context) bool {
 	w.pauseMu.Lock()
 	defer w.pauseMu.Unlock()
-	if time.Now().Before(w.pausedUnil) {
+	if time.Now().Before(w.pausedUntil) {
 		return w.pausedNow
 	}
 	var settings store.OperationsSettings
 	if err := w.store.Setting(ctx, store.OperationsSettingKey, &settings); err != nil {
-		w.pausedUnil = time.Now().Add(5 * time.Second)
+		w.pausedUntil = time.Now().Add(5 * time.Second)
 		w.pausedNow = false
 		return false
 	}
@@ -291,7 +291,7 @@ func (w *Worker) paused(ctx context.Context) bool {
 		}
 	}
 	w.pausedNow = settings.Paused
-	w.pausedUnil = time.Now().Add(5 * time.Second)
+	w.pausedUntil = time.Now().Add(5 * time.Second)
 	return w.pausedNow
 }
 

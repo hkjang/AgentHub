@@ -261,6 +261,7 @@ func (s *Server) apiRoutes() []Route {
 		admin(http.MethodPost, "/admin/execution/pause", "Administration", "Pause or resume task execution", s.pauseExecution),
 		admin(http.MethodPut, "/admin/execution/retention", "Administration", "Set how long operational history is kept", s.putRetention),
 		admin(http.MethodPost, "/admin/execution/cleanup", "Administration", "Remove history past its retention, or count what would go", s.cleanupHistory),
+		admin(http.MethodPost, "/admin/kubernetes/check", "Administration", "Ask the cluster whether it answers, holds the namespace and CRD, and permits what the platform does", s.clusterCheck),
 		admin(http.MethodPost, "/admin/mcp-servers/{id}/check", "Administration", "Ask an MCP server whether it answers, and what tools it offers", s.mcpServerCheck),
 		admin(http.MethodPost, "/admin/models/{id}/check", "Administration", "Ask a model endpoint whether it is reachable and serving the model named on it", s.modelCheck),
 		admin(http.MethodPost, "/admin/network-check", "Administration", "Ask a running runtime whether this cluster actually enforces its egress policy", s.networkCheck),

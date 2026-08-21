@@ -1306,6 +1306,35 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Asking the cluster instead of waiting for it
+
+The Kubernetes settings are a form: a mode, an address, a token, a namespace.
+Saving it proves the form was filled in. Whether the address answers, the token
+is accepted, the namespace exists, the CRD is installed, and whether this account
+may do each thing the platform does are five separate questions that all had the
+same answer — a runtime that failed to start, hours later, for somebody else.
+
+The permission part is the one worth having. Kubernetes refuses a verb it was not
+granted with an error naming the verb, the resource and the account: perfectly
+clear, and read at three in the morning if at all. The API server will answer the
+same question in advance through SelfSubjectAccessReview, which is the cluster's
+own opinion about this account rather than the platform's guess about its own
+manifests.
+
+The first draft of the question list was wrong in an instructive way. It asked
+whether the control plane could create ConfigMaps, volumes and network policies —
+which it cannot, and never does: the operator writes those under its own account,
+and the control plane writes only AgentRuntime objects. Every correctly
+configured deployment would have been told three permissions were missing. A
+check that calls a healthy deployment broken is worse than no check, because the
+next real warning is read as another false one. The list now mirrors the calls in
+that package, a test holds it there, and the answer names whose account it is
+about, since SelfSubjectAccessReview can only ever answer for the caller.
+
+Snapshot support is reported separately from permission to use it. The account
+may well be allowed to create VolumeSnapshots on a cluster that has no such API,
+and the difference decides whether the snapshot button can work at all.
+
 ## Asking the endpoint instead of the logs
 
 The MCP registry gets the same treatment, and one thing more: the check returns

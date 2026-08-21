@@ -703,3 +703,14 @@ tr.clickable:hover { background: #f7f9fc; }
 .model-check.model_missing, .model-check.reachable { background: #fffaf0; color: #96610a; }
 .model-check.unauthorised, .model-check.wrong_path, .model-check.unreachable, .model-check.error, .model-check.unconfigured { background: #fff5f7; color: #a3283f; }
 .model-check-tools { display: block; margin-top: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #52606f; word-break: break-all; }
+
+/* The Kubernetes settings, answered by Kubernetes. */
+.cluster-check { display: flex; align-items: flex-start; justify-content: space-between; gap: 17px; padding: 15px 17px; margin-top: 15px; border: 1px solid #e6eaf1; border-radius: 11px; background: #fbfcfe; }
+.cluster-check strong { display: block; font-size: 13px; color: #101828; }
+.cluster-check p { margin: 5px 0 0; font-size: 12px; line-height: 1.55; color: #667085; max-width: 720px; }
+.cluster-check .cluster-check-detail { margin-top: 9px; font-weight: 600; color: #344054; }
+.cluster-check .cluster-check-note { margin-top: 7px; font-size: 11px; color: #98a2b3; }
+.cluster-check.ok { border-color: #b7e3c9; background: #f4fbf7; }
+.cluster-check.warn { border-color: #f0dcae; background: #fffaf0; }
+.cluster-check.danger { border-color: #f0b6c2; background: #fff5f7; }
+.cluster-check.danger .cluster-check-detail { color: #a3283f; }
