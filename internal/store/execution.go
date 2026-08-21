@@ -36,6 +36,25 @@ const (
 // so the claim query sorts on this expression.
 const taskPriorityRank = `CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 WHEN 'low' THEN 3 ELSE 4 END`
 
+// ACPToolPolicy is what a goal says about tools by name, for ACP runs where the
+// platform answers each permission request itself.
+//
+// Two lists rather than one mode, because they answer different questions and an
+// operator usually has both. Never is a rule: it holds even under yolo, since a
+// blocklist an approval mode can overrule is not a blocklist. Without asking is
+// the remedy for an agent that reports every tool as `other` — the kind-based
+// mode cannot tell `npm test` from `rm -rf`, and a name can.
+type ACPToolPolicy struct {
+	// Deny refuses the request outright, whatever the mode says.
+	Deny []string `json:"deny,omitempty"`
+	// Allow runs the tool without asking anybody, before the mode is consulted.
+	Allow []string `json:"allow,omitempty"`
+}
+
+// Empty reports a policy that says nothing, so the caller can keep the old path
+// exactly as it was.
+func (p ACPToolPolicy) Empty() bool { return len(p.Deny) == 0 && len(p.Allow) == 0 }
+
 type AgentGoal struct {
 	AgentID            string   `json:"agentId"`
 	Description        string   `json:"description"`
@@ -87,6 +106,9 @@ type AgentGoal struct {
 	// that takes named inputs rather than a prompt. Empty uses the product's
 	// default for that kind.
 	ExternalInputKey string `json:"externalInputKey"`
+	// ToolPolicy names tools rather than kinds, for the runs where the kind does
+	// not distinguish anything.
+	ToolPolicy ACPToolPolicy `json:"toolPolicy"`
 	// ApprovalMode is how much a run may do without asking.
 	// when it runs a task unattended. It is stored rather than defaulted at the
 	// call site because the difference between "plan" and "yolo" is the difference
@@ -282,9 +304,9 @@ type AgentArtifact struct {
 
 func (s *Store) AgentGoalByID(ctx context.Context, agentID string) (AgentGoal, error) {
 	item := AgentGoal{AgentID: agentID}
-	var success, failure []byte
-	err := s.pool.QueryRow(ctx, `SELECT description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint,token_budget,runner,flow_id,flow_output_component,approval_mode,COALESCE(external_app_id,''),external_input_key FROM agent_goals WHERE agent_id=$1`, agentID).
-		Scan(&item.Description, &success, &failure, &item.Constraints, &item.MaxSteps, &item.MaxToolCalls, &item.MaxDurationSeconds, &item.MaxRetries, &item.StartOnDemand, &item.StopAfterTask, &item.CompletionStrategy, &item.ConcurrencyPolicy, &item.MaxConcurrentRuns, &item.PlannerMode, &item.ApprovalRequired, &item.MaxDelegationDepth, &item.WarmupSeconds, &item.KeepWarmSeconds, &item.ResumeFromCheckpoint, &item.TokenBudget, &item.Runner, &item.FlowID, &item.FlowOutputComponent, &item.ApprovalMode, &item.ExternalAppID, &item.ExternalInputKey)
+	var success, failure, toolPolicy []byte
+	err := s.pool.QueryRow(ctx, `SELECT description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint,token_budget,runner,flow_id,flow_output_component,approval_mode,COALESCE(external_app_id,''),external_input_key,tool_policy FROM agent_goals WHERE agent_id=$1`, agentID).
+		Scan(&item.Description, &success, &failure, &item.Constraints, &item.MaxSteps, &item.MaxToolCalls, &item.MaxDurationSeconds, &item.MaxRetries, &item.StartOnDemand, &item.StopAfterTask, &item.CompletionStrategy, &item.ConcurrencyPolicy, &item.MaxConcurrentRuns, &item.PlannerMode, &item.ApprovalRequired, &item.MaxDelegationDepth, &item.WarmupSeconds, &item.KeepWarmSeconds, &item.ResumeFromCheckpoint, &item.TokenBudget, &item.Runner, &item.FlowID, &item.FlowOutputComponent, &item.ApprovalMode, &item.ExternalAppID, &item.ExternalInputKey, &toolPolicy)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WithLegacyNames(DefaultAgentGoal(agentID)), nil
 	}
@@ -293,6 +315,7 @@ func (s *Store) AgentGoalByID(ctx context.Context, agentID string) (AgentGoal, e
 	}
 	_ = json.Unmarshal(success, &item.SuccessCriteria)
 	_ = json.Unmarshal(failure, &item.FailureCriteria)
+	_ = json.Unmarshal(toolPolicy, &item.ToolPolicy)
 	if item.SuccessCriteria == nil {
 		item.SuccessCriteria = []string{}
 	}
@@ -305,10 +328,11 @@ func (s *Store) AgentGoalByID(ctx context.Context, agentID string) (AgentGoal, e
 func (s *Store) PutAgentGoal(ctx context.Context, item AgentGoal) (AgentGoal, error) {
 	success, _ := json.Marshal(item.SuccessCriteria)
 	failure, _ := json.Marshal(item.FailureCriteria)
-	_, err := s.pool.Exec(ctx, `INSERT INTO agent_goals(agent_id,description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint,token_budget,runner,flow_id,flow_output_component,approval_mode,external_app_id,external_input_key)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
-		ON CONFLICT(agent_id) DO UPDATE SET description=excluded.description,success_criteria=excluded.success_criteria,failure_criteria=excluded.failure_criteria,constraints=excluded.constraints,max_steps=excluded.max_steps,max_tool_calls=excluded.max_tool_calls,max_duration_seconds=excluded.max_duration_seconds,max_retries=excluded.max_retries,start_on_demand=excluded.start_on_demand,stop_after_task=excluded.stop_after_task,completion_strategy=excluded.completion_strategy,concurrency_policy=excluded.concurrency_policy,max_concurrent_runs=excluded.max_concurrent_runs,planner_mode=excluded.planner_mode,approval_required=excluded.approval_required,max_delegation_depth=excluded.max_delegation_depth,warmup_seconds=excluded.warmup_seconds,keep_warm_seconds=excluded.keep_warm_seconds,resume_from_checkpoint=excluded.resume_from_checkpoint,token_budget=excluded.token_budget,runner=excluded.runner,flow_id=excluded.flow_id,flow_output_component=excluded.flow_output_component,approval_mode=excluded.approval_mode,external_app_id=excluded.external_app_id,external_input_key=excluded.external_input_key,updated_at=now()`,
-		item.AgentID, item.Description, success, failure, item.Constraints, item.MaxSteps, item.MaxToolCalls, item.MaxDurationSeconds, item.MaxRetries, item.StartOnDemand, item.StopAfterTask, item.CompletionStrategy, item.ConcurrencyPolicy, item.MaxConcurrentRuns, item.PlannerMode, item.ApprovalRequired, item.MaxDelegationDepth, item.WarmupSeconds, item.KeepWarmSeconds, item.ResumeFromCheckpoint, item.TokenBudget, runnerOrDefault(item.Runner), item.FlowID, item.FlowOutputComponent, approvalModeOrDefault(item.ApprovalMode), nullText(item.ExternalAppID), item.ExternalInputKey)
+	toolPolicy, _ := json.Marshal(cleanToolPolicy(item.ToolPolicy))
+	_, err := s.pool.Exec(ctx, `INSERT INTO agent_goals(agent_id,description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint,token_budget,runner,flow_id,flow_output_component,approval_mode,external_app_id,external_input_key,tool_policy)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
+		ON CONFLICT(agent_id) DO UPDATE SET description=excluded.description,success_criteria=excluded.success_criteria,failure_criteria=excluded.failure_criteria,constraints=excluded.constraints,max_steps=excluded.max_steps,max_tool_calls=excluded.max_tool_calls,max_duration_seconds=excluded.max_duration_seconds,max_retries=excluded.max_retries,start_on_demand=excluded.start_on_demand,stop_after_task=excluded.stop_after_task,completion_strategy=excluded.completion_strategy,concurrency_policy=excluded.concurrency_policy,max_concurrent_runs=excluded.max_concurrent_runs,planner_mode=excluded.planner_mode,approval_required=excluded.approval_required,max_delegation_depth=excluded.max_delegation_depth,warmup_seconds=excluded.warmup_seconds,keep_warm_seconds=excluded.keep_warm_seconds,resume_from_checkpoint=excluded.resume_from_checkpoint,token_budget=excluded.token_budget,runner=excluded.runner,flow_id=excluded.flow_id,flow_output_component=excluded.flow_output_component,approval_mode=excluded.approval_mode,external_app_id=excluded.external_app_id,external_input_key=excluded.external_input_key,tool_policy=excluded.tool_policy,updated_at=now()`,
+		item.AgentID, item.Description, success, failure, item.Constraints, item.MaxSteps, item.MaxToolCalls, item.MaxDurationSeconds, item.MaxRetries, item.StartOnDemand, item.StopAfterTask, item.CompletionStrategy, item.ConcurrencyPolicy, item.MaxConcurrentRuns, item.PlannerMode, item.ApprovalRequired, item.MaxDelegationDepth, item.WarmupSeconds, item.KeepWarmSeconds, item.ResumeFromCheckpoint, item.TokenBudget, runnerOrDefault(item.Runner), item.FlowID, item.FlowOutputComponent, approvalModeOrDefault(item.ApprovalMode), nullText(item.ExternalAppID), item.ExternalInputKey, toolPolicy)
 	if err != nil {
 		return AgentGoal{}, err
 	}
@@ -1066,4 +1090,27 @@ func (s *Store) Queue(ctx context.Context, ownerID string) (QueueSnapshot, error
 		return QueueSnapshot{}, err
 	}
 	return snapshot, nil
+}
+
+// cleanToolPolicy trims and drops empties, so a textarea that ended in a newline
+// does not store a pattern that matches every title.
+func cleanToolPolicy(policy ACPToolPolicy) ACPToolPolicy {
+	return ACPToolPolicy{Deny: cleanPatterns(policy.Deny), Allow: cleanPatterns(policy.Allow)}
+}
+
+func cleanPatterns(values []string) []string {
+	cleaned := []string{}
+	seen := map[string]bool{}
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" || seen[strings.ToLower(trimmed)] {
+			continue
+		}
+		seen[strings.ToLower(trimmed)] = true
+		cleaned = append(cleaned, trimmed)
+	}
+	if len(cleaned) == 0 {
+		return nil
+	}
+	return cleaned
 }

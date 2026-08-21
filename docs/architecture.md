@@ -1240,6 +1240,35 @@ A quota check that cannot be run does not stop the work. The task already surviv
 a claim against the same database, and turning a transient query error into a
 platform-wide stop would make a spend limit an outage.
 
+## Naming the tools a run may use
+
+The approval mode judges a permission request by the kind of tool the agent
+declares — read, edit, execute, delete. That works for an agent that
+distinguishes them. Goose and BrowserCode report nearly everything as `other`,
+and the platform will not guess a kind from a name, because inventing a fact the
+agent declined to state is how a security decision becomes fiction. So for those
+runtimes the mode had exactly two settings: refuse everything, or allow
+everything. Neither is a policy.
+
+A goal may now carry two lists of names, matched against the tool call's own
+title before the mode is consulted. *Deny* refuses outright and holds under every
+mode including yolo — a rule an unrelated dropdown can overrule is not a rule,
+and the dropdown is the setting people actually change. *Allow* runs the tool
+without asking, which is what makes `default` usable on a coarse-kind runtime:
+everything is refused except the three commands this goal exists to run.
+
+The match is a case-insensitive substring, because a title is prose the agent
+wrote for a human — "Run `npm test` in /workspace" — rather than a symbol.
+Exact matching would be the worse failure: the rule would never fire while
+looking configured. Two characters is the floor, since a shorter pattern is a
+substring of almost every title and would govern every tool while reading as a
+narrow exception.
+
+An empty title is left to the mode rather than matched. A substring rule against
+an empty subject would fire on every rule at once, which turns an agent that
+simply omits titles into an agent that can do nothing — or, with an allow list,
+one that may do everything.
+
 ## Departments, and one limit per person
 
 Every limit above applied to everybody equally, which is not how capacity is

@@ -172,6 +172,9 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 		return nil
 	}
 	if goal.Runner == store.RunnerACP {
+		if message := toolPolicyComplaint(goal.ToolPolicy); message != "" {
+			return errors.New(message)
+		}
 		// No conflict to refuse here any more. Under this backend the platform
 		// answers the agent itself, so a Goal that asks for human approval gets it:
 		// anything that is not read-only goes to a person, whatever the mode says.
@@ -195,6 +198,31 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 		return errors.New("흐름 식별자가 너무 깁니다")
 	}
 	return nil
+}
+
+// toolPolicyComplaint refuses a rule list nobody could act on. A one-character
+// pattern is a substring of almost every title, so it would quietly govern every
+// tool the agent has — as a deny list that stops the run dead, or worse, as an
+// allow list that waves everything through while looking like a narrow exception.
+func toolPolicyComplaint(policy store.ACPToolPolicy) string {
+	for _, list := range [][]string{policy.Deny, policy.Allow} {
+		if len(list) > 100 {
+			return "도구 규칙은 목록당 100개까지 지정할 수 있습니다"
+		}
+		for _, pattern := range list {
+			trimmed := strings.TrimSpace(pattern)
+			if trimmed == "" {
+				continue // dropped on the way to storage; a trailing newline is not an error
+			}
+			if len(trimmed) < 2 {
+				return "도구 규칙은 2글자 이상이어야 합니다. 짧은 규칙은 거의 모든 도구 이름에 걸립니다"
+			}
+			if len(trimmed) > 200 {
+				return "도구 규칙이 너무 깁니다(최대 200자)"
+			}
+		}
+	}
+	return ""
 }
 
 // approvalModeAllowsShell reports whether this mode lets an agent run shell

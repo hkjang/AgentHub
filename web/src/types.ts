@@ -54,6 +54,7 @@ export type AgentGoal = {
   approvalMode: 'plan' | 'default' | 'auto-edit' | 'auto' | 'yolo'
   externalAppId: string
   externalInputKey: string
+  toolPolicy?: { deny?: string[]; allow?: string[] }
 }
 export type RuntimeFlow = { id:string; name:string; description?:string; endpointName?:string; mcpEnabled?:boolean }
 export type ExternalApp = { id:string; name:string; provider:string; baseUrl:string; appKind:'workflow'|'chat'; description?:string; enabled:boolean; secretConfigured?:boolean }

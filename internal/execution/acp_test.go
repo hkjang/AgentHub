@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -314,5 +315,87 @@ func TestWhoAnswersTheAgent(t *testing.T) {
 				t.Errorf("allowed = %v, want %v", allowed, item.wantAllow)
 			}
 		})
+	}
+}
+
+// The approval mode judges by the kind of tool, and Goose and BrowserCode report
+// nearly everything as `other`. For those runs the mode has exactly two settings
+// — refuse everything, or allow everything — and neither is what an operator
+// wants. A named rule is the way out, so these pin what the names decide.
+func TestANamedToolRuleDecidesBeforeTheMode(t *testing.T) {
+	policy := store.ACPToolPolicy{Deny: []string{"rm -rf", "git push"}, Allow: []string{"npm test"}}
+	for _, tc := range []struct {
+		title   string
+		allowed bool
+		decided bool
+	}{
+		{"Run `npm test` in /workspace", true, true},
+		{"rm -rf /workspace/build", false, true},
+		{"Force-push with git push --force", false, true},
+		{"Write /workspace/main.go", false, false}, // no rule: the mode still answers
+	} {
+		allowed, decided := namedToolDecision(policy, tc.title)
+		if allowed != tc.allowed || decided != tc.decided {
+			t.Errorf("%q → allowed=%v decided=%v, want %v/%v", tc.title, allowed, decided, tc.allowed, tc.decided)
+		}
+	}
+}
+
+// A rule that yolo can overrule is not a rule, and the approval mode is the
+// setting people actually change.
+func TestDenyHoldsAgainstEveryApprovalMode(t *testing.T) {
+	goal := store.AgentGoal{ApprovalMode: "yolo", ToolPolicy: store.ACPToolPolicy{Deny: []string{"rm -rf"}}}
+	if allowed, decided := namedToolDecision(goal.ToolPolicy, "rm -rf build"); decided && allowed {
+		t.Error("yolo overruled a deny rule")
+	}
+	if !acpAllows("yolo", "execute") {
+		t.Error("the mode itself changed; this test no longer proves the deny is what stopped it")
+	}
+}
+
+// Deny and allow can both match the same title, and the answer must not depend on
+// which list an operator happened to type it into first.
+func TestDenyWinsOverAllow(t *testing.T) {
+	policy := store.ACPToolPolicy{Deny: []string{"push"}, Allow: []string{"git"}}
+	allowed, decided := namedToolDecision(policy, "git push origin main")
+	if !decided || allowed {
+		t.Errorf("allowed=%v decided=%v; deny must win", allowed, decided)
+	}
+}
+
+// An agent that sends no title must not be silently governed by a policy that
+// cannot see it. Matching an empty title against a substring rule would make
+// every rule fire at once.
+func TestAToolWithNoTitleIsLeftToTheMode(t *testing.T) {
+	policy := store.ACPToolPolicy{Deny: []string{"rm"}, Allow: []string{"test"}}
+	if _, decided := namedToolDecision(policy, "   "); decided {
+		t.Error("an untitled tool call was decided by a name-matching policy")
+	}
+}
+
+// A goal with no policy has to take exactly the path it took before this existed.
+func TestNoPolicyChangesNothing(t *testing.T) {
+	if _, decided := namedToolDecision(store.ACPToolPolicy{}, "anything at all"); decided {
+		t.Error("an empty policy decided a request")
+	}
+}
+
+// The wiring, not just the rule: a policy hit has to be consulted before the
+// approval mode and before anybody is asked. The Orchestrator here has no store
+// and no event sink, so a test that reaches either path panics rather than
+// passing quietly.
+func TestThePermissionPathConsultsTheToolPolicyFirst(t *testing.T) {
+	o := &Orchestrator{}
+	goal := store.AgentGoal{
+		ApprovalMode: "yolo", ApprovalRequired: true,
+		ToolPolicy: store.ACPToolPolicy{Deny: []string{"rm -rf"}, Allow: []string{"npm test"}},
+	}
+	run, agent := &store.AgentRun{}, store.Agent{}
+	if allowed, by := o.answerPermission(context.Background(), run, agent, goal, "rt", permissionFor("t1", "rm -rf /workspace", "other"), "other"); allowed || by != "toolPolicy" {
+		t.Errorf("deny: allowed=%v by=%q", allowed, by)
+	}
+	// approvalRequired would otherwise send this to a person, which needs a store.
+	if allowed, by := o.answerPermission(context.Background(), run, agent, goal, "rt", permissionFor("t2", "Run `npm test`", "other"), "other"); !allowed || by != "toolPolicy" {
+		t.Errorf("allow: allowed=%v by=%q", allowed, by)
 	}
 }

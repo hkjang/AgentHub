@@ -445,6 +445,16 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
           {goal.approvalRequired&&goal.approvalMode==='yolo'&&<div className="info-box"><ShieldAlert size={17}/><div><strong>같이 켤 수 없습니다</strong><p>사람 승인을 요구하는 목표에서는 yolo 를 쓸 수 없습니다. 승인 모드를 낮추거나 아래 자율성의 승인 요구를 끄세요.</p></div></div>}
           {goal.runner==='acp'&&goal.approvalRequired&&<div className="info-box"><ShieldAlert size={17}/><div><strong>사람이 답합니다</strong><p>이 목표는 승인을 요구하므로, 읽기가 아닌 도구 요청은 승인 모드와 상관없이 <b>사람에게 전달</b>됩니다. 에이전트는 답을 기다리고, 실행 시간 안에 답이 없으면 거절로 처리합니다.</p></div></div>}
           {goal.runner==='acp'&&!goal.approvalRequired&&descriptor(agent.runtimeType).coarseToolKinds&&!['auto','yolo'].includes(goal.approvalMode??'default')&&<div className="info-box"><ShieldAlert size={17}/><div><strong>이 모드에서는 거의 아무것도 못 합니다</strong><p>{runtimeLabel(agent.runtimeType)}는 도구의 종류를 <code>other</code> 로 알려주기 때문에, 종류로 판단하는 이 모드에서는 대부분의 요청이 거절됩니다. 무인 실행에는 <b>auto</b> 를 고르세요 — 무엇을 승인했는지는 그대로 기록에 남습니다.</p></div></div>}
+          {goal.runner==='acp'&&<>
+            <label><span>항상 거절할 도구</span>
+              <textarea rows={3} value={(goal.toolPolicy?.deny??[]).join('\n')} onChange={(e)=>update({toolPolicy:{...goal.toolPolicy,deny:e.target.value.split('\n')}})} placeholder={'rm -rf\ngit push\ncurl'}/>
+              <small>한 줄에 하나씩. 도구 이름에 이 문구가 들어 있으면 <b>승인 모드와 상관없이</b> 거절합니다. yolo 로도 풀리지 않습니다.</small>
+            </label>
+            <label><span>묻지 않고 허용할 도구</span>
+              <textarea rows={3} value={(goal.toolPolicy?.allow??[]).join('\n')} onChange={(e)=>update({toolPolicy:{...goal.toolPolicy,allow:e.target.value.split('\n')}})} placeholder={'npm test\npytest\ngit status'}/>
+              <small>거절 목록에 걸리지 않은 것만 확인합니다. {descriptor(agent.runtimeType).coarseToolKinds?`${runtimeLabel(agent.runtimeType)}처럼 도구 종류를 알려주지 않는 에이전트는 이 목록이 유일하게 세밀한 통제 수단입니다.`:'종류로 판단하기 전에 이름으로 먼저 판단합니다.'}</small>
+            </label>
+          </>}
         </>}
         {goal.runner==='flow'&&<>
           <label><span>실행할 흐름</span>

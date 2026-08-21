@@ -470,6 +470,11 @@ func acpAllows(mode, kind string) bool {
 // person. The approval mode still decides everything else, and still decides
 // alone when nobody asked to be consulted.
 func (o *Orchestrator) answerPermission(ctx context.Context, run *store.AgentRun, agent store.Agent, goal store.AgentGoal, runtimeID string, request acp.PermissionRequest, kind string) (bool, string) {
+	// A named rule is read before anything else, because it was written about
+	// this tool while the mode was written about tools in general.
+	if named, decided := namedToolDecision(goal.ToolPolicy, request.ToolCall.Title); decided {
+		return named, "toolPolicy"
+	}
 	asksPerson, allowed := permissionRoute(goal, kind)
 	if !asksPerson {
 		return allowed, "policy"
@@ -484,6 +489,47 @@ func (o *Orchestrator) answerPermission(ctx context.Context, run *store.AgentRun
 		return false, "unavailable"
 	}
 	return granted, "person"
+}
+
+// namedToolDecision applies the goal's tool policy to one request's title, and
+// says whether it decided at all.
+//
+// Deny wins over allow, and both win over the approval mode. That order is the
+// only one that makes a "never" mean never: a rule an operator can overrule by
+// changing an unrelated dropdown is not a rule, and the dropdown is the setting
+// people actually change.
+//
+// Matching is a case-insensitive substring of the tool's title, because the title
+// is prose the agent wrote — "Run `npm test` in /workspace", not a symbol. An
+// exact match would silently never fire, which is the worst way for a security
+// rule to fail: it looks configured.
+func namedToolDecision(policy store.ACPToolPolicy, title string) (allowed, decided bool) {
+	if policy.Empty() {
+		return false, false
+	}
+	subject := strings.ToLower(strings.TrimSpace(title))
+	if subject == "" {
+		// Nothing to match against. The mode still gets to answer; refusing here
+		// would turn any agent that omits titles into an agent that can do nothing.
+		return false, false
+	}
+	if matchesAny(policy.Deny, subject) {
+		return false, true
+	}
+	if matchesAny(policy.Allow, subject) {
+		return true, true
+	}
+	return false, false
+}
+
+func matchesAny(patterns []string, subject string) bool {
+	for _, pattern := range patterns {
+		trimmed := strings.ToLower(strings.TrimSpace(pattern))
+		if trimmed != "" && strings.Contains(subject, trimmed) {
+			return true
+		}
+	}
+	return false
 }
 
 // permissionRoute decides who answers one request: the platform from the Goal's
