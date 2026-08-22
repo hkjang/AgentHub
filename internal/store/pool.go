@@ -89,7 +89,11 @@ func (s *Store) RuntimesToCool(ctx context.Context, limit int) ([]CoolCandidate,
 		  AND NOT EXISTS (
 		    SELECT 1 FROM agent_tasks t
 		    WHERE t.agent_id = r.agent_id
-		      AND t.status IN ('queued', 'planning', 'ready', 'running', 'waiting_tool', 'retrying')
+		      -- handoff is here because the person finishing that task has to open
+		      -- this runtime to do it, and cooling it is the one thing that stops
+		      -- them. The list started as "work the pool would interrupt" and a task
+		      -- waiting for a person did not look like work.
+		      AND t.status IN ('queued', 'planning', 'ready', 'running', 'waiting_tool', 'retrying', 'handoff')
 		  )
 		ORDER BY r.warm_until
 		LIMIT $1`, limit)

@@ -1306,6 +1306,25 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Three stoppers, one question
+
+Three things on this platform stop a runtime that nobody asked them to stop: the
+idle culler, the warm pool cooling one down, and a task releasing the runtime it
+started. Each had grown its own idea of what "in use" means, and each was missing
+a different part of it — the culler measured a timestamp only a browser ever
+wrote, the task release asked who started the runtime rather than who is in it,
+and the pool, which had the most careful query of the three, would still cool a
+runtime holding a task handed to a person to finish in that very runtime.
+
+They ask one question now, and it is a question rather than three overlapping
+guesses: is another of this agent's tasks running in it, or has somebody touched a
+session in it recently. A guard holds the rule at every stop site in the tree.
+
+The two stops that are somebody's decision — the console's stop button, and the
+runtime action tool held by a caller with runtime:manage — are obeyed and
+recorded, not second-guessed. "Stop this runtime" from somebody who means it is
+not a thing for the platform to argue with.
+
 ## Who started it is not who is in it
 
 A task that started a runtime stops it afterwards when the agent asks for that,

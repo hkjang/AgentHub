@@ -41,6 +41,16 @@ func (s *Server) cullIdleRuntimes(ctx context.Context) {
 			s.logger.Warn("compile idle runtime spec", "runtime", item.RuntimeID, "error", specErr)
 			continue
 		}
+		// The candidate query excludes runtimes with a task in them; this also
+		// covers a person whose session is open but who has not clicked anything
+		// for a minute, which no timestamp on the runtime would show.
+		if reason, busyErr := s.store.RuntimeBusy(ctx, item.RuntimeID, item.AgentID, ""); busyErr != nil {
+			s.logger.Warn("runtime use could not be checked; leaving it running", "runtime", item.RuntimeID, "error", busyErr)
+			continue
+		} else if reason != "" {
+			s.logger.Info("idle runtime kept", "runtime", item.RuntimeID, "reason", reason)
+			continue
+		}
 		if stopErr := s.spawner.Stop(ctx, spec); stopErr != nil && !errors.Is(stopErr, appRuntime.ErrNotConfigured) {
 			s.logger.Warn("idle culling failed", "runtime", item.RuntimeID, "error", stopErr)
 			continue

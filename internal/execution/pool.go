@@ -147,6 +147,16 @@ func (p *Pool) cool(ctx context.Context) {
 			p.logger.Warn("cool spec could not be built", "runtime", candidate.RuntimeID, "error", err)
 			continue
 		}
+		// The query above knows about tasks; it cannot know about a person. Three
+		// things on this platform stop a runtime nobody asked them to stop, and all
+		// three have to ask the same question first.
+		if reason, busyErr := p.store.RuntimeBusy(ctx, candidate.RuntimeID, candidate.AgentID, ""); busyErr != nil {
+			p.logger.Warn("runtime use could not be checked; leaving it running", "runtime", candidate.RuntimeID, "error", busyErr)
+			continue
+		} else if reason != "" {
+			p.logger.Info("warm runtime kept", "runtime", candidate.RuntimeID, "reason", reason)
+			continue
+		}
 		if err := p.spawner.Stop(ctx, spec); err != nil && !errors.Is(err, appRuntime.ErrNotConfigured) {
 			p.logger.Warn("cool stop failed", "runtime", candidate.RuntimeID, "error", err)
 			continue
