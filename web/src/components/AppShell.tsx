@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   Activity, Bell, Boxes, Bot, Braces, Building2, Check, ClipboardList, ChevronDown, ChevronRight, CircleUserRound, Command,
-  Database, FileClock, FileCode2, FileCog, Gauge, KeyRound, LayoutDashboard, Library, LogOut, Menu, Network,
+  Database, FileClock, FileCode2, FileCog, Gauge, KeyRound, LayoutDashboard, Library, LockKeyhole, LogOut, Menu, Network,
   ListChecks, Palette, Search, Settings, ShieldAlert, ShieldCheck, Sparkles, UsersRound, Workflow, X
 } from 'lucide-react'
 import { useAuth } from '../App'
@@ -70,10 +70,35 @@ function matchesRoute(pathname: string, to: string) {
   return pathname === to || pathname.startsWith(to + '/')
 }
 
+/** Changing the one password a deployment has.
+ *
+ *  There was no way to do this at all: the local admin's password comes from
+ *  AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD on first start and nothing ever wrote it
+ *  again — so it stayed whatever a manifest said, forever. Changing it signs
+ *  every other browser out, which is the point of changing it. */
+function PasswordForm({ onDone }: { onDone: () => void }) {
+  const [current, setCurrent] = useState(''), [next, setNext] = useState('')
+  const [error, setError] = useState(''), [done, setDone] = useState(false), [busy, setBusy] = useState(false)
+  const submit = async (event: FormEvent) => {
+    event.preventDefault(); setError(''); setBusy(true)
+    try { await api.post('/api/v1/auth/password', { currentPassword: current, newPassword: next }); setDone(true); setCurrent(''); setNext('') }
+    catch (e) { setError(e instanceof Error ? e.message : '비밀번호를 바꾸지 못했습니다.') }
+    finally { setBusy(false) }
+  }
+  if (done) return <div className="password-form"><p className="password-done">비밀번호를 바꿨습니다. 다른 기기의 로그인은 모두 해제됐습니다.</p><button type="button" className="button subtle" onClick={onDone}>닫기</button></div>
+  return <form className="password-form" onSubmit={(e) => void submit(e)}>
+    <label><span>지금 비밀번호</span><input type="password" value={current} autoComplete="current-password" onChange={(e) => setCurrent(e.target.value)} required/></label>
+    <label><span>새 비밀번호</span><input type="password" value={next} autoComplete="new-password" minLength={12} onChange={(e) => setNext(e.target.value)} required/></label>
+    <small>12자 이상. 바꾸면 다른 기기의 로그인은 모두 해제됩니다.</small>
+    {error && <p className="password-error">{error}</p>}
+    <div className="password-actions"><button type="button" className="button subtle" onClick={onDone}>취소</button><button type="submit" className="button primary" disabled={busy}>{busy ? '바꾸는 중…' : '비밀번호 바꾸기'}</button></div>
+  </form>
+}
+
 export function AppShell() {
   const { user, version, capabilities, logout } = useAuth()
   const t = useTerms(), mode = useViewMode()
-  const [sidebar, setSidebar] = useState(false), [command, setCommand] = useState(false), [profile, setProfile] = useState(false)
+  const [sidebar, setSidebar] = useState(false), [command, setCommand] = useState(false), [profile, setProfile] = useState(false), [password, setPassword] = useState(false)
   const [notificationOpen,setNotificationOpen]=useState(false),[notifications,setNotifications]=useState<Notification[]>([]),[unread,setUnread]=useState(0)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const location = useLocation(), navigate = useNavigate()
@@ -153,7 +178,8 @@ export function AppShell() {
                   <Palette size={15}/><span><strong>{option.label}</strong><small>{option.hint}</small></span>{mode === option.id && <Check size={15}/>}
                 </button>)}
               </div>
-              <NavLink to="/developer" onClick={() => setProfile(false)}><KeyRound size={16}/>개인 키와 API</NavLink><div className="version-row"><span>AgentHub</span><code>v{version.version}</code><small>{version.commit.slice(0,8)}</small></div><button onClick={() => void logout()}><LogOut size={16}/>로그아웃</button></div>}
+              <NavLink to="/developer" onClick={() => setProfile(false)}><KeyRound size={16}/>개인 키와 API</NavLink>
+              {password ? <PasswordForm onDone={() => setPassword(false)}/> : <button type="button" onClick={() => setPassword(true)}><LockKeyhole size={16}/>비밀번호 바꾸기</button>}<div className="version-row"><span>AgentHub</span><code>v{version.version}</code><small>{version.commit.slice(0,8)}</small></div><button onClick={() => void logout()}><LogOut size={16}/>로그아웃</button></div>}
           </div>
         </div>
       </header>

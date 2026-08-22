@@ -129,6 +129,7 @@ func (s *Server) apiRoutes() []Route {
 		// Logging out ends a browser session. A key does not have one, and the
 		// route it would reach is not the credential it authenticated with.
 		browser(http.MethodPost, "/auth/logout", "Platform", "End the browser session", s.logout),
+		browser(http.MethodPost, "/auth/password", "Platform", "Change your own local password", s.changePassword),
 		read("/dashboard", "Platform", "Runtime and task summary for the signed-in user", s.dashboard),
 		read("/capabilities", "Platform", "Features enabled on this deployment", s.capabilities),
 		read("/templates", "Platform", "Published Agent templates", s.templates),

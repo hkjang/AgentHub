@@ -49,6 +49,19 @@ try {
 
   await page.locator('.profile-button').click()
   await page.locator('.profile-menu').waitFor()
+
+  // Changing the password has to be reachable from where a person already is.
+  // For a long time there was no way to change it at all, so this checks the
+  // door exists rather than that it opens — the rotation itself is checked
+  // against a real deployment in internal/api.
+  await page.getByRole('button', { name: '비밀번호 바꾸기' }).click()
+  await page.locator('.password-form').waitFor({ timeout: 5000 })
+  const secrets = await page.locator('.password-form input[type=password]').count()
+  if (secrets !== 2) throw new Error(`the password form asks for ${secrets} field(s); it needs the current one and the new one`)
+  const warning = await page.locator('.password-form small').innerText()
+  if (!/해제/.test(warning)) throw new Error(`the form does not say other sessions end: ${warning}`)
+  await page.getByRole('button', { name: '취소' }).click()
+
   await mkdir('../coverage', { recursive: true })
   await page.screenshot({ path: '../coverage/dashboard.png', fullPage: true })
 

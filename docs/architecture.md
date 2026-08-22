@@ -1306,6 +1306,35 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## A password nobody could change
+
+Bounding how fast a password can be guessed is worth less if the password can
+never be changed, and this one could not. The local admin is created on a
+deployment's first start from `AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD`, and nothing
+ever wrote `password_hash` again — not the product, which had no route for it,
+and not a restart with a different value, because the bootstrap does nothing once
+an admin exists.
+
+That value lives in a manifest. Manifests reach git histories, CI logs and shared
+runbooks, and on an offline site this account is the only way in. The remedy was
+an UPDATE against the database.
+
+Changing it ends every other session for that account, and keeps the one making
+the request. A rotation is done because somebody may have the old password;
+leaving their browser signed in makes it a gesture, and signing out the person
+doing the right thing punishes them for it. An account that signs in through SSO
+is told so rather than refused as if its current password were wrong.
+
+A wrong current password here counts against the same allowance the login route
+uses. Otherwise this route is the way around the throttle: it takes a password
+guess from somebody already signed in, which is exactly the shape of a session
+that has been stolen rather than borrowed.
+
+The check rotates the deployment's own password and puts it back, because that is
+the only honest way to know a rotation works. It says loudly which password the
+deployment is left on if it stops halfway — which it did, during a deliberate
+mutation, and that warning is how it was noticed.
+
 ## Sixty guesses in two and a half seconds
 
 There was nothing in front of the login route. Asked directly:

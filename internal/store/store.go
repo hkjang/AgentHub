@@ -157,6 +157,53 @@ func (s *Store) AuthenticateLocal(ctx context.Context, username, password string
 	return user, nil
 }
 
+// ErrNoLocalPassword is what an account signed in through SSO gets back: there
+// is no password on it to change, and saying so is better than refusing as if
+// the current one were wrong.
+var ErrNoLocalPassword = errors.New("this account has no local password")
+
+// ChangePassword rotates a local password and ends every other session.
+//
+// It exists because there was no way to do this at all. The one local account a
+// deployment has is created from AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD on first
+// start and nothing ever wrote password_hash again — not the product, not a
+// restart with a different value. That password lives in a manifest, which is
+// the kind of file that reaches a git history, a CI log or a shared runbook, and
+// on an offline site it is the only way in.
+//
+// Every other session for this user goes. A rotation is done because somebody
+// might have the old password, and leaving their browser signed in would make
+// the rotation a gesture; keeping this request's own session is what stops the
+// person doing the right thing from being thrown out for it.
+func (s *Store) ChangePassword(ctx context.Context, userID, current, next, keepSession string) error {
+	var hash *string
+	if err := s.pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE id=$1 AND status='active'`, userID).Scan(&hash); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if hash == nil {
+		return ErrNoLocalPassword
+	}
+	if bcrypt.CompareHashAndPassword([]byte(*hash), []byte(current)) != nil {
+		return ErrInvalidPassword
+	}
+	fresh, err := bcrypt.GenerateFromPassword([]byte(next), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE users SET password_hash=$2, updated_at=now() WHERE id=$1`, userID, string(fresh)); err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `DELETE FROM sessions WHERE user_id=$1 AND id_hash<>$2`, userID, cryptox.TokenHash(keepSession))
+	return err
+}
+
+// ErrInvalidPassword is a wrong current password, kept apart from a wrong new
+// one so the API can say which.
+var ErrInvalidPassword = errors.New("current password does not match")
+
 func (s *Store) UpsertOIDCUser(ctx context.Context, subject, username, email, displayName string, admin bool) (User, error) {
 	role := "user"
 	if admin {

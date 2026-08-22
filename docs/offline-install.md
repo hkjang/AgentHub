@@ -62,6 +62,14 @@ export AGENTHUB_ENCRYPTION_KEY="$(openssl rand -base64 32)"
 docker compose up -d
 ```
 
+`AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD` is read once, on the first start, and creates
+the admin account. It is not read again — changing it later and restarting does
+nothing, because the bootstrap stands down as soon as an admin exists. Sign in
+and change the password from the profile menu after the first start: the value
+above is written in a shell history and in whatever file this procedure was
+copied into, and on an offline site this account is the only way in. Changing it
+signs every other browser out.
+
 The Portal listens on host port 8080. Change the host-side Compose port mapping
 in `compose.yaml` if the offline host reserves that port; AgentHub itself still
 accepts only the four bootstrap environment variables shown above.

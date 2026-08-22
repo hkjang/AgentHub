@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -161,6 +162,61 @@ func (s *Server) issueSession(w http.ResponseWriter, r *http.Request, user store
 	http.SetCookie(w, &http.Cookie{Name: csrfCookie, Value: csrf, Path: "/", HttpOnly: false, Secure: secure, SameSite: http.SameSiteLaxMode, Expires: expires, MaxAge: int(time.Until(expires).Seconds())})
 	s.store.Audit(r.Context(), &user, "auth.login", "user", user.ID, "success", clientIP(r), nil)
 	writeJSON(w, http.StatusOK, map[string]any{"user": user, "csrfToken": csrf})
+}
+
+// minimumPasswordLength is a floor, not a policy.
+//
+// The platform does not get to be clever here: rules about mixed case and
+// punctuation push people towards one predictable word with a digit on the end.
+// Length is the part that actually costs an attacker, and the throttle in front
+// of the login route is what bounds how fast anybody can try.
+const minimumPasswordLength = 12
+
+// changePassword rotates the caller's own local password.
+func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	var input struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewPassword     string `json:"newPassword"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if len([]rune(input.NewPassword)) < minimumPasswordLength {
+		writeError(w, http.StatusBadRequest, "password_too_short",
+			fmt.Sprintf("새 비밀번호는 %d자 이상이어야 합니다.", minimumPasswordLength))
+		return
+	}
+	if input.NewPassword == input.CurrentPassword {
+		writeError(w, http.StatusBadRequest, "password_unchanged", "새 비밀번호가 지금 쓰는 것과 같습니다.")
+		return
+	}
+	cookie, err := r.Cookie(sessionCookie)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "no_session", "다시 로그인해 주세요.")
+		return
+	}
+	switch err := s.store.ChangePassword(r.Context(), u.ID, input.CurrentPassword, input.NewPassword, cookie.Value); {
+	case err == nil:
+	case errors.Is(err, store.ErrNoLocalPassword):
+		writeError(w, http.StatusConflict, "no_local_password", "이 계정은 SSO로 로그인합니다. 비밀번호는 SSO 쪽에서 바꿔 주세요.")
+		return
+	case errors.Is(err, store.ErrInvalidPassword):
+		// A wrong current password here is a guess at the account of whoever is
+		// already signed in, so it counts against the same allowance the login
+		// route uses. Otherwise this is the way around the throttle.
+		s.logins.fail(u.Username, clientIP(r))
+		s.store.Audit(r.Context(), &u, "auth.password_change", "user", u.ID, "failure", clientIP(r), nil)
+		writeError(w, http.StatusForbidden, "invalid_credentials", "지금 쓰는 비밀번호를 확인해 주세요.")
+		return
+	default:
+		writeStoreError(w, err)
+		return
+	}
+	s.store.Audit(r.Context(), &u, "auth.password_change", "user", u.ID, "success", clientIP(r),
+		map[string]any{"otherSessionsEnded": true})
+	s.logger.Info("password changed", "user", u.Username)
+	writeJSON(w, http.StatusOK, map[string]any{"changed": true, "otherSessionsEnded": true})
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
