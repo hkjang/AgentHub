@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -230,33 +231,50 @@ func isReady(phase string) bool {
 var ErrRuntimeQuota = errors.New("runtime quota is full")
 
 func (o *Orchestrator) runtimeRefusal(ctx context.Context, agent store.Agent, profileID, runtimeID string) (refusal string, waits bool) {
+	return runtimeStartRefusal(ctx, o.store, o.logger, agent, profileID, runtimeID)
+}
+
+// runtimeStartRefusal answers "may this runtime start", for whoever is asking.
+//
+// Three things on this platform start a runtime nobody pressed a button for: a
+// task acquiring one, the warm pool starting one ahead of a schedule, and the
+// console doing it on somebody's behalf. Starting from a task once went around
+// both the limits and the rules that govern starting from the console; that was
+// fixed by asking here. The pool was the third path and was never asked at all,
+// so a person held to three runtimes could hold more by scheduling them with a
+// warm-up, and an agent a policy forbids anyone from starting was started by its
+// own nightly schedule a minute before it ran.
+//
+// It is a package function rather than a method because the pool is not an
+// orchestrator, and the question is the same question.
+func runtimeStartRefusal(ctx context.Context, db *store.Store, logger *slog.Logger, agent store.Agent, profileID, runtimeID string) (refusal string, waits bool) {
 	// The record for this runtime already exists — it is created before the
 	// profile is known — so it has to be left out of what is currently held. It
 	// was not, and the check counted the runtime it was deciding about: with a
 	// limit of one, a task waited forever behind itself.
-	if err := o.store.CheckRuntimeQuotaExcept(ctx, agent.OwnerID, profileID, runtimeID); err != nil {
+	if err := db.CheckRuntimeQuotaExcept(ctx, agent.OwnerID, profileID, runtimeID); err != nil {
 		if errors.Is(err, quota.ErrExceeded) {
 			// The message already names the scope that refused — 사용자 or 부서 — which
 			// is the part that decides what somebody does about it. And it clears
 			// by itself, which is what makes this a wait.
 			return err.Error(), true
 		}
-		o.logger.Warn("runtime quota is unreadable; starting the runtime", "agent", agent.ID, "error", err)
+		logger.Warn("runtime quota is unreadable; starting the runtime", "agent", agent.ID, "error", err)
 		return "", false
 	}
 	var document policy.Document
-	if err := o.store.Setting(ctx, policy.SettingKey, &document); err != nil {
+	if err := db.Setting(ctx, policy.SettingKey, &document); err != nil {
 		if !errors.Is(err, store.ErrNotFound) {
-			o.logger.Warn("policy document is unreadable; starting the runtime", "agent", agent.ID, "error", err)
+			logger.Warn("policy document is unreadable; starting the runtime", "agent", agent.ID, "error", err)
 		}
 		return "", false
 	}
 	if len(document.Rules) == 0 {
 		return "", false
 	}
-	owner, err := o.store.UserByID(ctx, agent.OwnerID)
+	owner, err := db.UserByID(ctx, agent.OwnerID)
 	if err != nil {
-		o.logger.Warn("runtime owner is unreadable; starting the runtime", "agent", agent.ID, "error", err)
+		logger.Warn("runtime owner is unreadable; starting the runtime", "agent", agent.ID, "error", err)
 		return "", false
 	}
 	decision := policy.Evaluate(document, policy.Request{
@@ -270,7 +288,7 @@ func (o *Orchestrator) runtimeRefusal(ctx context.Context, agent store.Agent, pr
 	if reason == "" {
 		reason = "플랫폼 정책이 이 Agent의 Runtime 시작을 허용하지 않습니다."
 	}
-	o.store.Audit(ctx, &owner, "policy."+policy.ActionRuntimeStart, "policy", decision.RuleID, "denied", "",
+	db.Audit(ctx, &owner, "policy."+policy.ActionRuntimeStart, "policy", decision.RuleID, "denied", "",
 		map[string]any{"effect": decision.Effect, "agent": agent.Name, "agentId": agent.ID})
 	// A policy refusal does not clear on its own: somebody has to change a rule.
 	return reason, false

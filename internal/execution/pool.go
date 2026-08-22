@@ -101,6 +101,21 @@ func (p *Pool) warm(ctx context.Context) {
 			_ = p.store.ReleaseWarmRuntime(ctx, instance.ID)
 			continue
 		}
+		// Warming ahead of a schedule is still starting a runtime, and it was the
+		// one path that never asked whether it may. A person held to three runtimes
+		// could hold more by scheduling them with a warm-up, and an agent a policy
+		// forbids anyone from starting was started by its own nightly schedule a
+		// minute before it ran.
+		//
+		// A quota refusal clears by itself, so the hold is dropped and the next tick
+		// tries again — there is still time before the trigger fires. A policy
+		// refusal does not clear, and is already recorded where the console's
+		// refusals are.
+		if refusal, waits := runtimeStartRefusal(ctx, p.store, p.logger, agent, spec.Profile.ID, instance.ID); refusal != "" {
+			p.logger.Info("runtime not warmed", "agent", agent.ID, "runtime", instance.ID, "reason", refusal, "waits", waits)
+			_ = p.store.ReleaseWarmRuntime(ctx, instance.ID)
+			continue
+		}
 		if err := p.spawner.Start(ctx, spec); err != nil {
 			if errors.Is(err, appRuntime.ErrNotConfigured) {
 				// Without Kubernetes there is nothing to warm, and saying so once

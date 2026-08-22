@@ -1306,6 +1306,33 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Three starters, one question
+
+Three things start a runtime: a task acquiring one, the warm pool starting one
+ahead of a schedule, and the console doing it on somebody's behalf. All three
+spend the same cluster, and two rules govern all of them — the owner's runtime
+quota, and the platform policy on starting a runtime.
+
+Starting from a task once went around both, and that was fixed by making the task
+ask. The pool was the third path and it was never asked at all. So a person held
+to three runtimes could hold more by scheduling agents with a warm-up, and an
+agent that a policy forbids anyone from starting was started by its own nightly
+schedule, a minute before the schedule ran.
+
+The question is one function now, shared rather than reimplemented. Warming asks
+before it starts: a quota refusal drops the hold and lets the next tick try again,
+since there is still time before the trigger fires, and a policy refusal is
+recorded where the console's refusals are recorded.
+
+The console's own paths are exempt and named as exempt: they answer a person
+directly and return the refusal as a status, so they check the quota inline. A
+guard holds both halves — every other start asks, and the exempt ones still
+check — because an exemption nobody rechecks is a hole with a comment over it.
+
+This is the mirror of the stopping rule. It is worth noticing that the stopping
+side was found and fixed three releases before anybody looked at the starting
+side, which had the same shape all along.
+
 ## The honest half, finished
 
 Workflow tokens have counted toward the budget since they were recorded — a
