@@ -1306,6 +1306,27 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Asking the cluster what it threw away
+
+Two fields had been found the hard way — the runtime environment, and then the
+credential fingerprint, where the symptom was a key rotation that appeared to work
+while every running runtime kept the revoked credential. Each was answered with a
+check for that one field, which answers the instance rather than the question.
+
+The question is whether everything the control plane writes actually survives. The
+API server prunes a field its CRD does not declare, silently, on a write that
+otherwise succeeds: a setting saves, an object is written, nothing happens, and
+there is no error anywhere to connect the two.
+
+Both writes compare what came back with what was sent now, and name whatever is
+missing along with the file to apply. It costs nothing — Create and Update already
+return the stored object.
+
+There is also a check that asks a real cluster the same question: it renders a
+fully populated spec, writes it, and reports every path the CRD dropped. Run
+against the previous release's CRD it names spec.model.credentialsFingerprint,
+which is the bug that had to be found by reading code the release before.
+
 ## A rotated key that never reached the runtime
 
 Model API keys and MCP credentials live in the runtime's Secret. Rotating one

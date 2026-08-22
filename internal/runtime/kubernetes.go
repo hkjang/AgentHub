@@ -422,7 +422,8 @@ func (k *KubernetesSpawner) Spawn(ctx context.Context, spec Spec) error {
 	} else {
 		secretCreated = true
 	}
-	stored, err := client.Resource(runtimeGVR).Namespace(namespace).Create(ctx, k.object(spec), metav1.CreateOptions{})
+	sent := k.object(spec)
+	stored, err := client.Resource(runtimeGVR).Namespace(namespace).Create(ctx, sent, metav1.CreateOptions{})
 	if err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			return k.setDesired(ctx, spec, "Running")
@@ -432,15 +433,13 @@ func (k *KubernetesSpawner) Spawn(ctx context.Context, spec Spec) error {
 		}
 		return err
 	}
-	// A pruned environment is worth saying out loud, but not worth refusing to
-	// start a runtime over: the agent runs, it just runs without the files an
-	// administrator declared.
-	if provisioningPruned(spec, stored) {
-		k.logger().Warn("the AgentRuntime CRD dropped the runtime environment; apply deploy/kubernetes/crd.yaml",
-			"runtime", spec.Runtime.CRDName)
-	}
+	// A pruned field is worth saying out loud, but not worth refusing to start a
+	// runtime over: the agent runs, it just runs without whatever was dropped.
+	k.reportPruned(spec, sent, stored)
 	if credentialFingerprintPruned(spec, stored) {
-		k.logger().Warn("the AgentRuntime CRD dropped the credential fingerprint; apply deploy/kubernetes/crd.yaml — until then a rotated model key or MCP credential will not reach a running runtime",
+		// Named separately because this one's symptom is a rotation that looks like
+		// it worked, which nobody goes looking for.
+		k.logger().Warn("a rotated model key or MCP credential will not reach a running runtime until the CRD is reapplied",
 			"runtime", spec.Runtime.CRDName)
 	}
 	return nil
@@ -557,10 +556,12 @@ func (k *KubernetesSpawner) Sync(ctx context.Context, spec Spec) error {
 	if err := syncSpec(object, k.object(spec)); err != nil {
 		return err
 	}
+	sent := k.object(spec)
 	stored, err := client.Resource(runtimeGVR).Namespace(namespace).Update(ctx, object, metav1.UpdateOptions{})
 	if err != nil {
 		return err
 	}
+	k.reportPruned(spec, sent, stored)
 	// The API server prunes fields a CRD's schema does not declare, without
 	// saying so. Checking what came back costs nothing — Update already returns
 	// the stored object — and it is the difference between "the cluster is a
@@ -571,8 +572,6 @@ func (k *KubernetesSpawner) Sync(ctx context.Context, spec Spec) error {
 	return nil
 }
 
-// provisioningPruned reports whether the environment this spec carries survived
-// being written.
 // credentialFingerprintPruned reports that this cluster's CRD predates the
 // credential fingerprint, so the field was dropped on the way in.
 //
@@ -589,6 +588,72 @@ func credentialFingerprintPruned(spec Spec, stored *unstructured.Unstructured) b
 	return err == nil && (!found || value == "")
 }
 
+// prunedFields lists everything the control plane wrote that did not come back.
+//
+// The API server removes a field the CRD does not declare, silently, on a write
+// that otherwise succeeds. Two of those had already been found the hard way — the
+// runtime environment, and then the credential fingerprint, where the symptom was
+// a key rotation that appeared to work while every running runtime kept the
+// revoked credential — and each was answered with a check for that one field.
+//
+// This is the rule those two were examples of. What came back is compared with
+// what was sent, so a field added later is covered on the day it is added rather
+// than after somebody spends an afternoon on why a setting does nothing.
+func prunedFields(sent, stored *unstructured.Unstructured) []string {
+	if sent == nil || stored == nil {
+		return nil
+	}
+	var missing []string
+	comparePrunedPaths(sent.Object["spec"], stored.Object["spec"], "spec", &missing)
+	sort.Strings(missing)
+	return missing
+}
+
+// comparePrunedPaths walks what was sent and records the leaves that did not come
+// back. Only absence counts: the API server may add defaults of its own, and a
+// value it normalised is still a value it kept.
+func comparePrunedPaths(sent, stored any, path string, missing *[]string) {
+	switch value := sent.(type) {
+	case map[string]any:
+		storedMap, ok := stored.(map[string]any)
+		if !ok {
+			*missing = append(*missing, path)
+			return
+		}
+		for key, child := range value {
+			next, found := storedMap[key]
+			if !found {
+				*missing = append(*missing, path+"."+key)
+				continue
+			}
+			comparePrunedPaths(child, next, path+"."+key, missing)
+		}
+	case []any:
+		storedList, ok := stored.([]any)
+		if !ok || len(storedList) != len(value) {
+			*missing = append(*missing, path)
+			return
+		}
+		for index, child := range value {
+			comparePrunedPaths(child, storedList[index], path+"[]", missing)
+		}
+	}
+}
+
+// reportPruned says what this cluster's CRD dropped, once per write, naming the
+// paths and the file that fixes it.
+func (k *KubernetesSpawner) reportPruned(spec Spec, sent, stored *unstructured.Unstructured) {
+	missing := prunedFields(sent, stored)
+	if len(missing) == 0 {
+		return
+	}
+	k.logger().Warn("this cluster's AgentRuntime CRD dropped part of what the platform wrote; apply deploy/kubernetes/crd.yaml — whatever these fields configure is being ignored",
+		"runtime", spec.Runtime.CRDName, "fields", strings.Join(missing, ", "))
+}
+
+// provisioningPruned reports whether the environment this spec carries survived
+// being written. It stays as its own check because a sync refuses over it rather
+// than only warning.
 func provisioningPruned(spec Spec, stored *unstructured.Unstructured) bool {
 	if provisioningObject(spec) == nil || stored == nil {
 		return false

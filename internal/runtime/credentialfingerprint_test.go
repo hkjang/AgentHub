@@ -104,3 +104,50 @@ func TestAPrunedFingerprintIsNoticed(t *testing.T) {
 		t.Error("nothing was stored, so nothing was pruned")
 	}
 }
+
+// The general rule the two hand-written pruning checks were examples of: compare
+// what came back with what was sent, and name whatever is missing.
+func TestPrunedFieldsNamesWhatTheClusterDropped(t *testing.T) {
+	sent := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{
+		"owner": "someone",
+		"model": map[string]any{"baseUrl": "https://api", "credentialsFingerprint": "abc"},
+		"mcp":   []any{map[string]any{"name": "github", "credentialKey": "mcp-credential-github"}},
+	}}}
+	same := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{
+		"owner": "someone",
+		"model": map[string]any{"baseUrl": "https://api", "credentialsFingerprint": "abc"},
+		"mcp":   []any{map[string]any{"name": "github", "credentialKey": "mcp-credential-github"}},
+	}}}
+	if got := prunedFields(sent, same); len(got) != 0 {
+		t.Errorf("nothing was dropped and it reported %v; every write would warn", got)
+	}
+	// A field the schema does not declare disappears from a write that succeeded.
+	dropped := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{
+		"owner": "someone",
+		"model": map[string]any{"baseUrl": "https://api"},
+		"mcp":   []any{map[string]any{"name": "github"}},
+	}}}
+	got := prunedFields(sent, dropped)
+	want := []string{"spec.mcp[].credentialKey", "spec.model.credentialsFingerprint"}
+	if len(got) != len(want) {
+		t.Fatalf("pruned fields: got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("pruned fields: got %v, want %v", got, want)
+			break
+		}
+	}
+	// A value the API server normalised is still a value it kept.
+	normalised := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{
+		"owner": "someone",
+		"model": map[string]any{"baseUrl": "https://api/", "credentialsFingerprint": "abc"},
+		"mcp":   []any{map[string]any{"name": "github", "credentialKey": "mcp-credential-github"}},
+	}}}
+	if got := prunedFields(sent, normalised); len(got) != 0 {
+		t.Errorf("a normalised value was reported as pruned: %v", got)
+	}
+	if got := prunedFields(sent, nil); got != nil {
+		t.Errorf("nothing was stored, so nothing can be said about pruning: %v", got)
+	}
+}

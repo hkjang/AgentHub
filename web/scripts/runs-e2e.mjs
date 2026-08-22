@@ -64,7 +64,11 @@ try {
   check('기간이 상태와 함께 걸림', recent <= failed, `${recent} / ${failed}건`)
 
   await select('상태', '')
-  const back = await rows()
+  // The period goes back too. Leaving it at one day made everything after this
+  // depend on the deployment having run something today, and a quiet week is not
+  // a broken screen — the check failed on an idle database while the screen it
+  // was checking was working perfectly.
+  const back = await select('기간', '')
   check('조건을 풀면 다시 늘어남', back >= recent, `${back} / ${recent}건`)
 
   // What somebody has in hand when they arrive is usually a trace id from a log
