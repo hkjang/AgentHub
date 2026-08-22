@@ -1306,6 +1306,38 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Sixty guesses in two and a half seconds
+
+There was nothing in front of the login route. Asked directly:
+
+```
+60 wrong passwords in 2.4s → {401: 60}
+the correct password right after 60 failures: 200
+```
+
+No delay, no count, no lockout, and nothing in the audit trail that reads as an
+attack rather than as somebody being forgetful. Reading the code would not have
+found it, because the thing that was missing left nothing to read.
+
+Every guess also costs a bcrypt, so the same route was an unauthenticated way to
+spend the control plane's CPU. The throttle is asked before the password is
+checked, which is what makes a refusal cheap.
+
+The shape of the limits matters more than the numbers. The tight one is per
+(source, account): a person mistyping their own password has room to, and past
+that a source is guessing at somebody. There is deliberately **no** tight
+per-account limit, because a lock on a username alone hands anybody a way to keep
+somebody else out by failing on their name — trading a slow attack for a reliable
+denial of service. The per-source and per-name limits exist as backstops against
+spraying and are loose on purpose: an ingress that does not pass the client
+address makes an entire company share one apparent source, and a defence that
+shuts the door on everybody is not one.
+
+Refusals are audited as `auth.throttled` and carry `Retry-After`, so an operator
+can see an attack and a person who mistyped can tell the door from a fault. The
+allowance is per process, which is the honest description — with several replicas
+an attacker gets one allowance each.
+
 ## The request nobody could see
 
 The review queue returned two hundred rows: waiting requests first, and

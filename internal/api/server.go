@@ -44,13 +44,15 @@ type Server struct {
 	version buildinfo.Info
 	static  fs.FS
 
+	logins *loginThrottle
+
 	sessionSettingsMu    sync.RWMutex
 	sessionSettings      sessionGatewaySettings
 	sessionSettingsUntil time.Time
 }
 
 func New(db *store.Store, cipher *cryptox.Cipher, logger *slog.Logger, logs *appLog.Ring, spawner runtime.Spawner, static fs.FS) *Server {
-	return &Server{store: db, cipher: cipher, logger: logger, logs: logs, spawner: spawner, version: buildinfo.Current(), static: static}
+	return &Server{store: db, cipher: cipher, logger: logger, logs: logs, spawner: spawner, version: buildinfo.Current(), static: static, logins: newLoginThrottle()}
 }
 
 func (s *Server) Handler() http.Handler {

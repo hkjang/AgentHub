@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -108,13 +109,44 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
+	ip := clientIP(r)
+	// Asked before the password is checked, so a guess that is already over the
+	// limit costs no bcrypt. The answer is the same whether or not the username
+	// exists — a throttle that only fires on real accounts is a way to find them.
+	if wait := s.logins.blocked(input.Username, ip); wait > 0 {
+		s.refuseLogin(w, r, input.Username, ip, wait, "throttled")
+		return
+	}
 	user, err := s.store.AuthenticateLocal(r.Context(), input.Username, input.Password)
 	if err != nil {
-		s.store.Audit(r.Context(), nil, "auth.login", "user", "", "failure", clientIP(r), map[string]any{"username": input.Username})
+		wait := s.logins.fail(input.Username, ip)
+		s.store.Audit(r.Context(), nil, "auth.login", "user", "", "failure", ip, map[string]any{"username": input.Username})
+		if wait > 0 {
+			s.refuseLogin(w, r, input.Username, ip, wait, "blocked")
+			return
+		}
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "아이디 또는 비밀번호를 확인해 주세요.")
 		return
 	}
+	s.logins.succeed(input.Username, ip)
 	s.issueSession(w, r, user)
+}
+
+// refuseLogin answers a throttled attempt.
+//
+// It says how long to wait, because a person who has mistyped their password
+// five times needs to know the door is not broken, and the attacker learns
+// nothing from it that the refusal itself did not already tell them. Every
+// refusal is audited: a run of these is what an attack looks like from the
+// operator's side, and there was previously nothing to see.
+func (s *Server) refuseLogin(w http.ResponseWriter, r *http.Request, username, ip string, wait time.Duration, reason string) {
+	seconds := int(wait.Seconds()) + 1
+	s.store.Audit(r.Context(), nil, "auth.throttled", "user", "", "failure", ip,
+		map[string]any{"username": username, "retryAfterSeconds": seconds, "reason": reason})
+	s.logger.Warn("login attempts throttled", "username", username, "ip", ip, "retryAfterSeconds", seconds, "reason", reason)
+	w.Header().Set("Retry-After", strconv.Itoa(seconds))
+	writeError(w, http.StatusTooManyRequests, "too_many_attempts",
+		fmt.Sprintf("로그인 시도가 너무 많습니다. %d초 후에 다시 시도해 주세요.", seconds))
 }
 
 func (s *Server) issueSession(w http.ResponseWriter, r *http.Request, user store.User) {
