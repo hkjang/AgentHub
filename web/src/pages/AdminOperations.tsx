@@ -30,7 +30,7 @@ export function AdminOperations() {
   const [tab, setTab] = useState<'logs' | 'audit' | 'approvals'>('logs')
   const [logs, setLogs] = useState<LogEntry[]>()
   const [audit, setAudit] = useState<AuditPage>()
-  const [approvals, setApprovals] = useState<Approval[]>()
+  const [approvals, setApprovals] = useState<{ items: Approval[]; pending: number; hidden: number }>()
   const [query, setQuery] = useState('')
   const [level, setLevel] = useState('INFO')
   const [auditQuery, setAuditQuery] = useState<AuditQuery>(EMPTY_QUERY)
@@ -44,7 +44,7 @@ export function AdminOperations() {
   const load = useCallback(() => Promise.all([
     api.get<{ items: LogEntry[] }>(`/api/v1/admin/logs?level=${level}&q=${encodeURIComponent(query)}&limit=300`).then((v) => setLogs(v.items)),
     loadAudit(auditQuery),
-    api.get<{ items: Approval[] }>('/api/v1/admin/approvals').then((v) => setApprovals(v.items)),
+    api.get<{ items: Approval[]; pending: number; hidden: number }>('/api/v1/admin/approvals').then(setApprovals),
   ]).catch((e) => setError(e instanceof Error ? e.message : '불러오지 못했습니다.')), [level, query, auditQuery, loadAudit])
 
   useEffect(() => { void load() }, [load])
@@ -65,7 +65,7 @@ export function AdminOperations() {
       <article><ServerCog /><div><strong>컨트롤 플레인</strong><StatusBadge status="online" /></div></article>
       <article><Activity /><div><strong>수집된 로그</strong><span>{logs.length}</span></div></article>
       <article><FileClock /><div><strong>감사 이벤트</strong><span>{audit.total.toLocaleString('ko-KR')}</span></div></article>
-      <article><ClipboardCheck /><div><strong>대기</strong><span>{approvals.filter((a) => a.status === 'pending').length}</span></div></article>
+      <article><ClipboardCheck /><div><strong>대기</strong><span>{approvals.pending}</span></div></article>
     </div>
     <div className="tabs">
       <button className={tab === 'logs' ? 'active' : ''} onClick={() => setTab('logs')}>서버 로그</button>
@@ -133,7 +133,10 @@ export function AdminOperations() {
     </section>}
 
     {tab === 'approvals' && <section className="approval-list">
-      {approvals.length === 0 ? <div className="empty-compact">승인 요청이 없습니다.</div> : approvals.map((item) => <article key={item.id}>
+      {/* A request nobody can see is not a slow decision — it is a task that never
+          runs again. The list holds 200; when more are waiting it says how many. */}
+      {approvals.hidden > 0 && <div className="notice warning">대기 {approvals.pending}건 중 {approvals.items.length}건만 표시됩니다 — {approvals.hidden}건은 목록에 들어가지 않았습니다. 오래 기다린 순서로 보여 주므로, 처리하면 나머지가 올라옵니다.</div>}
+      {approvals.items.length === 0 ? <div className="empty-compact">승인 요청이 없습니다.</div> : approvals.items.map((item) => <article key={item.id}>
         <div>
           <StatusBadge status={item.status} />
           <h3>{item.action}</h3>

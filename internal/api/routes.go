@@ -1595,21 +1595,21 @@ func (s *Server) adminLogs(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) adminApprovals(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
-	items, err := s.store.Approvals(r.Context(), u.ID, true)
+	list, err := s.store.Approvals(r.Context(), u.ID, true)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"items": items})
+	writeJSON(w, 200, list)
 }
 func (s *Server) reviewerApprovals(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
-	items, err := s.store.Approvals(r.Context(), u.ID, u.Role == "admin")
+	list, err := s.store.Approvals(r.Context(), u.ID, u.Role == "admin")
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, list)
 }
 
 // approvalEventPayload says which agent the decision was about.

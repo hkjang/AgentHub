@@ -1306,6 +1306,33 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## The request nobody could see
+
+The review queue returned two hundred rows: waiting requests first, and
+newest-first inside that. Read that on a busy deployment and the arithmetic is
+unkind — with more than two hundred requests waiting, the ones that fall off the
+end are the ones that have waited longest. Arranged and measured against a
+running deployment:
+
+```
+210 waiting, 200 returned
+the ten missing: the ten oldest
+the admin screen's 대기 card: 200
+```
+
+The card counted the waiting requests among the ones it had been given, which is
+the same mistake the notification bell was fixed for — it counted the unread
+among the fifty it fetched and printed that as the unread count. The fix landed
+on the bell and not on its sibling.
+
+A slow decision is a queue working. A request a reviewer cannot see is a task
+that never runs again, and nothing anywhere said those ten existed.
+
+Waiting requests are ordered oldest-first now — that half of the list is a queue,
+and decided ones stay newest-first because that half is an archive. The response
+carries how many are waiting in the table and how many did not fit, and both
+screens say so rather than showing two hundred rows and looking complete.
+
 ## Asking for more, getting less
 
 Every list in the store has a ceiling, and every one of them wrote the ceiling
