@@ -85,6 +85,63 @@ func TestOnePersonsWorkIsNotVisibleToAnother(t *testing.T) {
 		t.Fatalf("only %d route(s) answered a stranger; this check is not reading the API", read)
 	}
 
+	// Reading a list only proves a stranger is not handed somebody else's things.
+	// It says nothing about asking for one by name, which is the older and more
+	// common way authorization goes wrong: the list is scoped and the by-id
+	// handler beside it is not. The stranger has no way to discover these ids —
+	// that is the point of testing it, since a real one would have got them from a
+	// log, a shared link, or a colleague's screen.
+	byID, skipped := map[string]string{}, []string{}
+	want := func(kind, path string) {
+		if path == "" {
+			skipped = append(skipped, kind)
+			return
+		}
+		byID[path] = kind
+	}
+	_ = want
+	if id := ownersThings["task id"]; id != "" {
+		byID["/api/v1/tasks/"+id] = "a task"
+		byID["/api/v1/tasks/"+id+"/checkpoint"] = "a task's checkpoint"
+	}
+	for _, item := range owner.list(t, "/api/v1/runs") {
+		if id := str(item["id"]); id != "" {
+			byID["/api/v1/runs/"+id] = "a run"
+			break
+		}
+	}
+	artifact := ""
+	for _, item := range owner.list(t, "/api/v1/artifacts") {
+		if id := str(item["id"]); id != "" {
+			artifact = "/api/v1/artifacts/" + id + "/content"
+			break
+		}
+	}
+	// Named rather than silently absent. This check passed against a build with
+	// the ownership condition removed from the artifact query, because the
+	// deployment happened to hold no artifacts and the route was never tried: a
+	// check that covers less than it looks like is worse than one that says so.
+	want("an artifact's contents", artifact)
+	for _, item := range owner.list(t, "/api/v1/runtimes") {
+		if id := str(item["id"]); id != "" {
+			byID["/api/v1/runtimes/"+id+"/logs"] = "a runtime's logs"
+			byID["/api/v1/runtimes/"+id+"/config-report"] = "a runtime's configuration"
+			break
+		}
+	}
+	for path, what := range byID {
+		body, status := stranger.get(path)
+		if status < 400 {
+			t.Errorf("%s handed a stranger %s belonging to somebody else (%d): %s", path, what, status, first(body, 120))
+		}
+	}
+	if len(byID) < 3 {
+		t.Fatalf("only %d by-id route(s) could be tried; this half of the check is not reading anything", len(byID))
+	}
+	if len(skipped) > 0 {
+		t.Logf("not covered, because this deployment holds none: %s", strings.Join(skipped, ", "))
+	}
+
 	// And the administrator's screens must refuse an ordinary person, or every
 	// scoped list above is beside the point.
 	for _, path := range []string{
@@ -99,7 +156,8 @@ func TestOnePersonsWorkIsNotVisibleToAnother(t *testing.T) {
 	// unconditionally, so a run that had just reported a leak signed off with a
 	// sentence saying there wasn't one.
 	if !t.Failed() {
-		t.Logf("%d routes read as a stranger, %d of the owner's things looked for, none visible", read, len(ownersThings))
+		t.Logf("%d routes read as a stranger, %d of the owner's things looked for and %d asked for by name, none visible",
+			read, len(ownersThings), len(byID))
 	}
 }
 

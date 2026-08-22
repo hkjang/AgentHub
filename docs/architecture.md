@@ -1306,6 +1306,28 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Asking for something by name
+
+Reading a list as a stranger proves only that nobody is handed somebody else's
+things. It says nothing about asking for one by name, which is the older and more
+common way authorization goes wrong: the list is scoped and the by-id handler
+beside it is not. A stranger has no way to discover those ids, which is precisely
+why it is worth testing — a real one would have them from a log, a shared link, or
+a colleague's screen.
+
+Six of them are asked for by name now: a task, its checkpoint, a run, an
+artifact's contents, a runtime's logs and its configuration report. All refused.
+
+Getting there took correcting the check twice, and the second correction is the
+one worth keeping. It passed against a build with the ownership condition removed
+from the artifact query — because this deployment held no artifacts, so that route
+was never tried at all. The floor it enforced (at least three by-id routes) was
+met by the five that did exist, and the missing sixth was invisible.
+
+A check that covers less than it appears to is worse than one that says so, so it
+now names what it could not try and why. With an artifact present it fails against
+that same build, quoting the body it was handed.
+
 ## Reading the platform as somebody else
 
 Every list this platform serves is scoped by owner, and every one of those scopes
