@@ -31,24 +31,28 @@ var (
 
 // ReviewFinding is one located observation.
 type ReviewFinding struct {
-	ID           string     `json:"id"`
-	RunID        string     `json:"runId"`
-	TaskID       string     `json:"taskId,omitempty"`
-	AgentID      string     `json:"agentId"`
-	OwnerID      string     `json:"ownerId"`
-	FilePath     string     `json:"filePath"`
-	StartLine    int        `json:"startLine"`
-	EndLine      int        `json:"endLine"`
-	Severity     string     `json:"severity"`
-	Category     string     `json:"category"`
-	Message      string     `json:"message"`
-	ExistingCode string     `json:"existingCode,omitempty"`
-	Suggestion   string     `json:"suggestion,omitempty"`
-	Status       string     `json:"status"`
-	DecidedBy    *string    `json:"decidedBy,omitempty"`
-	DecidedAt    *time.Time `json:"decidedAt,omitempty"`
-	Source       string     `json:"source"`
-	CreatedAt    time.Time  `json:"createdAt"`
+	ID           string `json:"id"`
+	RunID        string `json:"runId"`
+	TaskID       string `json:"taskId,omitempty"`
+	AgentID      string `json:"agentId"`
+	OwnerID      string `json:"ownerId"`
+	FilePath     string `json:"filePath"`
+	StartLine    int    `json:"startLine"`
+	EndLine      int    `json:"endLine"`
+	Severity     string `json:"severity"`
+	Category     string `json:"category"`
+	Message      string `json:"message"`
+	ExistingCode string `json:"existingCode,omitempty"`
+	Suggestion   string `json:"suggestion,omitempty"`
+	Status       string `json:"status"`
+	// FixTaskID names the task somebody asked to fix this with. It is not a claim
+	// that the finding is fixed — nothing has checked that — only that a fix was
+	// asked for, which is what the console needs to stop somebody asking twice.
+	FixTaskID string     `json:"fixTaskId,omitempty"`
+	DecidedBy *string    `json:"decidedBy,omitempty"`
+	DecidedAt *time.Time `json:"decidedAt,omitempty"`
+	Source    string     `json:"source"`
+	CreatedAt time.Time  `json:"createdAt"`
 }
 
 // ReviewRun is what the review covered — the claim its findings rest on.
@@ -72,14 +76,14 @@ type ReviewRun struct {
 	CreatedAt     time.Time `json:"createdAt"`
 }
 
-const reviewFindingColumns = `id,run_id,COALESCE(task_id,''),agent_id,owner_id,file_path,start_line,end_line,severity,category,message,existing_code,suggestion,status,decided_by,decided_at,source,created_at`
+const reviewFindingColumns = `id,run_id,COALESCE(task_id,''),agent_id,owner_id,file_path,start_line,end_line,severity,category,message,existing_code,suggestion,status,decided_by,decided_at,source,created_at,COALESCE(fix_task_id,'')`
 
 func scanReviewFinding(row pgx.Row) (ReviewFinding, error) {
 	var item ReviewFinding
 	err := row.Scan(&item.ID, &item.RunID, &item.TaskID, &item.AgentID, &item.OwnerID, &item.FilePath,
 		&item.StartLine, &item.EndLine, &item.Severity, &item.Category, &item.Message,
 		&item.ExistingCode, &item.Suggestion, &item.Status, &item.DecidedBy, &item.DecidedAt,
-		&item.Source, &item.CreatedAt)
+		&item.Source, &item.CreatedAt, &item.FixTaskID)
 	return item, err
 }
 
@@ -296,6 +300,41 @@ func (s *Store) DecideReviewFinding(ctx context.Context, id, ownerID, decision s
 		args = append(args, ownerID)
 	}
 	query += ` RETURNING ` + reviewFindingColumns
+	item, err := scanReviewFinding(s.pool.QueryRow(ctx, query, args...))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReviewFinding{}, ErrNotFound
+	}
+	return item, err
+}
+
+// LinkReviewFix records the task somebody asked to fix a finding with.
+//
+// It does not touch the finding's status. Asking for a fix is not the same as
+// having one, and a platform that marked the finding fixed here would be
+// reporting its own hope.
+func (s *Store) LinkReviewFix(ctx context.Context, findingID, taskID, ownerID string, admin bool) (ReviewFinding, error) {
+	query := `UPDATE review_findings SET fix_task_id=$1 WHERE id=$2`
+	args := []any{taskID, findingID}
+	if !admin {
+		query += ` AND owner_id=$3`
+		args = append(args, ownerID)
+	}
+	query += ` RETURNING ` + reviewFindingColumns
+	item, err := scanReviewFinding(s.pool.QueryRow(ctx, query, args...))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReviewFinding{}, ErrNotFound
+	}
+	return item, err
+}
+
+// ReviewFindingByID reads one finding.
+func (s *Store) ReviewFindingByID(ctx context.Context, id, ownerID string, admin bool) (ReviewFinding, error) {
+	query := `SELECT ` + reviewFindingColumns + ` FROM review_findings WHERE id=$1`
+	args := []any{id}
+	if !admin {
+		query += ` AND owner_id=$2`
+		args = append(args, ownerID)
+	}
 	item, err := scanReviewFinding(s.pool.QueryRow(ctx, query, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ReviewFinding{}, ErrNotFound

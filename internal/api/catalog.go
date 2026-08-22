@@ -136,6 +136,7 @@ func (s *Server) apiRoutes() []Route {
 		read("/review-findings", "Code Review", "What every review has found and nobody has dealt with", s.reviewFindingList),
 		read("/runs/{id}/review", "Code Review", "What a code review found, and what it covered", s.reviewFindings),
 		write(http.MethodPost, "/review-findings/{id}/decision", "Code Review", "Accept, dismiss or close one finding", s.decideReviewFinding),
+		write(http.MethodPost, "/review-findings/{id}/fix", "Code Review", "Hand one finding to an agent that can change files", s.fixReviewFinding),
 		read("/runtime-profiles", "Platform", "Runtime profiles available to users", s.runtimeProfiles),
 		read("/runtime-types", "Platform", "The runtime adapters this build supports, described", s.runtimeTypes),
 		read("/models", "Platform", "Enabled model endpoints", s.models),

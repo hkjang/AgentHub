@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { FileSearch, Filter } from 'lucide-react'
 import { api } from '../api'
+import { descriptor } from '../runtime'
 import { Empty, ErrorBanner, Loading, PageHeader } from '../components/UI'
 import { RunDrawer } from './Tasks'
-import type { ReviewFinding } from '../types'
+import type { Agent, ReviewFinding } from '../types'
 
 const SEVERITY_LABEL: Record<string, string> = { critical: '심각', high: '높음', medium: '보통', low: '낮음' }
 const CATEGORY_LABEL: Record<string, string> = {
@@ -31,6 +32,11 @@ export function CodeReview() {
   const [status, setStatus] = useState('open')
   const [openRun, setOpenRun] = useState<string | null>(null)
   const [busy, setBusy] = useState('')
+  // Only agents whose runtime can actually edit a file are offered: handing a
+  // fix to something that cannot change anything produces a task that runs,
+  // reports something reasonable, and leaves the finding exactly where it was.
+  const [fixers, setFixers] = useState<Agent[]>([])
+  const [fixing, setFixing] = useState<ReviewFinding | null>(null)
 
   const load = useCallback(async () => {
     const query = new URLSearchParams({ status })
@@ -40,6 +46,18 @@ export function CodeReview() {
     catch (e) { setError(e instanceof Error ? e.message : '리뷰 지적을 불러오지 못했습니다.') }
   }, [severity, category, status])
   useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    api.get<{ items: Agent[] }>('/api/v1/agents')
+      .then((v) => setFixers(v.items.filter((agent) => (descriptor(agent.runtimeType).runners ?? []).some((runner) => runner === 'cli' || runner === 'acp'))))
+      .catch(() => undefined)
+  }, [])
+
+  const handOver = async (finding: ReviewFinding, agentId: string) => {
+    setBusy(finding.id); setError('')
+    try { await api.post(`/api/v1/review-findings/${finding.id}/fix`, { agentId }); setFixing(null); await load() }
+    catch (e) { setError(e instanceof Error ? e.message : '수정 작업을 만들지 못했습니다.') }
+    finally { setBusy('') }
+  }
 
   const decide = async (id: string, decision: 'accepted' | 'dismissed' | 'fixed') => {
     setBusy(id); setError('')
@@ -89,10 +107,18 @@ export function CodeReview() {
         <p>{finding.message}</p>
         {finding.existingCode && <pre className="custom-scroll">{finding.existingCode}</pre>}
         {finding.suggestion && <pre className="custom-scroll suggestion">{finding.suggestion}</pre>}
+        {finding.fixTaskId && <p className="review-handed">수정 작업으로 넘겼습니다. 작업이 끝나도 이 지적은 열려 있습니다 — 다음 리뷰가 확인해 줍니다.</p>}
         {finding.status === 'open' && <div className="review-actions">
           <button className="button subtle" disabled={busy === finding.id} onClick={() => void decide(finding.id, 'dismissed')}>오탐</button>
           <button className="button ghost" disabled={busy === finding.id} onClick={() => void decide(finding.id, 'fixed')}>수정됨</button>
+          {!finding.fixTaskId && fixers.length > 0 && <button className="button ghost" disabled={busy === finding.id} onClick={() => setFixing(finding)}>수정 맡기기</button>}
           <button className="button primary" disabled={busy === finding.id} onClick={() => void decide(finding.id, 'accepted')}>인정</button>
+        </div>}
+        {fixing?.id === finding.id && <div className="review-fix-picker">
+          <span>어느 에이전트에게 맡길까요?</span>
+          {fixers.map((agent) => <button key={agent.id} className="button subtle" disabled={busy === finding.id}
+            onClick={() => void handOver(finding, agent.id)}>{agent.name}</button>)}
+          <button className="text-link" onClick={() => setFixing(null)}>취소</button>
         </div>}
       </li>)}</ol>}
 

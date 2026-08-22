@@ -69,7 +69,7 @@ export type ReviewFinding = {
   severity:'critical'|'high'|'medium'|'low'
   category:'bug'|'security'|'performance'|'maintainability'|'test'|'style'|'documentation'|'other'
   message:string; existingCode?:string; suggestion?:string
-  status:'open'|'accepted'|'dismissed'|'fixed'; source:string; createdAt:string
+  status:'open'|'accepted'|'dismissed'|'fixed'; source:string; createdAt:string; fixTaskId?:string
 }
 /** What the review covered — the claim its findings rest on. An empty list of
  *  findings means one thing when 17 files were read and another when none were. */

@@ -1306,6 +1306,33 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Finding and fixing are two runtimes' work
+
+The review engine reads and reports; it does not edit. A coding agent edits. What
+was missing between them was the handover — a person read a finding on one screen
+and retyped it into a task on another, losing the file, the line and the
+suggested code on the way, and nothing afterwards connected the two.
+
+A finding can be handed to an agent now, and everything the review established
+travels with it: which file, which lines, what is wrong, what the reviewer
+suggested, and that the suggestion is a suggestion. The instruction is
+deliberately narrow — address this one finding, not the file — because a task
+that improves three things at once cannot be told whether it did the one it was
+asked to.
+
+Two refusals matter more than the feature. A runtime that cannot edit a file is
+refused rather than handed the work, because it would produce a task that runs,
+reports something reasonable, and changes nothing; the question is asked of the
+descriptor, so a backend that can edit is a name in a list rather than a branch.
+And asking twice is a conflict rather than a second task, because two agents on
+the same line of the same file is worse than one.
+
+What it does **not** do is mark the finding fixed. Asking for a fix is not having
+one. The finding stays open, carrying the task it was handed to, until somebody
+says otherwise or a later review stops reporting it — a platform that closed it
+here would be recording its own hope, which is the class of claim this codebase
+keeps removing.
+
 ## The finding nobody could find
 
 A review's findings hung off the run that produced them, and nowhere else.

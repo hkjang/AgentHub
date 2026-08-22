@@ -1,12 +1,14 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -97,6 +99,100 @@ func containsValue(list []string, value string) bool {
 		}
 	}
 	return false
+}
+
+// fixReviewFinding hands one finding to an agent that can change files.
+//
+// Finding something and fixing it are two runtimes' work — the review engine
+// reads and reports, a coding agent edits — and what was missing between them
+// was the handover. A person read a finding on one screen and retyped it into a
+// task on another, losing the file, the line and the suggested code on the way,
+// and nothing afterwards connected the two.
+//
+// It does not mark the finding fixed. Asking for a fix is not having one, and
+// the finding stays open until somebody says otherwise or a later review stops
+// reporting it.
+func (s *Server) fixReviewFinding(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	var input struct {
+		AgentID string `json:"agentId"`
+		// Priority is passed through so an urgent fix can jump the queue the same
+		// way any other task can.
+		Priority string `json:"priority"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	admin := u.Role == "admin"
+	finding, err := s.store.ReviewFindingByID(r.Context(), chi.URLParam(r, "id"), u.ID, admin)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if finding.FixTaskID != "" {
+		writeError(w, http.StatusConflict, "fix_already_requested",
+			"이 지적은 이미 수정 작업으로 넘겼습니다. 작업 대기열에서 진행 상황을 확인해 주세요.")
+		return
+	}
+	agent, err := s.store.AgentByID(r.Context(), input.AgentID, u.ID, admin)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	// A runtime that cannot edit a file cannot fix anything, and handing it the
+	// work would produce a task that runs, reports something reasonable and
+	// changes nothing. Asked of the descriptor, so adding a backend that can edit
+	// is a name in a list rather than another branch here.
+	if !runtimetype.SupportsRunner(agent.RuntimeType, runtimetype.RunnerCLI) &&
+		!runtimetype.SupportsRunner(agent.RuntimeType, runtimetype.RunnerACP) {
+		writeError(w, http.StatusBadRequest, "agent_cannot_edit",
+			runtimetype.Describe(agent.RuntimeType).Label+" 런타임은 파일을 고치지 못합니다. 코딩 에이전트를 골라 주세요.")
+		return
+	}
+
+	title := fmt.Sprintf("리뷰 지적 수정: %s:%d", finding.FilePath, finding.StartLine)
+	task, err := s.enqueueTask(w, r, u, agent.ID, title, reviewFixInput(finding), input.Priority, "review", nil)
+	if err != nil {
+		return
+	}
+	linked, err := s.store.LinkReviewFix(r.Context(), finding.ID, task.ID, u.ID, admin)
+	if err != nil {
+		// The task exists and is already queued. Saying it failed would leave
+		// somebody asking again and getting a second one.
+		s.logger.Error("a fix task could not be linked to its finding", "finding", finding.ID, "task", task.ID, "error", err)
+		linked = finding
+		linked.FixTaskID = task.ID
+	}
+	s.store.Audit(r.Context(), &u, "review.finding.fix", "review_finding", finding.ID, "success", clientIP(r),
+		map[string]any{"taskId": task.ID, "agentId": agent.ID, "filePath": finding.FilePath, "severity": finding.Severity})
+	writeJSON(w, http.StatusAccepted, map[string]any{"task": task, "finding": linked})
+}
+
+// reviewFixInput is what the coding agent is told.
+//
+// Everything the review established travels with it — which file, which lines,
+// what is wrong and what the reviewer suggested — because an agent that has to
+// go and find the problem again is an agent that may fix a different one. The
+// instruction is deliberately narrow: this task exists to address one finding,
+// not to improve the file.
+func reviewFixInput(finding store.ReviewFinding) string {
+	lines := []string{
+		fmt.Sprintf("%s 파일의 %d번째 줄에 대한 코드 리뷰 지적을 수정해 주세요.", finding.FilePath, finding.StartLine),
+		"",
+		"지적 (" + finding.Severity + " · " + finding.Category + "):",
+		finding.Message,
+	}
+	if finding.ExistingCode != "" {
+		lines = append(lines, "", "현재 코드:", finding.ExistingCode)
+	}
+	if finding.Suggestion != "" {
+		lines = append(lines, "", "리뷰가 제안한 코드:", finding.Suggestion,
+			"", "제안은 참고입니다 — 이 코드베이스에서 맞지 않으면 더 나은 방법으로 고쳐 주세요.")
+	}
+	lines = append(lines, "",
+		"이 지적 하나만 다루세요. 같은 파일의 다른 부분을 함께 고치면 무엇이 이 수정인지 알 수 없게 됩니다.",
+		"고친 뒤에는 무엇을 왜 바꿨는지 한 문단으로 알려 주세요.")
+	return strings.Join(lines, "\n")
 }
 
 // decideReviewFinding records what a person concluded about one finding.
