@@ -1243,6 +1243,48 @@ func (s *Store) DueCronTriggers(ctx context.Context, limit int) ([]AgentTrigger,
 
 // MarkTriggerFired advances the schedule. Returning the row count lets the
 // caller tell whether it won the race against another worker.
+// ClaimWebhookDelivery records a webhook delivery and reports whether it is the
+// first time this exact request has arrived.
+//
+// A signature proves the sender knew the secret. It does not prove this is the
+// first time the request has been sent — the signature is a function of the body,
+// so a captured request stays valid forever, and every replay of it queued another
+// task. Anybody who saw one request could fire that agent again whenever they
+// liked, indefinitely, and the audit trail would show a perfectly valid webhook.
+//
+// A body carrying anything unique — a delivery id, a timestamp, an event id, which
+// most senders include — signs differently every time and is unaffected. An
+// identical body arriving twice is either a replay or a sender retrying after a
+// timeout, and refusing the second one is what both cases want.
+func (s *Store) ClaimWebhookDelivery(ctx context.Context, triggerID, signature string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `INSERT INTO webhook_deliveries(trigger_id,signature) VALUES($1,$2)
+		ON CONFLICT (trigger_id,signature) DO NOTHING`, triggerID, signature)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// RecordWebhookTask links a claimed delivery to the task it created, so an
+// operator asking "did that webhook do anything" has an answer.
+func (s *Store) RecordWebhookTask(ctx context.Context, triggerID, signature, taskID string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE webhook_deliveries SET task_id=$3 WHERE trigger_id=$1 AND signature=$2`, triggerID, signature, taskID)
+	return err
+}
+
+// SweepWebhookDeliveries drops delivery records past the replay window.
+//
+// Like an expired session, this is not history somebody might want: past the
+// window the record cannot refuse anything, and keeping it only grows a table
+// every webhook writes to. It is swept whether or not retention is configured.
+func (s *Store) SweepWebhookDeliveries(ctx context.Context, window time.Duration) (int, error) {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM webhook_deliveries WHERE created_at < now() - $1::interval`, window.String())
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 func (s *Store) MarkTriggerFired(ctx context.Context, id string, next *time.Time) (bool, error) {
 	tag, err := s.pool.Exec(ctx, `UPDATE agent_triggers SET last_fired_at=now(),next_fire_at=$2,updated_at=now() WHERE id=$1 AND (next_fire_at IS NULL OR next_fire_at <= now())`, id, next)
 	if err != nil {

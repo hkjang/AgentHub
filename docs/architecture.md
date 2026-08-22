@@ -1306,6 +1306,28 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## A signature is not a first delivery
+
+A webhook signature proves the sender knew the secret. It says nothing about
+whether this is the first time the request has been sent — the signature is a
+function of the body, so a captured request stays valid for ever and every replay
+of it queued another task. Anybody who saw one request, in a proxy log or a CI
+transcript or a curl command pasted into a chat, could fire that agent again
+whenever they liked, and the audit trail would show a perfectly valid webhook each
+time.
+
+The delivery is claimed once, by its signature. A body carrying anything unique —
+a delivery id, a timestamp, an event id, which most senders include — signs
+differently every time and is unaffected. An identical body arriving twice is
+either a replay or a sender retrying after a timeout, and refusing the second is
+what both of those want; the refusal says which it was.
+
+The check is on the near side of the work and the far side of the signature: an
+unsigned request cannot fill the ledger with signatures of its choosing, and a
+ledger that cannot be read refuses rather than waving the request past. The record
+itself is swept after the replay window like an expired session, because past that
+window it cannot refuse anything and it is a table every webhook writes to.
+
 ## One bracket past the tool policy
 
 The in-Pod gateway is the reason an agent cannot route around its own MCP tool

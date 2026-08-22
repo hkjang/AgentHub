@@ -845,9 +845,26 @@ func (s *Server) triggerWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "서명을 확인할 수 없습니다.")
 		return
 	}
-	if !validSignature(secret, body, r.Header.Get("X-AgentHub-Signature")) {
+	signature := strings.TrimSpace(r.Header.Get("X-AgentHub-Signature"))
+	if !validSignature(secret, body, signature) {
 		s.logger.Warn("webhook rejected", "trigger", id, "reason", "signature mismatch")
 		writeError(w, http.StatusUnauthorized, "unauthorized", "서명을 확인할 수 없습니다.")
+		return
+	}
+	// A valid signature is not the same as a first delivery. The signature is a
+	// function of the body, so a captured request stays valid for ever and each
+	// replay queued another task; the delivery is claimed once, by its signature.
+	first, err := s.store.ClaimWebhookDelivery(r.Context(), id, signature)
+	if err != nil {
+		// An unreadable ledger must not become an open door.
+		s.logger.Error("webhook delivery could not be claimed", "trigger", id, "error", err)
+		writeError(w, http.StatusServiceUnavailable, "delivery_unverifiable", "요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+		return
+	}
+	if !first {
+		s.logger.Warn("webhook rejected", "trigger", id, "reason", "replayed delivery")
+		writeError(w, http.StatusConflict, "duplicate_delivery",
+			"이미 처리한 요청입니다. 같은 본문을 다시 보내면 같은 서명이 되므로 중복으로 처리됩니다.")
 		return
 	}
 	trigger, err := s.store.AgentTriggerByID(r.Context(), id)
@@ -876,6 +893,9 @@ func (s *Server) triggerWebhook(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeStoreError(w, err)
 		return
+	}
+	if err := s.store.RecordWebhookTask(r.Context(), id, signature, task.ID); err != nil {
+		s.logger.Warn("webhook delivery could not be linked to its task", "trigger", id, "task", task.ID, "error", err)
 	}
 	s.logger.Info("webhook task queued", "trigger", trigger.ID, "task", task.ID, "agent", trigger.AgentID)
 	writeJSON(w, http.StatusAccepted, map[string]any{"taskId": task.ID})

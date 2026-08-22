@@ -60,6 +60,7 @@ func (c *Caretaker) Run(ctx context.Context) error {
 			c.reclaim(ctx)
 		case <-sweep.C:
 			c.expireSessions(ctx)
+			c.expireWebhookDeliveries(ctx)
 			c.sweep(ctx)
 		}
 	}
@@ -98,6 +99,25 @@ func (c *Caretaker) expireSessions(ctx context.Context) {
 		c.logger.Info("removed expired sessions", "sessions", removed)
 	}
 }
+
+// expireWebhookDeliveries drops delivery records past the replay window. Like an
+// expired session it is not history: past the window the record cannot refuse
+// anything, and it is a table every webhook writes to.
+func (c *Caretaker) expireWebhookDeliveries(ctx context.Context) {
+	removed, err := c.store.SweepWebhookDeliveries(ctx, WebhookReplayWindow)
+	if err != nil {
+		c.logger.Warn("webhook deliveries could not be swept", "error", err)
+		return
+	}
+	if removed > 0 {
+		c.logger.Info("removed expired webhook delivery records", "deliveries", removed)
+	}
+}
+
+// WebhookReplayWindow is how long a delivery can refuse its own replay. Long
+// enough to cover a sender's retry schedule, short enough that the table stays
+// small on a deployment taking a webhook every few seconds.
+const WebhookReplayWindow = 48 * time.Hour
 
 // sweep trims history according to the configured retention.
 //
