@@ -830,7 +830,18 @@ LEFT JOIN runtime_profiles p ON p.id=a.runtime_profile_id
 WHERE r.desired_state='running'
   AND r.status IN ('running','ready','idle')
   AND COALESCE(p.idle_timeout_seconds,$1)>0
-  AND COALESCE(r.last_activity_at,r.started_at,r.created_at) < now() - make_interval(secs => COALESCE(p.idle_timeout_seconds,$1))`, fallback)
+  AND COALESCE(r.last_activity_at,r.started_at,r.created_at) < now() - make_interval(secs => COALESCE(p.idle_timeout_seconds,$1))
+  -- A runtime with work in it is not idle, whatever the timestamp says. The
+  -- execution plane keeps last_activity_at fresh now, but a run that hangs
+  -- between steps would still age past the timeout, and stopping the Pod under a
+  -- running task turns a stall into a crash with no explanation in it. A handed
+  -- over task is here too: it is waiting for a person to open that runtime, which
+  -- is the one thing culling it guarantees they cannot do.
+  AND NOT EXISTS (
+    SELECT 1 FROM agent_tasks t
+    WHERE t.agent_id = r.agent_id
+      AND t.status IN ('running','waiting_tool','handoff')
+  )`, fallback)
 	if err != nil {
 		return nil, err
 	}

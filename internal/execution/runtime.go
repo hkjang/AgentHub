@@ -47,6 +47,7 @@ func (o *Orchestrator) acquireRuntime(ctx context.Context, run store.AgentRun, a
 			}
 		}
 		o.event(ctx, run, "runtime.reused", "이미 실행 중인 Runtime을 재사용합니다.", map[string]any{"runtimeId": existing.ID, "podName": existing.PodName, "warm": warmed})
+		o.store.TouchRuntime(ctx, existing.ID)
 		return &acquiredRuntime{runtimeID: existing.ID, startedByTask: warmed}, nil
 	}
 
@@ -91,6 +92,13 @@ func (o *Orchestrator) acquireRuntime(ctx context.Context, run store.AgentRun, a
 	if err := o.waitForRuntime(ctx, run, spec, instance.ID); err != nil {
 		return nil, err
 	}
+	// A runtime doing work for a task is not idle, and until now nothing in the
+	// execution plane ever said so: last_activity_at was written only by a person's
+	// browser session, so the idle culler measured a task's runtime from the moment
+	// it started and stopped it mid-run once the profile's timeout passed. A short
+	// idle timeout is exactly what an operator sets to save cluster money, and it
+	// turned every long run into a runtime that failed for no stated reason.
+	o.store.TouchRuntime(ctx, instance.ID)
 	return &acquiredRuntime{runtimeID: instance.ID, startedByTask: true}, nil
 }
 

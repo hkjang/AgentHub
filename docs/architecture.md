@@ -1306,6 +1306,27 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Idle meant "no browser has touched it"
+
+A runtime is culled when it has been idle for its profile's timeout, measured from
+last_activity_at. Exactly one thing wrote that column: a person's browser session
+going through the runtime proxy. The execution plane — the worker running the
+agent's own work inside that runtime — never touched it at all.
+
+So a runtime doing an agent's work was idle by definition from the moment it
+started. With a five-minute profile timeout, which is precisely what an operator
+sets to keep a cluster cheap, the culler stopped the Pod out from under any run
+that took longer than five minutes, set its desired state to stopped, and the task
+failed with a runtime error that explained nothing about why.
+
+Both halves are fixed. The execution plane marks the runtime active when it takes
+one and after every step, so the timestamp measures what it claims to. And the
+query refuses to call a runtime idle while a task is running in it whatever the
+timestamp says — a run that hangs between steps would otherwise age past the
+timeout, and stopping a Pod under a stalled task turns a stall into a crash. A
+handed over task counts too: it is waiting for a person to open that runtime, and
+culling it is the one thing that stops them.
+
 ## Three of the four gates said no and remembered nothing
 
 Four things can refuse a task before it exists: the platform policy, the promotion

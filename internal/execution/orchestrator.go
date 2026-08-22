@@ -412,6 +412,12 @@ func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task stor
 			}
 		}
 		o.event(ctx, *run, "step.completed", record.Title, map[string]any{"sequence": sequence, "durationMs": elapsed, "tokens": usage.TotalTokens})
+		// Each step is activity. Without this a run whose steps are long — an ACP
+		// agent working through a repository, an investigation waiting on a cluster —
+		// looks idle for exactly as long as it is busy.
+		if run.RuntimeID != nil {
+			o.store.TouchRuntime(ctx, *run.RuntimeID)
+		}
 		transcript = append(transcript, output)
 		o.saveMemory(ctx, *run, task, output)
 
