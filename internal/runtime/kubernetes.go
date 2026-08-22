@@ -24,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -466,22 +467,34 @@ func (k *KubernetesSpawner) ensureSecret(ctx context.Context, coreClient kuberne
 	if err != nil {
 		return err
 	}
-	if existing.Data == nil {
-		existing.Data = map[string][]byte{}
-	}
+	// The credentials are this platform's to write; the operator owns the same
+	// Secret's metadata and writes it on every reconcile. Both used to read the
+	// object and send the whole thing back, so whichever wrote second was refused
+	// with "the object has been modified" — which reached whoever had just pressed
+	// start. A patch names only the keys being set and cleared, carries no resource
+	// version, and cannot collide with the other writer.
+	data := map[string]any{}
 	if spec.ModelAPIKey != "" || existing.Data["model-api-key"] == nil {
-		existing.Data["model-api-key"] = []byte(spec.ModelAPIKey)
+		data["model-api-key"] = []byte(spec.ModelAPIKey)
 	}
-	// Drop stale MCP credentials so unbinding a server also revokes its secret.
+	// Unbinding a server revokes its credential: a key that is no longer wanted is
+	// set to null, which is how a merge patch deletes one.
 	for key := range existing.Data {
 		if strings.HasPrefix(key, "mcp-credential-") || key == gitCredentialKey {
-			delete(existing.Data, key)
+			data[key] = nil
 		}
 	}
 	for key, value := range runtimeCredentialData(spec) {
-		existing.Data[key] = []byte(value)
+		data[key] = []byte(value)
 	}
-	_, err = coreClient.CoreV1().Secrets(namespace).Update(ctx, existing, metav1.UpdateOptions{})
+	if len(data) == 0 {
+		return nil
+	}
+	patch, err := json.Marshal(map[string]any{"data": data})
+	if err != nil {
+		return err
+	}
+	_, err = coreClient.CoreV1().Secrets(namespace).Patch(ctx, spec.Runtime.CRDName, types.MergePatchType, patch, metav1.PatchOptions{})
 	return err
 }
 func (k *KubernetesSpawner) Start(ctx context.Context, spec Spec) error {

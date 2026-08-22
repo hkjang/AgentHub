@@ -1197,11 +1197,25 @@ func (c *Controller) ensureConfigMap(ctx context.Context, ns, name string, value
 	return err
 }
 func (c *Controller) ensureSecret(ctx context.Context, ns, name string, owner *unstructured.Unstructured) error {
-	existing, err := c.client.CoreV1().Secrets(ns).Get(ctx, name, metav1.GetOptions{})
+	_, err := c.client.CoreV1().Secrets(ns).Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
-		existing.OwnerReferences = ownerRef(owner)
-		existing.Labels = labels(name, nil)
-		_, err = c.client.CoreV1().Secrets(ns).Update(ctx, existing, metav1.UpdateOptions{})
+		// Two processes write this Secret: the operator owns its metadata, and the
+		// control plane owns the credentials inside it. Both used to read the object
+		// and send the whole thing back, so whichever wrote second was rejected —
+		// "the object has been modified", verified against a real API server — and
+		// the loser was either a reconcile that failed or a person starting a
+		// runtime who got a Kubernetes conflict in their face.
+		//
+		// Each patches what it owns instead. A patch carries no resource version, so
+		// there is nothing for the two of them to disagree about.
+		metadata, marshalErr := json.Marshal(map[string]any{"metadata": map[string]any{
+			"labels":          labels(name, nil),
+			"ownerReferences": ownerRef(owner),
+		}})
+		if marshalErr != nil {
+			return marshalErr
+		}
+		_, err = c.client.CoreV1().Secrets(ns).Patch(ctx, name, types.MergePatchType, metadata, metav1.PatchOptions{})
 		return err
 	}
 	if !apierrors.IsNotFound(err) {

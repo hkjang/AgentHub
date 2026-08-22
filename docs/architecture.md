@@ -1306,6 +1306,30 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## One Secret, two writers
+
+A runtime's Secret has two authors. The operator owns its metadata and rewrites it
+on every reconcile. The control plane owns the credentials inside it — the model
+key, the MCP credentials, the git credential — and writes them on every spawn and
+every settings sync.
+
+Both read the object and sent the whole thing back. Two readers of the same
+version cannot both do that: whichever wrote second was refused with "the object
+has been modified", which was checked against a real API server rather than
+reasoned about. The loser was either a reconcile that failed and retried, or a
+person who had just pressed start and got a Kubernetes conflict in their face.
+
+Each patches what it owns now, and a patch carries no resource version, so there
+is nothing for the two of them to disagree about. Checked the same way: two
+readers of one version, both writes accepted, the credential still there, the
+label applied, the runtime token untouched.
+
+Revoking still works, and it is the part a patch makes easy to get wrong. A merge
+patch removes a key by setting it to null; omitting it leaves it alone. So an MCP
+server that is unbound has its credential set to null explicitly rather than
+simply left out of the new set — otherwise detaching a server would leave its
+credential sitting in the Pod.
+
 ## A volume that was never made bigger
 
 A workspace volume was created once and never looked at again. Raising the storage
