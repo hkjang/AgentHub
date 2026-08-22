@@ -103,6 +103,33 @@ func contains(values []string, want string) bool {
 }
 
 // rpcRequest is the part of a JSON-RPC message the gateway needs to decide.
+// isBatch reports whether the body is a JSON-RPC batch: a JSON array at the top
+// level, whatever is inside it.
+func isBatch(body []byte) bool {
+	trimmed := bytes.TrimLeft(body, " \t\r\n")
+	return len(trimmed) > 0 && trimmed[0] == '['
+}
+
+// methodAndTool reads the method and the tool name from the message as JSON,
+// independently of whether the rest of it fits rpcRequest.
+func methodAndTool(body []byte) (string, string, bool) {
+	var message map[string]json.RawMessage
+	if err := json.Unmarshal(body, &message); err != nil {
+		return "", "", false
+	}
+	var method string
+	if err := json.Unmarshal(message["method"], &method); err != nil {
+		return "", "", false
+	}
+	var params struct {
+		Name string `json:"name"`
+	}
+	// A tools/call with unreadable params is still a tools/call, and it is answered
+	// by the policy for the empty tool name rather than by being waved through.
+	_ = json.Unmarshal(message["params"], &params)
+	return method, params.Name, true
+}
+
 type rpcRequest struct {
 	ID     json.RawMessage `json:"id"`
 	Method string          `json:"method"`
@@ -165,8 +192,33 @@ func mcpGatewayWith(upstreams []mcpUpstream, auditor func(entry map[string]any),
 			return
 		}
 
+		// A batch is a way past every check below.
+		//
+		// JSON-RPC 2.0 lets a client send an array of requests, and an array does
+		// not decode into one request struct — so Method stayed empty, every check
+		// compared against "", and the body went upstream unread with the
+		// credential attached. The tool policy, the approval gate and the content
+		// scanner were one bracket away from not applying.
+		//
+		// Refused rather than policed element by element: the current revision of
+		// MCP has removed batching, so nothing legitimate needs it, and a refusal
+		// that says so is better than a second policing path to keep in step with
+		// this one.
+		if isBatch(body) {
+			auditor(map[string]any{"server": name, "decision": "denied", "reason": "batch"})
+			writeRPCError(w, nil, -32600, "이 게이트웨이는 JSON-RPC 일괄 요청을 처리하지 않습니다. 도구 호출은 한 번에 하나씩 보내 주세요.")
+			return
+		}
+
+		// Read the method and the tool name out of the message itself rather than
+		// out of a struct that has to fit all of it. A field elsewhere in the
+		// message with an unexpected type used to fail the whole decode and leave
+		// the method empty, which is the same bypass wearing a different hat.
 		var request rpcRequest
 		_ = json.Unmarshal(body, &request)
+		if method, tool, ok := methodAndTool(body); ok {
+			request.Method, request.Params.Name = method, tool
+		}
 		if request.Method == "tools/call" && !upstream.permits(request.Params.Name) {
 			platform := upstream.deniedByPlatform(request.Params.Name)
 			auditor(map[string]any{"server": name, "tool": request.Params.Name, "decision": "denied", "mode": upstream.Mode, "policy": platform})

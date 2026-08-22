@@ -1306,6 +1306,33 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## One bracket past the tool policy
+
+The in-Pod gateway is the reason an agent cannot route around its own MCP tool
+policy: the credential is attached there, the deny list is applied there, gated
+tools wait for a person there, and arguments are scanned there on the way out. The
+guide says as much — a tool the policy blocks does not even appear in the list.
+
+It read one JSON-RPC request out of the body and ignored the parse failure.
+JSON-RPC 2.0 lets a client send an array of requests instead, and an array does
+not decode into one request struct: the method came out empty, every check
+compared against "", and the body went upstream unread with the credential
+attached. A denied tool, wrapped in a batch, reached the server. So did anything a
+gated tool would have waited for, and anything the content scanner would have
+caught.
+
+Batches are refused rather than policed one element at a time. The current
+revision of MCP has removed batching, so nothing legitimate needs it, and a second
+policing path to keep in step with the first is a worse answer than a refusal that
+says what happened. Every top-level array is refused, not only one carrying a
+tools/call: a batch the gateway lets past is a batch it has not read.
+
+The method and tool name are also read from the message as JSON now rather than
+out of a struct that has to fit all of it. That part is hardening, not a hole that
+was demonstrated — a message with positional params fails the struct decode, but
+encoding/json records the error and carries on, so the check still ran. It should
+not rest on the standard library's error recovery.
+
 ## Cancelling a goal that had been handed out
 
 An agent that delegates part of its goal creates a task of its own, tracked
