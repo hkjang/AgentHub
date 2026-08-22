@@ -693,6 +693,35 @@ func (s *Store) UpdateAgent(ctx context.Context, id, ownerID string, admin bool,
 // DeleteAgent removes the definition. agent_runtimes and runtime_sessions cascade
 // from the definition, so the caller must delete the Kubernetes resources first —
 // otherwise the CRD name is lost and the Pod is orphaned in the cluster.
+// AgentWorkInFlight counts the work that would be destroyed with this agent, and
+// says what kind it is.
+//
+// Deleting an agent cascades through twelve tables: its tasks, runs, transcripts,
+// artifacts, memories, evaluations, versions and triggers all go with it. Most of
+// that is history, and deleting history is what somebody deleting an agent is
+// asking for. Work in flight is not history. A task running right now, one parked
+// at an approval somebody is about to give, one handed to a person who is
+// finishing it in the runtime — those disappear mid-sentence, and nobody is told.
+func (s *Store) AgentWorkInFlight(ctx context.Context, agentID string) (map[string]int, error) {
+	rows, err := s.pool.Query(ctx, `SELECT status, count(*) FROM agent_tasks
+		WHERE agent_id=$1 AND status IN ('running','waiting_tool','waiting_approval','handoff')
+		GROUP BY status`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	counts := map[string]int{}
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, err
+		}
+		counts[status] = count
+	}
+	return counts, rows.Err()
+}
+
 func (s *Store) DeleteAgent(ctx context.Context, id, ownerID string, admin bool) error {
 	query := `DELETE FROM agent_definitions WHERE id=$1`
 	args := []any{id}

@@ -126,7 +126,12 @@ export function Agents({runtimeOnly=false}:{runtimeOnly?:boolean}) {
     {versionsFor&&<VersionsDrawer agent={versionsFor} close={()=>setVersionsFor(null)} done={()=>{setVersionsFor(null);void refresh()}}/>}
     {removing&&<ConfirmDialog
       title="에이전트를 삭제할까요?"
-      message={<><strong>{removing.name}</strong> 정의와 실행 중인 런타임(Pod, Service, NetworkPolicy)이 함께 삭제됩니다.<br/>연결된 작업공간 볼륨은 보존됩니다.</>}
+      /* The dialog used to name the definition and the Pod, which is the part
+         somebody pictures. The rest of it — every task, run transcript, artifact,
+         memory, evaluation and version — went too, unmentioned. */
+      message={<><strong>{removing.name}</strong> 정의와 실행 중인 런타임(Pod, Service, NetworkPolicy)이 함께 삭제됩니다.<br/>
+        <strong>이 에이전트의 기록도 모두 지워집니다</strong> — 작업과 실행 기록·전사, 산출물, 기억, 사전검증 결과, 정의 버전, Trigger. 되돌릴 수 없습니다.<br/>
+        연결된 작업공간 볼륨은 보존됩니다. 진행 중인 작업이 있으면 삭제는 거절됩니다.</>}
       busy={removeBusy} error={removeError}
       onConfirm={()=>void remove()} onCancel={()=>setRemoving(null)}/>}
   </div>

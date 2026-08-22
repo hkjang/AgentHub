@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -72,12 +73,42 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 // deleteAgent tears down the Kubernetes resources before dropping the row.
 // agent_runtimes cascades from the definition, so deleting the row first would
 // lose the CRD name and orphan the StatefulSet in the cluster.
+// workInFlightSummary names the work in the words the task list uses, because a
+// person who is told "3건" still has to go and find which three.
+func workInFlightSummary(counts map[string]int) string {
+	labels := []struct{ status, label string }{
+		{"running", "실행 중"},
+		{"waiting_tool", "도구 대기"},
+		{"waiting_approval", "승인 대기"},
+		{"handoff", "런타임 인계"},
+	}
+	parts := []string{}
+	for _, item := range labels {
+		if counts[item.status] > 0 {
+			parts = append(parts, fmt.Sprintf("%s %d건", item.label, counts[item.status]))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
 func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	id := chi.URLParam(r, "id")
 	agent, err := s.store.AgentByID(r.Context(), id, u.ID, u.Role == "admin")
 	if err != nil {
 		writeStoreError(w, err)
+		return
+	}
+	// Work in flight is not history, and deleting the agent takes it with no
+	// warning: a task running right now, one parked at an approval somebody is
+	// about to give, one handed to a person finishing it in the runtime. The
+	// confirmation dialog offers to delete "the definition and the runtime", which
+	// is what somebody thinks they are agreeing to.
+	if inFlight, flightErr := s.store.AgentWorkInFlight(r.Context(), agent.ID); flightErr != nil {
+		s.logger.Warn("work in flight could not be counted", "agent", agent.ID, "error", flightErr)
+	} else if len(inFlight) > 0 {
+		writeError(w, http.StatusConflict, "work_in_flight",
+			"이 Agent에는 진행 중인 작업이 있습니다("+workInFlightSummary(inFlight)+"). 끝나기를 기다리거나 작업을 취소한 뒤 삭제해 주세요.")
 		return
 	}
 	if existing, runtimeErr := s.store.LatestRuntimeForAgent(r.Context(), agent.ID); runtimeErr == nil {

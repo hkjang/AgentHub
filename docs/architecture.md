@@ -1306,6 +1306,28 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Deleting an agent took work with it
+
+Deleting an agent cascades through twelve tables: its tasks, runs, transcripts,
+artifacts, memories, evaluations, versions and triggers. Most of that is history,
+and deleting history is what somebody deleting an agent is asking for.
+
+Work in flight is not history. A task running right now, one parked at an approval
+somebody is about to give, one handed to a person who is finishing it in the
+runtime — those went too, mid-sentence, with nobody told. The confirmation offered
+to delete "the definition and the running runtime (Pod, Service, NetworkPolicy)",
+which is the part somebody pictures, and said nothing about the rest.
+
+Both halves are answered. The deletion is refused while work is in flight, naming
+what is in flight in the words the task list uses, so the refusal is something to
+act on rather than a number to go and look for. And the confirmation now says what
+it destroys, because agreeing to lose a definition is not agreeing to lose a
+year of run transcripts.
+
+A count that cannot be read is logged and allowed through: a database hiccup
+should not stop somebody deleting an agent, and the refusal exists for the case
+where the answer is known and is "yes, something is running".
+
 ## Asking the cluster what it threw away
 
 Two fields had been found the hard way — the runtime environment, and then the
