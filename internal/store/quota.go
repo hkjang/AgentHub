@@ -148,12 +148,14 @@ func departmentExecutionUsage(ctx context.Context, db querier, departmentID, exc
 		return usage, err
 	}
 	var workflowTokens int64
-	if err := db.QueryRow(ctx, `SELECT COALESCE(sum(w.total_tokens), 0) FROM workflow_runs w
+	var workflowCost float64
+	if err := db.QueryRow(ctx, `SELECT COALESCE(sum(w.total_tokens), 0), COALESCE(sum(w.cost), 0) FROM workflow_runs w
 		JOIN users u ON u.id = w.owner_id
-		WHERE u.department_id = $1 AND w.created_at >= $2`, departmentID, since).Scan(&workflowTokens); err != nil {
+		WHERE u.department_id = $1 AND w.created_at >= $2`, departmentID, since).Scan(&workflowTokens, &workflowCost); err != nil {
 		return usage, err
 	}
 	usage.Tokens += workflowTokens
+	usage.Cost += workflowCost
 	return usage, nil
 }
 
@@ -178,17 +180,22 @@ func executionUsage(ctx context.Context, db querier, ownerID, agentID, exceptTas
 		return usage, err
 	}
 	// Workflows call the same models through the same endpoints and were counted
-	// by nothing. A budget that a person can walk around by putting the agent in
-	// a graph is a suggestion, so their spend joins the same total. There is no
-	// cost figure for it: a workflow step's model is resolved per agent at run
-	// time and the run does not record which endpoint priced it, so counting the
-	// tokens and leaving the money uncounted is the honest half.
+	// by nothing. A budget somebody can walk around by putting the agent in a graph
+	// is a suggestion, so their spend joins the same total.
+	//
+	// The money is counted now too. It used to be the honest half — the tokens
+	// without the money — because a workflow step's model is resolved per agent at
+	// run time and nothing recorded which endpoint priced which step. The rate
+	// travels with the step and the engine prices each call as it happens, so the
+	// figure is here to be added rather than reconstructed.
 	var workflowTokens int64
-	if err := db.QueryRow(ctx, `SELECT COALESCE(sum(total_tokens), 0) FROM workflow_runs
-		WHERE owner_id = $1 AND created_at >= $2`, ownerID, since).Scan(&workflowTokens); err != nil {
+	var workflowCost float64
+	if err := db.QueryRow(ctx, `SELECT COALESCE(sum(total_tokens), 0), COALESCE(sum(cost), 0) FROM workflow_runs
+		WHERE owner_id = $1 AND created_at >= $2`, ownerID, since).Scan(&workflowTokens, &workflowCost); err != nil {
 		return usage, err
 	}
 	usage.Tokens += workflowTokens
+	usage.Cost += workflowCost
 	return usage, nil
 }
 

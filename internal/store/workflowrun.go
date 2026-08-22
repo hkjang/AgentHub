@@ -43,13 +43,19 @@ func (s *Store) CreateWorkflowRun(ctx context.Context, workflowID, ownerID strin
 // is countable by the usage report and by the budgets that now refuse a workflow
 // when they are spent — which they could not do while the only record of a
 // workflow's cost was a field in a JSON blob.
-func (s *Store) FinishWorkflowRun(ctx context.Context, id, status string, output any, totalTokens, agentCalls int) (WorkflowRun, error) {
+// FinishWorkflowRun records what the run produced and what it cost.
+//
+// The cost arrives already computed: a workflow's steps belong to different
+// agents and so possibly different endpoints, so there is no single rate to apply
+// here. The engine prices each step at the endpoint that answered it, which also
+// means a later price correction cannot rewrite it — the same rule a run follows.
+func (s *Store) FinishWorkflowRun(ctx context.Context, id, status string, output any, totalTokens, agentCalls int, cost float64, currency string) (WorkflowRun, error) {
 	payload, err := json.Marshal(output)
 	if err != nil {
 		return WorkflowRun{}, err
 	}
 	var item WorkflowRun
-	err = s.pool.QueryRow(ctx, `UPDATE workflow_runs SET status=$2,output=$3,total_tokens=$4,agent_calls=$5,finished_at=now() WHERE id=$1 RETURNING id,workflow_id,owner_id,status,input,output,started_at,finished_at,created_at`, id, status, payload, totalTokens, agentCalls).
+	err = s.pool.QueryRow(ctx, `UPDATE workflow_runs SET status=$2,output=$3,total_tokens=$4,agent_calls=$5,cost=$6,currency=$7,finished_at=now() WHERE id=$1 RETURNING id,workflow_id,owner_id,status,input,output,started_at,finished_at,created_at`, id, status, payload, totalTokens, agentCalls, cost, currency).
 		Scan(&item.ID, &item.WorkflowID, &item.OwnerID, &item.Status, &item.Input, &item.Output, &item.StartedAt, &item.FinishedAt, &item.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WorkflowRun{}, ErrNotFound

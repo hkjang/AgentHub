@@ -1306,6 +1306,27 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## The honest half, finished
+
+Workflow tokens have counted toward the budget since they were recorded — a
+budget somebody can walk around by putting the agent in a graph is a suggestion.
+The money was left out, and the guide said so: a workflow's steps are bound to
+different agents and therefore possibly different endpoints, and nothing recorded
+which endpoint priced which step. Counting the tokens and leaving the money
+uncounted was the honest half.
+
+It stayed the honest half because the rate was looked up afterwards, and
+afterwards there is no single rate to look up. The answer is the same one the run
+snapshot uses: price it at the point of the call. The endpoint's rate travels with
+the step, the engine prices each step by the endpoint that answered it, and the
+run stores the total — so a price corrected next month cannot rewrite it either.
+
+A run whose steps used endpoints with different currencies records the mixture
+verbatim rather than choosing one of them, for the same reason the platform bill
+stopped labelling a mixed total with one currency's name. An unpriced endpoint
+adds no money and contributes no currency: its tokens still count, because
+unpriced is not unmetered.
+
 ## Adding won to dollars
 
 Every number under the bill is a single figure in a single currency: the total,

@@ -89,7 +89,7 @@ func (s *Server) runWorkflow(w http.ResponseWriter, r *http.Request) {
 		status = "failed"
 		result = workflow.Result{Mode: item.Mode, Status: status, Output: runErr.Error()}
 	}
-	stored, storeErr := s.store.FinishWorkflowRun(r.Context(), run.ID, status, result, result.TotalTokens, result.AgentCall)
+	stored, storeErr := s.store.FinishWorkflowRun(r.Context(), run.ID, status, result, result.TotalTokens, result.AgentCall, result.Cost, result.Currency)
 	if storeErr != nil {
 		s.logger.Error("workflow run could not be recorded", "run", run.ID, "error", storeErr)
 	}
@@ -129,6 +129,14 @@ func (s *Server) resolveWorkflowSteps(ctx context.Context, ownerID string, defin
 		baseURL string
 		name    string
 		key     string
+		// The rate this endpoint charges, carried to the step so the engine can
+		// price each call at the endpoint that answered it. A workflow's steps
+		// belong to different agents and so possibly different endpoints; there is
+		// no single rate to apply to the run afterwards, which is why the money
+		// went uncounted while the tokens were counted.
+		inputPrice  float64
+		outputPrice float64
+		currency    string
 	}{}
 	steps := make([]workflow.Step, 0, len(definition.Steps))
 	for _, step := range definition.Steps {
@@ -156,9 +164,11 @@ func (s *Server) resolveWorkflowSteps(ctx context.Context, ownerID string, defin
 				return nil, modelErr
 			}
 			binding.baseURL, binding.name, binding.key = endpoint.BaseURL, endpoint.DefaultModel, key
+			binding.inputPrice, binding.outputPrice, binding.currency = endpoint.InputPricePerMTok, endpoint.OutputPricePerMTok, endpoint.Currency
 			models[*agent.ModelEndpointID] = binding
 		}
 		resolved.ModelBaseURL, resolved.ModelName, resolved.ModelAPIKey = binding.baseURL, binding.name, binding.key
+		resolved.InputPricePerMTok, resolved.OutputPricePerMTok, resolved.Currency = binding.inputPrice, binding.outputPrice, binding.currency
 		steps = append(steps, resolved)
 	}
 	return steps, nil

@@ -32,6 +32,14 @@ type Step struct {
 	ModelBaseURL string
 	ModelName    string
 	ModelAPIKey  string
+	// What the endpoint answering this step charges, as it stands now. Carried on
+	// the step because a workflow's steps belong to different agents and so
+	// possibly different endpoints: there is no one rate for a run. Priced here
+	// rather than joined later, for the same reason a run records its own rate —
+	// a correction next month must not rewrite this month.
+	InputPricePerMTok  float64
+	OutputPricePerMTok float64
+	Currency           string
 	// Schema constrains this step's answer, for the steps whose answer the
 	// platform acts on rather than passes along — today the router's decision.
 	Schema *Schema
@@ -82,6 +90,13 @@ type Result struct {
 	TraceID     string `json:"traceId"`
 	DurationMs  int64  `json:"durationMs"`
 	TotalTokens int    `json:"totalTokens"`
+	// Cost is what these steps were charged, priced at each step's own endpoint at
+	// the moment it answered. Currency is what they were charged in — and when a
+	// run's steps used endpoints with different currencies it says so verbatim,
+	// because there is no exchange rate here and a total wearing one of their
+	// names would be a fiction.
+	Cost     float64 `json:"cost"`
+	Currency string  `json:"currency,omitempty"`
 	// Consensus is the vote tally, present only for consensus runs.
 	Consensus *ConsensusResult `json:"consensus,omitempty"`
 	// Supervision is the review record, present only for supervised runs.
@@ -490,14 +505,41 @@ func terminalSteps(steps []Step) []string {
 func finish(result Result, results map[string]*StepResult, steps []Step, calls int) Result {
 	result.AgentCall = calls
 	ordered := make([]StepResult, 0, len(results))
+	// Each step is priced by the endpoint that answered it. A workflow's steps
+	// belong to different agents and so possibly different endpoints, which is
+	// why there is no single rate to apply afterwards — and why the money went
+	// uncounted until the rate travelled with the step.
+	currencies := map[string]bool{}
 	for _, step := range steps {
-		if item, ok := results[step.ID]; ok {
-			ordered = append(ordered, *item)
-			result.TotalTokens += item.TotalTokens
+		item, ok := results[step.ID]
+		if !ok {
+			continue
+		}
+		ordered = append(ordered, *item)
+		result.TotalTokens += item.TotalTokens
+		cost := (float64(item.PromptTokens)*step.InputPricePerMTok + float64(item.CompletionTokens)*step.OutputPricePerMTok) / 1_000_000
+		if cost > 0 {
+			result.Cost += cost
+			if currency := strings.TrimSpace(step.Currency); currency != "" {
+				currencies[currency] = true
+			}
 		}
 	}
+	result.Currency = oneCurrency(currencies)
 	result.Steps = ordered
 	return result
+}
+
+// oneCurrency names what this run was charged in, and refuses to pick when the
+// steps disagree. Summing across currencies is already what the platform's own
+// bill had to stop pretending about; a run that did it says so instead.
+func oneCurrency(present map[string]bool) string {
+	names := make([]string, 0, len(present))
+	for name := range present {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return strings.Join(names, "+")
 }
 
 func truncate(value string, limit int) string {
