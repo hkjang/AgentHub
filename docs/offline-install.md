@@ -54,6 +54,7 @@ docker load < agenthub-jupyter-v0.1.0.tar.gz
 docker load < agenthub-goose-v0.1.0.tar.gz
 docker load < agenthub-holmes-v0.2.0.tar.gz
 docker load < agenthub-browsercode-v0.2.0.tar.gz
+docker load < agenthub-opencodereview-v0.1.0.tar.gz
 docker load < agenthub-nodered-v0.1.0.tar.gz
 docker load < agenthub-n8n-v0.1.0.tar.gz
 export AGENTHUB_BOOTSTRAP_ADMIN=admin

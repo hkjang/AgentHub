@@ -115,12 +115,69 @@ func (s *Server) saveAgentGoal(w http.ResponseWriter, r *http.Request) {
 // The check lives here rather than at execution time because the failure it
 // prevents is a task that queues, starts a Pod and then fails: an agent whose
 // runtime has no flow engine, or a flow-backed Goal with no flow chosen. Both are
+// validateReview answers the review Goal's questions here rather than at three in
+// the morning.
+//
+// A review is told what to compare, and every mode needs different things: a
+// range without both ends compares nothing, a commit review without a commit
+// reviews the workspace instead and looks like it worked. The engine would fail
+// on each of these, in its own words, one task attempt later.
+func validateReview(goal *store.AgentGoal) error {
+	goal.ReviewMode = strings.TrimSpace(goal.ReviewMode)
+	goal.ReviewBaseRef = strings.TrimSpace(goal.ReviewBaseRef)
+	goal.ReviewHeadRef = strings.TrimSpace(goal.ReviewHeadRef)
+	goal.ReviewPath = strings.TrimSpace(goal.ReviewPath)
+	goal.ReviewExclude = strings.TrimSpace(goal.ReviewExclude)
+	goal.ReviewFailOn = strings.TrimSpace(strings.ToLower(goal.ReviewFailOn))
+	if goal.ReviewMode == "" {
+		goal.ReviewMode = "workspace"
+	}
+	if !contains([]string{"workspace", "range", "commit", "scan"}, goal.ReviewMode) {
+		return errors.New("리뷰 대상을 확인해 주세요")
+	}
+	switch goal.ReviewMode {
+	case "range":
+		if goal.ReviewBaseRef == "" || goal.ReviewHeadRef == "" {
+			return errors.New("비교할 두 브랜치를 모두 입력해 주세요")
+		}
+		if goal.ReviewBaseRef == goal.ReviewHeadRef {
+			return errors.New("같은 브랜치끼리는 비교할 변경분이 없습니다")
+		}
+	case "commit":
+		if goal.ReviewHeadRef == "" {
+			return errors.New("리뷰할 커밋을 입력해 주세요")
+		}
+	}
+	// A git ref is not a place to accept shell metacharacters. The command is
+	// executed as argv rather than through a shell, so this is not what stops an
+	// injection — it is what stops a ref that cannot possibly exist from becoming
+	// a review that failed for reasons nobody can read.
+	for _, ref := range []string{goal.ReviewBaseRef, goal.ReviewHeadRef} {
+		if strings.ContainsAny(ref, " \t\n\"'`$;|&<>\\") {
+			return errors.New("브랜치나 커밋 이름에 쓸 수 없는 문자가 있습니다")
+		}
+		if len(ref) > 200 {
+			return errors.New("브랜치나 커밋 이름이 너무 깁니다")
+		}
+	}
+	if len(goal.ReviewPath) > 400 || len(goal.ReviewExclude) > 1000 {
+		return errors.New("리뷰 경로나 제외 패턴이 너무 깁니다")
+	}
+	if goal.ReviewFailOn != "" && !contains(store.ReviewSeverities, goal.ReviewFailOn) {
+		return errors.New("실패 기준 심각도를 확인해 주세요")
+	}
+	if !goal.StartOnDemand {
+		return errors.New("리뷰는 Runtime 안에서 이루어지므로 '작업 시 Runtime 시작'을 켜 주세요")
+	}
+	return nil
+}
+
 // answerable while somebody is still looking at the form.
 func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 	if goal.Runner == "" {
 		goal.Runner = store.RunnerProse
 	}
-	if !contains([]string{store.RunnerProse, store.RunnerFlow, store.RunnerCLI, store.RunnerDify, store.RunnerACP, store.RunnerInvestigate}, goal.Runner) {
+	if !contains([]string{store.RunnerProse, store.RunnerFlow, store.RunnerCLI, store.RunnerDify, store.RunnerACP, store.RunnerInvestigate, store.RunnerReview}, goal.Runner) {
 		return errors.New("실행 방식을 확인해 주세요")
 	}
 	// Kept whatever the runner is, so switching back and forth in the console does
@@ -181,6 +238,9 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 		// anything that is not read-only goes to a person, whatever the mode says.
 		// The mode still decides everything else.
 		return nil
+	}
+	if goal.Runner == store.RunnerReview {
+		return validateReview(goal)
 	}
 	if goal.Runner == store.RunnerCLI {
 		// The headless runner cannot ask. It hands the approval mode to the agent

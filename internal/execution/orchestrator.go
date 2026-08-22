@@ -266,6 +266,17 @@ func (o *Orchestrator) run(ctx context.Context, run *store.AgentRun, task store.
 			return outcome
 		}
 		return o.evaluate(ctx, run, task, agent, goal, model, transcript)
+	case store.RunnerReview:
+		// A review is the one backend the evaluator has nothing to add to. Its
+		// verdict is already an answer to a specific question — is anything at or
+		// above this severity still open — and asking a model whether the review
+		// met its goal would replace a fact with an opinion, at the cost of
+		// another model call on every review.
+		transcript, outcome := o.runReview(ctx, run, task, agent, goal, acquired)
+		if outcome.Status != "" {
+			return outcome
+		}
+		return Outcome{Status: store.TaskCompleted, Result: strings.Join(transcript, "\n")}
 	}
 
 	plan := ""

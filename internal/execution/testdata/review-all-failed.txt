@@ -1,0 +1,24 @@
+agenthub: no control plane address, skipping the configuration report
+{
+  "status": "failed",
+  "llm": {
+    "provider": "agenthub",
+    "model": "gw-model"
+  },
+  "summary": {
+    "files_reviewed": 1,
+    "comments": 0,
+    "total_tokens": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "elapsed": "14s"
+  },
+  "tool_calls": {
+    "total": 0,
+    "by_tool": {}
+  },
+  "comments": null,
+  "session_id": "98ff769d-2e25-4ab4-a833-44d43ba72fa3"
+}
+[ocr] Session: 98ff769d-2e25-4ab4-a833-44d43ba72fa3 (retry with: --resume 98ff769d-2e25-4ab4-a833-44d43ba72fa3)
+Error: review failed: all 1 file review(s) failed — check your LLM configuration and API key

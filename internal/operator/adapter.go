@@ -238,6 +238,18 @@ func qwenCodeStart(build adapterBuild) string {
 		"/usr/local/bin/agenthub-qwencode-shell"
 }
 
+// openCodeReviewStart serves the review engine's terminal under the runtime's
+// own path, the same way the coding agents' terminals are served. There is no
+// chat here: what a person gets is a shell in the workspace with the connection
+// already prepared, so anything tried by hand behaves the way a scheduled review
+// will.
+func openCodeReviewStart(build adapterBuild) string {
+	return "exec /usr/local/bin/ttyd --port 7681 --interface 127.0.0.1 --writable " +
+		"--base-path /" + build.runtimeID() + " " +
+		"--client-option titleFixed=AgentHub " +
+		"/usr/local/bin/agenthub-opencodereview-shell"
+}
+
 // qwenCodeHealthCommand asks ttyd's own token endpoint, which answers as soon as
 // the terminal is being served — under the same base path.
 func qwenCodeHealthCommand(build adapterBuild) []string {
@@ -447,6 +459,48 @@ var runtimeAdapters = map[string]runtimeAdapter{
 		},
 		// Checked from inside the container: ttyd is on loopback, so a probe from
 		// the kubelet could never connect.
+		Probes: func(build adapterBuild) (*corev1.Probe, *corev1.Probe) {
+			command := qwenCodeHealthCommand(build)
+			return &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 5, PeriodSeconds: 5, TimeoutSeconds: 3, FailureThreshold: 24,
+				}, &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 60, PeriodSeconds: 30, TimeoutSeconds: 3, FailureThreshold: 4,
+				}
+		},
+	},
+	runtimetype.OpenCodeReview: {
+		Type:    runtimetype.OpenCodeReview,
+		Command: []string{"/bin/sh", "-ec"},
+		ArgsFor: func(build adapterBuild) []string { return []string{openCodeReviewStart(build)} },
+		Env: func(build adapterBuild) []corev1.EnvVar {
+			// The review engine is told the gateway and the model by name. It is
+			// configured on every run rather than once at start — a runtime that
+			// was started before an administrator changed either would otherwise
+			// keep reviewing against the old one and say nothing — so these are
+			// what the wrapper reads each time.
+			return []corev1.EnvVar{
+				{Name: "AGENTHUB_MODEL_BASE_URL", Value: build.Value.Model.BaseURL},
+				{Name: "AGENTHUB_MODEL_NAME", Value: build.Value.Model.Name},
+			}
+		},
+		InitContainers: func(build adapterBuild) []corev1.Container {
+			// Preparing the connection at start is not what makes a run work — the
+			// run does it again — but it is what makes a runtime that cannot reach
+			// its gateway fail at start, where somebody is watching, rather than on
+			// the first review at three in the morning.
+			return []corev1.Container{{
+				Name: "opencodereview-config-init", Image: build.image(), ImagePullPolicy: corev1.PullIfNotPresent,
+				Command: []string{"/usr/local/bin/agenthub-opencodereview-configure"}, Env: build.Env,
+				Resources:       initResources("200m", "256Mi"),
+				SecurityContext: restrictedContainerSecurityContext(build.Value.Security.ReadOnlyRootFilesystem),
+				VolumeMounts:    homeAndConfigMounts,
+			}}
+		},
+		Sidecars: func(build adapterBuild) []corev1.Container {
+			return []corev1.Container{runtimeProxyContainer("opencodereview-proxy", build.Name, build.sidecarImage(), "http://127.0.0.1:7681")}
+		},
 		Probes: func(build adapterBuild) (*corev1.Probe, *corev1.Probe) {
 			command := qwenCodeHealthCommand(build)
 			return &corev1.Probe{

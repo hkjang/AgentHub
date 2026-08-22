@@ -1306,6 +1306,60 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## A backend whose result is not a sentence
+
+Every execution backend before this one ends the same way: the work produces
+text, the evaluator judges the text against the Goal, and the task passes or
+fails on that judgement. A code review does not fit that shape, and forcing it
+to would throw away the part worth having.
+
+What a review produces is a list. Each item points at a file and a line, carries
+a severity somebody has to act on, and belongs to a category. A console can show
+eleven of those worst-first, let a person mark each real or not, and fail the
+task while anything serious is still open. It can do none of that with a
+paragraph, and asking a model afterwards whether the review met its goal would
+replace a fact with an opinion — at the cost of another model call every time.
+
+So `review` is a runner of its own, and it is the one backend that does not go
+through the evaluator. Its verdict answers a specific question: is anything at or
+above this Goal's severity floor still open. An empty floor is a deployment
+saying it has not asked for a gate, which is the state a deployment should have
+to choose its way out of rather than into.
+
+### What the engine decides and what the platform decides
+
+The engine reads the diff, decides which files are in scope, resolves which
+rules apply to each, and locates every comment on a real line by matching the
+code the model quoted against the diff — rather than trusting a model to count
+lines. The platform decides what to compare, which model answers, who may see
+the result, and what happens when the answer is bad. Neither has opinions about
+the other's half, which is what keeps this from being two sets of review rules
+disagreeing in production.
+
+The model connection is a custom provider pointed at the AgentHub gateway, so
+every review's model calls carry the same policy, content inspection, quota and
+audit trail as everything else. The runtime never learns a provider's own key.
+It is configured on every run rather than once at start: a runtime started before
+an administrator changed the gateway or the model would otherwise keep reviewing
+against the old one, and say nothing.
+
+### Coverage is not decoration
+
+A review that found nothing and a review that read nothing both produce an empty
+list, and they mean opposite things. The engine's run manifest carries the
+resolved base and head commits, the exact range, and every item selected,
+completed, reused or failed — so the platform records what was covered even when
+saving the findings fails, and the console can say "17 files reviewed, nothing
+found" rather than showing an empty box.
+
+That distinction is also where the parser earns its keep. When every file fails
+the engine prints its session id and an error line *after* the JSON document and
+exits non-zero — and that is precisely the document that must be read, because
+it is the one that says the review read nothing. `json.Unmarshal` refuses a
+document with anything after it; decoding a single value does not. Both cases
+are tested against output the real binary actually wrote, captured by running it
+in the image this platform ships.
+
 ## The cluster refusing is not the platform failing
 
 Pressing start on a deployment whose Kubernetes token is no longer accepted

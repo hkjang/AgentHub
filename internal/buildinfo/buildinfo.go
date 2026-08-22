@@ -27,6 +27,10 @@ var (
 	HolmesVersion  = "0.1.0-dev"
 	// BrowserCodeVersion is the image that carries the browser-driving agent.
 	BrowserCodeVersion = "0.1.0-dev"
+	// OpenCodeReviewVersion is the image that carries the review engine. It needs
+	// a newer git than the shared base image has, which is one of the reasons it
+	// is built and published on its own.
+	OpenCodeReviewVersion = "0.1.0-dev"
 )
 
 type Info struct {

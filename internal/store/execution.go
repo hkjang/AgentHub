@@ -120,6 +120,25 @@ type AgentGoal struct {
 	// that takes named inputs rather than a prompt. Empty uses the product's
 	// default for that kind.
 	ExternalInputKey string `json:"externalInputKey"`
+	// The review Goal's settings. A review is told what to compare rather than
+	// what to say, so these are the whole instruction: everything else about how
+	// the review is conducted belongs to the engine and its rules.
+	//
+	// ReviewMode is one of workspace, range, commit or scan.
+	ReviewMode string `json:"reviewMode"`
+	// ReviewBaseRef and ReviewHeadRef bound a range review; ReviewHeadRef alone
+	// carries the commit for a commit review.
+	ReviewBaseRef string `json:"reviewBaseRef"`
+	ReviewHeadRef string `json:"reviewHeadRef"`
+	// ReviewPath narrows a scan to one directory.
+	ReviewPath string `json:"reviewPath"`
+	// ReviewExclude is a comma-separated list of gitignore-style patterns, for
+	// the generated and vendored files a review should not spend a model on.
+	ReviewExclude string `json:"reviewExclude"`
+	// ReviewFailOn is the severity at which a review fails its task. Empty means
+	// it reports and never fails, which is the default a deployment should have
+	// to choose its way out of rather than into.
+	ReviewFailOn string `json:"reviewFailOn"`
 	// ToolPolicy names tools rather than kinds, for the runs where the kind does
 	// not distinguish anything.
 	ToolPolicy ACPToolPolicy `json:"toolPolicy"`
@@ -158,10 +177,12 @@ const (
 	// StepInvestigate is one investigation: a question, the evidence gathered for
 	// it, and the conclusion drawn from that evidence.
 	StepInvestigate = "investigate"
+	// StepReview is one pass of a review engine over a diff.
+	StepReview = "review"
 )
 
 // RunStepTypes is every type the platform writes.
-var RunStepTypes = []string{StepPlan, StepReasoning, StepTool, StepArtifact, StepCompletion, StepDelegation, StepFlow, StepCLI, StepExternal, StepACP, StepInvestigate}
+var RunStepTypes = []string{StepPlan, StepReasoning, StepTool, StepArtifact, StepCompletion, StepDelegation, StepFlow, StepCLI, StepExternal, StepACP, StepInvestigate, StepReview}
 
 // The two places a task's work can happen.
 const (
@@ -181,7 +202,22 @@ const (
 	// holds. One adapter, many agents: the platform is the client and the thing
 	// in the Pod is the agent, whichever vendor wrote it.
 	RunnerACP = "acp"
+	// RunnerReview hands a diff to a review engine. It is the one runner whose
+	// result is not prose: it produces findings that point at a file and a line,
+	// and the run is judged by what it found rather than by what it said.
+	RunnerReview = "review"
 )
+
+// reviewModeOrDefault keeps the database's check constraint from refusing a goal
+// that simply never named a mode, which every goal saved before reviews existed
+// did not.
+func reviewModeOrDefault(mode string) string {
+	switch mode {
+	case "workspace", "range", "commit", "scan":
+		return mode
+	}
+	return "workspace"
+}
 
 // DefaultAgentGoal is what an agent without an explicit goal runs with, so a
 // manual task on a plain interactive agent still executes sensibly.
@@ -347,8 +383,8 @@ const (
 func (s *Store) AgentGoalByID(ctx context.Context, agentID string) (AgentGoal, error) {
 	item := AgentGoal{AgentID: agentID}
 	var success, failure, toolPolicy []byte
-	err := s.pool.QueryRow(ctx, `SELECT description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint,token_budget,runner,flow_id,flow_output_component,approval_mode,COALESCE(external_app_id,''),external_input_key,tool_policy FROM agent_goals WHERE agent_id=$1`, agentID).
-		Scan(&item.Description, &success, &failure, &item.Constraints, &item.MaxSteps, &item.MaxToolCalls, &item.MaxDurationSeconds, &item.MaxRetries, &item.StartOnDemand, &item.StopAfterTask, &item.CompletionStrategy, &item.ConcurrencyPolicy, &item.MaxConcurrentRuns, &item.PlannerMode, &item.ApprovalRequired, &item.MaxDelegationDepth, &item.WarmupSeconds, &item.KeepWarmSeconds, &item.ResumeFromCheckpoint, &item.TokenBudget, &item.Runner, &item.FlowID, &item.FlowOutputComponent, &item.ApprovalMode, &item.ExternalAppID, &item.ExternalInputKey, &toolPolicy)
+	err := s.pool.QueryRow(ctx, `SELECT description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint,token_budget,runner,flow_id,flow_output_component,approval_mode,COALESCE(external_app_id,''),external_input_key,review_mode,review_base_ref,review_head_ref,review_path,review_exclude,review_fail_on,tool_policy FROM agent_goals WHERE agent_id=$1`, agentID).
+		Scan(&item.Description, &success, &failure, &item.Constraints, &item.MaxSteps, &item.MaxToolCalls, &item.MaxDurationSeconds, &item.MaxRetries, &item.StartOnDemand, &item.StopAfterTask, &item.CompletionStrategy, &item.ConcurrencyPolicy, &item.MaxConcurrentRuns, &item.PlannerMode, &item.ApprovalRequired, &item.MaxDelegationDepth, &item.WarmupSeconds, &item.KeepWarmSeconds, &item.ResumeFromCheckpoint, &item.TokenBudget, &item.Runner, &item.FlowID, &item.FlowOutputComponent, &item.ApprovalMode, &item.ExternalAppID, &item.ExternalInputKey, &item.ReviewMode, &item.ReviewBaseRef, &item.ReviewHeadRef, &item.ReviewPath, &item.ReviewExclude, &item.ReviewFailOn, &toolPolicy)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WithLegacyNames(DefaultAgentGoal(agentID)), nil
 	}
@@ -371,10 +407,10 @@ func (s *Store) PutAgentGoal(ctx context.Context, item AgentGoal) (AgentGoal, er
 	success, _ := json.Marshal(item.SuccessCriteria)
 	failure, _ := json.Marshal(item.FailureCriteria)
 	toolPolicy, _ := json.Marshal(cleanToolPolicy(item.ToolPolicy))
-	_, err := s.pool.Exec(ctx, `INSERT INTO agent_goals(agent_id,description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint,token_budget,runner,flow_id,flow_output_component,approval_mode,external_app_id,external_input_key,tool_policy)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
-		ON CONFLICT(agent_id) DO UPDATE SET description=excluded.description,success_criteria=excluded.success_criteria,failure_criteria=excluded.failure_criteria,constraints=excluded.constraints,max_steps=excluded.max_steps,max_tool_calls=excluded.max_tool_calls,max_duration_seconds=excluded.max_duration_seconds,max_retries=excluded.max_retries,start_on_demand=excluded.start_on_demand,stop_after_task=excluded.stop_after_task,completion_strategy=excluded.completion_strategy,concurrency_policy=excluded.concurrency_policy,max_concurrent_runs=excluded.max_concurrent_runs,planner_mode=excluded.planner_mode,approval_required=excluded.approval_required,max_delegation_depth=excluded.max_delegation_depth,warmup_seconds=excluded.warmup_seconds,keep_warm_seconds=excluded.keep_warm_seconds,resume_from_checkpoint=excluded.resume_from_checkpoint,token_budget=excluded.token_budget,runner=excluded.runner,flow_id=excluded.flow_id,flow_output_component=excluded.flow_output_component,approval_mode=excluded.approval_mode,external_app_id=excluded.external_app_id,external_input_key=excluded.external_input_key,tool_policy=excluded.tool_policy,updated_at=now()`,
-		item.AgentID, item.Description, success, failure, item.Constraints, item.MaxSteps, item.MaxToolCalls, item.MaxDurationSeconds, item.MaxRetries, item.StartOnDemand, item.StopAfterTask, item.CompletionStrategy, item.ConcurrencyPolicy, item.MaxConcurrentRuns, item.PlannerMode, item.ApprovalRequired, item.MaxDelegationDepth, item.WarmupSeconds, item.KeepWarmSeconds, item.ResumeFromCheckpoint, item.TokenBudget, runnerOrDefault(item.Runner), item.FlowID, item.FlowOutputComponent, approvalModeOrDefault(item.ApprovalMode), nullText(item.ExternalAppID), item.ExternalInputKey, toolPolicy)
+	_, err := s.pool.Exec(ctx, `INSERT INTO agent_goals(agent_id,description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint,token_budget,runner,flow_id,flow_output_component,approval_mode,external_app_id,external_input_key,review_mode,review_base_ref,review_head_ref,review_path,review_exclude,review_fail_on,tool_policy)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34)
+		ON CONFLICT(agent_id) DO UPDATE SET description=excluded.description,success_criteria=excluded.success_criteria,failure_criteria=excluded.failure_criteria,constraints=excluded.constraints,max_steps=excluded.max_steps,max_tool_calls=excluded.max_tool_calls,max_duration_seconds=excluded.max_duration_seconds,max_retries=excluded.max_retries,start_on_demand=excluded.start_on_demand,stop_after_task=excluded.stop_after_task,completion_strategy=excluded.completion_strategy,concurrency_policy=excluded.concurrency_policy,max_concurrent_runs=excluded.max_concurrent_runs,planner_mode=excluded.planner_mode,approval_required=excluded.approval_required,max_delegation_depth=excluded.max_delegation_depth,warmup_seconds=excluded.warmup_seconds,keep_warm_seconds=excluded.keep_warm_seconds,resume_from_checkpoint=excluded.resume_from_checkpoint,token_budget=excluded.token_budget,runner=excluded.runner,flow_id=excluded.flow_id,flow_output_component=excluded.flow_output_component,approval_mode=excluded.approval_mode,external_app_id=excluded.external_app_id,external_input_key=excluded.external_input_key,review_mode=excluded.review_mode,review_base_ref=excluded.review_base_ref,review_head_ref=excluded.review_head_ref,review_path=excluded.review_path,review_exclude=excluded.review_exclude,review_fail_on=excluded.review_fail_on,tool_policy=excluded.tool_policy,updated_at=now()`,
+		item.AgentID, item.Description, success, failure, item.Constraints, item.MaxSteps, item.MaxToolCalls, item.MaxDurationSeconds, item.MaxRetries, item.StartOnDemand, item.StopAfterTask, item.CompletionStrategy, item.ConcurrencyPolicy, item.MaxConcurrentRuns, item.PlannerMode, item.ApprovalRequired, item.MaxDelegationDepth, item.WarmupSeconds, item.KeepWarmSeconds, item.ResumeFromCheckpoint, item.TokenBudget, runnerOrDefault(item.Runner), item.FlowID, item.FlowOutputComponent, approvalModeOrDefault(item.ApprovalMode), nullText(item.ExternalAppID), item.ExternalInputKey, reviewModeOrDefault(item.ReviewMode), item.ReviewBaseRef, item.ReviewHeadRef, item.ReviewPath, item.ReviewExclude, item.ReviewFailOn, toolPolicy)
 	if err != nil {
 		return AgentGoal{}, err
 	}
@@ -394,7 +430,7 @@ func WithLegacyNames(item AgentGoal) AgentGoal {
 
 func runnerOrDefault(value string) string {
 	switch value {
-	case RunnerFlow, RunnerCLI, RunnerDify, RunnerACP, RunnerInvestigate:
+	case RunnerFlow, RunnerCLI, RunnerDify, RunnerACP, RunnerInvestigate, RunnerReview:
 		return value
 	}
 	return RunnerProse

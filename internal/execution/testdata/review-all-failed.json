@@ -1,0 +1,131 @@
+{
+  "status": "failed",
+  "llm": {
+    "provider": "agenthub",
+    "model": "gw-model"
+  },
+  "message": "Review failed: 0 finding(s); 1 of 1 selected item(s) failed.",
+  "summary": {
+    "files_reviewed": 1,
+    "comments": 0,
+    "total_tokens": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "elapsed": "14s"
+  },
+  "tool_calls": {
+    "total": 0,
+    "by_tool": {}
+  },
+  "comments": null,
+  "session_id": "98ff769d-2e25-4ab4-a833-44d43ba72fa3",
+  "manifest": {
+    "schema_version": "ocr.run-manifest/v1",
+    "run_id": "98ff769d-2e25-4ab4-a833-44d43ba72fa3",
+    "operation": "review",
+    "terminal_state": "failed",
+    "repository": {},
+    "input": {
+      "mode": "range",
+      "requested_from": "master",
+      "requested_head": "feature",
+      "resolved_base": "53f8530fc12d9fdaab27eec11c5fccc0baaf5113",
+      "resolved_head": "09d4a274d583b510d539baad573663bba7109ef4",
+      "exact_range": "53f8530fc12d9fdaab27eec11c5fccc0baaf5113..09d4a274d583b510d539baad573663bba7109ef4",
+      "source_artifact_sha256": "4eb65aa796c78ba0a03f6b91ae034a54a0aeb45934be27c05218dc371135a7a9"
+    },
+    "execution": {
+      "ocr_version": "v1.9.9",
+      "provider": "agenthub",
+      "model": "gw-model",
+      "configured_concurrency": 8,
+      "rule_config_sha256": "4afad74442aafca69595179d239a262461a4d0a26af18bcc366046a3f107991c",
+      "runtime_config_sha256": "f50206e5ed313c005e0c4d4eae7240c4d5fd5b6b9a1e3ecf246b5b2128a073aa"
+    },
+    "coverage": {
+      "selected": [
+        {
+          "item_id": "7645434ef289740fdd53f9bbc7169e7a837c31ac811930a85093d3ccfca387f1",
+          "path": "internal/auth/token.go",
+          "fingerprint": "48111cb8382e6f7e2faa2a799c3b2b0ee3acd54f8d2fc59a5513879bb3723c5b"
+        }
+      ],
+      "completed": [],
+      "reused": [],
+      "failed": [
+        {
+          "item_id": "7645434ef289740fdd53f9bbc7169e7a837c31ac811930a85093d3ccfca387f1",
+          "path": "internal/auth/token.go",
+          "fingerprint": "48111cb8382e6f7e2faa2a799c3b2b0ee3acd54f8d2fc59a5513879bb3723c5b",
+          "classification": "provider",
+          "reason": "provider or subtask request failed"
+        }
+      ],
+      "waived": []
+    },
+    "elapsed_ms": 14041
+  },
+  "retry_report": {
+    "schema_version": "ocr.llm-retry-report/v1",
+    "total_requests": 1,
+    "retried_requests": 1,
+    "total_retries": 5,
+    "recovered_requests": 0,
+    "failed_requests": 1,
+    "cancelled_requests": 0,
+    "requests": [
+      {
+        "logical_request_id": "e7a33e5aab16857add3a6f2f35f703d2a40bf7ffcdcaac7eb3aeeca531be85b4",
+        "provider": "agenthub",
+        "model": "gw-model",
+        "file_path": "internal/auth/token.go",
+        "task_type": "main_task",
+        "request_no": 1,
+        "outcome": "failed",
+        "attempts": [
+          {
+            "attempt": 1,
+            "outcome": "error",
+            "error_class": "network",
+            "failure_phase": "transport"
+          },
+          {
+            "attempt": 2,
+            "outcome": "error",
+            "error_class": "network",
+            "failure_phase": "transport",
+            "observed_backoff_ms": 490
+          },
+          {
+            "attempt": 3,
+            "outcome": "error",
+            "error_class": "network",
+            "failure_phase": "transport",
+            "observed_backoff_ms": 910
+          },
+          {
+            "attempt": 4,
+            "outcome": "error",
+            "error_class": "network",
+            "failure_phase": "transport",
+            "observed_backoff_ms": 1754
+          },
+          {
+            "attempt": 5,
+            "outcome": "error",
+            "error_class": "network",
+            "failure_phase": "transport",
+            "observed_backoff_ms": 3604
+          },
+          {
+            "attempt": 6,
+            "outcome": "error",
+            "error_class": "network",
+            "failure_phase": "transport",
+            "observed_backoff_ms": 7228
+          }
+        ]
+      }
+    ]
+  }
+}

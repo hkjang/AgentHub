@@ -78,6 +78,7 @@ export const RUNNER_LABELS: Record<string, string> = {
   cli: '런타임의 에이전트가 직접 수행',
   acp: 'ACP로 에이전트와 대화하며 수행',
   investigate: '조사하고 근거와 함께 결론을 남김',
+  review: '변경분을 리뷰하고 파일·줄 단위 지적을 남김',
 }
 
 export function runnerSummary(runners?: string[]) {

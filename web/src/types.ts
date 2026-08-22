@@ -48,13 +48,34 @@ export type AgentGoal = {
   keepWarmSeconds: number
   resumeFromCheckpoint: boolean
   tokenBudget: number
-  runner: 'prose' | 'flow' | 'cli' | 'dify' | 'acp' | 'investigate'
+  runner: 'prose' | 'flow' | 'cli' | 'dify' | 'acp' | 'investigate' | 'review'
   flowId: string
   flowOutputComponent: string
   approvalMode: 'plan' | 'default' | 'auto-edit' | 'auto' | 'yolo'
   externalAppId: string
   externalInputKey: string
+  reviewMode?: 'workspace' | 'range' | 'commit' | 'scan'
+  reviewBaseRef?: string
+  reviewHeadRef?: string
+  reviewPath?: string
+  reviewExclude?: string
+  reviewFailOn?: '' | 'critical' | 'high' | 'medium' | 'low'
   toolPolicy?: { deny?: string[]; allow?: string[] }
+}
+/** One located observation from a code review. The severity and category are the
+ *  review engine's own words, not a mapping onto something of ours. */
+export type ReviewFinding = {
+  id:string; runId:string; agentId:string; filePath:string; startLine:number; endLine:number
+  severity:'critical'|'high'|'medium'|'low'
+  category:'bug'|'security'|'performance'|'maintainability'|'test'|'style'|'documentation'|'other'
+  message:string; existingCode?:string; suggestion?:string
+  status:'open'|'accepted'|'dismissed'|'fixed'; source:string; createdAt:string
+}
+/** What the review covered — the claim its findings rest on. An empty list of
+ *  findings means one thing when 17 files were read and another when none were. */
+export type ReviewCoverage = {
+  runId:string; mode:string; baseRef:string; headRef:string; resolvedBase:string; resolvedHead:string
+  filesSelected:number; filesReviewed:number; filesFailed:number; sessionId:string; engineVersion:string; status:string
 }
 export type RuntimeFlow = { id:string; name:string; description?:string; endpointName?:string; mcpEnabled?:boolean }
 export type ExternalApp = { id:string; name:string; provider:string; baseUrl:string; appKind:'workflow'|'chat'; description?:string; enabled:boolean; secretConfigured?:boolean }

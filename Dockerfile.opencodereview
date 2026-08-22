@@ -1,0 +1,71 @@
+# syntax=docker/dockerfile:1.7
+#
+# The Open Code Review runtime image.
+#
+# This runtime is not a coding agent. It is a review engine: it reads a git diff,
+# decides deterministically which files to review and which rules apply, asks a
+# model only about the parts that need judgement, and locates each comment on a
+# real line by matching the code the model quoted against the diff. So the image
+# carries git and the engine, and none of the data-science toolchain the shared
+# image has — nothing here installs packages on an agent's behalf.
+#
+# Two things matter. `ocr` is the engine; `ttyd` is what puts a terminal in a
+# browser, because a person who wants to try `ocr review --preview` by hand needs
+# somewhere to type it. ttyd binds to loopback, so the token-checking proxy
+# sidecar is the only way in.
+ARG NODE_IMAGE=22-trixie-slim
+FROM node:${NODE_IMAGE}
+
+# Open Code Review requires git 2.41 or newer. Debian bookworm ships 2.39, which
+# fails as an empty review rather than as a missing dependency — trixie ships
+# 2.47, and the configure script checks the version at run time as well, because
+# an image is not the only way this container can be built.
+ARG OCR_VERSION=1.9.9
+ARG TTYD_VERSION=1.7.7
+ARG TTYD_SHA256_X86_64=8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55
+ARG TTYD_SHA256_AARCH64=
+
+USER root
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      git ca-certificates curl openssh-client tini jq ripgrep less procps \
+ && npm install --global "@alibaba-group/open-code-review@${OCR_VERSION}" \
+ && npm cache clean --force \
+ && arch="$(uname -m)"; \
+    case "${arch}" in \
+      x86_64) asset="ttyd.x86_64"; sum="${TTYD_SHA256_X86_64}" ;; \
+      aarch64) asset="ttyd.aarch64"; sum="${TTYD_SHA256_AARCH64}" ;; \
+      *) echo "unsupported architecture ${arch}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /usr/local/bin/ttyd "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/${asset}"; \
+    if [ -n "${sum}" ]; then echo "${sum}  /usr/local/bin/ttyd" | sha256sum -c -; \
+    else echo "no checksum pinned for ${arch}; refusing to ship an unverified binary" >&2; exit 1; fi \
+ && chmod 0755 /usr/local/bin/ttyd \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /workspace /home/agent/.config \
+ && chown -R 10000:10000 /workspace /home/agent
+
+# The engine is installed globally as root above; a run resolves it from PATH.
+# The agent's own npm prefix is still on PATH so a person can pin a different
+# version into their home volume without rebuilding the image.
+COPY deploy/runtime/agenthub-report-config.sh /usr/local/bin/agenthub-report-config
+COPY deploy/runtime/opencodereview-configure.sh /usr/local/bin/agenthub-opencodereview-configure
+COPY deploy/runtime/opencodereview-shell.sh /usr/local/bin/agenthub-opencodereview-shell
+COPY deploy/runtime/opencodereview-run.sh /usr/local/bin/agenthub-ocr-run
+COPY deploy/runtime/opencodereview-toolchain.sh /etc/profile.d/agenthub-toolchain.sh
+RUN chmod 0755 /usr/local/bin/agenthub-report-config /usr/local/bin/agenthub-opencodereview-configure \
+      /usr/local/bin/agenthub-opencodereview-shell /usr/local/bin/agenthub-ocr-run \
+ && chmod 0644 /etc/profile.d/agenthub-toolchain.sh \
+ && git --version
+
+USER 10000:10000
+ENV PATH=/home/agent/.npm-global/bin:$PATH \
+    HOME=/home/agent \
+    AGENTHUB_RUNTIME_TYPE=opencodereview \
+    AGENTHUB_WORKSPACE=/workspace \
+    npm_config_prefix=/home/agent/.npm-global \
+    npm_config_cache=/home/agent/.npm
+WORKDIR /workspace
+EXPOSE 7681
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/usr/local/bin/ttyd", "--port", "7681", "--interface", "127.0.0.1", "--writable", "/usr/local/bin/agenthub-opencodereview-shell"]

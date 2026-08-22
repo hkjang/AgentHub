@@ -102,6 +102,14 @@ type Descriptor struct {
 //
 // JupyterLab shares it: that image is built on this one, and the agent beside the
 // notebooks is the same agent.
+// The review engine takes its whole task from flags, so the runner appends them
+// all: what to compare, what to leave out, how much it may spend. The wrapper
+// prepares the model connection on every run rather than at start, so a review
+// never quietly uses the gateway or model that was configured yesterday.
+var openCodeReviewCommands = map[string][]string{
+	RunnerReview: {"/usr/local/bin/agenthub-ocr-run"},
+}
+
 var qwenCodeCommands = map[string][]string{
 	// Headless: the agent's own budgets and output format are appended by the
 	// runner, which knows this agent's flags.
@@ -251,6 +259,26 @@ var descriptors = map[string]Descriptor{
 		BrowserUI: true, Terminal: false, ToolLoop: false, MCPConfigured: false, ProxiedUI: true,
 		HostSessionOnly: true,
 	},
+	OpenCodeReview: {
+		Type: OpenCodeReview, Code: "CR", Label: "Open Code Review",
+		Summary: "코드리뷰 전용 엔진. 무엇을 읽을지·어떤 규칙을 적용할지는 규칙이 정하고, 판단이 필요한 부분만 모델에게 묻습니다.",
+		BestFor: "브랜치·커밋·작업공간 변경분의 자동 리뷰와 저장소 전체 점검",
+		Strengths: []string{
+			"diff로 리뷰 대상을 정하므로 바뀌지 않은 코드에 대해 말하지 않음",
+			"모델이 인용한 코드를 diff에 맞춰 실제 줄 번호를 스스로 확정함",
+			"결과가 파일·줄·심각도·분류를 가진 findings로 남아 화면에서 다룰 수 있음",
+			"세션을 이어서 다시 실행하면 이미 본 파일은 건너뜀",
+			"모델 없이도 대상 파일과 적용 규칙만 미리 볼 수 있음",
+		},
+		Watchouts: []string{
+			"코드를 고치지 않습니다 — 찾기만 합니다. 수정은 다른 런타임에 맡기세요",
+			"git 2.41 이상이 필요합니다(이미지가 갖고 있고, 실행 전에 확인합니다)",
+			"자체 인증이 없는 브라우저 터미널이라 플랫폼 프록시로만 공개됩니다",
+		},
+		Workspace: "/workspace", Port: 7681,
+		BrowserUI: true, Terminal: true, ToolLoop: true, MCPConfigured: false, ProxiedUI: true,
+		Runners: []string{RunnerReview}, Commands: openCodeReviewCommands,
+	},
 	Custom: {
 		Type: Custom, Code: "A", Label: "Custom",
 		Summary:   "직접 정의한 컨테이너 실행 명령. 플랫폼은 수명주기와 네트워크만 관리합니다.",
@@ -280,6 +308,15 @@ const (
 	// RunnerACP speaks the Agent Client Protocol to whatever agent the runtime
 	// was given, which is how one adapter serves many agents.
 	RunnerACP = "acp"
+	// RunnerReview hands a diff to a review engine and keeps what it found as
+	// findings on real lines, rather than as prose about the code.
+	//
+	// It is its own backend rather than a shape of RunnerCLI because the two
+	// produce different things. A CLI run ends with an answer, which the
+	// evaluator judges; a review ends with a list of located, categorised,
+	// severity-ranked findings, and flattening that into a paragraph is
+	// throwing away the part worth having.
+	RunnerReview = "review"
 )
 
 // RunnerCommand is the argv the platform executes in this runtime for a backend,
