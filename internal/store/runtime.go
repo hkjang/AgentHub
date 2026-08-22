@@ -790,7 +790,11 @@ func (s *Store) UpdateRuntimeDesiredState(ctx context.Context, id, ownerID, stat
 	if state != "running" && state != "stopped" && state != "deleted" {
 		return Runtime{}, fmt.Errorf("invalid desired state %q", state)
 	}
-	query := `UPDATE agent_runtimes SET desired_state=$1,status=CASE WHEN $1='running' THEN 'pending' WHEN $1='stopped' THEN 'stopping' ELSE 'deleting' END,updated_at=now() WHERE id=$2`
+	// Deleting takes the gateway token with it. The Pod and the Secret that held
+	// it are going; leaving the hash behind leaves a working credential for
+	// something that no longer exists.
+	query := `UPDATE agent_runtimes SET desired_state=$1,status=CASE WHEN $1='running' THEN 'pending' WHEN $1='stopped' THEN 'stopping' ELSE 'deleting' END,
+		gateway_token_hash=CASE WHEN $1='deleted' THEN NULL ELSE gateway_token_hash END,updated_at=now() WHERE id=$2`
 	args := []any{state, id}
 	if !admin {
 		query += ` AND owner_id=$3`

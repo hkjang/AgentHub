@@ -50,13 +50,25 @@ func (s *Store) SetRuntimeGatewayToken(ctx context.Context, runtimeID, token str
 //
 // The token is compared by hash, and the lookup is the authentication: a caller
 // that cannot present the token of a runtime that exists gets nothing.
+//
+// A deleted runtime does not exist. The lookup used to accept its token anyway —
+// the row survives a delete with desired_state='deleted', and the hash sat in it
+// — so the credential of a Pod that had been removed, along with the Secret that
+// held it, went on working. Measured against a running deployment: the same
+// token parked a tool approval before the delete and after it, 201 both times.
+// The session lookup has had the equivalent rule all along, refusing a token
+// whose user is no longer active; this is the same rule on the other credential.
+//
+// The hash is also cleared when a runtime is deleted, so this is a second lock
+// rather than the only one: a credential that no longer exists cannot be
+// accepted by a lookup somebody adds later.
 func (s *Store) RuntimeByGatewayToken(ctx context.Context, token string) (Runtime, error) {
 	if token == "" {
 		return Runtime{}, ErrNotFound
 	}
 	var item Runtime
 	err := s.pool.QueryRow(ctx, `SELECT id,agent_id,owner_id,status,desired_state,crd_name,pod_name,node_name,endpoint,restart_count,failure_reason,last_activity_at,started_at,stopped_at,warm_until,created_at,updated_at
-		FROM agent_runtimes WHERE gateway_token_hash=$1`, cryptox.TokenHash(token)).
+		FROM agent_runtimes WHERE gateway_token_hash=$1 AND desired_state<>'deleted'`, cryptox.TokenHash(token)).
 		Scan(&item.ID, &item.AgentID, &item.OwnerID, &item.Status, &item.DesiredState, &item.CRDName, &item.PodName, &item.NodeName, &item.Endpoint, &item.RestartCount, &item.FailureReason, &item.LastActivityAt, &item.StartedAt, &item.StoppedAt, &item.WarmUntil, &item.CreatedAt, &item.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Runtime{}, ErrNotFound

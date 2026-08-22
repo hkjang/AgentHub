@@ -1306,6 +1306,34 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Two mints, one credential
+
+A runtime Pod authenticates to the control plane with a token whose hash the
+control plane stores. Two processes make that token. The control plane mints one
+when it creates the Pod's Secret and records the hash. The operator mints one
+when it reconciles a runtime whose Secret is missing — and it has to, because a
+CRD applied without this control plane still needs one, and the runtime's own
+server password is that same token.
+
+The operator's token is shown to nobody. A Pod that boots with it has every
+gateway request answered 401: no tool approval can be asked for, no
+content-scanner finding reported, no configuration report delivered. The runtime
+looks healthy and its approval gate is quietly off. It takes only the Secret
+being absent when the operator gets there — a failed create, a cleanup, a CRD
+applied ahead of the control plane.
+
+The control plane reads the token back out of the Secret and stores that, which
+settles the disagreement whichever way it went and costs one statement on a path
+that already touches the database.
+
+While looking at that credential: the lookup accepted a token belonging to a
+runtime marked deleted. Nothing in the product sets that state today, so this was
+latent rather than live — the reachable delete removes the row outright — but the
+session lookup has always had the equivalent rule, refusing a token whose user is
+no longer active, and this one had nothing. It refuses now, and deleting clears
+the hash, so the credential stops existing rather than merely stopping being
+accepted.
+
 ## A password nobody could change
 
 Bounding how fast a password can be guessed is worth less if the password can

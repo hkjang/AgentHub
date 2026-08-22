@@ -468,6 +468,25 @@ func (k *KubernetesSpawner) ensureSecret(ctx context.Context, coreClient kuberne
 	if err != nil {
 		return err
 	}
+	// Whatever token the Pod actually holds is the one the control plane has to
+	// recognise.
+	//
+	// The operator mints a runtime-token of its own when it reconciles a runtime
+	// whose Secret is missing — it has to, because a CRD applied without this
+	// control plane still needs one. That token is never shown to the control
+	// plane, so its hash is not the one on file, and every request from that
+	// Pod's gateway is answered 401: no tool approval can be asked for, no
+	// content-scanner finding reported, no configuration report delivered. The
+	// runtime looks healthy and its approval gate is simply off.
+	//
+	// Reading the token back out of the Secret settles it in whichever direction
+	// the disagreement went, and costs one statement on a path that already
+	// touches the database.
+	if token := string(existing.Data["runtime-token"]); token != "" {
+		if err := k.store.SetRuntimeGatewayToken(ctx, spec.Runtime.ID, token); err != nil {
+			return err
+		}
+	}
 	// The credentials are this platform's to write; the operator owns the same
 	// Secret's metadata and writes it on every reconcile. Both used to read the
 	// object and send the whole thing back, so whichever wrote second was refused
