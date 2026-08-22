@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/hkjang/AgentHub/internal/quota"
+	"github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -49,6 +50,17 @@ func writeStoreError(w http.ResponseWriter, err error) {
 	// operator to go looking for a bug that was not there.
 	if errors.Is(err, quota.ErrExceeded) {
 		writeError(w, http.StatusConflict, "quota_exceeded", err.Error())
+		return
+	}
+	// The cluster refusing is not this platform failing. Every route that touches
+	// Kubernetes arrives here, and they all used to hand back a 500 carrying the
+	// upstream text — "요청을 처리하지 못했습니다: Unauthorized" for a token the
+	// cluster no longer accepts, which reads as a bug in AgentHub and sends the
+	// person looking in the wrong place. The deployment check has always said it
+	// properly; this says the same thing everywhere else.
+	if message, refused := runtime.ClusterRefusal(err); refused {
+		slog.Warn("the cluster refused an operation", "error", err)
+		writeError(w, http.StatusBadGateway, "cluster_unavailable", message)
 		return
 	}
 	slog.Error("store or runtime operation failed", "error", err)

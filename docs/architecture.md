@@ -1306,6 +1306,53 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## The cluster refusing is not the platform failing
+
+Pressing start on a deployment whose Kubernetes token is no longer accepted
+answered:
+
+```
+500 {"code":"internal_error","message":"요청을 처리하지 못했습니다: Unauthorized"}
+```
+
+A five-hundred means the platform broke. The deployment check, asked about the
+same cluster in the same second, said what was actually true:
+
+```
+{"reachable": false, "detail": "the server has asked for the client to provide credentials"}
+```
+
+One path explained it and every sibling dumped the upstream error, in a mix of
+two languages, with a status that sends the operator looking for a bug in
+AgentHub. They all pass through one error mapper, so the explanation went there:
+a token the cluster rejects, a permission the account does not have, a name that
+does not resolve, a connection nobody accepted, a certificate that does not check
+out — each answers 502 with what happened and where to look.
+
+The negative case is the one worth guarding. A classifier that swallows
+everything turns every real bug into "the cluster is having a moment", so an
+ordinary failure — a not-found, a bad unmarshal, a 422 — still reports as a
+failure, and a test says so.
+
+## A check that could only be run once
+
+The platform's own end-to-end script created objects with fixed names. Run it
+twice against a deployment and the first create answered 409; the script took
+`null` as the id and carried on, asking for `/api/v1/workspaces/null/snapshots`,
+building an agent bound to a workspace called "null", and finally stopping on
+
+```
+curl: (6) Could not resolve host: null
+```
+
+which names DNS rather than the step that failed. The assertions at the bottom
+were correct and were never reached — and that is why the default database name
+in it has a date in it: the check could only ever be run once.
+
+Every object it creates now carries the run's own suffix, and reading an id it
+needs stops the run right there, printing what the platform actually answered.
+The first thing that surfaced was the message above.
+
 ## Two mints, one credential
 
 A runtime Pod authenticates to the control plane with a token whose hash the

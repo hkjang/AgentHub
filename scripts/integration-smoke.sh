@@ -9,6 +9,17 @@ postgres_container="${AGENTHUB_TEST_POSTGRES_CONTAINER:-agenthub-postgres-1}"
 test_dir=$(mktemp -d)
 cookie="$test_dir/cookies"
 
+# Every object this run creates carries the run's own suffix.
+#
+# The names used to be fixed, so a second run against the same deployment got a
+# 409 on the first create and carried the string "null" forward as an id — it
+# then asked for /api/v1/workspaces/null/snapshots, built an agent bound to a
+# workspace called "null", and finally died on "Could not resolve host: null",
+# which names DNS rather than the step that failed. The assertions at the end
+# were right and were never reached. That is why the default database name has a
+# date in it: the check could only ever be run once.
+run="${AGENTHUB_TEST_RUN_ID:-$(date +%s)}"
+
 status() {
   local method=$1 path=$2 body=$3 output=$4
   shift 4
@@ -22,6 +33,23 @@ status() {
   curl "${args[@]}" "$@" "$base_url$path"
 }
 
+# id reads an identifier a later step depends on, and stops here if it is not
+# there. A missing id is the end of the run: everything after it would be asking
+# the platform about something that does not exist, and the answers would be
+# read as this check having covered them.
+id() {
+  local file=$1 field=$2 what=$3
+  local value
+  value=$(jq -r ".$field // empty" "$file")
+  if [[ -z "$value" || "$value" == null ]]; then
+    echo "$what did not come back with an id — the platform answered:" >&2
+    head -c 400 "$file" >&2
+    echo >&2
+    exit 1
+  fi
+  printf '%s' "$value"
+}
+
 login_body=$(jq -cn --arg username "$admin" --arg password "$password" '{username:$username,password:$password}')
 login_code=$(curl -sS -c "$cookie" -o "$test_dir/login.json" -w '%{http_code}' -H 'Content-Type: application/json' -d "$login_body" "$base_url/api/v1/auth/login")
 csrf=$(awk '$6=="agenthub_csrf" {print $7}' "$cookie")
@@ -32,31 +60,32 @@ settings=$(status PUT /api/v1/admin/settings/sessionGateway '{"value":{"enabled"
 runtime_env=$(status PUT /api/v1/admin/settings/runtimeEnvironment '{"value":{"files":[{"path":"/etc/pip.conf","content":"[global]\nindex-url = https://nexus.company.local/repository/pypi-all/simple\n","mode":"0644","enabled":true}],"variables":[{"name":"PIP_INDEX_URL","value":"https://nexus.company.local/repository/pypi-all/simple","enabled":true}]}}' "$test_dir/runtime-env.json")
 # A path the platform owns has to be refused on the way in, not dropped later.
 runtime_env_reject=$(status PUT /api/v1/admin/settings/runtimeEnvironment '{"value":{"files":[{"path":"/etc/agenthub/runtime.json","content":"x"}],"variables":[]}}' "$test_dir/runtime-env-reject.json")
-workspace=$(status POST /api/v1/workspaces '{"name":"integration-workspace","type":"empty","sizeGb":10}' "$test_dir/workspace.json")
-workspace_id=$(jq -r '.id' "$test_dir/workspace.json")
-snapshot=$(status POST "/api/v1/workspaces/$workspace_id/snapshots" '{"name":"integration-snapshot"}' "$test_dir/snapshot.json")
+workspace=$(status POST /api/v1/workspaces "{\"name\":\"integration-workspace-$run\",\"type\":\"empty\",\"sizeGb\":10}" "$test_dir/workspace.json")
+workspace_id=$(id "$test_dir/workspace.json" id "the workspace")
+snapshot=$(status POST "/api/v1/workspaces/$workspace_id/snapshots" "{\"name\":\"integration-snapshot-$run\"}" "$test_dir/snapshot.json")
 
-agent_body=$(jq -cn --arg workspace "$workspace_id" '{name:"Integration Agent",description:"end-to-end verification",runtimeType:"opencode",runtimeProfileId:"rp-basic",workspaceId:$workspace,systemPrompt:"Operate safely"}')
+agent_body=$(jq -cn --arg workspace "$workspace_id" --arg run "$run" '{name:("Integration Agent "+$run),description:"end-to-end verification",runtimeType:"opencode",runtimeProfileId:"rp-basic",workspaceId:$workspace,systemPrompt:"Operate safely"}')
 agent=$(status POST /api/v1/agents "$agent_body" "$test_dir/agent.json")
-agent_id=$(jq -r '.id' "$test_dir/agent.json")
+agent_id=$(id "$test_dir/agent.json" id "the agent")
 spawn=$(status POST "/api/v1/agents/$agent_id/spawn" '{}' "$test_dir/spawn.json")
-runtime_id=$(jq -r '.runtime.id' "$test_dir/spawn.json")
+runtime_id=$(id "$test_dir/spawn.json" runtime.id "the spawned runtime")
 
-workflow_body=$(jq -cn --arg agent "$agent_id" '{name:"Integration Workflow",description:"DAG validation",mode:"sequential",maxDepth:4,maxAgentCalls:12,maxToolCalls:50,maxDurationSeconds:900,maxParallelAgents:3,definition:{steps:[{id:"build",agentId:$agent,dependsOn:[]},{id:"review",agentId:$agent,dependsOn:["build"]}]},enabled:true}')
+workflow_body=$(jq -cn --arg agent "$agent_id" --arg run "$run" '{name:("Integration Workflow "+$run),description:"DAG validation",mode:"sequential",maxDepth:4,maxAgentCalls:12,maxToolCalls:50,maxDurationSeconds:900,maxParallelAgents:3,definition:{steps:[{id:"build",agentId:$agent,dependsOn:[]},{id:"review",agentId:$agent,dependsOn:["build"]}]},enabled:true}')
 workflow=$(status POST /api/v1/workflows "$workflow_body" "$test_dir/workflow.json")
-workflow_id=$(jq -r '.id' "$test_dir/workflow.json")
+workflow_id=$(id "$test_dir/workflow.json" id "the workflow")
 workflow_validate=$(status POST "/api/v1/workflows/$workflow_id/validate" '{}' "$test_dir/workflow-validate.json")
-cycle_body=$(jq -cn --arg agent "$agent_id" '{name:"Invalid Cycle",mode:"sequential",maxDepth:4,maxAgentCalls:12,maxToolCalls:50,maxDurationSeconds:900,maxParallelAgents:3,definition:{steps:[{id:"a",agentId:$agent,dependsOn:["b"]},{id:"b",agentId:$agent,dependsOn:["a"]}]}}')
+cycle_body=$(jq -cn --arg agent "$agent_id" --arg run "$run" '{name:("Invalid Cycle "+$run),mode:"sequential",maxDepth:4,maxAgentCalls:12,maxToolCalls:50,maxDurationSeconds:900,maxParallelAgents:3,definition:{steps:[{id:"a",agentId:$agent,dependsOn:["b"]},{id:"b",agentId:$agent,dependsOn:["a"]}]}}')
 cycle_reject=$(status POST /api/v1/workflows "$cycle_body" "$test_dir/cycle.json")
 
-evaluation_set=$(status POST /api/v1/evaluation/test-sets '{"name":"Integration Preflight","description":"required bindings","passThreshold":100,"cases":[{"name":"OpenCode runtime","expectedRuntime":"opencode"},{"name":"Profile","requiresProfile":true},{"name":"Workspace","requiresWorkspace":true},{"name":"Security","requiresSecurity":true}]}' "$test_dir/evaluation-set.json")
-evaluation_set_id=$(jq -r '.id' "$test_dir/evaluation-set.json")
+evaluation_set_body=$(jq -cn --arg run "$run" '{name:("Integration Preflight "+$run),description:"required bindings",passThreshold:100,cases:[{name:"OpenCode runtime",expectedRuntime:"opencode"},{name:"Profile",requiresProfile:true},{name:"Workspace",requiresWorkspace:true},{name:"Security",requiresSecurity:true}]}')
+evaluation_set=$(status POST /api/v1/evaluation/test-sets "$evaluation_set_body" "$test_dir/evaluation-set.json")
+evaluation_set_id=$(id "$test_dir/evaluation-set.json" id "the evaluation set")
 evaluation=$(status POST "/api/v1/agents/$agent_id/evaluate" "{\"testSetId\":\"$evaluation_set_id\"}" "$test_dir/evaluation.json")
 
-secret=$(status POST /api/v1/secrets '{"name":"Integration Secret","kind":"api_key","value":"never-return-this-value"}' "$test_dir/secret.json")
+secret=$(status POST /api/v1/secrets "{\"name\":\"Integration Secret $run\",\"kind\":\"api_key\",\"value\":\"never-return-this-value\"}" "$test_dir/secret.json")
 rotate=$(status POST /api/v1/keys/rotate '{}' "$test_dir/rotate.json")
-api_key=$(status POST /api/v1/api-keys '{"name":"Integration MCP","scopes":["api:read","mcp:read","runtime:manage"]}' "$test_dir/api-key.json")
-api_token=$(jq -r '.token' "$test_dir/api-key.json")
+api_key=$(status POST /api/v1/api-keys "{\"name\":\"Integration MCP $run\",\"scopes\":[\"api:read\",\"mcp:read\",\"runtime:manage\"]}" "$test_dir/api-key.json")
+api_token=$(id "$test_dir/api-key.json" token "the API key")
 
 mcp=$(curl -sS -o "$test_dir/mcp.json" -w '%{http_code}' -H "Authorization: Bearer $api_token" -H 'Content-Type: application/json' -H 'MCP-Protocol-Version: 2026-07-28' -H 'Mcp-Method: tools/list' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}' "$base_url/mcp")
 mcp_mismatch=$(curl -sS -o "$test_dir/mcp-mismatch.json" -w '%{http_code}' -H "Authorization: Bearer $api_token" -H 'Content-Type: application/json' -H 'MCP-Protocol-Version: 2026-07-28' -H 'Mcp-Method: wrong/method' -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}' "$base_url/mcp")
@@ -66,7 +95,7 @@ notifications=$(status GET /api/v1/notifications '' "$test_dir/notifications.jso
 
 docker exec "$postgres_container" psql -U agenthub -d "$database" -c "UPDATE agent_runtimes SET status='ready' WHERE id='$runtime_id'" >/dev/null
 launch=$(status POST "/api/v1/runtimes/$runtime_id/launch" '{}' "$test_dir/launch.json")
-launch_url=$(jq -r '.url' "$test_dir/launch.json")
+launch_url=$(id "$test_dir/launch.json" url "the launch")
 gateway_without_k8s=$(curl --noproxy '*' -sS -o "$test_dir/gateway.json" -w '%{http_code}' "$launch_url")
 ticket_replay=$(curl --noproxy '*' -sS -o "$test_dir/replay.json" -w '%{http_code}' "$launch_url")
 # Without a Runtime Base Domain the same session is served from the Portal's own
