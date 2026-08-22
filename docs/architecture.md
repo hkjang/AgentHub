@@ -1306,6 +1306,35 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## A comment is not a test
+
+The platform holds several kinds of secret — a person's own, a model endpoint's
+API key, an MCP server's credential, a webhook signing secret, an external
+application's key — and each is read back by something that needs it: the spec
+that provisions a Pod, the gateway that attaches a credential, the handler that
+verifies a signature. None is meant to reach a browser, and the store says so in a
+comment: "callers must never return the value to a browser."
+
+That is an instruction, not a check. Nothing would have caught the next endpoint
+that helpfully echoes back what it was given — the "test your connection" button
+that returns the key it tested with.
+
+So there is a check that plants a value nobody would type by accident into every
+place that takes one, reads every route a person can read, and looks for it. Forty
+six routes, three kinds of secret, and the sentinel comes back from none of them.
+
+It took two goes to make it able to fail, and both failures are the point. The
+first run silently failed to plant the model key at all, because the field was
+named something else and the failure was a log line: a check that plants two of
+three sentinels has quietly stopped covering the third, so failing to plant is now
+a failing test. The second run passed against a build deliberately made to leak,
+because the endpoint had been planted disabled and the code that reads keys does
+not resolve disabled endpoints — the sentinel was in the database and out of reach
+of everything that could have exposed it.
+
+Proved the only way this kind of check can be proved: against a build that leaks.
+It names the route and the kind.
+
 ## Three starters, one question
 
 Three things start a runtime: a task acquiring one, the warm pool starting one
