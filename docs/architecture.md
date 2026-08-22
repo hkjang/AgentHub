@@ -1306,6 +1306,23 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Asking for an approval and telling nobody
+
+The reviewer on an approval is the requester's manager. manager_id is an org-chart
+field, and a deployment that has not imported an org chart — which is most of them
+on the first day — leaves it empty for everybody.
+
+Both places that ask for an approval notified the reviewer only when there was
+one. So on such a deployment: the task parked at the gate, the requester was told
+their work was waiting, and the approval sat in a queue that only an administrator
+could see, and only if they thought to look. Nothing said "nobody was told". The
+gate worked exactly as designed and the work stopped forever.
+
+An unassigned approval can be decided by an administrator and by nobody else, so
+that is who now hears about it. The notification goes through one function, which
+returns how many people it reached — and the caller logs an error when that is
+zero, because a gate nobody can open should at least say so.
+
 ## An event nobody can filter is an event nobody can subscribe to
 
 A trigger picks its events by payload containment, and the guide offers

@@ -178,8 +178,12 @@ func (s *Server) spawnAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.store.Audit(r.Context(), &u, "approval.request", "agent", agent.ID, "success", clientIP(r), nil)
-		if approval.ReviewerID != nil {
-			_ = s.store.CreateNotification(r.Context(), *approval.ReviewerID, "approval", "Agent 승인 요청", u.DisplayName+" 사용자가 "+agent.Name+" Runtime 실행 승인을 요청했습니다.", "/reviews")
+		told, notifyErr := s.store.NotifyApprovers(r.Context(), approval, "Agent 승인 요청",
+			u.DisplayName+" 사용자가 "+agent.Name+" Runtime 실행 승인을 요청했습니다.")
+		if notifyErr != nil {
+			s.logger.Warn("approval reviewers could not be notified", "approval", approval.ID, "error", notifyErr)
+		} else if told == 0 {
+			s.logger.Error("nobody was told about an approval request", "approval", approval.ID, "agent", agent.ID)
 		}
 		writeJSON(w, 202, map[string]any{"approvalRequired": true, "approval": approval})
 		return

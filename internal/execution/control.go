@@ -145,9 +145,14 @@ func (o *Orchestrator) requestApproval(ctx context.Context, run store.AgentRun, 
 		return err
 	}
 	o.event(ctx, run, "approval.requested", summary, map[string]any{"approvalId": approval.ID})
-	if approval.ReviewerID != nil {
-		_ = o.store.CreateNotification(ctx, *approval.ReviewerID, "approval", "에이전트 작업 승인 요청",
-			task.Title+" 작업이 상태 변경 작업 승인을 기다리고 있습니다: "+summary, "/reviews")
+	told, notifyErr := o.store.NotifyApprovers(ctx, approval, "에이전트 작업 승인 요청",
+		task.Title+" 작업이 상태 변경 작업 승인을 기다리고 있습니다: "+summary)
+	if notifyErr != nil {
+		o.logger.Warn("approval reviewers could not be notified", "approval", approval.ID, "error", notifyErr)
+	} else if told == 0 {
+		// Nobody can answer this. Said out loud, because the task is now waiting on
+		// a person who does not exist.
+		o.logger.Error("nobody was told about an approval request", "approval", approval.ID, "task", task.ID)
 	}
 	// The owner is told too: their task has stopped and they should know why.
 	_ = o.store.CreateNotification(ctx, task.OwnerID, "approval", "작업이 승인을 기다립니다",
