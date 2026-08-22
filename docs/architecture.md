@@ -1306,6 +1306,25 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Three of the four gates said no and remembered nothing
+
+Four things can refuse a task before it exists: the platform policy, the promotion
+gate, a spent budget, and an agent with no model bound. Only the policy wrote
+anything down — under the rule that refused it, with the rule's id, exactly as the
+guide promises.
+
+The other three answered the caller and forgot. So the audit log could tell you
+who was refused by a policy rule and had nothing at all to say about the two
+governance gates beside it. "Why did last night's run not happen" is the question
+this log exists for, and for a budget that ran out the answer was not in it.
+
+Refusals go through one function now, which records the gate and the reason before
+answering, and a guard allows no other way out of the queueing path — a gate added
+later cannot quietly be the fifth. The wider rule it came from is guarded too:
+every state-changing route reaches an audit call, with three named exceptions
+(marking one's own notice read, and two dry runs) so a fourth has to be somebody's
+decision rather than an oversight.
+
 ## A list of dependencies cannot report the one that is not there
 
 The readiness screen asked each configured model endpoint and each configured MCP

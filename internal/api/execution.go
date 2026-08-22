@@ -437,22 +437,20 @@ func (s *Server) enqueueTask(w http.ResponseWriter, r *http.Request, u store.Use
 		title = agent.Name + " 작업"
 	}
 	if len(title) > 200 {
-		writeError(w, http.StatusBadRequest, "invalid_task_title", "Task 제목은 200자 이하여야 합니다.")
-		return store.AgentTask{}, errors.New("invalid title")
+		return s.refuseTask(w, r, u, agent, http.StatusBadRequest, "invalid_task_title", "Task 제목은 200자 이하여야 합니다.", "title", source)
 	}
 	if priority != "" && !contains([]string{"critical", "high", "normal", "low", "background"}, priority) {
-		writeError(w, http.StatusBadRequest, "invalid_priority", "우선순위를 확인해 주세요.")
-		return store.AgentTask{}, errors.New("invalid priority")
+		return s.refuseTask(w, r, u, agent, http.StatusBadRequest, "invalid_priority", "우선순위를 확인해 주세요.", "priority", source)
 	}
 	// An agent with no model cannot run autonomously, and finding that out only
 	// once a worker picks it up wastes a whole attempt.
 	if agent.ModelEndpointID == nil || *agent.ModelEndpointID == "" {
-		writeError(w, http.StatusConflict, "model_not_bound", "이 Agent에는 Model Endpoint가 연결되어 있지 않아 자동 실행할 수 없습니다.")
-		return store.AgentTask{}, errors.New("model not bound")
+		return s.refuseTask(w, r, u, agent, http.StatusConflict, "model_not_bound",
+			"이 Agent에는 Model Endpoint가 연결되어 있지 않아 자동 실행할 수 없습니다.", "model", source)
 	}
 	// The platform policy decides before anything else does: a rule that says a
 	// role may not run an agent is not something an agent's own settings can
-	// answer for.
+	// answer for. This one records itself, under the rule that refused it.
 	if refusal := policyRefusal(s.decide(r, u, policy.Request{
 		Action: policy.ActionTaskCreate, Agent: agent.Name, AgentID: agent.ID,
 	})); refusal != "" {
@@ -464,14 +462,12 @@ func (s *Server) enqueueTask(w http.ResponseWriter, r *http.Request, u store.Use
 	if reason, err := s.store.PromotionBlock(r.Context(), agent.ID); err != nil {
 		s.logger.Warn("promotion gate is unreadable; accepting the task", "agent", agent.ID, "error", err)
 	} else if reason != "" {
-		writeError(w, http.StatusConflict, "promotion_required", reason)
-		return store.AgentTask{}, errors.New("promotion required")
+		return s.refuseTask(w, r, u, agent, http.StatusConflict, "promotion_required", reason, "promotion", source)
 	}
 	// A budget that is already spent is refused here rather than minutes later by
 	// a worker, so the person who asked hears it while they are still looking.
 	if reason := s.budgetRefusal(r, agent.OwnerID, agent.ID); reason != "" {
-		writeError(w, http.StatusTooManyRequests, "quota_exceeded", reason)
-		return store.AgentTask{}, errors.New("quota exceeded")
+		return s.refuseTask(w, r, u, agent, http.StatusTooManyRequests, "quota_exceeded", reason, "quota", source)
 	}
 	task, err := s.store.CreateAgentTask(r.Context(), store.CreateTaskInput{
 		AgentID: agent.ID, OwnerID: agent.OwnerID, Title: title, Input: taskInput,
@@ -484,6 +480,26 @@ func (s *Server) enqueueTask(w http.ResponseWriter, r *http.Request, u store.Use
 	s.store.Audit(r.Context(), &u, "task.create", "task", task.ID, "success", clientIP(r), map[string]any{"agentId": agent.ID, "source": source})
 	s.logger.Info("task queued", "task", task.ID, "agent", agent.ID, "source", source, "priority", task.Priority)
 	return task, nil
+}
+
+// refuseTask says no to a request for work, and records that it did.
+//
+// Four gates can stop a task before it exists — the platform policy, the
+// promotion gate, a spent budget, and the agent having no model bound — and only
+// the policy left any record. So the audit log answered "who was refused, and by
+// what" for one of the four, and for the other three the platform simply did
+// nothing, visibly, and remembered nothing about it. "Why did last night's run not
+// happen" is exactly the question this log exists for.
+//
+// It is one function so that a gate added later cannot quietly be the fifth: the
+// guard beside this file allows no other refusal in enqueueTask.
+func (s *Server) refuseTask(w http.ResponseWriter, r *http.Request, u store.User, agent store.Agent,
+	status int, code, message, gate, source string) (store.AgentTask, error) {
+	s.store.Audit(r.Context(), &u, "task.create", "agent", agent.ID, "denied", clientIP(r),
+		map[string]any{"agentId": agent.ID, "agent": agent.Name, "gate": gate, "source": source, "reason": message})
+	s.logger.Info("task refused", "agent", agent.ID, "gate", gate, "source", source, "reason", message)
+	writeError(w, status, code, message)
+	return store.AgentTask{}, errors.New(code)
 }
 
 func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
