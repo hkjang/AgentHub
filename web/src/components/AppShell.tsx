@@ -74,7 +74,7 @@ export function AppShell() {
   const { user, version, capabilities, logout } = useAuth()
   const t = useTerms(), mode = useViewMode()
   const [sidebar, setSidebar] = useState(false), [command, setCommand] = useState(false), [profile, setProfile] = useState(false)
-  const [notificationOpen,setNotificationOpen]=useState(false),[notifications,setNotifications]=useState<Notification[]>([])
+  const [notificationOpen,setNotificationOpen]=useState(false),[notifications,setNotifications]=useState<Notification[]>([]),[unread,setUnread]=useState(0)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const location = useLocation(), navigate = useNavigate()
   const visibleGroups = useMemo(() => groups.filter((g) => (!g.admin || user.role === 'admin') && (!g.review || (capabilities.teamApprovalEnabled && (user.role === 'manager' || user.role === 'admin')))), [user.role, capabilities.teamApprovalEnabled])
@@ -112,12 +112,15 @@ export function AppShell() {
 
   // Poll notifications only while the tab is in front, like every other polling
   // surface, and catch up immediately when the user comes back to it.
-  useEffect(()=>{const load=()=>api.get<{items:Notification[]}>('/api/v1/notifications').then((value)=>setNotifications(value.items)).catch(()=>undefined);void load()
+  useEffect(()=>{// The count comes from the server. Counting the fetched page said "읽지 않음 12건"
+  // while ninety-nine sat unread, because the page holds fifty and the oldest
+  // unread — the approval somebody is waiting on — had fallen off the end of it.
+  const load=()=>api.get<{items:Notification[];unread?:number}>('/api/v1/notifications').then((value)=>{setNotifications(value.items);setUnread(value.unread??value.items.filter((item)=>!item.readAt).length)}).catch(()=>undefined);void load()
     const timer=window.setInterval(()=>{if(document.visibilityState==='visible')void load()},30000)
     const onVisible=()=>{if(document.visibilityState==='visible')void load()}
     document.addEventListener('visibilitychange',onVisible)
     return()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',onVisible)}},[])
-  const openNotification=async(item:Notification)=>{if(!item.readAt){await api.post(`/api/v1/notifications/${item.id}/read`).catch(()=>undefined);setNotifications((values)=>values.map((value)=>value.id===item.id?{...value,readAt:new Date().toISOString()}:value))}setNotificationOpen(false);if(item.resourceUrl)navigate(item.resourceUrl)}
+  const openNotification=async(item:Notification)=>{if(!item.readAt){await api.post(`/api/v1/notifications/${item.id}/read`).catch(()=>undefined);setNotifications((values)=>values.map((value)=>value.id===item.id?{...value,readAt:new Date().toISOString()}:value));setUnread((value)=>Math.max(0,value-1))}setNotificationOpen(false);if(item.resourceUrl)navigate(item.resourceUrl)}
 
   return <div className="app-frame">
     <aside className={`sidebar ${sidebar ? 'sidebar-open' : ''}`}>
@@ -140,7 +143,7 @@ export function AppShell() {
         <div className="breadcrumb"><span>AgentHub</span><ChevronRight size={14}/><strong>{active ? (active.term ? t(active.term) : active.label) : t('workspaces')}</strong></div>
         <div className="top-actions">
           <button className="command-chip" onClick={() => setCommand(true)}><Command size={15}/><span>빠른 이동</span></button>
-          <div className="notification-wrap"><button className="icon-button notification-button" onClick={()=>{setProfile(false);setNotificationOpen((value)=>!value)}} aria-label="알림" aria-expanded={notificationOpen}><Bell size={18}/>{notifications.some((item)=>!item.readAt)&&<i/>}</button>{notificationOpen&&<div className="notification-menu custom-scroll"><header><strong>알림</strong><span>읽지 않음 {notifications.filter((item)=>!item.readAt).length}건</span></header>{notifications.length===0?<div className="empty-compact">새 알림이 없습니다.</div>:notifications.map((item)=><button key={item.id} className={item.readAt?'read':''} onClick={()=>void openNotification(item)}><i/><span><strong>{item.title}</strong><small>{item.message}</small><time>{new Date(item.createdAt).toLocaleString('ko-KR')}</time></span></button>)}</div>}</div>
+          <div className="notification-wrap"><button className="icon-button notification-button" onClick={()=>{setProfile(false);setNotificationOpen((value)=>!value)}} aria-label="알림" aria-expanded={notificationOpen}><Bell size={18}/>{unread>0&&<i/>}</button>{notificationOpen&&<div className="notification-menu custom-scroll"><header><strong>알림</strong><span>읽지 않음 {unread}건{unread>notifications.length&&` · 최근 ${notifications.length}건 표시`}</span></header>{notifications.length===0?<div className="empty-compact">새 알림이 없습니다.</div>:notifications.map((item)=><button key={item.id} className={item.readAt?'read':''} onClick={()=>void openNotification(item)}><i/><span><strong>{item.title}</strong><small>{item.message}</small><time>{new Date(item.createdAt).toLocaleString('ko-KR')}</time></span></button>)}</div>}</div>
           <div className="profile-wrap"><button className="profile-button" onClick={() => {setNotificationOpen(false);setProfile((v) => !v)}} aria-expanded={profile}><div className="avatar">{user.displayName.slice(0,1).toUpperCase()}</div><div><strong>{user.displayName}</strong><span>{user.role}</span></div><ChevronDown size={15}/></button>
             {profile && <div className="profile-menu"><div className="profile-card"><CircleUserRound size={20}/><div><strong>{user.displayName}</strong><span>{user.email || user.username}</span></div></div>
               <div className="mode-switch" role="group" aria-label="보기 방식">

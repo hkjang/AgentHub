@@ -889,12 +889,12 @@ func (s *Server) agentEvaluations(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) notifications(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
-	items, err := s.store.Notifications(r.Context(), u.ID)
+	items, unread, err := s.store.Notifications(r.Context(), u.ID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "unread": unread})
 }
 
 func (s *Server) readNotification(w http.ResponseWriter, r *http.Request) {

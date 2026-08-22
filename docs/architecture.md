@@ -1306,6 +1306,23 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## The bell had the same shape as the list
+
+The notification feed takes the fifty most recent notices and the console counted
+the unread ones among them. Both numbers were about the page rather than the
+person, and the notices this platform sends are almost all "something is waiting
+for you" — the kind that goes unread precisely while more arrive.
+
+Measured on a real deployment, the effect was total: with a single unread notice
+older than fifty newer read ones, the bell showed no dot, the header read
+읽지 않음 0건, and the notice itself was not reachable through the feed at all. The
+platform had told somebody an approval was waiting and then hidden it.
+
+Unread notices lead the feed now — the bell is a list of what somebody has not
+dealt with, not an archive — and the count is a count of the table. When there is
+more unread than fits, the header says so rather than implying the page is all
+there is.
+
 ## Waiting work should get more visible, not less
 
 The task list is capped and ordered newest first, which is right for a log and
