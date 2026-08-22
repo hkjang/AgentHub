@@ -74,7 +74,11 @@ func (o *Orchestrator) runCLI(ctx context.Context, run *store.AgentRun, task sto
 		return nil, Outcome{Status: store.TaskFailed, Retryable: true, Failure: "Runtime 사양을 만들지 못했습니다: " + err.Error()}
 	}
 
-	command := cliCommand(agent.RuntimeType, goal, model, prompt)
+	adapter, adapterErr := adapterFor(agent.RuntimeType)
+	if adapterErr != nil {
+		return nil, Outcome{Status: store.TaskFailed, Failure: adapterErr.Error()}
+	}
+	command := adapter.Command(runtimetype.RunnerCommand(agent.RuntimeType, runtimetype.RunnerCLI), goal, model, prompt)
 	ctx, span := telemetry.Start(ctx, "cli.run",
 		attribute.String("agenthub.runtime.id", acquired.runtimeID),
 		attribute.String("agenthub.cli.approval_mode", approvalMode(goal)))
@@ -107,7 +111,7 @@ func (o *Orchestrator) runCLI(ctx context.Context, run *store.AgentRun, task sto
 		return nil, Outcome{Status: store.TaskFailed, Failure: "Runtime에서 에이전트를 실행하지 못했습니다: " + execErr.Error(), Retryable: true}
 	}
 
-	parsed, parseErr := parseCLIRun(result.Stdout, result.Stderr, result.ExitCode)
+	parsed, parseErr := adapter.Parse(result.Stdout, result.Stderr, result.ExitCode)
 	record.Output = parsed.Result
 	if parseErr != nil {
 		record.Status, record.Error = "failed", parseErr.Error()
@@ -129,7 +133,7 @@ func (o *Orchestrator) runCLI(ctx context.Context, run *store.AgentRun, task sto
 		o.event(ctx, *run, "cli.failed", parseErr.Error(), map[string]any{
 			"exitCode": result.ExitCode, "runtimeId": acquired.runtimeID,
 		})
-		return nil, Outcome{Status: store.TaskFailed, Failure: parseErr.Error(), Retryable: retryableCLIExit(result.ExitCode)}
+		return nil, Outcome{Status: store.TaskFailed, Failure: parseErr.Error(), Retryable: adapter.Retryable(result.ExitCode)}
 	}
 
 	answer := parsed.Result
@@ -161,13 +165,15 @@ func approvalMode(goal store.AgentGoal) string {
 	return "default"
 }
 
-// cliCommand builds argv. The Goal's guardrails become the agent's own budgets,
-// so a limit set in the console is enforced by the thing doing the work rather
-// than by a timeout that kills it half way.
-func cliCommand(runtimeType string, goal store.AgentGoal, model resolvedModel, prompt string) []string {
-	// The wrapper the image ships, named by the descriptor: an exec has no shell
-	// and no working directory, and the wrapper supplies both.
-	command := append(runtimetype.RunnerCommand(runtimeType, runtimetype.RunnerCLI),
+// qwenCodeCLI drives Qwen Code, and the JupyterLab image that ships the same
+// agent beside the notebooks.
+type qwenCodeCLI struct{}
+
+// Command builds argv. The Goal's guardrails become the agent's own budgets, so a
+// limit set in the console is enforced by the thing doing the work rather than by
+// a timeout that kills it half way.
+func (qwenCodeCLI) Command(base []string, goal store.AgentGoal, model resolvedModel, prompt string) []string {
+	command := append(append([]string{}, base...),
 		"-p", prompt, "--approval-mode", approvalMode(goal), "--output-format", "json")
 	if goal.MaxSteps > 0 {
 		command = append(command, "--max-session-turns", strconv.Itoa(goal.MaxSteps))
@@ -189,6 +195,12 @@ func cliCommand(runtimeType string, goal store.AgentGoal, model resolvedModel, p
 	}
 	return command
 }
+
+func (qwenCodeCLI) Parse(stdout, stderr string, exitCode int) (cliRun, error) {
+	return parseCLIRun(stdout, stderr, exitCode)
+}
+
+func (qwenCodeCLI) Retryable(exitCode int) bool { return retryableCLIExit(exitCode) }
 
 // cliRun is what one headless run produced.
 type cliRun struct {

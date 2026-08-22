@@ -1306,6 +1306,32 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## One agent's flags, written as though they were every agent's
+
+The CLI backend runs a task as the runtime's own command-line agent. It was
+written for Qwen Code, and it read as though it had been written for headless
+agents in general: whatever wrapper the descriptor named was handed `-p`,
+`--approval-mode`, `--output-format json`, `--max-session-turns`,
+`--max-tool-calls` and `--max-wall-time`, and whatever came back was parsed as the
+JSON array Qwen Code emits.
+
+Those are one agent's flags and one agent's output format. A second runtime
+declaring `cli` in its descriptor would have been handed Qwen Code's command line
+— flags it has never heard of — and the failure would have arrived as a usage
+error from a binary the operator never typed, with nothing to say which part was
+wrong. That is not a hypothetical: it is what adding any further headless agent
+would have done on the first run.
+
+The backend asks the runtime how it is spoken to. What stays shared is what is
+genuinely the platform's — the prompt, the content scan on both sides, the run
+step, the metering decision, the artifacts, the verdict — and what moves behind
+the seam is the vocabulary: how the Goal's guardrails are spelled as that agent's
+budgets, and how its output becomes an answer.
+
+A runtime that offers the backend and has no adapter fails a test rather than a
+run, an adapter no descriptor can reach fails too, and an unknown runtime is
+refused in words rather than quietly given somebody else's command line.
+
 ## A signature is not a first delivery
 
 A webhook signature proves the sender knew the secret. It says nothing about
