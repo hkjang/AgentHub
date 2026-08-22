@@ -822,8 +822,16 @@ func (s *Store) CreateAgentRun(ctx context.Context, run AgentRun) (AgentRun, err
 	if run.ID == "" {
 		run.ID = uuid.NewString()
 	}
-	err := s.pool.QueryRow(ctx, `INSERT INTO agent_runs(id,task_id,agent_id,owner_id,attempt,agent_version,runtime_id,model_endpoint_id,model_name,trace_id,worker_id,resumed_steps)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+	// The rate this run is charged at, as it stands now. Reading it here rather
+	// than at billing time is the whole point: a price corrected next month must
+	// not rewrite this month's bill, and an endpoint deleted next year must not
+	// take this run's cost to zero.
+	err := s.pool.QueryRow(ctx, `INSERT INTO agent_runs(id,task_id,agent_id,owner_id,attempt,agent_version,runtime_id,model_endpoint_id,model_name,trace_id,worker_id,resumed_steps,
+			input_price_per_mtok,output_price_per_mtok,price_currency)
+		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
+		       m.input_price_per_mtok, m.output_price_per_mtok, m.currency
+		FROM (SELECT 1) AS one
+		LEFT JOIN model_endpoints m ON m.id = $8
 		RETURNING `+runColumns,
 		run.ID, run.TaskID, run.AgentID, run.OwnerID, run.Attempt, run.AgentVersion, run.RuntimeID, run.ModelEndpointID, run.ModelName, run.TraceID, run.WorkerID, run.ResumedSteps).
 		Scan(run.scanTargets()...)

@@ -1306,6 +1306,30 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## A bill that moved when somebody corrected a price
+
+Cost was computed by joining the model endpoint at the moment somebody asked for
+the number. So every past month was priced at today's rates, and the bill was not
+a record of anything — it was a calculation over whatever the price table happened
+to say.
+
+On this platform's own data: a window that read 0 before an administrator entered
+the real rates read 52.17 afterwards, for work that had already happened. And
+because there is no foreign key from a run to its endpoint, deleting an endpoint
+took its whole history to zero: the join simply found nothing.
+
+The same expression prices the cost quota. So a rate correction also decided,
+retroactively, whether somebody was over budget — refusing new work on the
+strength of a number that had moved under them after the work was done.
+
+A run records the rate it is charged at when it starts, and cost is priced from
+that, falling back to the endpoint only for runs recorded before the snapshot
+existed. Those keep being priced as they always have been; filling them in would
+be inventing a rate nobody wrote down.
+
+Verified on the same run: 18000 at the rate it was charged, 18000 after the price
+was doubled, 18000 after the endpoint was deleted outright.
+
 ## One agent's flags, written as though they were every agent's
 
 The CLI backend runs a task as the runtime's own command-line agent. It was

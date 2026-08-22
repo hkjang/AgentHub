@@ -113,7 +113,19 @@ func (s *Store) attachUnmetered(ctx context.Context, report *UsageReport, ownerI
 }
 
 // usageCostSQL prices one row. Prices are per million tokens.
-const usageCostSQL = `(s.prompt_tokens * COALESCE(m.input_price_per_mtok, 0) + s.completion_tokens * COALESCE(m.output_price_per_mtok, 0)) / 1000000.0`
+//
+// The run's own snapshot comes first, and the endpoint is the fallback. Pricing
+// from the endpoint alone meant the bill was always computed at today's rates:
+// correcting a price rewrote every past month, and deleting an endpoint took its
+// history to zero because the join found nothing. The same expression prices the
+// cost quota, so a correction also decided retroactively whether somebody was
+// over budget — refusing new work on the strength of a number that had moved
+// under them.
+//
+// Runs from before the snapshot existed have no rate of their own and keep being
+// priced from the endpoint, which is what they have always been priced at.
+// Filling those in would be inventing a rate nobody recorded.
+const usageCostSQL = `(s.prompt_tokens * COALESCE(r.input_price_per_mtok, m.input_price_per_mtok, 0) + s.completion_tokens * COALESCE(r.output_price_per_mtok, m.output_price_per_mtok, 0)) / 1000000.0`
 
 // Usage totals token spend for one owner over a window.
 //
