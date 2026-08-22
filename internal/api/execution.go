@@ -489,12 +489,20 @@ func (s *Server) enqueueTask(w http.ResponseWriter, r *http.Request, u store.Use
 func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	items, err := s.store.AgentTasks(r.Context(), u.ID, r.URL.Query().Get("agentId"), r.URL.Query().Get("status"), limit)
+	agentID := r.URL.Query().Get("agentId")
+	items, err := s.store.AgentTasks(r.Context(), u.ID, agentID, r.URL.Query().Get("status"), limit)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	// Counted in the database rather than in the page: the page is capped, and the
+	// number somebody reads as "how much is waiting" has to mean that.
+	counts, err := s.store.AgentTaskCounts(r.Context(), u.ID, agentID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "counts": counts})
 }
 
 func (s *Server) task(w http.ResponseWriter, r *http.Request) {

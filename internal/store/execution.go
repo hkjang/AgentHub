@@ -32,6 +32,20 @@ const (
 	TaskHandoff = "handoff"
 )
 
+// taskFinished is the set a task never leaves on its own. It exists as an
+// expression because two different questions turn on it: what to put in front of
+// somebody first, and what still needs a person.
+const taskFinished = `('completed','failed','dead_letter','cancelled')`
+
+// taskUnfinishedFirst puts work that has not ended above work that has.
+//
+// The list is capped and ordered newest first, which is right for a log and wrong
+// for a work queue: a task waiting for an approval or handed to a person is
+// exactly the task that gets older, so on a busy deployment it slides past the end
+// of the page and stops existing as far as the screen is concerned. The longer it
+// waits, the less visible it is — the opposite of what waiting should do.
+const taskUnfinishedFirst = `CASE WHEN t.status IN ` + taskFinished + ` THEN 1 ELSE 0 END`
+
 // taskPriorityRank orders the queue. Postgres has no ordering for these strings,
 // so the claim query sorts on this expression.
 const taskPriorityRank = `CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 WHEN 'low' THEN 3 ELSE 4 END`
@@ -485,6 +499,37 @@ func scanTask(row pgx.Row) (AgentTask, error) {
 	return item, err
 }
 
+// AgentTaskCounts is how many tasks are in each status, over all of them.
+//
+// The console used to count the rows it had been given, which is a different
+// question: the list is capped, so "승인 대기 2" meant two were waiting among the
+// hundred most recent tasks — and read as two waiting altogether. On a deployment
+// that finishes a hundred tasks a day, work waiting for a person showed as zero
+// while it sat there.
+func (s *Store) AgentTaskCounts(ctx context.Context, ownerID, agentID string) (map[string]int, error) {
+	query := `SELECT status, count(*) FROM agent_tasks WHERE owner_id=$1`
+	args := []any{ownerID}
+	if agentID != "" {
+		args = append(args, agentID)
+		query += fmt.Sprintf(` AND agent_id=$%d`, len(args))
+	}
+	rows, err := s.pool.Query(ctx, query+` GROUP BY status`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	counts := map[string]int{}
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, err
+		}
+		counts[status] = count
+	}
+	return counts, rows.Err()
+}
+
 // AgentTasks lists a user's tasks, optionally filtered by agent and status.
 func (s *Store) AgentTasks(ctx context.Context, ownerID, agentID, status string, limit int) ([]AgentTask, error) {
 	if limit <= 0 || limit > 200 {
@@ -501,7 +546,7 @@ func (s *Store) AgentTasks(ctx context.Context, ownerID, agentID, status string,
 		query += fmt.Sprintf(` AND t.status=$%d`, len(args))
 	}
 	args = append(args, limit)
-	query += fmt.Sprintf(` ORDER BY t.created_at DESC LIMIT $%d`, len(args))
+	query += fmt.Sprintf(` ORDER BY `+taskUnfinishedFirst+`, t.created_at DESC LIMIT $%d`, len(args))
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err

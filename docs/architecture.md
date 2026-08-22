@@ -1306,6 +1306,25 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Waiting work should get more visible, not less
+
+The task list is capped and ordered newest first, which is right for a log and
+wrong for a work queue. A task waiting for an approval, or handed to a person, is
+exactly the task that gets older: on a deployment that finishes a hundred tasks a
+day it slides past the end of the page within a day and stops existing as far as
+the screen is concerned. The longer somebody leaves it, the harder it is to find —
+the opposite of what waiting ought to do.
+
+The counts made it worse rather than catching it. They were tallied over the rows
+the console had been handed, so "승인 대기 0" was true of that page and read as true
+of the platform. There was no number anywhere that would have shown the work.
+
+Unfinished work now sorts above finished work, so the oldest thing waiting for a
+person is on the first page rather than the last, and the counts are a GROUP BY
+over every task rather than over the page. Both are guarded, including the set of
+statuses that counts as finished: a status missing from it sorts as unfinished
+forever, which is the same bug pointing the other way.
+
 ## Asking for an approval and telling nobody
 
 The reviewer on an approval is the requester's manager. manager_id is an org-chart

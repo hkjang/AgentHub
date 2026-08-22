@@ -53,6 +53,7 @@ export function Tasks() {
   const t = useTerms()
   const { capabilities } = useAuth()
   const [tasks, setTasks] = useState<AgentTask[]>()
+  const [counts, setCounts] = useState<Record<string, number>>({})
   const [agents, setAgents] = useState<Agent[]>([])
   const [queue, setQueue] = useState<QueueSnapshot>()
   const [error, setError] = useState('')
@@ -67,11 +68,12 @@ export function Tasks() {
   const load = useCallback(async () => {
     try {
       const [taskResult, agentResult, queueResult] = await Promise.all([
-        api.get<{ items?: AgentTask[] }>('/api/v1/tasks'),
+        api.get<{ items?: AgentTask[]; counts?: Record<string, number> }>('/api/v1/tasks'),
         api.get<{ items?: Agent[] }>('/api/v1/agents'),
         api.get<QueueSnapshot>('/api/v1/queue'),
       ])
       setTasks(taskResult.items ?? [])
+      setCounts(taskResult.counts ?? {})
       setAgents(agentResult.items ?? [])
       setQueue(queueResult)
     } catch (e) {
@@ -94,8 +96,10 @@ export function Tasks() {
   if (!tasks) return <Loading />
 
   const visible = filter ? tasks.filter((task) => task.status === filter) : tasks
-  const counts = tasks.reduce<Record<string, number>>((all, task) => ({ ...all, [task.status]: (all[task.status] ?? 0) + 1 }), {})
-  const active = tasks.filter((task) => ACTIVE.includes(task.status)).length
+  // Counted in the database. Counting the page said "승인 대기 0" while work sat
+  // waiting: the page holds the newest hundred tasks, and the thing waiting for a
+  // person is the thing that gets old.
+  const active = ACTIVE.reduce((total, status) => total + (counts[status] ?? 0), 0)
 
   const cancel = async () => {
     if (!cancelling) return
