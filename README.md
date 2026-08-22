@@ -160,7 +160,7 @@ kubectl apply -k deploy/kubernetes
 make image image-base
 # base 이미지는 BASE_VERSION 파일을 따르며, 변경이 없으면 이전 태그를 그대로 사용합니다.
 minikube image load agenthub:v0.73.0
-minikube image load agenthub-base:v0.12.0
+minikube image load agenthub-base:v0.13.0
 
 # 4. 파드 상태 확인
 kubectl get pods -n agent-platform-system

@@ -46,7 +46,7 @@ for archive in *.tar.gz.part-aa; do
 done
 
 docker load < agenthub-v0.73.0.tar.gz
-docker load < agenthub-base-v0.12.0.tar.gz
+docker load < agenthub-base-v0.13.0.tar.gz
 # Only if this site runs Agents of that runtime type.
 docker load < agenthub-langflow-v0.2.0.tar.gz
 docker load < agenthub-qwencode-v0.2.0.tar.gz
