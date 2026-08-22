@@ -1306,6 +1306,32 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Two references that only worked at home
+
+An exported definition exists to be imported somewhere else — a review branch, a
+production cluster — so every reference in it travels by name. Identifiers mean
+nothing in the cluster the file arrives in.
+
+Two of the six did not travel that way. Security and network profiles were written
+as raw identifiers, on the reasoning that the profiles this platform seeds have
+stable ids. They do. A profile an operator creates does not: it gets a fresh uuid
+that exists in one cluster and nowhere else.
+
+So exporting an agent that used a profile somebody made wrote that uuid into the
+file, and importing it elsewhere reached the database with a reference to nothing.
+The person moving a definition between clusters — the documented use for these
+files — was answered with
+
+    ERROR: insert or update on table "agent_definitions" violates foreign key
+    constraint "agent_definitions_security_profile_id_fkey" (SQLSTATE 23503)
+
+where the other four references answer with a sentence naming what is missing.
+
+Both now travel by name and are resolved on the way back in, so a profile this
+cluster does not have is reported like anything else. An identifier still resolves
+to itself, so every document exported before this change imports exactly as it
+did — including the seeded ids the original reasoning was about.
+
 ## Asking for something by name
 
 Reading a list as a stranger proves only that nobody is handed somebody else's

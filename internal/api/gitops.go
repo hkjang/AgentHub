@@ -114,9 +114,11 @@ func (s *Server) agentToDocument(r *http.Request, agent store.Agent) (agentDocum
 	document.Spec.Workspace = names.workspaces[deref(agent.WorkspaceID)]
 	document.Spec.ModelEndpoint = names.models[deref(agent.ModelEndpointID)]
 	document.Spec.MCPBundle = names.bundles[deref(agent.MCPBundleID)]
-	// Policy profiles are seeded with stable ids, so they travel as they are.
-	document.Spec.SecurityProfile = deref(agent.SecurityProfileID)
-	document.Spec.NetworkProfile = deref(agent.NetworkProfileID)
+	// By name, like everything else. The seeded profiles have stable ids and
+	// travelled as those, but a profile an operator creates gets a uuid that means
+	// nothing in another cluster — which is the one place these documents are for.
+	document.Spec.SecurityProfile = names.security[deref(agent.SecurityProfileID)]
+	document.Spec.NetworkProfile = names.network[deref(agent.NetworkProfileID)]
 	return document, nil
 }
 
@@ -124,12 +126,24 @@ func (s *Server) agentToDocument(r *http.Request, agent store.Agent) (agentDocum
 type referenceLookup struct {
 	profiles, workspaces, models, bundles         map[string]string
 	profileIDs, workspaceIDs, modelIDs, bundleIDs map[string]string
+	// Security and network profiles travelled as raw identifiers because the ones
+	// this platform seeds have stable ids. A profile an operator creates does not:
+	// it gets a fresh uuid, which exists in one cluster and nowhere else. Exporting
+	// such an agent wrote that uuid into the document, and importing it elsewhere
+	// reached the database with a reference to nothing — answering the person who
+	// moved a definition between clusters with a Postgres foreign key error in
+	// English, where every other reference answers in a sentence naming what is
+	// missing.
+	security, network       map[string]string
+	securityIDs, networkIDs map[string]string
 }
 
 func (s *Server) referenceNames(r *http.Request) (referenceLookup, error) {
 	lookup := referenceLookup{
 		profiles: map[string]string{}, workspaces: map[string]string{}, models: map[string]string{}, bundles: map[string]string{},
 		profileIDs: map[string]string{}, workspaceIDs: map[string]string{}, modelIDs: map[string]string{}, bundleIDs: map[string]string{},
+		security: map[string]string{}, network: map[string]string{},
+		securityIDs: map[string]string{}, networkIDs: map[string]string{},
 	}
 	u, _ := userFromContext(r.Context())
 	profiles, err := s.store.RuntimeProfiles(r.Context())
@@ -159,6 +173,24 @@ func (s *Server) referenceNames(r *http.Request) (referenceLookup, error) {
 	bundles, err := s.store.MCPBundles(r.Context(), true)
 	if err != nil {
 		return lookup, err
+	}
+	for _, kind := range []string{"security", "network"} {
+		items, profileErr := s.store.PolicyProfiles(r.Context(), kind)
+		if profileErr != nil {
+			return lookup, profileErr
+		}
+		byID, byName := lookup.security, lookup.securityIDs
+		if kind == "network" {
+			byID, byName = lookup.network, lookup.networkIDs
+		}
+		for _, item := range items {
+			byID[item.ID] = item.Name
+			byName[strings.ToLower(item.Name)] = item.ID
+			// An identifier still resolves to itself, so a document written before
+			// profiles travelled by name — and every document naming a seeded
+			// profile — imports exactly as it did.
+			byName[strings.ToLower(item.ID)] = item.ID
+		}
 	}
 	for _, item := range bundles {
 		lookup.bundles[item.ID] = item.Name
@@ -225,8 +257,8 @@ func (s *Server) importAgent(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID:       resolve(document.Spec.Workspace, lookup.workspaceIDs, "작업공간"),
 		ModelEndpointID:   resolve(document.Spec.ModelEndpoint, lookup.modelIDs, "모델 엔드포인트"),
 		MCPBundleID:       resolve(document.Spec.MCPBundle, lookup.bundleIDs, "MCP 번들"),
-		SecurityProfileID: document.Spec.SecurityProfile,
-		NetworkProfileID:  document.Spec.NetworkProfile,
+		SecurityProfileID: resolve(document.Spec.SecurityProfile, lookup.securityIDs, "보안 프로파일"),
+		NetworkProfileID:  resolve(document.Spec.NetworkProfile, lookup.networkIDs, "네트워크 프로파일"),
 	}
 	if len(missing) > 0 {
 		writeError(w, http.StatusBadRequest, "unresolved_references",
