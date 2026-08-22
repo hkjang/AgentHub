@@ -60,8 +60,15 @@ export function Agents({runtimeOnly=false}:{runtimeOnly?:boolean}) {
   const importAgent=async(file:File)=>{
     setError(''); setNotice('')
     try {
-      const result=await api.postText<{mode?:string;agent?:Agent}>('/api/v1/agents/import',await file.text())
-      setNotice(`${result.agent?.name ?? file.name} 정의를 ${result.mode==='updated'?'갱신':'생성'}했습니다.`)
+      const result=await api.postText<{mode?:string;agent?:Agent;execution?:string}>('/api/v1/agents/import',await file.text())
+      /* A definition is not a Goal. Creating an agent from a file leaves it on the
+         default runner, approval mode and limits, whatever the agent it came from
+         was set to do — the part somebody moving a definition between clusters is
+         least likely to notice. */
+      setNotice(`${result.agent?.name ?? file.name} 정의를 ${result.mode==='updated'?'갱신':'생성'}했습니다.`
+        +(result.execution==='defaults'
+          ? ' 실행 설정(Goal)은 정의에 포함되지 않으므로 기본값(prose 실행기·기본 승인 모드·기본 한도)으로 시작합니다 — 목표 화면에서 확인해 주세요.'
+          : result.execution==='kept' ? ' 기존 실행 설정(Goal)은 그대로 유지했습니다.' : ''))
       await refresh()
     } catch(err) {
       setError(err instanceof Error?err.message:'정의를 가져오지 못했습니다.')

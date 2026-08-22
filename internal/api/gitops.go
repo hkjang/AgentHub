@@ -296,7 +296,10 @@ func (s *Server) importAgent(w http.ResponseWriter, r *http.Request) {
 		}
 		s.snapshotAgent(r, saved, "YAML 가져오기", u.ID)
 		s.store.Audit(r.Context(), &u, "agent.import", "agent", saved.ID, "success", clientIP(r), map[string]any{"mode": "update"})
-		writeJSON(w, http.StatusOK, map[string]any{"agent": saved, "mode": "updated"})
+		// The document carries a definition and not a Goal, so an update leaves the
+		// agent's execution settings exactly as they were. Worth saying, because the
+		// same file creating an agent leaves it on defaults instead.
+		writeJSON(w, http.StatusOK, map[string]any{"agent": saved, "mode": "updated", "execution": "kept"})
 	case errors.Is(lookupErr, store.ErrNotFound):
 		saved, err := s.store.CreateAgent(r.Context(), u.ID, input)
 		if err != nil {
@@ -305,7 +308,14 @@ func (s *Server) importAgent(w http.ResponseWriter, r *http.Request) {
 		}
 		s.snapshotAgent(r, saved, "YAML 가져오기", u.ID)
 		s.store.Audit(r.Context(), &u, "agent.import", "agent", saved.ID, "success", clientIP(r), map[string]any{"mode": "create"})
-		writeJSON(w, http.StatusCreated, map[string]any{"agent": saved, "mode": "created"})
+		// A definition is not a Goal. An agent created from a document has no
+		// execution settings of its own and runs on the defaults — the prose runner,
+		// the default approval mode, the default limits, no tool policy — whatever
+		// the agent it was exported from was set to do. That is the thing somebody
+		// moving a definition between clusters is least likely to notice and most
+		// likely to be surprised by, so the answer says it rather than leaving them
+		// to find out from a run.
+		writeJSON(w, http.StatusCreated, map[string]any{"agent": saved, "mode": "created", "execution": "defaults"})
 	default:
 		writeStoreError(w, lookupErr)
 	}

@@ -1306,6 +1306,30 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## A definition is not a Goal, and now it says so
+
+An exported definition carries a definition. It does not carry the agent's Goal —
+its runner, approval mode, limits, tool policy, budgets — and that is deliberate:
+a version captures the definition, and the Goal is edited and versioned apart from
+it.
+
+The consequence was not deliberate. An agent created from a document has no
+execution settings of its own, so it runs on the defaults: the prose runner, the
+default approval mode, the default limits, no tool policy. A definition exported
+from an agent that ran a headless CLI agent under a tool policy arrives in the
+other cluster as a prose agent with neither — identical in the list, different in
+what it does. The console said "정의를 생성했습니다" and nothing else.
+
+Importing over an agent that already exists is the opposite: its Goal is untouched,
+because the import writes the definition only. Two different outcomes, reported
+identically.
+
+They are reported separately now. Creating says the agent starts on defaults and
+where to go and set them; updating says the existing settings were kept. Both were
+checked against the running platform, including the part with consequences: an
+agent set to the CLI runner with a changed approval mode and step limit still has
+all three after re-importing its own document.
+
 ## Two references that only worked at home
 
 An exported definition exists to be imported somewhere else — a review branch, a
