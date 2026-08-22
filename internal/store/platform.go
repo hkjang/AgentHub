@@ -89,11 +89,25 @@ type SpendRow struct {
 
 // PlatformSpend is the bill, and where it came from.
 type PlatformSpend struct {
-	Currency       string  `json:"currency"`
-	InputTokens    int64   `json:"inputTokens"`
-	OutputTokens   int64   `json:"outputTokens"`
-	Cost           float64 `json:"cost"`
-	UnpricedTokens int64   `json:"unpricedTokens"`
+	Currency string `json:"currency"`
+	// Currencies is every currency the priced work in this window was charged in.
+	//
+	// Everything downstream of this number — the total, the per-user and per-agent
+	// breakdowns, the cost budget — is a single figure in a single currency. The
+	// price table is not: each endpoint carries its own currency string, typed by
+	// hand in the console. Two endpoints in different currencies were summed and
+	// the total labelled with whichever string sorted highest, so ₩10,000 of local
+	// inference plus $7 of hosted inference was reported as "10007 USD".
+	//
+	// The arithmetic is unchanged, because changing it on the strength of a
+	// misconfiguration would be worse. What changes is that the number stops
+	// claiming to be something it is not: when this holds more than one, the
+	// console says so instead of printing a confident figure.
+	Currencies     []string `json:"currencies,omitempty"`
+	InputTokens    int64    `json:"inputTokens"`
+	OutputTokens   int64    `json:"outputTokens"`
+	Cost           float64  `json:"cost"`
+	UnpricedTokens int64    `json:"unpricedTokens"`
 	// How much of the window the bill actually covers. A run whose agent reported
 	// nothing contributes no tokens to any figure above, so a total without this
 	// number reads as a complete bill when it is not.
@@ -334,12 +348,37 @@ func (s *Store) PlatformSpend(ctx context.Context, from, to time.Time, limit int
 		COALESCE(sum(`+usageCostSQL+`), 0),
 		COALESCE(sum(CASE WHEN COALESCE(m.input_price_per_mtok, 0) = 0 AND COALESCE(m.output_price_per_mtok, 0) = 0
 			THEN s.prompt_tokens + s.completion_tokens ELSE 0 END), 0),
-		COALESCE(max(m.currency), 'KRW')
+		COALESCE(max(COALESCE(r.price_currency, m.currency)), 'KRW')
 		FROM agent_run_steps s
 		JOIN agent_runs r ON r.id = s.run_id
 		LEFT JOIN model_endpoints m ON m.id = r.model_endpoint_id
 		WHERE s.created_at >= $1 AND s.created_at < $2`, from, to).
 		Scan(&spend.InputTokens, &spend.OutputTokens, &spend.Cost, &spend.UnpricedTokens, &spend.Currency); err != nil {
+		return PlatformSpend{}, err
+	}
+	// Which currencies the priced work was actually charged in. Only priced work
+	// counts: an unpriced endpoint contributes nothing to the total, so its
+	// currency string is not part of what the total mixes.
+	currencies, err := s.pool.Query(ctx, `SELECT DISTINCT COALESCE(r.price_currency, m.currency, 'KRW')
+		FROM agent_run_steps s
+		JOIN agent_runs r ON r.id = s.run_id
+		LEFT JOIN model_endpoints m ON m.id = r.model_endpoint_id
+		WHERE s.created_at >= $1 AND s.created_at < $2
+		  AND `+usageCostSQL+` > 0
+		ORDER BY 1`, from, to)
+	if err != nil {
+		return PlatformSpend{}, err
+	}
+	for currencies.Next() {
+		var currency string
+		if err := currencies.Scan(&currency); err != nil {
+			currencies.Close()
+			return PlatformSpend{}, err
+		}
+		spend.Currencies = append(spend.Currencies, currency)
+	}
+	currencies.Close()
+	if err := currencies.Err(); err != nil {
 		return PlatformSpend{}, err
 	}
 	if spend.Currency == "" {

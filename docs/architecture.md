@@ -1306,6 +1306,30 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Adding won to dollars
+
+Every number under the bill is a single figure in a single currency: the total,
+the per-user and per-agent breakdowns, the cost budget. The price table is not.
+Each model endpoint carries its own currency, typed by hand into a free-text box
+in the console, and the total simply summed across all of them and labelled the
+result with whichever string sorted highest.
+
+So ₩10,000 of local inference plus $7 of hosted inference was reported as
+"10007 USD" — a confident number that is not a quantity of anything. The cost
+quota computes the same way, so a budget was enforced against it too.
+
+The arithmetic is deliberately unchanged. Rewriting it on the strength of a
+misconfiguration would be worse than saying what happened, and there is no
+exchange rate on this platform to rewrite it with. What changed is that the
+number stops claiming to be something it is not: the bill reports which
+currencies it added together, the console prints "통화 혼재" instead of a
+currency name, and the attention list says it plainly — including that the cost
+budget is computed the same way, which is the part with consequences.
+
+Only priced work counts toward the mix. An unpriced endpoint contributes nothing
+to the total, so naming its currency would report a mixture that is not in the
+number.
+
 ## A bill that moved when somebody corrected a price
 
 Cost was computed by joining the model endpoint at the moment somebody asked for
