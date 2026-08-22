@@ -29,9 +29,7 @@ type WarmCandidate struct {
 // RuntimesToWarm lists agents with a cron trigger due inside their warm-up
 // window whose runtime is not already running.
 func (s *Store) RuntimesToWarm(ctx context.Context, limit int) ([]WarmCandidate, error) {
-	if limit <= 0 {
-		limit = 20
-	}
+	limit = clampLimit(limit, 20, 200)
 	rows, err := s.pool.Query(ctx, `
 		SELECT t.agent_id, a.name, t.owner_id, t.id, t.next_fire_at,
 		       t.next_fire_at + make_interval(secs => GREATEST(g.keep_warm_seconds, 60))
@@ -78,9 +76,7 @@ type CoolCandidate struct {
 // only make the next task pay to start it again, which is the opposite of what
 // the pool is for.
 func (s *Store) RuntimesToCool(ctx context.Context, limit int) ([]CoolCandidate, error) {
-	if limit <= 0 {
-		limit = 20
-	}
+	limit = clampLimit(limit, 20, 200)
 	rows, err := s.pool.Query(ctx, `
 		SELECT r.id, r.agent_id, r.owner_id
 		FROM agent_runtimes r

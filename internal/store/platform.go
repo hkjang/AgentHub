@@ -286,15 +286,19 @@ func (s *Store) executionHealth(ctx context.Context, from, to time.Time) (Execut
 	return health, nil
 }
 
+// platformSpendCeiling bounds one breakdown. It is far above what a console
+// page shows because the CSV export asks for the whole bill through the same
+// call, and a deployment with more than two hundred agents was reconciling from
+// a file that stopped at the top two hundred.
+const PlatformSpendCeiling = 5000
+
 // PlatformSpend breaks the bill down by user, by agent and by model.
 //
 // limit bounds each breakdown: an operator reads the top of these lists and
 // exports the rest, and an unbounded list on a deployment with a thousand agents
 // is a page nobody can use.
 func (s *Store) PlatformSpend(ctx context.Context, from, to time.Time, limit int) (PlatformSpend, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 8
-	}
+	limit = clampLimit(limit, 8, PlatformSpendCeiling)
 	spend := PlatformSpend{Currency: "KRW", Users: []SpendRow{}, Agents: []SpendRow{}, Models: []SpendRow{}, Daily: []UsagePoint{}}
 
 	byUser := `SELECT u.id, COALESCE(NULLIF(u.display_name, ''), u.username)`

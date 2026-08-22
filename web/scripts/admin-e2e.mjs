@@ -185,10 +185,14 @@ try {
   await post('/api/v1/admin/execution/cleanup', { auditDays: 3650 })
   check('미리보기 후에도 감사 로그가 그대로', (await get('/api/v1/admin/audit?limit=1')).body?.total >= auditBefore,
     `${auditBefore}`)
-  const retention = await put('/api/v1/admin/execution/retention', { taskDays: 30, runDays: 30, eventDays: 7, auditDays: 365 })
+  // Every knob goes in the body: this endpoint replaces the whole set, so a knob
+  // left out of the request is set back to zero — which turns that sweep off.
+  const retention = await put('/api/v1/admin/execution/retention', { taskDays: 30, runDays: 30, eventDays: 7, auditDays: 365, notificationDays: 45 })
   check('보관 기간 저장', retention.status === 200 && retention.body?.auditDays === 365, `HTTP ${retention.status}`)
   check('보관 기간이 상태에 반영', (await get('/api/v1/admin/execution')).body?.retention?.auditDays === 365)
-  await put('/api/v1/admin/execution/retention', { taskDays: 0, runDays: 0, eventDays: 0, auditDays: 0 })
+  check('빠뜨린 항목은 꺼짐으로 되돌아감', (await put('/api/v1/admin/execution/retention', { taskDays: 30, runDays: 30, eventDays: 7, auditDays: 365 })).body?.notificationDays === 0,
+    '이 엔드포인트는 전체를 대체합니다')
+  await put('/api/v1/admin/execution/retention', { taskDays: 0, runDays: 0, eventDays: 0, auditDays: 0, notificationDays: 0 })
 
   // The platform-wide runtime environment is copied into each runtime's object,
   // so saving it has to push the change out — otherwise "저장했습니다" means
@@ -251,8 +255,14 @@ try {
   await page.getByRole('heading', { name: '실행 제어' }).waitFor({ timeout: 15000 })
   check('실행 스위치 표시', await page.locator('.switch-panel').isVisible())
   check('워커 표 표시', (await page.locator('.panel table').count()) >= 1)
-  check('보관 기간 입력 4개', (await page.locator('.retention-panel input[type=number]').count()) === 4,
-    String(await page.locator('.retention-panel input[type=number]').count()))
+  // Counting inputs against a number written here is a check that goes stale the
+  // day a knob is added — it did, and said 4 when the screen had 5. It asks the
+  // API how many retention knobs there are instead, which is the thing the screen
+  // is supposed to be offering all of.
+  const knobs = Object.keys((await get('/api/v1/admin/execution')).body?.retention ?? {})
+  const inputs = await page.locator('.retention-panel input[type=number]').count()
+  check('보관 기간 입력이 설정 항목 수와 일치', knobs.length > 0 && inputs === knobs.length,
+    `${inputs}개 입력 vs ${knobs.length}개 항목 (${knobs.join(',')})`)
   check('사용법 안내 제공', await page.getByText('이 화면은 이럴 때 씁니다').isVisible())
 
   await page.goto(`${baseURL}/admin/users`, { waitUntil: 'networkidle' })

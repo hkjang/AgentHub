@@ -200,9 +200,7 @@ func (filter RequeueFilter) normalise() (RequeueFilter, error) {
 	if filter.Status != TaskDeadLetter && filter.Status != TaskFailed {
 		return filter, errors.New("dead_letter 또는 failed 상태만 다시 실행할 수 있습니다")
 	}
-	if filter.Limit <= 0 || filter.Limit > 1000 {
-		filter.Limit = 200
-	}
+	filter.Limit = clampLimit(filter.Limit, 200, 1000)
 	return filter, nil
 }
 
@@ -264,9 +262,7 @@ func (s *Store) RedeliverEvents(ctx context.Context, eventID string) (int, error
 // DeadLetteredEvents lists what could not be delivered, so the operator deciding
 // whether to redeliver can see what they would be sending.
 func (s *Store) DeadLetteredEvents(ctx context.Context, limit int) ([]PlatformEvent, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
+	limit = clampLimit(limit, 50, 200)
 	rows, err := s.pool.Query(ctx, `SELECT id,type,owner_id,subject_type,subject_id,payload,cause_trigger_id,created_at,dispatched_at,attempts,last_error
 		FROM platform_events WHERE dead_lettered_at IS NOT NULL ORDER BY created_at DESC LIMIT $1`, limit)
 	if err != nil {

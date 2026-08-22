@@ -532,9 +532,7 @@ func (s *Store) AgentTaskCounts(ctx context.Context, ownerID, agentID string) (m
 
 // AgentTasks lists a user's tasks, optionally filtered by agent and status.
 func (s *Store) AgentTasks(ctx context.Context, ownerID, agentID, status string, limit int) ([]AgentTask, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 100
-	}
+	limit = clampLimit(limit, 100, 200)
 	query := `SELECT ` + taskColumns + ` FROM agent_tasks t JOIN agent_definitions a ON a.id=t.agent_id WHERE t.owner_id=$1`
 	args := []any{ownerID}
 	if agentID != "" {
@@ -909,9 +907,7 @@ var runListColumns = prefixColumns("r", runColumns) + ", a.name"
 
 // AgentRuns lists runs, most recent first.
 func (s *Store) AgentRuns(ctx context.Context, ownerID string, filter RunFilter) ([]AgentRun, error) {
-	if filter.Limit <= 0 || filter.Limit > 200 {
-		filter.Limit = 50
-	}
+	filter.Limit = clampLimit(filter.Limit, 50, 200)
 	query := `SELECT ` + runListColumns + ` FROM agent_runs r JOIN agent_definitions a ON a.id = r.agent_id WHERE true`
 	args := []any{}
 	add := func(clause string, value any) {
@@ -1090,9 +1086,7 @@ func (s *Store) CreateArtifact(ctx context.Context, item AgentArtifact) (AgentAr
 // Artifacts lists metadata only; content is fetched per artifact so a listing
 // never drags every report through memory.
 func (s *Store) Artifacts(ctx context.Context, ownerID, runID string, limit int) ([]AgentArtifact, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 100
-	}
+	limit = clampLimit(limit, 100, 200)
 	query := `SELECT id,run_id,task_id,agent_id,owner_id,name,type,content_type,size_bytes,storage_ref,created_at FROM agent_artifacts WHERE owner_id=$1`
 	args := []any{ownerID}
 	if runID != "" {

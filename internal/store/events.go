@@ -88,9 +88,7 @@ func (s *Store) PublishEvent(ctx context.Context, event PlatformEvent) error {
 //
 // FOR UPDATE SKIP LOCKED plus the lease is what makes several workers safe.
 func (s *Store) ClaimEvents(ctx context.Context, workerID string, lease time.Duration, limit int) ([]PlatformEvent, error) {
-	if limit <= 0 {
-		limit = 50
-	}
+	limit = clampLimit(limit, 50, 500)
 	rows, err := s.pool.Query(ctx, `
 		WITH claimed AS (
 			SELECT id FROM platform_events
@@ -223,9 +221,7 @@ func (s *Store) TriggersForEvent(ctx context.Context, event PlatformEvent) ([]Ag
 
 // RecentEvents backs the operator-facing event feed.
 func (s *Store) RecentEvents(ctx context.Context, ownerID, eventType string, limit int) ([]PlatformEvent, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
+	limit = clampLimit(limit, 50, 200)
 	rows, err := s.pool.Query(ctx, `SELECT e.id,e.type,e.owner_id,e.subject_type,e.subject_id,e.payload,e.cause_trigger_id,e.created_at,e.dispatched_at,
 			e.attempts,e.last_error,e.dead_lettered_at,
 			(SELECT count(*) FROM event_deliveries d WHERE d.event_id = e.id),

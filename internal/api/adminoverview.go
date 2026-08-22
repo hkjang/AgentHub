@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -133,7 +134,11 @@ func (s *Server) adminSpendExport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_window", err.Error())
 		return
 	}
-	spend, err := s.store.PlatformSpend(r.Context(), from, to, 200)
+	// The whole bill, not the top of it. This asked for two hundred rows per
+	// breakdown, which is a console page rather than an export: a deployment
+	// with more agents than that reconciled from a file that stopped, with
+	// nothing in the file to say where.
+	spend, err := s.store.PlatformSpend(r.Context(), from, to, store.PlatformSpendCeiling)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -148,6 +153,9 @@ func (s *Server) adminSpendExport(w http.ResponseWriter, r *http.Request) {
 				label string
 				rows  []store.SpendRow
 			}{{"사용자", spend.Users}, {"에이전트", spend.Agents}, {"모델", spend.Models}} {
+				if len(group.rows) >= store.PlatformSpendCeiling {
+					_ = out.Write(noticeRow(fmt.Sprintf("%s 구분은 %d건에서 잘렸습니다 — 기간을 나눠 다시 받으세요.", group.label, store.PlatformSpendCeiling), 9))
+				}
 				for _, row := range group.rows {
 					_ = out.Write([]string{group.label, row.ID, row.Name,
 						strconv.Itoa(row.Runs), strconv.FormatInt(row.InputTokens, 10),
@@ -224,29 +232,65 @@ func (s *Server) adminAuditExport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_filter", err.Error())
 		return
 	}
-	// An export is not a page: it carries the whole filtered result, up to a
-	// bound that keeps one request from reading a year of rows into memory.
-	filter.Limit, filter.Offset = 5000, 0
-	page, err := s.store.AuditTrail(r.Context(), filter)
-	if err != nil {
-		writeStoreError(w, err)
-		return
-	}
-	u, _ := userFromContext(r.Context())
-	s.store.Audit(r.Context(), &u, "admin.audit.export", "audit", "", "success", clientIP(r),
-		map[string]any{"rows": len(page.Items), "total": page.Total})
+	// An export is not a page: it carries the whole filtered result, read a page
+	// at a time so a year of rows never sits in memory at once. If it does have
+	// to stop, the file says so — a compliance review reads the file, not the
+	// server's idea of how big it should have been.
+	filter.Limit, filter.Offset = 0, 0
+	var written, total int
+	var walkErr error
 	writeCSV(w, fmt.Sprintf("agenthub-audit-%s.csv", time.Now().UTC().Format("20060102")),
 		[]string{"시각", "수행자", "동작", "대상유형", "대상ID", "결과", "IP", "상세"},
 		func(out *csv.Writer) {
-			for _, item := range page.Items {
+			written, total, walkErr = s.store.AuditTrailEach(r.Context(), filter, store.AuditExportCeiling, func(item map[string]any) error {
 				details, _ := json.Marshal(item["details"])
-				_ = out.Write([]string{
+				return out.Write([]string{
 					text(item["occurredAt"]), text(item["actor"]), text(item["action"]),
 					text(item["resourceType"]), text(item["resourceId"]), text(item["outcome"]),
 					text(item["ipAddress"]), string(details),
 				})
+			})
+			if notice := exportNotice(written, total, walkErr); notice != "" {
+				_ = out.Write(noticeRow(notice, 8))
 			}
 		})
+	u, _ := userFromContext(r.Context())
+	outcome := "success"
+	if walkErr != nil || written < total {
+		outcome = "partial"
+	}
+	s.store.Audit(context.WithoutCancel(r.Context()), &u, "admin.audit.export", "audit", "", outcome, clientIP(r),
+		map[string]any{"rows": written, "total": total, "complete": walkErr == nil && written == total})
+}
+
+// exportNotice is the last row of a file that is not the whole answer.
+//
+// A download that stops has no status code left to fail with and no page footer
+// to put a warning in, so the warning goes where the person is looking: the
+// bottom of the spreadsheet. Saying nothing is what made the old export
+// dangerous — a hundred rows of a two-thousand-row trail look exactly like a
+// complete file.
+// noticeRow pads the warning out to the width of the file.
+//
+// A row with one cell in an eight-column file is not CSV any more: Excel shrugs,
+// and everything that parses strictly — the spreadsheet's own importer, a script,
+// this platform's own check — rejects the file outright. A truncated export that
+// cannot be opened is a worse answer than a truncated one that can.
+func noticeRow(message string, width int) []string {
+	row := make([]string, width)
+	row[0] = message
+	return row
+}
+
+func exportNotice(written, total int, err error) string {
+	switch {
+	case err != nil:
+		return fmt.Sprintf("이 파일은 완전하지 않습니다 — %d건까지 기록한 뒤 오류로 중단됐습니다(%v). 조건을 좁혀 다시 받으세요.", written, err)
+	case written < total:
+		return fmt.Sprintf("이 파일은 %d건에서 잘렸습니다 — 조건에 맞는 기록은 %d건입니다. 기간이나 조건을 좁혀 나눠 받으세요.", written, total)
+	default:
+		return ""
+	}
 }
 
 // writeCSV streams a download with a UTF-8 BOM.
@@ -280,7 +324,10 @@ func text(value any) string {
 	case string:
 		return typed
 	case time.Time:
-		return typed.Format(time.RFC3339)
+		// Milliseconds, because a trail is read to establish an order and RFC3339
+		// alone rounds to the second: eighty-six rows of this deployment's
+		// nineteen hundred are distinct events that printed as identical lines.
+		return typed.Format("2006-01-02T15:04:05.000Z07:00")
 	default:
 		return fmt.Sprint(typed)
 	}

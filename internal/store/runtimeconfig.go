@@ -69,9 +69,7 @@ func (s *Store) RuntimeConfigReportByRuntime(ctx context.Context, runtimeID stri
 // RuntimeConfigReports lists the reports for every runtime that has one, newest
 // first, so an operator can see the fleet rather than one Pod.
 func (s *Store) RuntimeConfigReports(ctx context.Context, limit int) ([]RuntimeConfigReport, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 200
-	}
+	limit = clampLimit(limit, 200, 500)
 	rows, err := s.pool.Query(ctx, `SELECT runtime_id,agent_id,runtime_type,fingerprint,status,detail,file,keys,reported_at
 		FROM runtime_config_reports ORDER BY reported_at DESC LIMIT $1`, limit)
 	if err != nil {

@@ -1306,6 +1306,56 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Asking for more, getting less
+
+Every list in the store has a ceiling, and every one of them wrote the ceiling
+the same way:
+
+```go
+if limit <= 0 || limit > 200 {
+	limit = 50
+}
+```
+
+Read it as a caller: `?limit=1000` returns fifty rows. Asking for two hundred
+returns two hundred. Asking for more than is allowed is answered with fewer rows
+than asking for the maximum, and nothing in the response says the number was
+ignored — a script paging by a large limit sees a fraction of a table and has
+every reason to believe it is the whole of it. Ten lists had it, identical, which
+is what a copied line looks like.
+
+Too many now means the most that is allowed. The ceiling still does its job; it
+is applied as a ceiling instead of as a penalty, and a guard fails the eleventh
+list that clamps by hand.
+
+## An export that stopped at a hundred
+
+The trap above had already caught something. The audit CSV asked for five
+thousand rows; the store saw a number above its page ceiling and reset it to the
+default hundred. On this deployment that meant an auditor downloading a
+compliance trail with nineteen hundred entries received a hundred lines, in a
+file with nothing in it to say so — and the audit record the export wrote about
+itself had both numbers side by side:
+
+```
+{"rows": 100, "total": 1948}
+```
+
+Neither half is wrong on its own, which is why reading the code did not find it
+and asking the running deployment did.
+
+An export is not a page. It reads a page at a time, so a year of rows never sits
+in memory, and keeps its place by `(occurred_at, id)` rather than by offset —
+an offset would skip or repeat rows as new events land at the top of a descending
+order while the walk runs. The same call carries the whole bill in the usage
+export, which had been handing back the top two hundred agents.
+
+If an export does have to stop, the file says so on its last row, padded to the
+file's width: a one-cell row in an eight-column file is not CSV any more, and
+everything that parses strictly rejects it exactly when somebody needs to read
+it. That was found by breaking the fix and watching the check fail for the wrong
+reason.
+
 ## The spec write that lost to a phase change
 
 The Secret is not the only object with two authors. The runtime's own

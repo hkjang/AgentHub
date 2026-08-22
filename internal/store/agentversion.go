@@ -91,9 +91,7 @@ func agentSystemPromptFromSpec(spec json.RawMessage) string {
 // AgentVersions lists the saved definitions, newest first, with the evaluation
 // each version earned.
 func (s *Store) AgentVersions(ctx context.Context, agentID string, limit int) ([]AgentVersion, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
+	limit = clampLimit(limit, 50, 200)
 	rows, err := s.pool.Query(ctx, `SELECT v.agent_id, v.version, v.name, v.description, v.runtime_profile_id,
 			v.runtime_image_id, v.model_endpoint_id, v.mcp_bundle_id, v.workspace_id, v.system_prompt, v.spec,
 			v.note, v.created_by, v.created_at,
