@@ -31,6 +31,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/client-go/util/exec"
+	"k8s.io/client-go/util/retry"
 
 	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
@@ -503,6 +504,44 @@ func (k *KubernetesSpawner) Start(ctx context.Context, spec Spec) error {
 func (k *KubernetesSpawner) Stop(ctx context.Context, spec Spec) error {
 	return k.setDesired(ctx, spec, "Stopped")
 }
+
+// updateRuntimeObject rewrites a runtime's object and does not give up because
+// somebody else touched it first.
+//
+// The object has two writers. The control plane owns the spec — start, stop,
+// restart, and the platform-wide environment push — and the operator owns the
+// status, which it rewrites whenever a Pod changes phase. Kubernetes counts a
+// status write as a change to the object, so a spec write carrying the version
+// that was read a moment earlier is refused:
+//
+//	both read resourceVersion 2409596
+//	  operator writes status: ok
+//	  control plane writes the spec: 409 the object has been modified
+//
+// That was checked against a real API server, and it is not a rare corner: the
+// environment push walks every runtime at once, and a person pressing start is
+// most likely to do it while the phase is moving. A refusal cost them the whole
+// action — the setting reported as failed for that runtime and silently never
+// reached the Pod, or the start button returned an error.
+//
+// A conflict means the read was stale, nothing more, so the read is taken again
+// and the change reapplied to what is there now.
+func updateRuntimeObject(ctx context.Context, client dynamic.Interface, namespace, name string, apply func(*unstructured.Unstructured) error) (*unstructured.Unstructured, error) {
+	var stored *unstructured.Unstructured
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		object, err := client.Resource(runtimeGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if err := apply(object); err != nil {
+			return err
+		}
+		stored, err = client.Resource(runtimeGVR).Namespace(namespace).Update(ctx, object, metav1.UpdateOptions{})
+		return err
+	})
+	return stored, err
+}
+
 func (k *KubernetesSpawner) Restart(ctx context.Context, spec Spec) error {
 	ensureCRDName(&spec)
 	if spec.Runtime.CRDName == "" {
@@ -519,22 +558,20 @@ func (k *KubernetesSpawner) Restart(ctx context.Context, spec Spec) error {
 	if coreClient != nil {
 		_ = k.ensureSecret(ctx, coreClient, namespace, spec)
 	}
-	object, err := client.Resource(runtimeGVR).Namespace(namespace).Get(ctx, spec.Runtime.CRDName, metav1.GetOptions{})
+	_, err = updateRuntimeObject(ctx, client, namespace, spec.Runtime.CRDName, func(object *unstructured.Unstructured) error {
+		fresh := k.object(spec)
+		object.Object["spec"] = fresh.Object["spec"]
+		if object.GetAnnotations() == nil {
+			object.SetAnnotations(map[string]string{})
+		}
+		annotations := object.GetAnnotations()
+		annotations["agenthub.io/restarted-at"] = time.Now().UTC().Format(time.RFC3339Nano)
+		object.SetAnnotations(annotations)
+		return nil
+	})
 	if apierrors.IsNotFound(err) {
 		return k.Spawn(ctx, spec)
 	}
-	if err != nil {
-		return err
-	}
-	fresh := k.object(spec)
-	object.Object["spec"] = fresh.Object["spec"]
-	if object.GetAnnotations() == nil {
-		object.SetAnnotations(map[string]string{})
-	}
-	annotations := object.GetAnnotations()
-	annotations["agenthub.io/restarted-at"] = time.Now().UTC().Format(time.RFC3339Nano)
-	object.SetAnnotations(annotations)
-	_, err = client.Resource(runtimeGVR).Namespace(namespace).Update(ctx, object, metav1.UpdateOptions{})
 	return err
 }
 
@@ -559,21 +596,16 @@ func (k *KubernetesSpawner) Sync(ctx context.Context, spec Spec) error {
 	if namespace == "" {
 		namespace = "agent-runtime-dev"
 	}
-	object, err := client.Resource(runtimeGVR).Namespace(namespace).Get(ctx, spec.Runtime.CRDName, metav1.GetOptions{})
+	stored, err := updateRuntimeObject(ctx, client, namespace, spec.Runtime.CRDName, func(object *unstructured.Unstructured) error {
+		return syncSpec(object, k.object(spec))
+	})
 	if apierrors.IsNotFound(err) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if err := syncSpec(object, k.object(spec)); err != nil {
-		return err
-	}
 	sent := k.object(spec)
-	stored, err := client.Resource(runtimeGVR).Namespace(namespace).Update(ctx, object, metav1.UpdateOptions{})
-	if err != nil {
-		return err
-	}
 	k.reportPruned(spec, sent, stored)
 	// The API server prunes fields a CRD's schema does not declare, without
 	// saying so. Checking what came back costs nothing — Update already returns
@@ -725,22 +757,17 @@ func (k *KubernetesSpawner) setDesired(ctx context.Context, spec Spec, state str
 	if state == "Running" && coreClient != nil {
 		_ = k.ensureSecret(ctx, coreClient, namespace, spec)
 	}
-	object, err := client.Resource(runtimeGVR).Namespace(namespace).Get(ctx, spec.Runtime.CRDName, metav1.GetOptions{})
+	_, err = updateRuntimeObject(ctx, client, namespace, spec.Runtime.CRDName, func(object *unstructured.Unstructured) error {
+		fresh := k.object(spec)
+		object.Object["spec"] = fresh.Object["spec"]
+		return unstructured.SetNestedField(object.Object, state, "spec", "lifecycle", "desiredState")
+	})
 	if apierrors.IsNotFound(err) {
 		if state == "Running" {
 			return k.Spawn(ctx, spec)
 		}
 		return nil
 	}
-	if err != nil {
-		return err
-	}
-	fresh := k.object(spec)
-	object.Object["spec"] = fresh.Object["spec"]
-	if err := unstructured.SetNestedField(object.Object, state, "spec", "lifecycle", "desiredState"); err != nil {
-		return err
-	}
-	_, err = client.Resource(runtimeGVR).Namespace(namespace).Update(ctx, object, metav1.UpdateOptions{})
 	return err
 }
 func (k *KubernetesSpawner) Status(ctx context.Context, spec Spec) (Status, error) {

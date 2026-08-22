@@ -1306,6 +1306,34 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## The spec write that lost to a phase change
+
+The Secret is not the only object with two authors. The runtime's own
+`AgentRuntime` has them too — the control plane owns the spec (start, stop,
+restart, and the platform-wide environment push) and the operator owns the
+status, which it rewrites whenever a Pod changes phase.
+
+Kubernetes keeps one resource version for both, so a status write is a change to
+the object, and a spec write carrying the version read a moment earlier is
+refused. Against a real API server:
+
+```
+both read resourceVersion 2409596
+  operator writes status: ok
+  control plane writes the spec: 409 the object has been modified
+```
+
+Unlike the Secret, this one cannot be fixed by dividing the object up — the two
+already write different halves, and the conflict is on the version, not the
+content. What it needed instead was to not give up: a conflict means the read was
+stale and nothing more, so the read is taken again and the change reapplied.
+
+It was worth fixing because of when it happened. The environment push walks every
+runtime at once, so an administrator saving a setting saw "N건 실패" for whichever
+runtimes were changing phase, and those Pods silently kept the old environment. A
+person pressing start is likeliest to press it exactly while the phase is moving,
+and got a Kubernetes error back.
+
 ## One Secret, two writers
 
 A runtime's Secret has two authors. The operator owns its metadata and rewrites it
