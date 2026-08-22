@@ -1306,6 +1306,27 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Reading the platform as somebody else
+
+Every list this platform serves is scoped by owner, and every one of those scopes
+is a WHERE clause somebody remembered to write. That kind of rule holds until a
+route is added in a hurry, and the failure is silent: the data looks perfectly
+ordinary to whoever it is shown to.
+
+So there is a check that reads the API as a second, ordinary person and looks for
+the first one's things — their agent, their task, the name of their personal
+secret. Twenty-two routes answer a stranger, and none of them contains any of it.
+It also insists the administrator's own screens refuse that person, because a list
+that is empty for the wrong reason is not isolation either.
+
+Proved against a build with the owner scope removed from one route: it names the
+route and what leaked out of it.
+
+The first version of the summary line was wrong in a way worth recording. It said
+"none visible" unconditionally, so a run that had just reported a leak signed off
+with a sentence saying there wasn't one — the same failure this codebase keeps
+finding elsewhere, written into the tool built to find it.
+
 ## A comment is not a test
 
 The platform holds several kinds of secret — a person's own, a model endpoint's

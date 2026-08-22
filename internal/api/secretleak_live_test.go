@@ -123,11 +123,13 @@ type apiClient struct {
 }
 
 func login(t *testing.T, base string) *apiClient {
+	return loginAs(t, base, os.Getenv("AGENTHUB_TEST_USER"), os.Getenv("AGENTHUB_TEST_PASSWORD"))
+}
+
+func loginAs(t *testing.T, base, username, password string) *apiClient {
 	t.Helper()
 	client := &apiClient{base: base, http: &http.Client{Timeout: 30 * time.Second}}
-	payload, _ := json.Marshal(map[string]string{
-		"username": os.Getenv("AGENTHUB_TEST_USER"), "password": os.Getenv("AGENTHUB_TEST_PASSWORD"),
-	})
+	payload, _ := json.Marshal(map[string]string{"username": username, "password": password})
 	request, _ := http.NewRequest(http.MethodPost, base+"/api/v1/auth/login", strings.NewReader(string(payload)))
 	request.Header.Set("content-type", "application/json")
 	response, err := client.http.Do(request)
