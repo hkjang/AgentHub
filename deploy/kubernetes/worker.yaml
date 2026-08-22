@@ -24,7 +24,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: worker
-          image: agenthub:v0.92.0
+          image: agenthub:v0.93.0
           imagePullPolicy: IfNotPresent
           command: [/app/agenthub-worker]
           envFrom:
