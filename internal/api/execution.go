@@ -539,11 +539,19 @@ func (s *Server) task(w http.ResponseWriter, r *http.Request) {
 func (s *Server) cancelTask(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	id := chi.URLParam(r, "id")
-	if err := s.store.CancelAgentTask(r.Context(), id, u.ID); err != nil {
+	delegated, err := s.store.CancelAgentTask(r.Context(), id, u.ID)
+	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	s.store.Audit(r.Context(), &u, "task.cancel", "task", id, "success", clientIP(r), nil)
+	// Saying how much was stopped, because "cancelled" on a task that had handed
+	// three sub-tasks to other agents used to mean one of the four.
+	s.store.Audit(r.Context(), &u, "task.cancel", "task", id, "success", clientIP(r), map[string]any{"delegated": delegated})
+	if delegated > 0 {
+		s.logger.Info("task cancelled with its delegated work", "task", id, "delegated", delegated)
+		writeJSON(w, http.StatusOK, map[string]any{"cancelled": 1 + delegated, "delegated": delegated})
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -3,7 +3,7 @@ import { AlertTriangle, Bot, Check, ClipboardList, Clock3, Coins, ExternalLink, 
 import { api } from '../api'
 import { useAuth } from '../App'
 import { Link } from 'react-router-dom'
-import { ConfirmDialog, Drawer, Empty, ErrorBanner, GuideLegend, GuidePanel, Loading, PageHeader, StatusBadge, statusLabel, useEscape } from '../components/UI'
+import { ConfirmDialog, Drawer, Empty, ErrorBanner, GuideLegend, GuidePanel, Loading, PageHeader, StatusBadge, SuccessBanner, statusLabel, useEscape } from '../components/UI'
 import { useTerms } from '../viewmode'
 import { relativeTime, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
 import { metering as meteringOf } from '../metering'
@@ -57,6 +57,7 @@ export function Tasks() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [queue, setQueue] = useState<QueueSnapshot>()
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [filter, setFilter] = useState('')
   const [creating, setCreating] = useState(false)
   const [openRun, setOpenRun] = useState<string | null>(null)
@@ -105,8 +106,9 @@ export function Tasks() {
     if (!cancelling) return
     setBusy(true)
     try {
-      await api.post(`/api/v1/tasks/${cancelling.id}/cancel`)
+      const result = await api.post<{ delegated?: number }>(`/api/v1/tasks/${cancelling.id}/cancel`)
       setCancelling(null)
+      if (result?.delegated) setNotice(`위임한 작업 ${result.delegated}건도 함께 취소했습니다.`)
       await load()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Task를 취소하지 못했습니다.')
@@ -166,6 +168,7 @@ export function Tasks() {
         <button className="button primary" disabled={agents.length === 0} onClick={() => setCreating(true)}><Plus size={16} />새 작업</button>
       </>} />
     {error && <ErrorBanner message={error} onClose={() => setError('')} />}
+    {notice && <SuccessBanner message={notice} />}
     {/* A queue that stops moving with no explanation is indistinguishable from a
         broken one, and the people waiting are not administrators. */}
     {capabilities.executionPaused && <div className="alert warning">
@@ -255,7 +258,11 @@ export function Tasks() {
     {creating && <CreateTaskDrawer agents={agents} close={() => setCreating(false)} done={() => { setCreating(false); void load() }} />}
     {openRun && <RunDrawer runId={openRun} close={() => setOpenRun(null)} />}
     {cancelling && <ConfirmDialog title="작업을 취소할까요?"
-      message={<><strong>{cancelling.title}</strong> 작업이 취소됩니다. 이미 실행 중인 단계는 마무리된 뒤 중단됩니다.</>}
+      /* It used to say the step finishes and the task stops, and stopped there.
+         Two things were missing: the run is actually interrupted now, and the
+         sub-tasks this one handed to other agents stop with it. */
+      message={<><strong>{cancelling.title}</strong> 작업이 취소됩니다. 실행 중이면 워커가 몇 초 안에 알아채고 중단하며, 이미 시작된 모델 호출이나 도구 실행은 그 호출이 끝나는 시점까지 진행될 수 있습니다.<br/>
+        이 작업이 다른 에이전트에게 위임한 작업 중 <strong>아직 끝나지 않은 것도 함께 취소</strong> 됩니다.</>}
       confirmLabel="취소하기" busy={busy}
       onConfirm={() => void cancel()} onCancel={() => setCancelling(null)} />}
   </div>

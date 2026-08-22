@@ -1306,6 +1306,25 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Cancelling a goal that had been handed out
+
+An agent that delegates part of its goal creates a task of its own, tracked
+separately. That is the right way to run delegated work and the wrong way to stop
+it: cancelling the parent left every delegated child running — spending the same
+person's budget, changing whatever it was going to change, for a goal that had
+been called off. The relationship is recorded and the descendants are one
+recursive query away; nothing asked for them.
+
+A cancellation now reaches the whole unfinished tree, at any depth, and says how
+many tasks it stopped rather than leaving somebody to count. Work that already
+finished is left alone: it is history, and a cancellation is not a reason to
+rewrite it. The ownership check applies to the descendants too, not only to the
+task somebody named.
+
+It composes with the release before it: cancelling the parent marks a running
+child cancelled, and that child's own worker notices within a lease interval and
+stops it.
+
 ## Cancel did not cancel
 
 Cancelling a running task marked the row cancelled and cleared the claim. The run

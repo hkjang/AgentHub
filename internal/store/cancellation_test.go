@@ -53,8 +53,19 @@ func TestACancelledTaskStopsAndStaysCancelled(t *testing.T) {
 		t.Error("a failed lease extension is treated as a lost claim; a moment's connection trouble would abandon the work")
 	}
 	execute := functionText(t, string(worker), "func (w *Worker) execute(")
-	if !strings.Contains(execute, "go w.keepClaim(heartbeat, task.ID, stopRun)") {
+	// What matters is that the watcher can stop the run and that the worker can
+	// tell afterwards why it stopped — not the exact shape of the call. This
+	// asserted the literal `keepClaim(heartbeat, task.ID, stopRun)` and went red
+	// the moment that argument became a closure, which is a guard failing over its
+	// own wording rather than over the thing it guards.
+	if !strings.Contains(execute, "keepClaim(heartbeat, task.ID,") {
+		t.Error("the watcher is not given the task to watch")
+	}
+	if !strings.Contains(execute, "stopRun()") {
 		t.Error("the run's cancel is not handed to the watcher, so nothing can stop the run")
+	}
+	if !strings.Contains(execute, "claimLost.Store(true)") || !strings.Contains(execute, "claimLost.Load()") {
+		t.Error("the worker cannot tell a cancellation from the error the run died with; it would file one as a failure and retry it")
 	}
 	if !strings.Contains(execute, "ctx = run") {
 		t.Error("the run does not use the cancellable context; stopping it would stop nothing")
@@ -112,5 +123,37 @@ func TestNothingDragsACancelledTaskBack(t *testing.T) {
 				t.Errorf("%s can move a cancelled task back out; the work somebody stopped starts again", name)
 			}
 		}
+	}
+}
+
+// Cancelling a task has to stop the work it handed to other agents.
+//
+// An agent that delegates part of its goal creates a task of its own, tracked
+// separately — the right way to run it and the wrong way to stop it. Cancelling
+// the parent left every delegated child running: spending the same person's
+// budget, changing whatever it was going to change, for a goal that had been
+// called off. The relationship is recorded and the descendants are one query away.
+func TestCancellingATaskStopsWhatItDelegated(t *testing.T) {
+	body, err := os.ReadFile("execution.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel := functionText(t, string(body), "func (s *Store) CancelAgentTask(")
+	if !strings.Contains(cancel, "RECURSIVE") || !strings.Contains(cancel, "parent_task_id") {
+		t.Error("cancelling a task does not reach the tasks it delegated; they run on for a goal that was called off")
+	}
+	// Finished work is history and a cancellation is not a reason to rewrite it.
+	if !strings.Contains(cancel, "'completed','cancelled','dead_letter','failed'") {
+		t.Error("the cascade does not exclude work that already finished; a cancellation would rewrite history")
+	}
+	// The owner check has to hold for the descendants too, not only the task the
+	// person named.
+	if strings.Count(cancel, "owner_id=$2") < 2 {
+		t.Error("the cascade does not check ownership; a delegated task belonging to somebody else could be cancelled")
+	}
+	// And the count is reported, because "cancelled" on a task that delegated three
+	// sub-tasks used to mean one of the four.
+	if !strings.Contains(cancel, "(int, error)") {
+		t.Error("the cancellation does not report how much it stopped")
 	}
 }

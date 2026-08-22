@@ -770,17 +770,42 @@ func retryRefusal(status string) string {
 	return "지금 상태(" + status + ")에서는 다시 실행할 수 없습니다."
 }
 
-// CancelAgentTask stops a task that has not reached a terminal state.
-func (s *Store) CancelAgentTask(ctx context.Context, taskID, ownerID string) error {
+// CancelAgentTask stops a task that has not reached a terminal state, and the
+// unfinished work it delegated, and reports how many of those there were.
+//
+// An agent that hands part of its goal to another agent creates a task of its own
+// — tracked separately, which is the right way to run it and the wrong way to stop
+// it. Cancelling the parent left every delegated child running: still spending the
+// same person's budget, still changing whatever it was going to change, on behalf
+// of a goal that had been called off. The delegation is recorded, the descendants
+// are one query away, and nothing asked.
+//
+// Only unfinished descendants are touched. A child that already completed is
+// history, and a cancellation is not a reason to rewrite it.
+func (s *Store) CancelAgentTask(ctx context.Context, taskID, ownerID string) (int, error) {
 	tag, err := s.pool.Exec(ctx, `UPDATE agent_tasks SET status='cancelled',claimed_by='',claimed_until=NULL,updated_at=now()
 		WHERE id=$1 AND owner_id=$2 AND status NOT IN ('completed','cancelled','dead_letter')`, taskID, ownerID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+		return 0, ErrNotFound
 	}
-	return nil
+	descendants, err := s.pool.Exec(ctx, `
+		WITH RECURSIVE tree AS (
+			SELECT id, 0 AS depth FROM agent_tasks WHERE id=$1
+			UNION ALL
+			SELECT t.id, tree.depth+1 FROM agent_tasks t JOIN tree ON t.parent_task_id = tree.id
+			WHERE tree.depth < 20
+		)
+		UPDATE agent_tasks SET status='cancelled',claimed_by='',claimed_until=NULL,updated_at=now()
+		WHERE id IN (SELECT id FROM tree WHERE depth > 0)
+		  AND owner_id=$2
+		  AND status NOT IN ('completed','cancelled','dead_letter','failed')`, taskID, ownerID)
+	if err != nil {
+		return 0, err
+	}
+	return int(descendants.RowsAffected()), nil
 }
 
 // RunningRunsForAgent counts in-flight runs, which is what the concurrency
