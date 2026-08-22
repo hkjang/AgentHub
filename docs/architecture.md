@@ -1306,6 +1306,24 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## A list of dependencies cannot report the one that is not there
+
+The readiness screen asked each configured model endpoint and each configured MCP
+server how it was. That answers every question except "there aren't any", which is
+the state a new deployment is in — and with no model endpoint enabled, every
+prose, flow and investigation agent fails the moment it calls a model, while the
+screen reported no problems at all.
+
+The worker is the same shape and worse, because nothing else notices either. A
+control plane with no worker looks healthy from every angle: the console answers,
+agents save, tasks queue — and nothing ever claims one. It is the most common way
+a first deployment stalls, and the screen built to answer "what is wrong with this
+deployment" had no row for it.
+
+Both absences are reported now, along with a paused execution plane: pausing is a
+decision rather than a fault, but it is also the answer to "why is nothing
+running", which is what somebody opening this screen is asking.
+
 ## Two tables that nothing ever deleted from
 
 Retention is off until an administrator chooses a number, which is right: deleting

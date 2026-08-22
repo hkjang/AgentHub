@@ -1,11 +1,14 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
+	"github.com/hkjang/AgentHub/internal/store"
 )
 
 // One place to ask everything the deployment depends on.
@@ -106,6 +109,21 @@ func (s *Server) readiness(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
+		enabled := 0
+		for _, endpoint := range endpoints {
+			if endpoint.Enabled {
+				enabled++
+			}
+		}
+		if enabled == 0 {
+			// The absence of a dependency is the one state a loop over dependencies
+			// cannot report, and it is the state a new deployment is in. Every prose,
+			// flow and investigation agent calls a model; with none configured the
+			// queue fills and every task fails, and this screen said nothing at all.
+			add(readinessItem{Area: "모델", Name: "모델 엔드포인트", Verdict: "unconfigured",
+				Detail: "사용 가능한 모델 엔드포인트가 없습니다. 에이전트가 모델을 호출하는 순간 모든 작업이 실패합니다.", Fix: "/admin/models"})
+			return
+		}
 		for _, endpoint := range endpoints {
 			if !endpoint.Enabled {
 				continue
@@ -117,6 +135,34 @@ func (s *Server) readiness(w http.ResponseWriter, r *http.Request) {
 			verdict, detail, _ := s.askModelEndpoint(r, endpoint.BaseURL, key, endpoint.DefaultModel)
 			add(readinessItem{Area: "모델", Name: endpoint.Name, Verdict: verdict, Detail: detail, Fix: "/admin/models"})
 		}
+	})
+
+	// The execution plane. A control plane with no worker looks perfectly healthy
+	// from the outside: the console answers, agents save, tasks queue — and nothing
+	// ever claims one. It is the most common way a first deployment stalls, and
+	// every screen that could have said so was reporting on something else.
+	run(func() {
+		workers, err := s.store.LiveWorkers(r.Context())
+		if err != nil {
+			add(readinessItem{Area: "실행", Name: "워커", Verdict: "unknown",
+				Detail: "워커 상태를 확인하지 못했습니다: " + shortError(err.Error()), Fix: "/admin/execution"})
+			return
+		}
+		if workers == 0 {
+			add(readinessItem{Area: "실행", Name: "워커", Verdict: "none",
+				Detail: "실행 중인 워커가 없습니다. 작업이 큐에 쌓이기만 하고 아무도 가져가지 않습니다.", Fix: "/admin/execution"})
+			return
+		}
+		detail := fmt.Sprintf("워커 %d대가 작업을 가져가고 있습니다.", workers)
+		var operations store.OperationsSettings
+		if err := s.store.Setting(r.Context(), store.OperationsSettingKey, &operations); err == nil && operations.Paused {
+			// Paused is somebody's decision rather than a fault, and it is also the
+			// answer to "why is nothing running", which is what this list is for.
+			add(readinessItem{Area: "실행", Name: "워커", Verdict: "paused",
+				Detail: "실행이 일시 중지되어 있습니다" + pauseReason(operations) + ". " + detail, Fix: "/admin/execution"})
+			return
+		}
+		add(readinessItem{Area: "실행", Name: "워커", Verdict: "ok", Detail: detail, Fix: "/admin/execution"})
 	})
 
 	// Shared MCP servers. The ones that run inside a runtime Pod answer
@@ -164,8 +210,20 @@ func readinessRank(area string) int {
 		return 1
 	case "모델":
 		return 2
+	case "실행":
+		return 3
 	}
-	return 3
+	return 4
+}
+
+// pauseReason repeats the sentence somebody typed when they paused, because "실행이
+// 일시 중지되어 있습니다" without it is the same unexplained stop the pause screen
+// exists to avoid.
+func pauseReason(operations store.OperationsSettings) string {
+	if strings.TrimSpace(operations.Reason) == "" {
+		return ""
+	}
+	return " — " + operations.Reason
 }
 
 func missingPermissions(result appRuntime.ClusterCheck) []string {
