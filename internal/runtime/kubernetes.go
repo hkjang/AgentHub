@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -155,7 +157,7 @@ func (k *KubernetesSpawner) object(spec Spec) *unstructured.Unstructured {
 	object := map[string]any{
 		"apiVersion": "agenthub.io/v1alpha1", "kind": "AgentRuntime",
 		"metadata": map[string]any{"name": spec.Runtime.CRDName, "labels": map[string]any{"app.kubernetes.io/managed-by": "agenthub", "agenthub.io/owner": labelValue(spec.Agent.OwnerID), "agenthub.io/agent": labelValue(spec.Agent.ID)}},
-		"spec": map[string]any{"owner": spec.Agent.OwnerID, "agentRef": map[string]any{"id": spec.Agent.ID, "version": int64(spec.Agent.Version)}, "runtimeRef": map[string]any{"id": spec.Runtime.ID}, "runtime": runtimeObject(spec, image), "profile": profile, "workspace": map[string]any{"type": spec.WorkspaceType, "pvcName": spec.WorkspacePVC, "sizeGb": int64(workspaceSize), "repositoryUrl": spec.WorkspaceRepositoryURL, "branch": spec.WorkspaceBranch, "snapshotName": spec.WorkspaceSnapshot, "gitCredentialKind": spec.WorkspaceGitCredentialKind, "gitCredentialUsername": spec.WorkspaceGitCredentialUsername}, "model": map[string]any{"baseUrl": spec.ModelBaseURL, "name": spec.ModelName, "secretRef": spec.Runtime.CRDName}, "mcp": bindings,
+		"spec": map[string]any{"owner": spec.Agent.OwnerID, "agentRef": map[string]any{"id": spec.Agent.ID, "version": int64(spec.Agent.Version)}, "runtimeRef": map[string]any{"id": spec.Runtime.ID}, "runtime": runtimeObject(spec, image), "profile": profile, "workspace": map[string]any{"type": spec.WorkspaceType, "pvcName": spec.WorkspacePVC, "sizeGb": int64(workspaceSize), "repositoryUrl": spec.WorkspaceRepositoryURL, "branch": spec.WorkspaceBranch, "snapshotName": spec.WorkspaceSnapshot, "gitCredentialKind": spec.WorkspaceGitCredentialKind, "gitCredentialUsername": spec.WorkspaceGitCredentialUsername}, "model": map[string]any{"baseUrl": spec.ModelBaseURL, "name": spec.ModelName, "secretRef": spec.Runtime.CRDName, "credentialsFingerprint": credentialFingerprint(spec)}, "mcp": bindings,
 			"security":  map[string]any{"runAsNonRoot": spec.Security.RunAsNonRoot, "readOnlyRootFilesystem": spec.Security.ReadOnlyRootFilesystem, "allowPrivilegeEscalation": spec.Security.AllowPrivilegeEscalation, "automountServiceAccountToken": spec.Security.AutomountServiceAccountToken, "seccompProfile": spec.Security.SeccompProfile, "clusterRead": spec.Security.ClusterRead},
 			"network":   map[string]any{"defaultDeny": spec.Network.DefaultDeny, "allowDNS": spec.Network.AllowDNS, "allowedDestinations": spec.Network.AllowedDestinations},
 			"lifecycle": map[string]any{"desiredState": "Running", "autoRestart": true, "idleTimeoutSeconds": int64(spec.Profile.IdleTimeoutSeconds)}}}
@@ -303,6 +305,38 @@ func mcpCredentialKey(serverName string) string {
 // runtimeCredentialData collects every credential that belongs in the runtime
 // Secret: the workspace clone credential and one entry per authenticated MCP
 // server. None of these may appear in the CRD or the ConfigMap.
+// credentialFingerprint identifies the credentials this runtime is meant to be
+// using, without putting any of them in the CRD.
+//
+// The Secret is updated in place when a model key is rotated or an MCP
+// credential changes, and nothing about the Pod changes with it: the values
+// arrive as environment variables and files that the agent process read once at
+// start. So the platform reported the rotation done while every running runtime
+// went on using the credential that had just been revoked — and the new one only
+// took effect whenever the Pod next happened to restart, which might be never.
+//
+// The fingerprint travels in the spec, the operator folds it into the Pod's
+// config hash, and a changed credential rolls the Pod exactly as a changed
+// setting does. Only the hash crosses the boundary; the credentials stay in the
+// Secret where they belong.
+func credentialFingerprint(spec Spec) string {
+	data := runtimeCredentialData(spec)
+	keys := make([]string, 0, len(data))
+	for key := range data {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	sum := sha256.New()
+	sum.Write([]byte(spec.ModelAPIKey))
+	for _, key := range keys {
+		sum.Write([]byte{0})
+		sum.Write([]byte(key))
+		sum.Write([]byte{0})
+		sum.Write([]byte(data[key]))
+	}
+	return hex.EncodeToString(sum.Sum(nil))
+}
+
 func runtimeCredentialData(spec Spec) map[string]string {
 	data := map[string]string{}
 	if spec.WorkspaceGitCredential != "" {
@@ -403,6 +437,10 @@ func (k *KubernetesSpawner) Spawn(ctx context.Context, spec Spec) error {
 	// administrator declared.
 	if provisioningPruned(spec, stored) {
 		k.logger().Warn("the AgentRuntime CRD dropped the runtime environment; apply deploy/kubernetes/crd.yaml",
+			"runtime", spec.Runtime.CRDName)
+	}
+	if credentialFingerprintPruned(spec, stored) {
+		k.logger().Warn("the AgentRuntime CRD dropped the credential fingerprint; apply deploy/kubernetes/crd.yaml — until then a rotated model key or MCP credential will not reach a running runtime",
 			"runtime", spec.Runtime.CRDName)
 	}
 	return nil
@@ -535,6 +573,22 @@ func (k *KubernetesSpawner) Sync(ctx context.Context, spec Spec) error {
 
 // provisioningPruned reports whether the environment this spec carries survived
 // being written.
+// credentialFingerprintPruned reports that this cluster's CRD predates the
+// credential fingerprint, so the field was dropped on the way in.
+//
+// It matters more than the other pruned fields, because the symptom is not a
+// missing feature: a rotation appears to succeed and the running runtime keeps
+// the revoked credential. An operator who upgrades the control plane without
+// reapplying the CRD deserves to be told that in words rather than to find out
+// from a provider's audit log.
+func credentialFingerprintPruned(spec Spec, stored *unstructured.Unstructured) bool {
+	if credentialFingerprint(spec) == "" || stored == nil {
+		return false
+	}
+	value, found, err := unstructured.NestedString(stored.Object, "spec", "model", "credentialsFingerprint")
+	return err == nil && (!found || value == "")
+}
+
 func provisioningPruned(spec Spec, stored *unstructured.Unstructured) bool {
 	if provisioningObject(spec) == nil || stored == nil {
 		return false

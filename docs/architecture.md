@@ -1306,6 +1306,31 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## A rotated key that never reached the runtime
+
+Model API keys and MCP credentials live in the runtime's Secret. Rotating one
+updates that Secret in place, and nothing about the Pod changes with it — the
+values reach the agent as environment variables and files it read once at
+startup. So the platform reported the rotation done while every running runtime
+went on using the credential that had just been revoked, and the new one took
+effect whenever the Pod next happened to restart, which might be never.
+
+Everything else that changes a runtime's configuration already rolls the Pod: the
+operator fingerprints the generated config files and the runtime settings into an
+annotation, and a different fingerprint is a different Pod template. Credentials
+were the one thing outside that, because they are deliberately not in the CRD.
+
+A fingerprint of them is, now — a hash and nothing else, with the credentials
+staying in the Secret where they belong. The operator folds it into the same
+annotation, so a rotation rolls the Pod exactly as a changed setting does.
+
+Against a real API server, with the CRD as it stood before this change and the
+non-strict write the control plane actually makes: the object is accepted and
+comes back without the field. That is what an undeclared field does — it is pruned
+without a word — so a deployment that upgrades the control plane without
+reapplying the CRD would go on ignoring rotations with no sign of it anywhere. The
+control plane says so in the log now, naming the file to apply.
+
 ## Three stoppers, one question
 
 Three things on this platform stop a runtime that nobody asked them to stop: the

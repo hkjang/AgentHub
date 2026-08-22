@@ -100,6 +100,13 @@ spec:
                     baseUrl: {type: string}
                     name: {type: string}
                     secretRef: {type: string}
+                    # Identifies the credentials in the Secret without carrying any
+                    # of them, so that rotating a key changes the Pod template and
+                    # the running runtime picks the new one up. A field missing from
+                    # this schema is pruned by the API server before the operator
+                    # ever sees it, which is how a rotation would go on being
+                    # silently ignored.
+                    credentialsFingerprint: {type: string, maxLength: 64}
                 mcp:
                   type: array
                   items:

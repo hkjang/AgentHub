@@ -226,6 +226,12 @@ type spec struct {
 		BaseURL   string `json:"baseUrl"`
 		Name      string `json:"name"`
 		SecretRef string `json:"secretRef"`
+		// CredentialsFingerprint identifies the credentials in the Secret without
+		// carrying any of them. The Secret is updated in place when a key is
+		// rotated, which changes nothing about the Pod, so the process goes on
+		// using the value it read at startup. Folding this into the config hash is
+		// what makes a rotation reach a running runtime.
+		CredentialsFingerprint string `json:"credentialsFingerprint"`
 	} `json:"model"`
 	MCP []mcpBinding `json:"mcp"`
 	// Provisioning is the platform-wide runtime environment: the files every
@@ -1860,7 +1866,8 @@ func configHash(ns, name string, value spec) string {
 	// Pod. Qwen Paw's overlay never reaches the generated configs above, and an
 	// environment variable is not part of them either, so without this a saved
 	// setting would sit in the ConfigMap while the running Pod kept its old one.
-	material.WriteString(nodeREDSettings(value) + "\x00" + provisioningHash(value) + "\x00" + value.RuntimeSettings.Fingerprint)
+	material.WriteString(nodeREDSettings(value) + "\x00" + provisioningHash(value) + "\x00" + value.RuntimeSettings.Fingerprint +
+		"\x00" + value.Model.CredentialsFingerprint)
 	sum := sha256.Sum256([]byte(material.String()))
 	return hex.EncodeToString(sum[:])
 }
