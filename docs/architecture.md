@@ -1306,6 +1306,35 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## A volume that was never made bigger
+
+A workspace volume was created once and never looked at again. Raising the storage
+on a runtime profile, or on a workspace, changed the number on the screen and
+nothing in the cluster: the reconcile fetched the claim, saw that it existed, and
+returned. The setting saved, the volume stayed the size it was provisioned at, and
+whoever asked for more space found out when something ran out of it.
+
+It asks the cluster now, and only ever to grow. Kubernetes does not shrink a
+volume, so a smaller number is left alone and said out loud — it is a setting that
+will not take effect either, and silently attempting it would produce an error
+about the request rather than about the intention.
+
+Whether the cluster agrees is not this platform's to decide, and being told no is
+not a reason to fail a reconcile: the runtime runs, on the volume it has, and the
+cluster's own sentence is passed on rather than replaced.
+
+Two things about how this was built are worth keeping. The first implementation
+sent the whole claim back with `Update`, which a fake client accepted happily; a
+real API server answered "the object has been modified", because a claim's status
+changes while it binds and the version was already stale. It patches the storage
+request alone now, which carries no version and cannot conflict.
+
+Then the test asserted the refusal would mention resizing — and a real cluster
+refused for a different legitimate reason, that an unbound claim's spec is
+immutable until it binds. Which refusal arrives depends on the claim. The property
+worth checking is that the platform passes on whatever the cluster said, not that
+it said one particular thing.
+
 ## A definition is not a Goal, and now it says so
 
 An exported definition carries a definition. It does not carry the agent's Goal —

@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/dynamic"
@@ -1216,9 +1217,9 @@ func (c *Controller) ensureSecret(ctx context.Context, ns, name string, owner *u
 	return err
 }
 func (c *Controller) ensurePVC(ctx context.Context, ns, name string, value spec, owner *unstructured.Unstructured) error {
-	_, err := c.client.CoreV1().PersistentVolumeClaims(ns).Get(ctx, name, metav1.GetOptions{})
+	existing, err := c.client.CoreV1().PersistentVolumeClaims(ns).Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
-		return nil
+		return c.growPVC(ctx, ns, existing, value)
 	}
 	if !apierrors.IsNotFound(err) {
 		return err
@@ -1234,6 +1235,58 @@ func (c *Controller) ensurePVC(ctx context.Context, ns, name string, value spec,
 	}
 	_, err = c.client.CoreV1().PersistentVolumeClaims(ns).Create(ctx, desired, metav1.CreateOptions{})
 	return err
+}
+
+// growPVC applies a workspace that has been made bigger.
+//
+// A volume was created once and never looked at again: raising the storage on a
+// runtime profile, or on a workspace, changed the number on the screen and
+// nothing in the cluster. The setting saved, the volume stayed the size it was
+// provisioned at, and the person who asked for more space found out when
+// something ran out of it.
+//
+// Only larger. Kubernetes does not shrink a volume, and asking it to produces an
+// error about the request rather than about the intention — so a smaller number
+// is left alone and said out loud, since it too is a setting that will not take
+// effect.
+//
+// Expansion also depends on the storage class: a cluster whose provisioner does
+// not support resize refuses with a message naming exactly that, and the platform
+// passes it on rather than swallowing it. Failing to grow is not a reason to fail
+// the reconcile — the runtime runs, on the volume it has.
+func (c *Controller) growPVC(ctx context.Context, ns string, existing *corev1.PersistentVolumeClaim, value spec) error {
+	want := value.Workspace.SizeGB
+	if want <= 0 {
+		return nil
+	}
+	desired := apiresource.MustParse(strconv.FormatInt(want, 10) + "Gi")
+	current, ok := existing.Spec.Resources.Requests[corev1.ResourceStorage]
+	if !ok {
+		return nil
+	}
+	switch current.Cmp(desired) {
+	case 0:
+		return nil
+	case 1:
+		c.logger.Info("workspace volume is larger than the profile now asks for; a volume is never shrunk",
+			"pvc", existing.Name, "current", current.String(), "requested", desired.String())
+		return nil
+	}
+	// A patch rather than an update of the whole object. A claim's status changes
+	// while it binds, so sending the object back carries a resource version that is
+	// already stale — checked against a real API server, which answered "the object
+	// has been modified" and never got as far as considering the resize. A patch
+	// carries no version and cannot conflict.
+	patch := []byte(`{"spec":{"resources":{"requests":{"storage":"` + desired.String() + `"}}}}`)
+	if _, err := c.client.CoreV1().PersistentVolumeClaims(ns).Patch(ctx, existing.Name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+		// The storage class is the usual reason, and the API server's own sentence
+		// names it. Repeating it is more use than any wording of ours.
+		c.logger.Warn("workspace volume could not be grown; the runtime keeps the volume it has",
+			"pvc", existing.Name, "current", current.String(), "requested", desired.String(), "error", err)
+		return nil
+	}
+	c.logger.Info("workspace volume grown", "pvc", existing.Name, "from", current.String(), "to", desired.String())
+	return nil
 }
 
 // homePVCName is the per-runtime volume backing /home/agent. The adapters keep
