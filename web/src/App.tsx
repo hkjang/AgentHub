@@ -24,6 +24,7 @@ import { AdminUsers } from './pages/AdminUsers'
 import { AdminQuota } from './pages/AdminQuota'
 import { Snapshots } from './pages/Snapshots'
 import { Runs } from './pages/Runs'
+import { CodeReview } from './pages/CodeReview'
 import { MCPFabric } from './pages/MCPFabric'
 import { AdminSecurity } from './pages/AdminSecurity'
 import { Sessions } from './pages/Sessions'
@@ -85,6 +86,7 @@ export function App() {
         <Route path="workspaces" element={<Workspaces />} />
         <Route path="workspaces/snapshots" element={<Snapshots />} />
         <Route path="runs" element={<Runs />} />
+        <Route path="code-review" element={<CodeReview />} />
         <Route path="mcp/catalog" element={<MCPFabric view="catalog" />} />
         <Route path="mcp/bundles" element={<MCPFabric view="bundles" />} />
         <Route path="runtime" element={<Agents runtimeOnly />} />

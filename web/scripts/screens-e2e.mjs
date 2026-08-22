@@ -7,6 +7,7 @@
 // under all of them: sign in once, visit every route, and insist that each one
 // renders a heading, some content, no uncaught error and no 5xx.
 import { chromium } from 'playwright-core'
+import { readFile } from 'node:fs/promises'
 import { chromiumPath } from './browser.mjs'
 
 const baseURL = process.env.AGENTHUB_TEST_URL ?? 'http://localhost:18080'
@@ -14,12 +15,19 @@ const username = process.env.AGENTHUB_TEST_USER ?? 'admin'
 const password = process.env.AGENTHUB_TEST_PASSWORD ?? 'local-development-password'
 
 // Every route in App.tsx that a person can reach from the menu or the palette.
+//
+// The claim in that sentence used to be a comment, and a comment is not a check:
+// a screen added to App.tsx and forgotten here left the suite reporting that
+// every screen renders while one of them was never opened. The routes are read
+// out of App.tsx below and compared against this list.
 const screens = [
   ['/', /님, 안녕하세요/],
   ['/agents', /에이전트|작업대/],
   ['/catalog', /카탈로그/],
+  ['/agents/builder', /에이전트 빌더/],
   ['/tasks', /작업|일감/],
   ['/runs', /실행 기록|작업 일지/],
+  ['/code-review', /코드 리뷰/],
   ['/workflows', /워크플로/],
   ['/workspaces', /작업공간|자료/],
   ['/workspaces/snapshots', /스냅샷/],
@@ -53,6 +61,26 @@ const check = (label, ok, detail = '') => {
   console.log(`${ok ? '  ok  ' : ' FAIL '} ${label}${detail ? ` — ${detail}` : ''}`)
   if (!ok) problems.push(`${label}${detail ? `: ${detail}` : ''}`)
 }
+
+// The list above says it is every route. This is what makes that true.
+//
+// Routes nested under the shell are what a person reaches; the login route and
+// the catch-all are not screens. A route added to App.tsx and forgotten here
+// left this suite reporting that every screen renders while one was never
+// opened — which is exactly the kind of claim this codebase keeps turning into
+// a check.
+const appSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
+// A redirect is not a screen, and neither is a parameterised path this suite has
+// no id for; the index route is the dashboard at '/'.
+const declared = [...appSource.matchAll(/<Route (index|path="([^"]*)")[^>]*element=\{<([A-Za-z]+)/g)]
+  .filter((m) => m[3] !== 'Navigate')
+  .map((m) => (m[1] === 'index' ? '/' : `/${m[2]}`))
+  .filter((path) => !path.includes(':') && !path.includes('*'))
+const covered = new Set(screens.map(([route]) => route))
+const missing = declared.filter((path) => !covered.has(path))
+const stale = [...covered].filter((path) => !declared.includes(path))
+check('App.tsx의 모든 화면이 목록에 있음', missing.length === 0, missing.join(', ') || `${declared.length}개`)
+check('목록에 사라진 화면이 없음', stale.length === 0, stale.join(', '))
 
 const browser = await chromium.launch({ executablePath: chromiumPath(), headless: true, args: ['--no-sandbox'] })
 try {

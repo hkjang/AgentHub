@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent as Rea
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   Activity, Bell, Boxes, Bot, Braces, Building2, Check, ClipboardList, ChevronDown, ChevronRight, CircleUserRound, Command,
-  Database, FileClock, FileCode2, FileCog, Gauge, KeyRound, LayoutDashboard, Library, LockKeyhole, LogOut, Menu, Network,
+  Database, FileClock, FileCode2, FileCog, FileSearch, Gauge, KeyRound, LayoutDashboard, Library, LockKeyhole, LogOut, Menu, Network,
   ListChecks, Palette, Search, Settings, ShieldAlert, ShieldCheck, Sparkles, UsersRound, Workflow, X
 } from 'lucide-react'
 import { useAuth } from '../App'
@@ -33,7 +33,8 @@ const groups: NavGroup[] = [
     { to: '/runtime', label: '런타임', icon: Activity, keywords: 'runtime pod 실행' , term: 'runtime' },
     { to: '/sessions', label: '세션', icon: FileCode2, keywords: 'session 작업' , term: 'sessions' },
     { to: '/tasks', label: '작업 대기열', icon: ListChecks, keywords: 'task queue run 자동 실행 큐' , term: 'tasks' },
-    { to: '/runs', label: '실행 기록', icon: ClipboardList, keywords: 'run history attempt failed tokens 실행 기록 시도 실패 토큰 계량' , term: 'runs' }
+    { to: '/runs', label: '실행 기록', icon: ClipboardList, keywords: 'run history attempt failed tokens 실행 기록 시도 실패 토큰 계량' , term: 'runs' },
+    { to: '/code-review', label: '코드 리뷰', icon: FileSearch, keywords: 'code review finding severity 코드 리뷰 지적 심각도 보안' }
   ]},
   { label: '연동', items: [
     { to: '/mcp/catalog', label: 'MCP 카탈로그', icon: Network, keywords: 'mcp catalog server 서버' , term: 'mcpCatalog' },

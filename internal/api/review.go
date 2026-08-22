@@ -2,6 +2,8 @@ package api
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -48,6 +50,55 @@ func (s *Server) reviewFindings(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// reviewFindingList answers "what is still open", across every review.
+//
+// The findings of one run are reachable from that run. This is the other
+// question, and until there was a list nobody could ask it: somebody who ran
+// three reviews yesterday had no way to see what they had left. It opens on the
+// open ones for the same reason — a page that starts with a year of dismissed
+// findings is a page nobody reads twice.
+func (s *Server) reviewFindingList(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	query := r.URL.Query()
+	limit, _ := strconv.Atoi(query.Get("limit"))
+	offset, _ := strconv.Atoi(query.Get("offset"))
+	filter := store.ReviewFindingFilter{
+		OwnerID: u.ID, AgentID: query.Get("agentId"),
+		Severity: query.Get("severity"), Category: query.Get("category"),
+		Status: query.Get("status"), Limit: limit, Offset: offset,
+	}
+	if filter.Severity != "" && !containsValue(store.ReviewSeverities, filter.Severity) {
+		writeError(w, http.StatusBadRequest, "invalid_filter", "심각도를 확인해 주세요.")
+		return
+	}
+	if filter.Category != "" && !containsValue(store.ReviewCategories, filter.Category) {
+		writeError(w, http.StatusBadRequest, "invalid_filter", "분류를 확인해 주세요.")
+		return
+	}
+	// Looking across the deployment is an administrator's view of somebody else's
+	// work, so it is asked for explicitly rather than implied by the role.
+	everyone := u.Role == "admin" && query.Get("scope") == "all"
+	page, err := s.store.ReviewFindingsFor(r.Context(), filter, everyone)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		store.ReviewFindingPage
+		Severities []string `json:"severities"`
+		Categories []string `json:"categories"`
+	}{ReviewFindingPage: page, Severities: store.ReviewSeverities, Categories: store.ReviewCategories})
+}
+
+func containsValue(list []string, value string) bool {
+	for _, item := range list {
+		if item == value {
+			return true
+		}
+	}
+	return false
+}
+
 // decideReviewFinding records what a person concluded about one finding.
 func (s *Server) decideReviewFinding(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
@@ -55,6 +106,14 @@ func (s *Server) decideReviewFinding(w http.ResponseWriter, r *http.Request) {
 		Decision string `json:"decision"`
 	}
 	if !decodeJSON(w, r, &input) {
+		return
+	}
+	// A decision the platform does not have is the request being wrong, not the
+	// platform breaking. Answered here so it is a 400 with the list of what is
+	// allowed, rather than a 500 carrying the store's own sentence.
+	if !containsValue(store.ReviewFindingDecisions, input.Decision) {
+		writeError(w, http.StatusBadRequest, "invalid_decision",
+			"처리 상태는 "+strings.Join(store.ReviewFindingDecisions, ", ")+" 중 하나여야 합니다.")
 		return
 	}
 	item, err := s.store.DecideReviewFinding(r.Context(), chi.URLParam(r, "id"), u.ID, input.Decision, u.Role == "admin")

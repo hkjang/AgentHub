@@ -133,6 +133,7 @@ func (s *Server) apiRoutes() []Route {
 		read("/dashboard", "Platform", "Runtime and task summary for the signed-in user", s.dashboard),
 		read("/capabilities", "Platform", "Features enabled on this deployment", s.capabilities),
 		read("/templates", "Platform", "Published Agent templates", s.templates),
+		read("/review-findings", "Code Review", "What every review has found and nobody has dealt with", s.reviewFindingList),
 		read("/runs/{id}/review", "Code Review", "What a code review found, and what it covered", s.reviewFindings),
 		write(http.MethodPost, "/review-findings/{id}/decision", "Code Review", "Accept, dismiss or close one finding", s.decideReviewFinding),
 		read("/runtime-profiles", "Platform", "Runtime profiles available to users", s.runtimeProfiles),

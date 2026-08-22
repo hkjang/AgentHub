@@ -1306,6 +1306,28 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## The finding nobody could find
+
+A review's findings hung off the run that produced them, and nowhere else.
+Somebody who ran three reviews yesterday had no way to ask the one question the
+list is for — what is still open — without remembering which runs to open. It is
+the same shape as the approvals queue before it: a record that exists, matters,
+and cannot be reached.
+
+The list opens on what is still open, because a page that starts with a year of
+dismissed findings is a page nobody reads twice, and its counts are of the table
+the filter selects rather than of the page it returned. That last part is the
+mistake the notification bell was fixed for and the review queue after it, so
+this time it is checked against a running deployment.
+
+Checking it took two pages, which is worth writing down. Counting the table
+rather than the page can only be told apart on a page *smaller* than the table.
+Ordering can only be told apart on a page that reaches the lower severities: the
+ordering this really guards against is the alphabetical one, and
+`critical < high < low < medium` is correct until the moment medium follows low.
+A single page satisfied one property and blinded the other — the first two
+attempts at this check passed against a deliberately broken build.
+
 ## A backend whose result is not a sentence
 
 Every execution backend before this one ends the same way: the work produces

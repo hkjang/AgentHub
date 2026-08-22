@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -160,6 +161,112 @@ func (s *Store) ReviewFindings(ctx context.Context, runID, ownerID string, admin
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+// ReviewFindingFilter narrows the list across every review somebody has run.
+type ReviewFindingFilter struct {
+	OwnerID  string
+	AgentID  string
+	Severity string
+	Category string
+	// Status defaults to open: the list exists to show what is still to be dealt
+	// with, and a page that opens on a year of dismissed findings is a page
+	// nobody reads twice.
+	Status string
+	Limit  int
+	Offset int
+}
+
+// ReviewFindingPage is one page of findings with the size of the whole result,
+// so the console can say how much is behind it.
+type ReviewFindingPage struct {
+	Items  []ReviewFinding `json:"items"`
+	Total  int             `json:"total"`
+	Limit  int             `json:"limit"`
+	Offset int             `json:"offset"`
+	// OpenBySeverity counts what is still open across the whole filter, not the
+	// page. A count of the page is the mistake the notification bell was fixed
+	// for and the review queue after it.
+	OpenBySeverity map[string]int `json:"openBySeverity"`
+}
+
+// ReviewFindingsFor lists findings across every review, worst first.
+//
+// Without this a finding can only be reached by knowing which run produced it.
+// Somebody who ran three reviews yesterday had no way to ask what is still open,
+// which is the only question the list is for.
+func (s *Store) ReviewFindingsFor(ctx context.Context, filter ReviewFindingFilter, admin bool) (ReviewFindingPage, error) {
+	filter.Limit = clampLimit(filter.Limit, 50, 200)
+	if filter.Offset < 0 {
+		filter.Offset = 0
+	}
+	where := []string{"1=1"}
+	args := []any{}
+	add := func(clause string, value any) {
+		args = append(args, value)
+		where = append(where, strings.Replace(clause, "?", "$"+strconv.Itoa(len(args)), 1))
+	}
+	if !admin {
+		add("owner_id = ?", filter.OwnerID)
+	}
+	if value := strings.TrimSpace(filter.AgentID); value != "" {
+		add("agent_id = ?", value)
+	}
+	if value := strings.TrimSpace(filter.Severity); value != "" {
+		add("severity = ?", value)
+	}
+	if value := strings.TrimSpace(filter.Category); value != "" {
+		add("category = ?", value)
+	}
+	switch strings.TrimSpace(filter.Status) {
+	case "", "open":
+		where = append(where, "status = 'open'")
+	case "all":
+	default:
+		add("status = ?", filter.Status)
+	}
+	predicate := strings.Join(where, " AND ")
+
+	page := ReviewFindingPage{Items: []ReviewFinding{}, Limit: filter.Limit, Offset: filter.Offset, OpenBySeverity: map[string]int{}}
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM review_findings WHERE `+predicate, args...).Scan(&page.Total); err != nil {
+		return page, err
+	}
+	// The counts are of the table this filter selects, not of the page.
+	counts, err := s.pool.Query(ctx, `SELECT severity, count(*) FROM review_findings WHERE `+predicate+` GROUP BY severity`, args...)
+	if err != nil {
+		return page, err
+	}
+	for counts.Next() {
+		var severity string
+		var count int
+		if err := counts.Scan(&severity, &count); err != nil {
+			counts.Close()
+			return page, err
+		}
+		page.OpenBySeverity[severity] = count
+	}
+	counts.Close()
+	if err := counts.Err(); err != nil {
+		return page, err
+	}
+
+	rows, err := s.pool.Query(ctx, `SELECT `+reviewFindingColumns+` FROM review_findings WHERE `+predicate+`
+		ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+		created_at DESC, file_path
+		LIMIT $`+strconv.Itoa(len(args)+1)+` OFFSET $`+strconv.Itoa(len(args)+2),
+		append(args, filter.Limit, filter.Offset)...)
+	if err != nil {
+		return page, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		item, err := scanReviewFinding(rows)
+		if err != nil {
+			return page, err
+		}
+		page.Items = append(page.Items, item)
+	}
+	return page, rows.Err()
 }
 
 // ReviewRunByID reads what a review covered.
