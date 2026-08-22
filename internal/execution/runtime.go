@@ -158,6 +158,22 @@ func (o *Orchestrator) releaseRuntime(ctx context.Context, run store.AgentRun, a
 		o.event(ctx, run, "runtime.retained", "사용자가 이미 사용 중이던 Runtime이라 중지하지 않았습니다.", map[string]any{"runtimeId": acquired.runtimeID})
 		return
 	}
+	// Who started it is not the same question as who is in it now. An agent
+	// allowed concurrent runs reuses the runtime the first task started, and the
+	// first task to finish was stopping the Pod under the others; a person who
+	// opened a terminal after the task started it lost their window the moment the
+	// task ended. Both are somebody else's work in a runtime this task believes it
+	// owns, and neither was asked about.
+	if reason, err := o.store.RuntimeBusy(ctx, acquired.runtimeID, agent.ID, run.TaskID); err != nil {
+		// A question that could not be answered is not a yes. Leaving a runtime up
+		// costs money; stopping one out from under a person or a running task costs
+		// their work.
+		o.logger.Warn("runtime use could not be checked; leaving it running", "runtime", acquired.runtimeID, "error", err)
+		return
+	} else if reason != "" {
+		o.event(ctx, run, "runtime.retained", reason+"라 중지하지 않았습니다.", map[string]any{"runtimeId": acquired.runtimeID})
+		return
+	}
 	// Hold it instead of stopping it when the agent asks for a warm window: a
 	// burst of tasks then pays the start cost once rather than per task. The
 	// pool stops it when the hold expires and nothing is queued.

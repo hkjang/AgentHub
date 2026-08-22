@@ -814,6 +814,40 @@ func (s *Store) TouchRuntime(ctx context.Context, id string) {
 	_, _ = s.pool.Exec(ctx, `UPDATE agent_runtimes SET last_activity_at=now(),updated_at=now() WHERE id=$1`, id)
 }
 
+// RuntimeBusy reports why a runtime must not be stopped right now, or "".
+//
+// Two things can be going on inside a runtime that the process about to stop it
+// knows nothing about. Another of the agent's tasks may be running in it — an
+// agent allowed more than one concurrent run reuses the runtime the first task
+// started, and the first task to finish was stopping the Pod under the others.
+// And a person may be working in it: whoever started it, a terminal or chat
+// session opened afterwards is somebody's window closing without warning.
+//
+// exceptTask is the task doing the asking, which is finishing and does not count
+// as a reason to keep its own runtime.
+func (s *Store) RuntimeBusy(ctx context.Context, runtimeID, agentID, exceptTask string) (string, error) {
+	var running int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM agent_tasks
+		WHERE agent_id=$1 AND id<>$2 AND status IN ('running','waiting_tool','handoff')`, agentID, exceptTask).Scan(&running); err != nil {
+		return "", err
+	}
+	if running > 0 {
+		return "다른 작업이 이 Runtime에서 실행 중입니다", nil
+	}
+	// A session row is only closed when somebody closes it, so an open one on its
+	// own means little; one touched in the last few minutes is a person at a
+	// keyboard.
+	var sessions int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM runtime_sessions
+		WHERE runtime_id=$1 AND status='active' AND updated_at > now() - interval '15 minutes'`, runtimeID).Scan(&sessions); err != nil {
+		return "", err
+	}
+	if sessions > 0 {
+		return "사람이 이 Runtime에서 작업 중입니다", nil
+	}
+	return "", nil
+}
+
 func (s *Store) IdleRuntimeCandidates(ctx context.Context) ([]IdleRuntimeCandidate, error) {
 	// The fallback for a runtime whose agent has no profile. It came from a
 	// constant here while the console offered a field for exactly this and saved

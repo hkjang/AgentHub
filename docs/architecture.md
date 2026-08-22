@@ -1306,6 +1306,24 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Who started it is not who is in it
+
+A task that started a runtime stops it afterwards when the agent asks for that,
+and leaves alone one it merely reused — the reasoning being that a runtime the
+task did not start belongs to a person who may be working in it.
+
+That answers who it belonged to when the task began. It says nothing about who is
+in it now. An agent allowed concurrent runs reuses the runtime the first task
+started, so the first task to finish stopped the Pod under the others. And a
+person who opened a terminal after the task started it lost their window the
+moment the task ended — directly under the comment about the user working in it.
+
+Both are answerable, so both are asked now: another of the agent's tasks running,
+or somebody's session touched in the last quarter of an hour. A session left open
+and untouched for hours does not count, since nothing closes those but a person.
+And a check that cannot be answered leaves the runtime up: an idle runtime costs
+money, while stopping one out from under somebody costs their work.
+
 ## Idle meant "no browser has touched it"
 
 A runtime is culled when it has been idle for its profile's timeout, measured from
