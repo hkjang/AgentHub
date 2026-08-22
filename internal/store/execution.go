@@ -606,15 +606,30 @@ func (s *Store) ClaimAgentTask(ctx context.Context, workerID string, lease time.
 	return item, err
 }
 
-// ExtendTaskLease keeps a long-running task claimed while the worker is alive.
-func (s *Store) ExtendTaskLease(ctx context.Context, taskID, workerID string, lease time.Duration) error {
-	_, err := s.pool.Exec(ctx, `UPDATE agent_tasks SET claimed_until=now() + $3::interval, updated_at=now() WHERE id=$1 AND claimed_by=$2`, taskID, workerID, lease.String())
-	return err
+// ExtendTaskLease keeps a long-running task claimed while the worker is alive, and
+// reports whether the worker still holds it.
+//
+// The row count was already the answer to "may this worker go on": a cancellation
+// clears claimed_by, so the update stops matching. It was discarded, and the run
+// carried on past a cancellation nobody had any way to enforce.
+func (s *Store) ExtendTaskLease(ctx context.Context, taskID, workerID string, lease time.Duration) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `UPDATE agent_tasks SET claimed_until=now() + $3::interval, updated_at=now()
+		WHERE id=$1 AND claimed_by=$2 AND status='running'`, taskID, workerID, lease.String())
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 // FinishAgentTask records the terminal state and clears the lease.
+//
+// A cancelled task is left alone. The run that was stopped still comes back here
+// with an outcome, and writing it would undo the cancellation — which is what used
+// to happen: somebody cancelled a task and the row said completed a minute later,
+// because the work it was cancelling had finished and reported itself.
 func (s *Store) FinishAgentTask(ctx context.Context, taskID, status, lastError string) error {
-	_, err := s.pool.Exec(ctx, `UPDATE agent_tasks SET status=$2,last_error=$3,claimed_by='',claimed_until=NULL,updated_at=now() WHERE id=$1`, taskID, status, lastError)
+	_, err := s.pool.Exec(ctx, `UPDATE agent_tasks SET status=$2,last_error=$3,claimed_by='',claimed_until=NULL,updated_at=now()
+		WHERE id=$1 AND status<>'cancelled'`, taskID, status, lastError)
 	return err
 }
 
@@ -633,7 +648,7 @@ func (s *Store) BlockAgentTask(ctx context.Context, taskID, reason string) error
 	_, err := s.pool.Exec(ctx, `UPDATE agent_tasks
 		SET status='blocked', last_error=$2, attempts=GREATEST(attempts - 1, 0),
 		    claimed_by='', claimed_until=NULL, updated_at=now()
-		WHERE id=$1`, taskID, reason)
+		WHERE id=$1 AND status<>'cancelled'`, taskID, reason)
 	return err
 }
 
@@ -646,7 +661,7 @@ func (s *Store) BlockAgentTask(ctx context.Context, taskID, reason string) error
 func (s *Store) HandOffTask(ctx context.Context, taskID, note string) error {
 	_, err := s.pool.Exec(ctx, `UPDATE agent_tasks
 		SET status='handoff', last_error=$2, claimed_by='', claimed_until=NULL, updated_at=now()
-		WHERE id=$1`, taskID, note)
+		WHERE id=$1 AND status<>'cancelled'`, taskID, note)
 	return err
 }
 
@@ -689,7 +704,8 @@ func (s *Store) ReleaseBlockedTasks(ctx context.Context, agentID string) (int, e
 }
 
 func (s *Store) RetryAgentTask(ctx context.Context, taskID string, delay time.Duration, lastError string) error {
-	_, err := s.pool.Exec(ctx, `UPDATE agent_tasks SET status='retrying',scheduled_at=now() + $2::interval,last_error=$3,claimed_by='',claimed_until=NULL,updated_at=now() WHERE id=$1`, taskID, delay.String(), lastError)
+	_, err := s.pool.Exec(ctx, `UPDATE agent_tasks SET status='retrying',scheduled_at=now() + $2::interval,last_error=$3,claimed_by='',claimed_until=NULL,updated_at=now()
+		WHERE id=$1 AND status<>'cancelled'`, taskID, delay.String(), lastError)
 	return err
 }
 

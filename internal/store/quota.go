@@ -255,7 +255,7 @@ func (s *Store) ReserveExecutionSlot(ctx context.Context, task AgentTask, scope 
 const deferTaskSQL = `UPDATE agent_tasks
 	SET status='queued', scheduled_at=now() + $2::interval, attempts=GREATEST(attempts - 1, 0),
 	    claimed_by='', claimed_until=NULL, waiting_reason=$3, updated_at=now()
-	WHERE id=$1`
+	WHERE id=$1 AND status<>'cancelled'`
 
 // DeferAgentTask puts a claimed task back on the queue without spending an
 // attempt.

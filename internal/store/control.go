@@ -115,7 +115,8 @@ func (s *Store) DeleteMemory(ctx context.Context, id, ownerID string) error {
 // ParkTaskForApproval moves a task out of the queue while a human decides. It is
 // not a failure, so it must not consume a retry.
 func (s *Store) ParkTaskForApproval(ctx context.Context, taskID, approvalID string) error {
-	_, err := s.pool.Exec(ctx, `UPDATE agent_tasks SET status='waiting_approval',approval_id=$2,claimed_by='',claimed_until=NULL,updated_at=now() WHERE id=$1`, taskID, approvalID)
+	_, err := s.pool.Exec(ctx, `UPDATE agent_tasks SET status='waiting_approval',approval_id=$2,claimed_by='',claimed_until=NULL,updated_at=now()
+		WHERE id=$1 AND status<>'cancelled'`, taskID, approvalID)
 	return err
 }
 

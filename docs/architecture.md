@@ -1306,6 +1306,31 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Cancel did not cancel
+
+Cancelling a running task marked the row cancelled and cleared the claim. The run
+carried on. The agent went on thinking, spending tokens, calling tools, doing
+whatever state-changing thing somebody had pressed a button to stop — and when it
+finished it wrote its own outcome over the top, so a task somebody cancelled ended
+up reading "completed".
+
+The answer was already being computed and thrown away. The lease extension runs
+every few seconds and matches on this worker still holding the claim; a
+cancellation clears exactly that, so the update was already returning zero rows
+and nobody looked. It reports that now, and the worker stops the run.
+
+That alone was not enough, and the live check said so: the stopped run came back
+with a context error, the worker filed it as a retryable failure, and the task was
+queued and claimed again eleven seconds later. Stopping the work is only half of
+cancelling it — nothing may drag a cancelled task back out. Every writer a stopped
+run can reach leaves it where it is, and the worker recognises a cancellation as a
+cancellation rather than as the error the run happened to die with.
+
+Verified end to end: cancel returns, the log says stopping the run and then
+cancelled while running, and forty seconds later — past every retry window — the
+task is cancelled, unclaimed, with no error text, and "task claimed" appears
+exactly once in the worker's whole log.
+
 ## Deleting an agent took work with it
 
 Deleting an agent cascades through twelve tables: its tasks, runs, transcripts,

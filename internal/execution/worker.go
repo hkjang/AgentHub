@@ -167,10 +167,18 @@ func (w *Worker) execute(ctx context.Context, task store.AgentTask) {
 	logger.Info("task claimed", "title", task.Title, "priority", task.Priority)
 
 	// Keep the claim alive while the task runs, otherwise a long agent run would
-	// be picked up a second time by another worker.
+	// be picked up a second time by another worker — and stop the run if somebody
+	// cancels the task, which nothing used to do.
+	run, stopRun := context.WithCancel(ctx)
+	defer stopRun()
 	heartbeat, stopHeartbeat := context.WithCancel(ctx)
 	defer stopHeartbeat()
-	go w.keepClaim(heartbeat, task.ID)
+	var claimLost atomic.Bool
+	go w.keepClaim(heartbeat, task.ID, func() {
+		claimLost.Store(true)
+		stopRun()
+	})
+	ctx = run
 
 	// Quotas are checked after the claim rather than before it, because the claim
 	// is what makes the count meaningful: two workers deciding at the same moment
@@ -190,6 +198,15 @@ func (w *Worker) execute(ctx context.Context, task store.AgentTask) {
 	outcome, err := w.orchestrator.Execute(ctx, task, traceID)
 	// Finalisation must survive shutdown, or a task would be left marked running.
 	finish := context.WithoutCancel(ctx)
+	// A run stopped because somebody cancelled the task did not fail. Reporting the
+	// error it died with would file a cancellation as a failure and, worse, put the
+	// task back on the queue: the first version of this fix stopped the run and
+	// then retried it, so the work carried on anyway a few seconds later.
+	if claimLost.Load() {
+		logger.Info("task was cancelled while running; the run was stopped", "title", task.Title)
+		w.publish(finish, task, store.EventTaskFailed, map[string]any{"title": task.Title, "agentId": task.AgentID, "reason": "취소되었습니다", "cancelled": true})
+		return
+	}
 	if err != nil {
 		logger.Error("task execution failed", "error", err)
 	}
@@ -489,7 +506,19 @@ func (w *Worker) publish(ctx context.Context, task store.AgentTask, eventType st
 }
 
 // keepClaim extends the lease periodically until the task finishes.
-func (w *Worker) keepClaim(ctx context.Context, taskID string) {
+// keepClaim holds the claim while the task runs, and stops the run if the task is
+// cancelled underneath it.
+//
+// Cancelling a running task used to do nothing to the run. The row was marked
+// cancelled and the claim cleared, and the agent carried on: spending tokens,
+// calling tools, performing whatever state-changing action somebody had just
+// pressed a button to stop. Then the run finished and wrote its own outcome over
+// the top, so a task somebody cancelled ended up saying completed.
+//
+// The lease extension already asks the question — it matches on this worker still
+// holding the claim, and a cancellation clears exactly that — so the answer was
+// there all along in a row count nobody looked at.
+func (w *Worker) keepClaim(ctx context.Context, taskID string, stopRun context.CancelFunc) {
 	interval := w.Lease / 3
 	if interval < time.Second {
 		interval = time.Second
@@ -501,8 +530,17 @@ func (w *Worker) keepClaim(ctx context.Context, taskID string) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := w.store.ExtendTaskLease(ctx, taskID, w.id, w.Lease); err != nil {
+			held, err := w.store.ExtendTaskLease(ctx, taskID, w.id, w.Lease)
+			if err != nil {
+				// An unreadable database is not a cancellation. Stopping the run here
+				// would turn a moment's connection trouble into abandoned work.
 				w.logger.Warn("task lease not extended", "task", taskID, "error", err)
+				continue
+			}
+			if !held {
+				w.logger.Info("task is no longer claimed by this worker; stopping the run", "task", taskID)
+				stopRun()
+				return
 			}
 		}
 	}
