@@ -299,6 +299,10 @@ type RetentionPolicy struct {
 	// Audit is kept longest and swept last: it is the record a compliance review
 	// asks for, and deleting it is the one cleanup that cannot be reconstructed.
 	AuditDays int `json:"auditDays"`
+	// Notifications covers ones somebody has read. An unread notice is still work
+	// — the same reason an undelivered event is never swept — so it is kept no
+	// matter how old it is, and the bell puts it first.
+	NotificationDays int `json:"notificationDays"`
 }
 
 // CleanupResult counts what a sweep removed, or would remove.
@@ -333,6 +337,9 @@ func (s *Store) Cleanup(ctx context.Context, policy RetentionPolicy, dryRun bool
 		{name: "audit", days: policy.AuditDays,
 			count:  `SELECT count(*) FROM audit_events WHERE occurred_at < $1`,
 			delete: `DELETE FROM audit_events WHERE occurred_at < $1`},
+		{name: "notifications", days: policy.NotificationDays,
+			count:  `SELECT count(*) FROM notifications WHERE read_at IS NOT NULL AND read_at < $1`,
+			delete: `DELETE FROM notifications WHERE read_at IS NOT NULL AND read_at < $1`},
 	}
 	for _, sweep := range sweeps {
 		if sweep.days <= 0 {
@@ -368,6 +375,7 @@ func (policy RetentionPolicy) Validate() error {
 		{"이벤트", policy.EventDays, 3},
 		{"작업", policy.TaskDays, 7},
 		{"감사 로그", policy.AuditDays, 30},
+		{"알림", policy.NotificationDays, 7},
 	}
 	for _, limit := range limits {
 		if limit.days == 0 {

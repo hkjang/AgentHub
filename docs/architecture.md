@@ -1306,6 +1306,31 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Two tables that nothing ever deleted from
+
+Retention is off until an administrator chooses a number, which is right: deleting
+a deployment's history because nobody picked a default would be wrong in the
+environments this platform runs in. But that reasoning covers records somebody
+might want to read, and two tables were growing without being either.
+
+Notifications had no sweep at all — no policy field, no console row, nothing that
+would ever remove one. They are also the table this platform writes to most
+reliably, since every gate and failure sends one. They are swept now, and only
+once read: an unread notice is still work, the same reason an undelivered event is
+never swept.
+
+Expired sessions had no sweep either, and they are not history in the first place.
+A session past its expiry cannot authenticate a request and nothing reads it, but
+it stays in the id_hash index that every authenticated request goes through. A
+development deployment with a single user had accumulated four hundred and fifty
+sessions, three hundred and forty-six of them expired. That sweep does not wait
+for anybody to configure retention, because there is no version of "keep these"
+that means anything.
+
+A guard ties the three places a retention knob has to exist — the console offers
+it, Validate floors it, Cleanup sweeps with it — so the next one cannot be a
+number that saves and does nothing.
+
 ## The bell had the same shape as the list
 
 The notification feed takes the fifty most recent notices and the console counted

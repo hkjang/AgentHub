@@ -59,6 +59,7 @@ func (c *Caretaker) Run(ctx context.Context) error {
 		case <-reclaim.C:
 			c.reclaim(ctx)
 		case <-sweep.C:
+			c.expireSessions(ctx)
 			c.sweep(ctx)
 		}
 	}
@@ -79,6 +80,22 @@ func (c *Caretaker) reclaim(ctx context.Context) {
 		c.logger.Debug("stopped workers could not be forgotten", "error", err)
 	} else if forgotten > 0 {
 		c.logger.Info("removed records of stopped workers", "workers", forgotten)
+	}
+}
+
+// expireSessions clears out sessions that can no longer log anybody in.
+//
+// It runs whether or not retention is configured, because it is not retention: an
+// expired session is not a record somebody might want, it is a row that cannot
+// authenticate anything and sits in the index every authenticated request reads.
+func (c *Caretaker) expireSessions(ctx context.Context) {
+	removed, err := c.store.SweepExpiredSessions(ctx, c.ForgetStoppedAfter)
+	if err != nil {
+		c.logger.Warn("expired sessions could not be removed", "error", err)
+		return
+	}
+	if removed > 0 {
+		c.logger.Info("removed expired sessions", "sessions", removed)
 	}
 }
 

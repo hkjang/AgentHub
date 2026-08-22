@@ -246,6 +246,26 @@ func (s *Store) DeleteSession(ctx context.Context, token string) error {
 	return err
 }
 
+// SweepExpiredSessions removes sessions that can no longer log anybody in.
+//
+// This is not history and it is not the operator's decision. Every other sweep on
+// this platform is off until somebody chooses a number, because deleting a
+// deployment's records by default would be wrong. An expired session is not a
+// record of anything: it cannot authenticate a request, nothing reads it, and it
+// is on the hot path of every authenticated request through the id_hash index. A
+// development deployment with one user had accumulated four hundred and fifty of
+// them, so a real one keeps a row per login per user forever.
+//
+// The grace period is so that a session which expired moments ago is still there
+// if somebody is looking at why a request was refused.
+func (s *Store) SweepExpiredSessions(ctx context.Context, grace time.Duration) (int, error) {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE expires_at < now() - $1::interval`, grace.String())
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 func (s *Store) CreateRuntimeLaunchTicket(ctx context.Context, runtimeID, userID string) (string, time.Time, error) {
 	token, err := cryptox.RandomToken(32)
 	if err != nil {

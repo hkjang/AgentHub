@@ -15,7 +15,7 @@ import { relativeTime } from '../runtime'
 
 type Worker = { id: string; hostname: string; version: string; concurrency: number; maxConcurrency: number; running: number; status: string; startedAt: string; lastSeenAt: string; stale: boolean }
 type DeadEvent = { id: string; type: string; subjectType: string; subjectId: string; attempts: number; lastError: string; createdAt: string }
-type Retention = { runDays: number; eventDays: number; taskDays: number; auditDays: number }
+type Retention = { runDays: number; eventDays: number; taskDays: number; auditDays: number; notificationDays: number }
 type ExecutionState = {
   paused: boolean; reason: string; pausedBy: string; pausedAt?: string
   retention: Retention
@@ -29,6 +29,7 @@ const RETENTION_FIELDS: { key: keyof Retention; label: string; hint: string }[] 
   { key: 'runDays', label: '실행 기록', hint: '끝난 실행과 단계. 가장 큰 표입니다. 최소 7일' },
   { key: 'eventDays', label: '이벤트', hint: '배달된 이벤트만. 최소 3일' },
   { key: 'auditDays', label: '감사 로그', hint: '되돌릴 수 없습니다. 최소 30일' },
+  { key: 'notificationDays', label: '알림', hint: '읽은 알림만. 읽지 않은 알림은 지우지 않습니다. 최소 7일' },
 ]
 
 export function AdminExecution() {
@@ -37,7 +38,7 @@ export function AdminExecution() {
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
   const [reason, setReason] = useState('')
-  const [retention, setRetention] = useState<Retention>({ runDays: 0, eventDays: 0, taskDays: 0, auditDays: 0 })
+  const [retention, setRetention] = useState<Retention>({ runDays: 0, eventDays: 0, taskDays: 0, auditDays: 0, notificationDays: 0 })
   const [preview, setPreview] = useState<Record<string, number> | null>(null)
   const [confirmCleanup, setConfirmCleanup] = useState(false)
   const [requeue, setRequeue] = useState({ status: 'dead_letter', sinceHours: 24, limit: 200 })
