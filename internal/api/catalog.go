@@ -272,6 +272,7 @@ func (s *Server) apiRoutes() []Route {
 		admin(http.MethodPost, "/admin/readiness", "Administration", "Ask every dependency this deployment has whether it is working", s.readiness),
 		admin(http.MethodPost, "/admin/authentication/check", "Administration", "Ask the identity provider whether single sign-on is configured to work", s.authenticationCheck),
 		admin(http.MethodPost, "/admin/kubernetes/check", "Administration", "Ask the cluster whether it answers, holds the namespace and CRD, and permits what the platform does", s.clusterCheck),
+		admin(http.MethodGet, "/admin/kubernetes/health", "Administration", "What the last cluster check found, without asking again", s.clusterHealthNow),
 		admin(http.MethodPost, "/admin/mcp-servers/{id}/check", "Administration", "Ask an MCP server whether it answers, and what tools it offers", s.mcpServerCheck),
 		admin(http.MethodPost, "/admin/models/{id}/check", "Administration", "Ask a model endpoint whether it is reachable and serving the model named on it", s.modelCheck),
 		admin(http.MethodPost, "/admin/network-check", "Administration", "Ask a running runtime whether this cluster actually enforces its egress policy", s.networkCheck),

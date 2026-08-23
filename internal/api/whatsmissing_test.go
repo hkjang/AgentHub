@@ -3,6 +3,7 @@ package api
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
@@ -17,11 +18,14 @@ import (
 func fullyEquipped() deploymentState {
 	return deploymentState{
 		kubernetesEnabled: true,
-		modelEndpoints:    1,
-		approvedImages:    map[string]int{runtimetype.OpenCode: 1, runtimetype.Pi: 1},
-		agentServers:      1,
-		healthyServers:    1,
-		externalApps:      1,
+		// Checked, answering, and permitted. A flag on its own is not a working
+		// cluster, which is the distinction the advice is built on.
+		cluster:        clusterHealth{Reachable: true, CheckedAt: time.Now().Add(-time.Hour)},
+		modelEndpoints: 1,
+		approvedImages: map[string]int{runtimetype.OpenCode: 1, runtimetype.Pi: 1},
+		agentServers:   1,
+		healthyServers: 1,
+		externalApps:   1,
 	}
 }
 
@@ -63,7 +67,8 @@ func TestACustomRuntimeIsNotAskedForAnImageNobodyCouldApprove(t *testing.T) {
 }
 
 func TestABackendWithNothingToRunOnSaysWhatToRegister(t *testing.T) {
-	empty := deploymentState{kubernetesEnabled: true, modelEndpoints: 1, approvedImages: map[string]int{}}
+	empty := deploymentState{kubernetesEnabled: true, modelEndpoints: 1, approvedImages: map[string]int{},
+		cluster: clusterHealth{Reachable: true, CheckedAt: time.Now()}}
 
 	server := runnerMissing(store.RunnerAgentServer, empty)
 	if len(server) == 0 {
@@ -86,7 +91,8 @@ func TestABackendWithNothingToRunOnSaysWhatToRegister(t *testing.T) {
 // not work" and something an operator can act on: the backends that run inside a
 // Pod need a runtime that offers them, and there are usually only one or two.
 func TestABackendThatNeedsAPodSaysWhichImage(t *testing.T) {
-	empty := deploymentState{kubernetesEnabled: true, modelEndpoints: 1, approvedImages: map[string]int{}}
+	empty := deploymentState{kubernetesEnabled: true, modelEndpoints: 1, approvedImages: map[string]int{},
+		cluster: clusterHealth{Reachable: true, CheckedAt: time.Now()}}
 	missing := runnerMissing(store.RunnerReview, empty)
 	if len(missing) == 0 {
 		t.Fatal("a backend with no runtime image was reported as ready")
@@ -141,5 +147,57 @@ func TestTheSummaryDoesNotHideHowMuchIsMissing(t *testing.T) {
 	summary := missingSummary(three)
 	if !strings.Contains(summary, "2") {
 		t.Errorf("the summary of three missing pieces does not say two more are hidden: %q", summary)
+	}
+}
+
+// TestASwitchedOnClusterIsNotTheSameAsAWorkingOne is the difference between what
+// somebody typed and what answered.
+//
+// The flag says a form was filled in. A deployment whose flag says enabled and
+// whose cluster has never been asked is the common case, and it is the one where
+// a person debugs a runtime that was never going to start.
+func TestASwitchedOnClusterIsNotTheSameAsAWorkingOne(t *testing.T) {
+	never := fullyEquipped()
+	never.cluster = clusterHealth{}
+	missing := runtimeMissing(runtimetype.Describe(runtimetype.OpenCode), never)
+	if len(missing) == 0 {
+		t.Fatal("a cluster nobody has ever checked was reported as ready")
+	}
+	if !strings.Contains(missing[0].Where, "연결 확인") {
+		t.Errorf("the advice does not point at the check that would answer it: %+v", missing[0])
+	}
+	// And it says nobody has asked, rather than that the asking failed. A
+	// deployment that has never been checked has no failed check to report, and
+	// telling an operator the cluster did not answer sends them looking at a
+	// cluster that may be perfectly fine.
+	if strings.Contains(missing[0].What, "마지막 확인") {
+		t.Errorf("a cluster nobody has checked is reported as having failed a check: %+v", missing[0])
+	}
+
+	unreachable := fullyEquipped()
+	unreachable.cluster = clusterHealth{Reachable: false, Detail: "i/o timeout", CheckedAt: time.Now()}
+	missing = runtimeMissing(runtimetype.Describe(runtimetype.OpenCode), unreachable)
+	if len(missing) == 0 {
+		t.Fatal("a cluster that did not answer its last check was reported as ready")
+	}
+	// What the cluster said, not a paraphrase: an operator fixes a timeout
+	// differently from a refused certificate.
+	if !strings.Contains(missing[0].What, "i/o timeout") {
+		t.Errorf("the advice drops what the cluster actually said: %+v", missing[0])
+	}
+}
+
+// TestAClusterThatAnswersButRefusesSaysWhichPermission — the runtime is created
+// and never starts, which reads as the runtime failing rather than as this
+// account lacking a permission.
+func TestAClusterThatAnswersButRefusesSaysWhichPermission(t *testing.T) {
+	state := fullyEquipped()
+	state.cluster = clusterHealth{Reachable: true, CheckedAt: time.Now(), Missing: []string{"create pods", "watch agentruntimes"}}
+	missing := runtimeMissing(runtimetype.Describe(runtimetype.OpenCode), state)
+	if len(missing) == 0 {
+		t.Fatal("a cluster that refuses what the platform does was reported as ready")
+	}
+	if !strings.Contains(missing[0].What, "create pods") {
+		t.Errorf("the advice does not name the permission that is missing: %+v", missing[0])
 	}
 }

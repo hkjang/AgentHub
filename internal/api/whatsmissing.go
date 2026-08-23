@@ -37,11 +37,14 @@ type missingPiece struct {
 // four queries on every page load.
 type deploymentState struct {
 	kubernetesEnabled bool
-	modelEndpoints    int
-	approvedImages    map[string]int
-	agentServers      int
-	healthyServers    int
-	externalApps      int
+	// What the last check of the cluster found, and when. The setting says
+	// somebody filled in a form; this says the cluster answered.
+	cluster        clusterHealth
+	modelEndpoints int
+	approvedImages map[string]int
+	agentServers   int
+	healthyServers int
+	externalApps   int
 }
 
 func (s *Server) readDeploymentState(ctx context.Context) deploymentState {
@@ -51,6 +54,7 @@ func (s *Server) readDeploymentState(ctx context.Context) deploymentState {
 	}
 	_ = s.store.Setting(ctx, "kubernetes", &kubernetes)
 	state.kubernetesEnabled = kubernetes.Enabled
+	_ = s.store.Setting(ctx, clusterHealthKey, &state.cluster)
 
 	if endpoints, err := s.store.ModelEndpoints(ctx); err == nil {
 		for _, endpoint := range endpoints {
@@ -87,6 +91,46 @@ func (s *Server) readDeploymentState(ctx context.Context) deploymentState {
 	return state
 }
 
+// clusterMissing is what the cluster is short of, in the words of the last thing
+// that actually asked it.
+//
+// A settings flag and a working cluster are different facts, and the difference
+// is the one an operator is trying to find out. A deployment whose flag says
+// enabled and whose cluster has never been checked is the common case, and
+// saying nothing about it is how a person ends up debugging a runtime that was
+// never going to start.
+func clusterMissing(state deploymentState) (missingPiece, bool) {
+	if !state.kubernetesEnabled {
+		return missingPiece{
+			What:  "이 배포에 Kubernetes 연결이 꺼져 있어 런타임을 띄울 수 없습니다.",
+			Where: "관리자 ▸ 설정 ▸ Kubernetes",
+		}, true
+	}
+	if state.cluster.CheckedAt.IsZero() {
+		return missingPiece{
+			What:  "Kubernetes 연결을 아직 한 번도 확인하지 않았습니다. 설정이 켜져 있다는 것과 클러스터가 응답한다는 것은 다른 이야기입니다.",
+			Where: "관리자 ▸ 설정 ▸ Kubernetes ▸ 연결 확인",
+		}, true
+	}
+	if !state.cluster.Reachable {
+		what := "마지막 확인에서 클러스터에 연결되지 않았습니다"
+		if state.cluster.Detail != "" {
+			what += ": " + state.cluster.Detail
+		}
+		return missingPiece{What: what + ".", Where: "관리자 ▸ 설정 ▸ Kubernetes ▸ 연결 확인"}, true
+	}
+	if len(state.cluster.Missing) > 0 {
+		// Reachable and not permitted. The runtime would be created and never
+		// start, which reads as the runtime failing rather than as this account
+		// lacking a permission.
+		return missingPiece{
+			What:  "클러스터는 응답하지만 이 계정에 권한이 없는 동작이 있습니다: " + strings.Join(state.cluster.Missing, ", "),
+			Where: "관리자 ▸ 설정 ▸ Kubernetes ▸ 연결 확인",
+		}, true
+	}
+	return missingPiece{}, false
+}
+
 // runtimeMissing is what stands between this deployment and a working runtime of
 // one type.
 //
@@ -95,11 +139,8 @@ func (s *Server) readDeploymentState(ctx context.Context) deploymentState {
 // failure mode of every readiness screen that reports everything.
 func runtimeMissing(descriptor runtimetype.Descriptor, state deploymentState) []missingPiece {
 	missing := []missingPiece{}
-	if !state.kubernetesEnabled {
-		missing = append(missing, missingPiece{
-			What:  "이 배포에 Kubernetes 연결이 꺼져 있어 런타임을 띄울 수 없습니다.",
-			Where: "관리자 ▸ 설정 ▸ Kubernetes",
-		})
+	if piece, short := clusterMissing(state); short {
+		missing = append(missing, piece)
 	}
 	// A custom runtime is whatever image somebody names when they create it, so
 	// there is nothing for an administrator to have approved in advance.
@@ -157,11 +198,8 @@ func runnerMissing(runner string, state deploymentState) []missingPiece {
 				Where: "관리자 ▸ 리소스 ▸ 런타임 이미지",
 			})
 		}
-		if !state.kubernetesEnabled {
-			missing = append(missing, missingPiece{
-				What:  "이 배포에 Kubernetes 연결이 꺼져 있어 런타임 안에서 실행할 수 없습니다.",
-				Where: "관리자 ▸ 설정 ▸ Kubernetes",
-			})
+		if piece, short := clusterMissing(state); short {
+			missing = append(missing, piece)
 		}
 	}
 	if state.modelEndpoints == 0 && runner != store.RunnerDify {

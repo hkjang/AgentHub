@@ -127,6 +127,15 @@ type ClusterAnswer = {
 function ClusterCheck() {
   const [answer, setAnswer] = useState<ClusterAnswer>()
   const [busy, setBusy] = useState(false)
+  // What the last check found, if anyone has ever run one. Shown before the
+  // button is pressed, because "nobody has ever checked" is the state this page
+  // used to be silent about — and the one where a person debugs a runtime that
+  // was never going to start.
+  const [last, setLast] = useState<{ checked: boolean; health?: { reachable: boolean; detail?: string; checkedAt: string; missing?: string[] } }>()
+  useEffect(() => {
+    void api.get<{ checked: boolean; health?: { reachable: boolean; detail?: string; checkedAt: string; missing?: string[] } }>('/api/v1/admin/kubernetes/health')
+      .then(setLast).catch(() => setLast(undefined))
+  }, [])
   const ask = async () => {
     setBusy(true)
     try { setAnswer(await api.post<ClusterAnswer>('/api/v1/admin/kubernetes/check')) }
@@ -140,6 +149,12 @@ function ClusterCheck() {
     <div>
       <strong>이 설정으로 실제로 되는지 확인합니다</strong>
       <p>주소가 응답하는지, 토큰이 받아들여지는지, 네임스페이스와 CRD가 있는지, 그리고 이 계정이 플랫폼이 하는 일을 할 수 있는지를 <b>클러스터에게 직접</b> 묻습니다.</p>
+      {!answer && last && (last.checked && last.health
+        ? <p className="cluster-check-detail">마지막 확인: {new Date(last.health.checkedAt).toLocaleString('ko-KR')} · {
+            last.health.reachable
+              ? (last.health.missing?.length ? `연결됨, 권한 부족: ${last.health.missing.join(', ')}` : '연결됨')
+              : `연결되지 않음${last.health.detail ? ` (${last.health.detail})` : ''}`}</p>
+        : <p className="cluster-check-detail">아직 한 번도 확인하지 않았습니다. 설정이 켜져 있다는 것과 클러스터가 응답한다는 것은 다른 이야기입니다.</p>)}
       {answer && !answer.reachable && <p className="cluster-check-detail">연결하지 못했습니다: {answer.detail}</p>}
       {check && <>
         <p className="cluster-check-detail">
