@@ -130,3 +130,73 @@ func (s *Store) RecordAgentServerHealth(ctx context.Context, id, health, detail 
 		id, health, detail)
 	return err
 }
+
+// AgentServerLoad is how many runs each server is holding right now.
+//
+// Counted from the runs themselves rather than kept on the server row: a counter
+// would have to be decremented by whatever finished the run, and a worker that
+// dies between the two leaves a machine looking permanently full. An unfinished
+// run is the fact; the count follows from it.
+func (s *Store) AgentServerLoad(ctx context.Context) (map[string]int, error) {
+	rows, err := s.pool.Query(ctx, `SELECT agent_server_id, count(*) FROM agent_runs
+		WHERE agent_server_id IS NOT NULL AND finished_at IS NULL GROUP BY agent_server_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	load := map[string]int{}
+	for rows.Next() {
+		var id string
+		var count int
+		if err := rows.Scan(&id, &count); err != nil {
+			return nil, err
+		}
+		load[id] = count
+	}
+	return load, rows.Err()
+}
+
+// ClaimAgentServer takes a place on one server for one run, or says there was
+// none.
+//
+// Reading the load and then writing the run is not enough, and this was measured
+// rather than reasoned about: two tasks queued together were placed three
+// milliseconds apart, both read a load of zero, and both went to the machine an
+// operator had limited to one at a time. The read and the write have to be the
+// same act.
+//
+// So the server's row is locked first. Two placements onto the same machine
+// queue behind each other for the microsecond it takes, and the second one then
+// counts a load that includes the first. Placements onto different machines do
+// not meet at all.
+func (s *Store) ClaimAgentServer(ctx context.Context, runID, serverID string) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var capacity int
+	if err := tx.QueryRow(ctx, `SELECT capacity FROM agent_servers WHERE id=$1 FOR UPDATE`, serverID).Scan(&capacity); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, ErrNotFound
+		}
+		return false, err
+	}
+	if capacity > 0 {
+		var running int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM agent_runs WHERE agent_server_id=$1 AND finished_at IS NULL`, serverID).Scan(&running); err != nil {
+			return false, err
+		}
+		if running >= capacity {
+			return false, nil
+		}
+	}
+	if _, err := tx.Exec(ctx, `UPDATE agent_runs SET agent_server_id=$2 WHERE id=$1`, runID, serverID); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}

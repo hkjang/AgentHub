@@ -148,7 +148,7 @@ export type ManagedUser = User & { status: string; managerId?: string; departmen
  *  registers it and why what matters about it is where it sits. */
 export type AgentServer = {
   id:string; name:string; baseUrl:string; kind:string; networkZone:string
-  capacity:number; enabled:boolean
+  capacity:number; enabled:boolean; running?:number
   health:'unknown'|'healthy'|'unreachable'|'refused'; healthDetail?:string
   checkedAt?:string; createdAt:string; updatedAt:string
 }

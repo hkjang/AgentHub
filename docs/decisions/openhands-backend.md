@@ -116,6 +116,22 @@ The approval gate, forking and condensation were read from the contract rather
 than exercised. The server has its own approval gate and AgentHub already has
 one; only one of them can be the authority and it has to be this platform's,
 which is why conversations are created with the confirmation policy left at
-never and the platform's own approval is what a task waits on. Backend pools
-across several zones exist as placement but have not been run against more than
-one machine.
+never and the platform's own approval is what a task waits on. Forking and condensation are still unused.
+
+## The pool, once there were two machines
+
+Placement was written against one server and checked against two, which is where
+its bugs were. Both were found by running it, not by reading it:
+
+- **Capacity was decoration.** The field was registered and never counted
+  against. It now is, from the runs in flight rather than from a counter, so a
+  worker that dies does not leave a machine looking permanently full.
+- **Counting is not claiming.** Two tasks queued together were placed three
+  milliseconds apart, both read a load of zero, and both went to the machine
+  limited to one at a time. The claim now locks the server's row and counts
+  inside that transaction; the same two tasks then land on different machines.
+  Choosing and taking stayed separate — a machine can fill between them — so a
+  refused claim sends the placement back to choose among what is left.
+
+Where a run executed is kept on the run. A pool changes shape, and "where did
+this actually run" is asked about one run long afterwards.

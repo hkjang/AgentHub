@@ -307,7 +307,11 @@ function facts(kind: Kind, item: Item): [string, unknown][] {
   if (kind === "servers")
     return [
       ["네트워크", item.networkZone || "구역 없음"],
-      ["동시 실행", item.capacity ? `${item.capacity}개` : "제한 없음"],
+      // Both numbers, because a limit is only meaningful next to what is
+      // actually running against it.
+      ["동시 실행", item.capacity
+        ? `${Number(item.running ?? 0)} / ${item.capacity}`
+        : `${Number(item.running ?? 0)} · 제한 없음`],
       // What the last check found, and when. A row that says it works because
       // somebody typed a URL is the claim this console keeps removing.
       ["연결", item.checkedAt

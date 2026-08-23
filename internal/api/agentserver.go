@@ -28,7 +28,24 @@ func (s *Server) agentServers(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "kinds": store.AgentServerKinds})
+	// What each one is holding right now. Registered capacity an operator cannot
+	// see used is a number they have no way to set well.
+	load, err := s.store.AgentServerLoad(r.Context())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	rows := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		rows = append(rows, map[string]any{
+			"id": item.ID, "name": item.Name, "baseUrl": item.BaseURL, "kind": item.Kind,
+			"networkZone": item.NetworkZone, "capacity": item.Capacity, "enabled": item.Enabled,
+			"health": item.Health, "healthDetail": item.HealthDetail, "checkedAt": item.CheckedAt,
+			"createdAt": item.CreatedAt, "updatedAt": item.UpdatedAt,
+			"running": load[item.ID],
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": rows, "kinds": store.AgentServerKinds})
 }
 
 // usableAgentServers is what a person writing a Goal may send work to.

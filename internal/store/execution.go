@@ -359,14 +359,18 @@ type AgentTask struct {
 }
 
 type AgentRun struct {
-	ID              string  `json:"id"`
-	TaskID          string  `json:"taskId"`
-	AgentID         string  `json:"agentId"`
-	OwnerID         string  `json:"ownerId"`
-	Attempt         int     `json:"attempt"`
-	Status          string  `json:"status"`
-	AgentVersion    int     `json:"agentVersion"`
-	RuntimeID       *string `json:"runtimeId,omitempty"`
+	ID           string  `json:"id"`
+	TaskID       string  `json:"taskId"`
+	AgentID      string  `json:"agentId"`
+	OwnerID      string  `json:"ownerId"`
+	Attempt      int     `json:"attempt"`
+	Status       string  `json:"status"`
+	AgentVersion int     `json:"agentVersion"`
+	RuntimeID    *string `json:"runtimeId,omitempty"`
+	// Which registered server held this run's work, when it was not held here.
+	// Kept on the run because "where did this actually execute" is a question an
+	// auditor asks about one run, long after the pool has changed shape.
+	AgentServerID   *string `json:"agentServerId,omitempty"`
 	ModelEndpointID *string `json:"modelEndpointId,omitempty"`
 	ModelName       string  `json:"modelName"`
 	TraceID         string  `json:"traceId"`
@@ -958,7 +962,7 @@ func (s *Store) FinishAgentRun(ctx context.Context, run AgentRun) error {
 	return err
 }
 
-const runColumns = `id,task_id,agent_id,owner_id,attempt,status,agent_version,runtime_id,model_endpoint_id,model_name,trace_id,worker_id,resumed_steps,step_count,tool_calls,total_tokens,metering,duration_ms,result,failure_reason,completion,started_at,finished_at`
+const runColumns = `id,task_id,agent_id,owner_id,attempt,status,agent_version,runtime_id,agent_server_id,model_endpoint_id,model_name,trace_id,worker_id,resumed_steps,step_count,tool_calls,total_tokens,metering,duration_ms,result,failure_reason,completion,started_at,finished_at`
 
 // scanTargets is where runColumns lands, in that order. The insert reads the
 // same columns back and cannot use scanRun, so it goes through here: a column
@@ -966,7 +970,7 @@ const runColumns = `id,task_id,agent_id,owner_id,attempt,status,agent_version,ru
 // queue with "number of field descriptions must equal number of destinations",
 // which names neither the column nor the query.
 func (r *AgentRun) scanTargets() []any {
-	return []any{&r.ID, &r.TaskID, &r.AgentID, &r.OwnerID, &r.Attempt, &r.Status, &r.AgentVersion, &r.RuntimeID,
+	return []any{&r.ID, &r.TaskID, &r.AgentID, &r.OwnerID, &r.Attempt, &r.Status, &r.AgentVersion, &r.RuntimeID, &r.AgentServerID,
 		&r.ModelEndpointID, &r.ModelName, &r.TraceID, &r.WorkerID, &r.ResumedSteps, &r.StepCount, &r.ToolCalls,
 		&r.TotalTokens, &r.Metering, &r.DurationMs, &r.Result, &r.FailureReason, &r.Completion, &r.StartedAt, &r.FinishedAt}
 }

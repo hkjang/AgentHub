@@ -43,7 +43,7 @@ type agentServerRun struct {
 
 // runAgentServer hands the task to a registered server and keeps what it said.
 func (o *Orchestrator) runAgentServer(ctx context.Context, run *store.AgentRun, task store.AgentTask, agent store.Agent, goal store.AgentGoal, model resolvedModel) ([]string, Outcome) {
-	server, outcome := o.placeOnAgentServer(ctx, goal)
+	server, outcome := o.placeOnAgentServer(ctx, run, goal)
 	if outcome.Status != "" {
 		return nil, outcome
 	}
@@ -127,7 +127,7 @@ func (o *Orchestrator) runAgentServer(ctx context.Context, run *store.AgentRun, 
 // for a reason somebody could not express in a field. Otherwise the choice is
 // made among the servers that are enabled, healthy and in the zone the goal
 // asked for.
-func (o *Orchestrator) placeOnAgentServer(ctx context.Context, goal store.AgentGoal) (store.AgentServer, Outcome) {
+func (o *Orchestrator) placeOnAgentServer(ctx context.Context, run *store.AgentRun, goal store.AgentGoal) (store.AgentServer, Outcome) {
 	if goal.AgentServerID != "" {
 		server, err := o.store.AgentServerByID(ctx, goal.AgentServerID)
 		if err != nil {
@@ -138,6 +138,17 @@ func (o *Orchestrator) placeOnAgentServer(ctx context.Context, goal store.AgentG
 			return store.AgentServer{}, Outcome{Status: store.TaskFailed,
 				Failure: "이 Goal이 지정한 에이전트 서버(" + server.Name + ")가 꺼져 있습니다."}
 		}
+		// A pinned server is still subject to its own limit. Otherwise the one way
+		// to overload a machine would be to name it.
+		claimed, err := o.store.ClaimAgentServer(ctx, run.ID, server.ID)
+		if err != nil {
+			return store.AgentServer{}, Outcome{Status: store.TaskFailed, Retryable: true,
+				Failure: "에이전트 서버 자리를 확보하지 못했습니다: " + err.Error()}
+		}
+		if !claimed {
+			return store.AgentServer{}, Outcome{Status: store.TaskFailed, Retryable: true,
+				Failure: server.Name + " 서버가 동시 실행 한도에 도달했습니다. 실행 중인 작업이 끝나면 다시 시도합니다."}
+		}
 		return server, Outcome{}
 	}
 	servers, err := o.store.AgentServers(ctx)
@@ -145,22 +156,54 @@ func (o *Orchestrator) placeOnAgentServer(ctx context.Context, goal store.AgentG
 		return store.AgentServer{}, Outcome{Status: store.TaskFailed, Retryable: true,
 			Failure: "에이전트 서버 목록을 읽지 못했습니다: " + err.Error()}
 	}
-	chosen, why := chooseAgentServer(servers, goal)
-	if why != "" {
-		// Retryable: a site that registers a server, or one whose machine comes
-		// back, should see the queued task run rather than have to start it again.
-		return store.AgentServer{}, Outcome{Status: store.TaskFailed, Retryable: true, Failure: why}
+	// What each machine is already holding. Registered capacity that nothing
+	// counts against is a number an operator sets and the platform ignores.
+	load, err := o.store.AgentServerLoad(ctx)
+	if err != nil {
+		return store.AgentServer{}, Outcome{Status: store.TaskFailed, Retryable: true,
+			Failure: "에이전트 서버 부하를 읽지 못했습니다: " + err.Error()}
 	}
-	return chosen, Outcome{}
+	// Choosing and taking are different acts: between them another task can fill
+	// the machine this one picked. The claim is what decides, and a refusal sends
+	// this back to choose again among what is left.
+	for len(servers) > 0 {
+		chosen, why := chooseAgentServer(servers, goal, load)
+		if why != "" {
+			return store.AgentServer{}, Outcome{Status: store.TaskFailed, Retryable: true, Failure: why}
+		}
+		claimed, err := o.store.ClaimAgentServer(ctx, run.ID, chosen.ID)
+		if err != nil {
+			return store.AgentServer{}, Outcome{Status: store.TaskFailed, Retryable: true,
+				Failure: "에이전트 서버 자리를 확보하지 못했습니다: " + err.Error()}
+		}
+		if claimed {
+			return chosen, Outcome{}
+		}
+		servers = withoutAgentServer(servers, chosen.ID)
+	}
+	return store.AgentServer{}, Outcome{Status: store.TaskFailed, Retryable: true, Failure: agentServerBusy(goal.AgentServerZone)}
+}
+
+// withoutAgentServer drops the machine that turned out to be full, so choosing
+// again does not choose it again.
+func withoutAgentServer(servers []store.AgentServer, id string) []store.AgentServer {
+	left := make([]store.AgentServer, 0, len(servers))
+	for _, server := range servers {
+		if server.ID != id {
+			left = append(left, server)
+		}
+	}
+	return left
 }
 
 // chooseAgentServer picks among the servers a goal will accept, or says why it
 // cannot. Separated from the store so the decision itself can be checked: its
 // mistakes are quiet ones — work in the wrong network, or on the machine that
 // failed its last check while a working one sat idle.
-func chooseAgentServer(servers []store.AgentServer, goal store.AgentGoal) (store.AgentServer, string) {
+func chooseAgentServer(servers []store.AgentServer, goal store.AgentGoal, load map[string]int) (store.AgentServer, string) {
 	zone := strings.TrimSpace(goal.AgentServerZone)
 	candidates := []store.AgentServer{}
+	full := 0
 	for _, server := range servers {
 		if !server.Enabled {
 			continue
@@ -173,20 +216,57 @@ func chooseAgentServer(servers []store.AgentServer, goal store.AgentGoal) (store
 		if server.Health == "unreachable" || server.Health == "refused" {
 			continue
 		}
+		// Full is full. Capacity zero means the operator did not say, which is not
+		// the same as no room and is treated as unbounded — refusing work because
+		// nobody typed a number would be the platform inventing a limit.
+		if server.Capacity > 0 && load[server.ID] >= server.Capacity {
+			full++
+			continue
+		}
 		candidates = append(candidates, server)
 	}
 	if len(candidates) == 0 {
+		if full > 0 {
+			// Different from having nowhere to run: the machines exist and are busy,
+			// so the task waits for one rather than telling an operator to register
+			// something that is already there.
+			return store.AgentServer{}, agentServerBusy(zone)
+		}
 		return store.AgentServer{}, agentServerShortage(zone)
 	}
 	// A checked server before an unchecked one, so a deployment that registered a
-	// spare does not send the first task to it.
+	// spare does not send the first task to it; then the emptiest, so a second
+	// task does not queue behind the first while another machine sits idle.
 	best := candidates[0]
 	for _, server := range candidates[1:] {
-		if best.Health != "healthy" && server.Health == "healthy" {
+		if betterAgentServer(server, best, load) {
 			best = server
 		}
 	}
 	return best, ""
+}
+
+// betterAgentServer says whether one machine should be preferred over another.
+//
+// Health first: a machine that answered its last check is known to work, and an
+// unchecked one is only a guess. Then load, so work spreads instead of piling
+// onto whichever server happened to be registered first.
+func betterAgentServer(candidate, best store.AgentServer, load map[string]int) bool {
+	if candidate.Health == "healthy" && best.Health != "healthy" {
+		return true
+	}
+	if candidate.Health != "healthy" && best.Health == "healthy" {
+		return false
+	}
+	return load[candidate.ID] < load[best.ID]
+}
+
+// agentServerBusy says the machines are there and working, just full.
+func agentServerBusy(zone string) string {
+	if zone != "" {
+		return "'" + zone + "' 구역의 에이전트 서버가 모두 동시 실행 한도에 도달했습니다. 실행 중인 작업이 끝나면 다시 시도합니다."
+	}
+	return "등록된 에이전트 서버가 모두 동시 실행 한도에 도달했습니다. 실행 중인 작업이 끝나면 다시 시도합니다."
 }
 
 func agentServerShortage(zone string) string {
