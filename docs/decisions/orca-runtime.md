@@ -136,11 +136,37 @@ So **an accepted dispatch is not a running worker.** A runner that counts the
 this platform keeps removing, and the first version of this runner did it. It
 asks `worker-show` now and records what the fabric says became of each dispatch.
 
-The fan-out is therefore still not demonstrated end to end: the checkouts and
-dispatches are real, the workers need the agent installed and logged in on the
-host. What is different from the earlier note is where the wall is — not at
-`worker-start`, which accepts, but eighteen seconds later in the worker's own
-terminal.
+## The fan-out, demonstrated
+
+The wall was an agent that was not there, and it came down once one was. The
+image carries codex, which needs no vendor account when the provider it is given
+is this platform's gateway. Run in that image:
+
+```
+$ orca orchestration worker-start --from <coordinator> --task <id>     --agent codex --worktree new-child --name agenthub-fan-codex --json
+{"ok":true}
+
+$ orca worktree list
+  /home/agent/orca/workspaces/repo/agenthub-fan          ← the coordinator
+  /home/agent/orca/workspaces/repo/agenthub-fan-codex    ← the worker's own checkout
+
+$ orca terminal read --terminal <worker>
+  • AGENTHUB-WORKER-OK   › Ask Codex to do anything   gw-model · ~/…/agenthub-fan-codex
+
+$ orca orchestration worker-show --dispatch ctx_aa8a74801964
+  "status":"dispatched", "last_failure":null,
+  "assignee_handle":"term_8c6c0e40-…"
+```
+
+The agent is running in its own checkout, it called the gateway, and the answer
+came back into the worker. The whole chain — AgentHub, the fabric, a coding agent
+in an isolated worktree, this platform's gateway, and back — with no vendor
+account anywhere in it.
+
+Codex rather than Claude or Cursor for exactly that reason: the provider written
+at start is its whole configuration. An agent that can only authenticate to its
+vendor can still be used, but only on a host where somebody has logged it in, and
+that is a deployment's choice rather than something this image can carry.
 
 ## Model calls do go through the gateway
 

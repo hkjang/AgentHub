@@ -29,6 +29,25 @@ RUN apt-get update \
       libgbm1 libpango-1.0-0 libcairo2 libasound2t64 libgtk-3-0t64 \
  && rm -rf /var/lib/apt/lists/*
 
+# One coding agent the fabric can actually start.
+#
+# Without an agent on the host, `worker-start` accepts the dispatch and the
+# worker dies in its own terminal — an acceptance that means nothing, which is
+# harder to notice than a refusal. Codex is here rather than Claude or Cursor
+# because it can be pointed at this platform's gateway and needs no vendor
+# account to run: the provider written at start is the whole configuration, and
+# its requests were observed arriving at the gateway with the platform's key.
+#
+# Node is installed for it. The fabric's own CLI is a binary and does not need
+# one, so this is the agent's cost and is stated as such.
+ARG CODEX_VERSION=0.149.0
+RUN DEBIAN_FRONTEND=noninteractive apt-get update \
+ && apt-get install -y --no-install-recommends nodejs npm \
+ && npm install --global "@openai/codex@${CODEX_VERSION}" \
+ && npm cache clean --force \
+ && rm -rf /var/lib/apt/lists/* \
+ && codex --version
+
 ARG ORCA_VERSION
 RUN mkdir -p /opt/orca \
  && curl -fsSL -o /opt/orca/orca-linux.AppImage \
