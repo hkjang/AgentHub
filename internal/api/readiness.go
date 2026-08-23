@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hkjang/AgentHub/internal/modelprobe"
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/store"
 )
@@ -132,7 +133,7 @@ func (s *Server) readiness(w http.ResponseWriter, r *http.Request) {
 			if keyErr != nil {
 				continue
 			}
-			verdict, detail, _ := s.askModelEndpoint(r, endpoint.BaseURL, key, endpoint.DefaultModel)
+			verdict, detail, _ := modelprobe.Ask(r.Context(), endpoint.BaseURL, key, endpoint.DefaultModel)
 			add(readinessItem{Area: "모델", Name: endpoint.Name, Verdict: verdict, Detail: detail, Fix: "/admin/models"})
 		}
 	})

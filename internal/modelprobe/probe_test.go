@@ -1,6 +1,7 @@
-package api
+package modelprobe
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -26,7 +27,7 @@ func TestAModelEndpointCheckNamesTheMistake(t *testing.T) {
 		{"provider error", status(http.StatusBadGateway), "", "error", "502"},
 	} {
 		server := httptest.NewServer(tc.handler)
-		verdict, detail, _ := (&Server{}).askModelEndpoint(httptest.NewRequest(http.MethodPost, "/", nil), server.URL, "", tc.model)
+		verdict, detail, _ := Ask(context.Background(), server.URL, "", tc.model)
 		server.Close()
 		if verdict != tc.verdict {
 			t.Errorf("%s → %q, want %q (%s)", tc.name, verdict, tc.verdict, detail)
@@ -37,10 +38,10 @@ func TestAModelEndpointCheckNamesTheMistake(t *testing.T) {
 	}
 
 	// An address nobody can reach, and an empty one, are different mistakes.
-	if verdict, detail, _ := (&Server{}).askModelEndpoint(httptest.NewRequest(http.MethodPost, "/", nil), "http://127.0.0.1:9/v1", "", ""); verdict != "unreachable" {
+	if verdict, detail, _ := Ask(context.Background(), "http://127.0.0.1:9/v1", "", ""); verdict != "unreachable" {
 		t.Errorf("a closed port → %q (%s)", verdict, detail)
 	}
-	if verdict, _, _ := (&Server{}).askModelEndpoint(httptest.NewRequest(http.MethodPost, "/", nil), "   ", "", ""); verdict != "unconfigured" {
+	if verdict, _, _ := Ask(context.Background(), "   ", "", ""); verdict != "unconfigured" {
 		t.Errorf("an empty address → %q", verdict)
 	}
 }
@@ -54,7 +55,7 @@ func TestATrailingSlashIsNotAMistake(t *testing.T) {
 		_, _ = w.Write([]byte(`{"data":[{"id":"m"}]}`))
 	}))
 	defer server.Close()
-	if verdict, detail, _ := (&Server{}).askModelEndpoint(httptest.NewRequest(http.MethodPost, "/", nil), server.URL+"/v1/", "", ""); verdict != "ok" {
+	if verdict, detail, _ := Ask(context.Background(), server.URL+"/v1/", "", ""); verdict != "ok" {
 		t.Errorf("verdict = %q (%s)", verdict, detail)
 	}
 	if asked != "/v1/models" {

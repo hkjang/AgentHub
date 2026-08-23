@@ -41,10 +41,16 @@ type deploymentState struct {
 	// somebody filled in a form; this says the cluster answered.
 	cluster        clusterHealth
 	modelEndpoints int
-	approvedImages map[string]int
-	agentServers   int
-	healthyServers int
-	externalApps   int
+	// The endpoints this deployment could actually reach at the last check, and
+	// whether anybody has ever asked. Registered and reachable are different
+	// facts, and a task at 3am is a poor place to learn the difference.
+	workingEndpoints int
+	checkedEndpoints int
+	endpointTrouble  string
+	approvedImages   map[string]int
+	agentServers     int
+	healthyServers   int
+	externalApps     int
 }
 
 func (s *Server) readDeploymentState(ctx context.Context) deploymentState {
@@ -57,11 +63,7 @@ func (s *Server) readDeploymentState(ctx context.Context) deploymentState {
 	_ = s.store.Setting(ctx, clusterHealthKey, &state.cluster)
 
 	if endpoints, err := s.store.ModelEndpoints(ctx); err == nil {
-		for _, endpoint := range endpoints {
-			if endpoint.Enabled {
-				state.modelEndpoints++
-			}
-		}
+		state.modelEndpoints, state.checkedEndpoints, state.workingEndpoints, state.endpointTrouble = countEndpoints(endpoints)
 	}
 	if images, err := s.store.RuntimeImages(ctx); err == nil {
 		for _, image := range images {
@@ -131,6 +133,62 @@ func clusterMissing(state deploymentState) (missingPiece, bool) {
 	return missingPiece{}, false
 }
 
+// countEndpoints separates three facts a listing runs together: how many
+// endpoints are registered, how many have ever been asked, and how many
+// answered well.
+//
+// Only "ok" counts as working. An endpoint that is reachable but does not offer
+// the model somebody typed is a task that fails at its first call, which is not
+// the same as an endpoint that is down and is not the same as one that works.
+func countEndpoints(endpoints []store.ModelEndpoint) (total, checked, working int, trouble string) {
+	for _, endpoint := range endpoints {
+		if !endpoint.Enabled {
+			continue
+		}
+		total++
+		if endpoint.CheckedAt == nil {
+			continue
+		}
+		checked++
+		if endpoint.Health == "ok" {
+			working++
+			continue
+		}
+		if trouble == "" && endpoint.HealthDetail != "" {
+			trouble = endpoint.Name + ": " + endpoint.HealthDetail
+		}
+	}
+	return total, checked, working, trouble
+}
+
+// modelMissing is what stands between this deployment and a model call.
+//
+// Registered is not reachable. The check that would tell them apart existed and
+// threw its answer away, so a deployment could hold an endpoint nobody had ever
+// asked about and hear nothing until a task failed at night.
+func modelMissing(state deploymentState) (missingPiece, bool) {
+	if state.modelEndpoints == 0 {
+		return missingPiece{
+			What:  "사용할 수 있는 Model Endpoint가 없습니다. 에이전트는 모델 없이 자동 실행되지 않습니다.",
+			Where: "관리자 ▸ 리소스 ▸ 모델 엔드포인트",
+		}, true
+	}
+	if state.checkedEndpoints == 0 {
+		return missingPiece{
+			What:  "Model Endpoint의 연결을 아직 한 번도 확인하지 않았습니다. 등록돼 있다는 것과 응답한다는 것은 다른 이야기입니다.",
+			Where: "관리자 ▸ 리소스 ▸ 모델 엔드포인트 ▸ 연결 확인",
+		}, true
+	}
+	if state.workingEndpoints == 0 {
+		what := "확인된 Model Endpoint 중 정상인 것이 없습니다"
+		if state.endpointTrouble != "" {
+			what += " — " + state.endpointTrouble
+		}
+		return missingPiece{What: what, Where: "관리자 ▸ 리소스 ▸ 모델 엔드포인트 ▸ 연결 확인"}, true
+	}
+	return missingPiece{}, false
+}
+
 // runtimeMissing is what stands between this deployment and a working runtime of
 // one type.
 //
@@ -150,11 +208,8 @@ func runtimeMissing(descriptor runtimetype.Descriptor, state deploymentState) []
 			Where: "관리자 ▸ 리소스 ▸ 런타임 이미지",
 		})
 	}
-	if state.modelEndpoints == 0 {
-		missing = append(missing, missingPiece{
-			What:  "사용할 수 있는 Model Endpoint가 없습니다. 에이전트는 모델 없이 자동 실행되지 않습니다.",
-			Where: "관리자 ▸ 리소스 ▸ 모델 엔드포인트",
-		})
+	if piece, short := modelMissing(state); short {
+		missing = append(missing, piece)
 	}
 	return missing
 }
@@ -202,11 +257,12 @@ func runnerMissing(runner string, state deploymentState) []missingPiece {
 			missing = append(missing, piece)
 		}
 	}
-	if state.modelEndpoints == 0 && runner != store.RunnerDify {
-		missing = append(missing, missingPiece{
-			What:  "사용할 수 있는 Model Endpoint가 없습니다.",
-			Where: "관리자 ▸ 리소스 ▸ 모델 엔드포인트",
-		})
+	// An external application brings its own model, so this deployment's endpoints
+	// are not what stands in its way.
+	if runner != store.RunnerDify {
+		if piece, short := modelMissing(state); short {
+			missing = append(missing, piece)
+		}
 	}
 	return missing
 }

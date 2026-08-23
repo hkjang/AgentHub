@@ -147,11 +147,12 @@ func run(logger *slog.Logger) error {
 	caretaker := execution.NewCaretaker(db, logger)
 	go func() { errs <- caretaker.Run(ctx) }()
 
-	// The agent servers are asked again on a timer. Their health was recorded
+	// The things this deployment depends on — its agent servers and its model
+	// endpoints — are asked again on a timer. Their health was recorded
 	// when somebody pressed a button and then kept forever, which made a machine
 	// verified in March look like one verified an hour ago — to the console, and
 	// to placement, which prefers a healthy server over an unchecked one.
-	watch := execution.NewServerWatch(db, logger)
+	watch := execution.NewDependencyWatch(db, logger)
 	go func() { errs <- watch.Run(ctx) }()
 
 	// The runtime warm pool claims each runtime before starting it, so several

@@ -34,10 +34,17 @@ type ModelEndpoint struct {
 	// InputPricePerMTok and OutputPricePerMTok price this endpoint's tokens, per
 	// million, in Currency. Zero means the endpoint is not priced, which the
 	// usage report says rather than showing a confident zero.
-	InputPricePerMTok  float64   `json:"inputPricePerMTok"`
-	OutputPricePerMTok float64   `json:"outputPricePerMTok"`
-	Currency           string    `json:"currency"`
-	CreatedAt          time.Time `json:"createdAt"`
+	InputPricePerMTok  float64 `json:"inputPricePerMTok"`
+	OutputPricePerMTok float64 `json:"outputPricePerMTok"`
+	Currency           string  `json:"currency"`
+	// What the last check of this endpoint found, and when. Kept rather than
+	// asked on every read: a listing of several endpoints must not make several
+	// outbound calls, and the last answer is worth seeing even when the endpoint
+	// has since stopped replying.
+	Health       string     `json:"health"`
+	HealthDetail string     `json:"healthDetail,omitempty"`
+	CheckedAt    *time.Time `json:"checkedAt,omitempty"`
+	CreatedAt    time.Time  `json:"createdAt"`
 }
 type MCPServer struct {
 	ID               string `json:"id"`
@@ -224,7 +231,7 @@ func (s *Store) UpsertRuntimeImage(ctx context.Context, item RuntimeImage) (Runt
 	return item, err
 }
 func (s *Store) ModelEndpoints(ctx context.Context) ([]ModelEndpoint, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id,name,provider,base_url,default_model,secret_value IS NOT NULL,enabled,input_price_per_mtok,output_price_per_mtok,currency,created_at FROM model_endpoints ORDER BY name`)
+	rows, err := s.pool.Query(ctx, `SELECT id,name,provider,base_url,default_model,secret_value IS NOT NULL,enabled,input_price_per_mtok,output_price_per_mtok,currency,health,health_detail,checked_at,created_at FROM model_endpoints ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +239,7 @@ func (s *Store) ModelEndpoints(ctx context.Context) ([]ModelEndpoint, error) {
 	items := []ModelEndpoint{}
 	for rows.Next() {
 		var item ModelEndpoint
-		if err := rows.Scan(&item.ID, &item.Name, &item.Provider, &item.BaseURL, &item.DefaultModel, &item.SecretConfigured, &item.Enabled, &item.InputPricePerMTok, &item.OutputPricePerMTok, &item.Currency, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.Provider, &item.BaseURL, &item.DefaultModel, &item.SecretConfigured, &item.Enabled, &item.InputPricePerMTok, &item.OutputPricePerMTok, &item.Currency, &item.Health, &item.HealthDetail, &item.CheckedAt, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -425,4 +432,11 @@ func (s *Store) UpdateUserGovernance(ctx context.Context, id, role, status strin
 		return User{}, errors.New("invalid status")
 	}
 	return scanUser(s.pool.QueryRow(ctx, `UPDATE users SET role=$1,status=$2,manager_id=$3,updated_at=now() WHERE id=$4 RETURNING `+userColumns, role, status, managerID, id))
+}
+
+// RecordModelEndpointHealth keeps what a check found.
+func (s *Store) RecordModelEndpointHealth(ctx context.Context, id, health, detail string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE model_endpoints SET health=$2, health_detail=$3, checked_at=now() WHERE id=$1`,
+		id, health, detail)
+	return err
 }

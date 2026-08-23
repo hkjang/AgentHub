@@ -296,6 +296,12 @@ function facts(kind: Kind, item: Item): [string, unknown][] {
           ? `입력 ${item.inputPricePerMTok} / 출력 ${item.outputPricePerMTok} ${item.currency ?? ""}`
           : "미산정",
       ],
+      // What the last check found, and when. The check used to be answered once
+      // on screen and forgotten, so a key rotated last week looked exactly like
+      // an endpoint verified this morning.
+      ["연결", item.checkedAt
+        ? `${endpointWord(String(item.health))} · ${new Date(String(item.checkedAt)).toLocaleString("ko-KR")}`
+        : "아직 확인하지 않음"],
     ];
   if (kind === "apps")
     return [
@@ -338,6 +344,20 @@ function facts(kind: Kind, item: Item): [string, unknown][] {
     ["Risk", item.riskLevel],
     ["인증", auth],
   ];
+}
+
+// endpointWord says what a model endpoint's check found, in the words an
+// administrator would use for the thing they would go and change.
+function endpointWord(health: string) {
+  return health === "ok" ? "정상"
+    : health === "model_missing" ? "지정한 모델 없음"
+    : health === "unauthorised" ? "인증 거절"
+    : health === "wrong_path" ? "주소 경로 문제"
+    : health === "reachable" ? "응답하지만 모델 목록이 비어 있음"
+    : health === "unreachable" ? "연결되지 않음"
+    : health === "unconfigured" ? "주소 없음"
+    : health === "error" ? "오류 응답"
+    : "확인 필요";
 }
 
 // healthWord says what a check found in words rather than in a status name.
