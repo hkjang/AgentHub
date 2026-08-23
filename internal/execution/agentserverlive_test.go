@@ -3,6 +3,8 @@ package execution
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -38,6 +40,10 @@ type quietNotes struct {
 	// what is being checked.
 	answer func(pendingAction) bool
 	asked  []pendingAction
+	// cancelAfter makes this stand-in report the work called off on the nth
+	// question. Zero means nobody ever cancels.
+	cancelAfter int
+	askCount    int
 }
 
 func (n *quietNotes) decide(_ context.Context, action pendingAction) (bool, error) {
@@ -53,6 +59,16 @@ func (n *quietNotes) activity(_ context.Context, _ string, actions int, tools []
 }
 
 func (n *quietNotes) trouble(_ context.Context, _ string, err error) { n.failure = err }
+
+// calledOff stands in for somebody pressing cancel. The default is that the work
+// is still wanted, which is what every other case in this file assumes.
+func (n *quietNotes) calledOff(context.Context) bool {
+	if n.cancelAfter == 0 {
+		return false
+	}
+	n.askCount++
+	return n.askCount >= n.cancelAfter
+}
 
 // seenCall is one model call as the gateway saw it.
 type seenCall struct {
@@ -359,4 +375,126 @@ func toolResultMentions(body map[string]any, text string) bool {
 		}
 	}
 	return false
+}
+
+// TestLiveCancellationReachesTheOtherMachine is the stop button doing something.
+//
+// Cancelling writes to a row in this deployment's database. The conversation is
+// held on a machine that never hears about it, so without the platform carrying
+// the news the agent goes on working — spending the site's model budget and
+// touching a workspace — for a task somebody has already called off.
+func TestLiveCancellationReachesTheOtherMachine(t *testing.T) {
+	base := os.Getenv("AGENTHUB_AGENT_SERVER")
+	callback := os.Getenv("AGENTHUB_AGENT_SERVER_CALLBACK")
+	if base == "" || callback == "" {
+		t.Skip("no agent server to talk to")
+	}
+
+	var mutex sync.Mutex
+	turns := 0
+	// A gateway that keeps the agent busy: every turn asks for another command, so
+	// the conversation would run until the iteration limit if nothing stopped it.
+	gateway := toolGatewayForever(t, func() {
+		mutex.Lock()
+		turns++
+		mutex.Unlock()
+	})
+	defer gateway.Close()
+	_, port, err := net.SplitHostPort(strings.TrimPrefix(gateway.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Second)
+
+	client := &agentServerClient{base: strings.TrimRight(base, "/"), http: &http.Client{Timeout: 60 * time.Second}}
+	// Called off at the first asking, which happens five polls in.
+	notes := &quietNotes{cancelAfter: 1}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	goal := store.AgentGoal{MaxSteps: 50, MaxDurationSeconds: 150, AgentServerDir: "workspace/cancel"}
+	result, err := client.hold(ctx, notes, goal, "Keep running the commands you are given.",
+		resolvedModel{BaseURL: "http://" + callback + ":" + port + "/v1", ModelName: "openai/agenthub-model", APIKey: "agenthub-issued-key"})
+	if err == nil {
+		t.Fatal("a cancelled run reported success")
+	}
+	if !errors.Is(err, errAgentServerCalledOff) {
+		t.Fatalf("a cancelled run failed for the wrong reason: %v", err)
+	}
+	if result.ConversationID == "" {
+		t.Fatal("no conversation was started, so this proves nothing about stopping one")
+	}
+
+	// The machine's own answer, after the platform said stop. Anything still
+	// running is the operator's cancel not having arrived.
+	settled := ""
+	for range 10 {
+		time.Sleep(2 * time.Second)
+		var info struct {
+			ExecutionStatus string `json:"execution_status"`
+		}
+		if err := client.call(ctx, http.MethodGet, "/api/conversations/"+result.ConversationID, nil, &info); err != nil {
+			t.Fatal(err)
+		}
+		settled = info.ExecutionStatus
+		if settled != "running" {
+			break
+		}
+	}
+	if settled == "running" {
+		t.Errorf("the conversation is still running on the server after the task was cancelled")
+	}
+
+	// And it stays stopped: a paused agent that quietly resumes is the same bug
+	// with a delay.
+	before := 0
+	mutex.Lock()
+	before = turns
+	mutex.Unlock()
+	time.Sleep(6 * time.Second)
+	mutex.Lock()
+	after := turns
+	mutex.Unlock()
+	if after != before {
+		t.Errorf("the agent made %d more model calls after being stopped", after-before)
+	}
+}
+
+// toolGatewayForever answers every turn with another command, so the agent never
+// finishes on its own.
+func toolGatewayForever(t *testing.T, saw func()) *httptest.Server {
+	t.Helper()
+	var count struct {
+		sync.Mutex
+		n int
+	}
+	listener, err := net.Listen("tcp4", "0.0.0.0:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		saw()
+		if mentionsTool(body, "terminal") {
+			// A different command each turn. The server watches for an agent going in
+			// circles and stops it — which would end the conversation for its own
+			// reasons and make this test pass whether or not the platform's stop
+			// works. It did exactly that until the commands stopped repeating.
+			count.Lock()
+			count.n++
+			command := fmt.Sprintf(`{"command":"sleep 2 && echo STILL-WORKING-%d"}`, count.n)
+			count.Unlock()
+			writeCompletion(w, map[string]any{"role": "assistant", "content": nil, "tool_calls": []map[string]any{{
+				"id": fmt.Sprintf("keep_going_%d", count.n), "type": "function",
+				"function": map[string]any{"name": "terminal", "arguments": command},
+			}}})
+			return
+		}
+		writeCompletion(w, map[string]any{"role": "assistant", "content": "…"})
+	}))
+	server.Listener.Close()
+	server.Listener = listener
+	server.Start()
+	return server
 }

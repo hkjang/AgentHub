@@ -98,6 +98,11 @@ func (o *Orchestrator) runAgentServer(ctx context.Context, run *store.AgentRun, 
 		// A server that stopped answering is infrastructure, not the agent failing
 		// its goal, so the task is worth another attempt — possibly on a different
 		// machine, since placement runs again.
+		if errors.Is(convErr, errAgentServerCalledOff) {
+			// Somebody stopped it. The task row already says cancelled, so this is
+			// recorded as what happened rather than as the agent failing.
+			return nil, Outcome{Status: store.TaskCancelled, Failure: convErr.Error()}
+		}
 		return nil, Outcome{Status: store.TaskFailed, Failure: convErr.Error(), Retryable: agentServerRetryable(convErr)}
 	}
 	if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
@@ -321,6 +326,8 @@ type agentServerClient struct {
 type agentServerNotes interface {
 	activity(ctx context.Context, conversationID string, actions int, tools []string)
 	trouble(ctx context.Context, conversationID string, err error)
+	// calledOff says somebody has cancelled this work while it was running.
+	calledOff(ctx context.Context) bool
 	// decide answers the server's approval gate. It is on this interface rather
 	// than inside the client because the answer is a platform decision — a person,
 	// a policy — and none of that belongs to HTTP.
@@ -359,6 +366,23 @@ func (n runNotes) activity(ctx context.Context, conversationID string, actions i
 // which is the only arrangement in which there is one authority rather than two.
 func (n runNotes) decide(ctx context.Context, action pendingAction) (bool, error) {
 	return n.orchestrator.askAboutServerAction(ctx, n.run, n.agent, n.goal, action)
+}
+
+// calledOff asks whether the task is still wanted.
+//
+// The conversation is held on a machine this deployment does not own, so nothing
+// about cancelling reaches it unless the platform carries the news — and a
+// cancelled task whose agent keeps working is the operator's stop button doing
+// nothing.
+func (n runNotes) calledOff(ctx context.Context) bool {
+	cancelled, err := n.orchestrator.store.TaskWasCancelled(ctx, n.run.TaskID)
+	if err != nil {
+		// Not knowing is not a reason to stop work that may be wanted.
+		n.orchestrator.logger.Warn("could not check whether a task was cancelled",
+			"run", n.run.ID, "task", n.run.TaskID, "error", err)
+		return false
+	}
+	return cancelled
 }
 
 func (n runNotes) trouble(ctx context.Context, conversationID string, err error) {
@@ -435,6 +459,11 @@ func (c *agentServerClient) hold(ctx context.Context, notes agentServerNotes, go
 	}()
 
 	deadline := time.Now().Add(agentServerTimeout(goal))
+	// How many polls between asking whether anybody still wants this. The work
+	// itself is polled every two seconds; asking the database that often for
+	// something that changes once would be the platform generating its own load.
+	const askEvery = 5
+	polls := 0
 	// Whether this platform has refused something. It changes what an idle
 	// conversation means: the agent stops where it was refused and goes idle, so
 	// without this the run would poll a finished conversation until its deadline
@@ -448,6 +477,13 @@ func (c *agentServerClient) hold(ctx context.Context, notes agentServerNotes, go
 		case <-ctx.Done():
 			return result, ctx.Err()
 		case <-time.After(2 * time.Second):
+		}
+		polls++
+		if polls%askEvery == 0 && notes.calledOff(ctx) {
+			// The deferred stop closes the conversation on the way out, so the work
+			// ends on that machine too rather than running on unwatched.
+			result.Actions = c.recordEvents(ctx, notes, created.ID)
+			return result, errAgentServerCalledOff
 		}
 		var info struct {
 			ExecutionStatus string `json:"execution_status"`
@@ -713,6 +749,10 @@ func agentServerTimeout(goal store.AgentGoal) time.Duration {
 	}
 	return 30 * time.Minute
 }
+
+// errAgentServerCalledOff is a run stopped because somebody cancelled the task,
+// which is neither a failure of the agent nor something to try again.
+var errAgentServerCalledOff = errors.New("작업이 취소되어 에이전트 서버 실행을 중단했습니다")
 
 // agentServerRetryable separates a machine that is having trouble from work that
 // was refused. The first is worth another attempt, possibly on another server;

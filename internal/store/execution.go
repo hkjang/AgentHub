@@ -918,6 +918,30 @@ func (s *Store) CancelAgentTask(ctx context.Context, taskID, ownerID string) (in
 	return int(descendants.RowsAffected()), nil
 }
 
+// TaskWasCancelled says whether somebody has called this work off.
+//
+// Cancelling writes to the task row, and the worker holding the task is another
+// process that never hears about it. For work running inside this deployment
+// that costs some wasted effort; for work held on a machine this platform does
+// not own it means the conversation the operator just cancelled goes on running,
+// spending the site's model budget and touching a workspace, with nothing to
+// stop it but the goal's own time limit.
+//
+// So the backends that wait in a loop ask this while they wait. It is one
+// indexed read of one row, at a fraction of the rate they already poll the work
+// itself.
+func (s *Store) TaskWasCancelled(ctx context.Context, taskID string) (bool, error) {
+	var status string
+	if err := s.pool.QueryRow(ctx, `SELECT status FROM agent_tasks WHERE id=$1`, taskID).Scan(&status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// A task that no longer exists is not work anybody is waiting for.
+			return true, nil
+		}
+		return false, err
+	}
+	return status == TaskCancelled, nil
+}
+
 // RunningRunsForAgent counts in-flight runs, which is what the concurrency
 // policy is enforced against.
 func (s *Store) RunningRunsForAgent(ctx context.Context, agentID, exceptRunID string) (int, error) {
