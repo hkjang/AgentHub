@@ -127,7 +127,11 @@ func (p *Pool) warm(ctx context.Context) {
 			_ = p.store.ReleaseWarmRuntime(ctx, instance.ID)
 			continue
 		}
-		if _, err := p.store.UpdateRuntimeDesiredState(ctx, instance.ID, agent.OwnerID, "running", true); err != nil {
+		// Under the owner's quota, like every other way of taking capacity. The
+		// refusal above answers whether this may start; this keeps the answer true
+		// at the moment it is taken, so two workers warming at the same tick cannot
+		// both take the last runtime.
+		if _, err := p.store.StartRuntimeWithinQuota(ctx, instance.ID, agent.OwnerID, spec.Profile.ID, true); err != nil {
 			p.logger.Warn("warm desired state not recorded", "runtime", instance.ID, "error", err)
 			continue
 		}

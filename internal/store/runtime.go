@@ -138,17 +138,6 @@ type governanceSettings struct {
 	DefaultIdleTimeoutSeconds int `json:"defaultIdleTimeoutSeconds"`
 }
 
-// CheckRuntimeQuota refuses a runtime that would put its owner, or their whole
-// department, over a limit.
-//
-// Both are asked because they are different questions with different answers: a
-// person inside their own allowance can still be refused because the capacity
-// their department was given is full, and telling them to raise their personal
-// limit would not help. The refusal names which one it was.
-func (s *Store) CheckRuntimeQuota(ctx context.Context, userID, profileID string) error {
-	return s.CheckRuntimeQuotaExcept(ctx, userID, profileID, "")
-}
-
 // CheckRuntimeQuotaExcept is the same question asked about a runtime whose record
 // already exists.
 //
@@ -171,21 +160,6 @@ func (s *Store) CheckRuntimeQuotaExcept(ctx context.Context, userID, profileID, 
 	}
 	if resolved.DepartmentID != "" {
 		return quota.CheckHeld(quota.ScopeDepartment, resolved.DepartmentQ.Total, resolved.DepartmentHeld, addCPU, addMemory)
-	}
-	return nil
-}
-
-// CheckWorkspaceQuota asks the same two questions about storage.
-func (s *Store) CheckWorkspaceQuota(ctx context.Context, userID string, addGB int) error {
-	resolved, err := s.ResolveQuota(ctx, userID)
-	if err != nil {
-		return err
-	}
-	if err := quota.CheckStorage(quota.ScopeUser, resolved.Effective, resolved.Held.StorageGB, addGB); err != nil {
-		return err
-	}
-	if resolved.DepartmentID != "" {
-		return quota.CheckStorage(quota.ScopeDepartment, resolved.DepartmentQ.Total, resolved.DepartmentHeld.StorageGB, addGB)
 	}
 	return nil
 }

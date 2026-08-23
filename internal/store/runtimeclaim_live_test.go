@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -107,4 +108,50 @@ func TestOnlyOneRuntimeTakesTheLastOfTheQuota(t *testing.T) {
 	if after > limit {
 		t.Errorf("this owner now holds %d running runtimes against a limit of %d", after, limit)
 	}
+}
+
+// TestTheOnlyWaysToTakeCapacityHoldTheQuota names the rule this platform now
+// follows, so a fifth way of taking capacity has to follow it too.
+//
+// Three limits were read and then written against — storage, runtimes, and the
+// runtimes the autonomous paths start. The fourth, task concurrency, was already
+// taken under a lock and is the shape the others were changed to match. A future
+// path that asks a limit and then writes is the bug all three of them were.
+func TestTheOnlyWaysToTakeCapacityHoldTheQuota(t *testing.T) {
+	for _, claim := range []struct{ what, file, fn string }{
+		{"저장소", "workspaceclaim.go", "func (s *Store) ClaimWorkspaceStorage("},
+		{"런타임", "runtimeclaim.go", "func (s *Store) ClaimRuntimeCapacity("},
+		{"동시 실행", "quota.go", "func (s *Store) ReserveExecutionSlot("},
+	} {
+		body, err := os.ReadFile(claim.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source := string(body)
+		at := indexOf(source, claim.fn)
+		if at < 0 {
+			t.Fatalf("%s: %s is gone; this guard is reading nothing", claim.what, claim.fn)
+		}
+		block := source[at:]
+		if end := indexOf(block[1:], "\nfunc "); end >= 0 {
+			block = block[:end]
+		}
+		if !containsAny(block, "FOR UPDATE", "pg_advisory_xact_lock") {
+			t.Errorf("%s 한도는 잠금 없이 세고 씁니다 — 동시에 들어온 두 요청이 각자 마지막 자리를 가져갑니다 (%s)", claim.what, claim.file)
+		}
+		if !containsAny(block, "s.pool.Begin(") {
+			t.Errorf("%s 한도의 확인과 쓰기가 한 트랜잭션이 아닙니다 (%s)", claim.what, claim.file)
+		}
+	}
+}
+
+func indexOf(haystack, needle string) int { return strings.Index(haystack, needle) }
+
+func containsAny(haystack string, needles ...string) bool {
+	for _, needle := range needles {
+		if strings.Contains(haystack, needle) {
+			return true
+		}
+	}
+	return false
 }

@@ -85,7 +85,15 @@ func (o *Orchestrator) acquireRuntime(ctx context.Context, run store.AgentRun, a
 			}
 			return nil, err
 		}
-		if _, err := o.store.UpdateRuntimeDesiredState(ctx, instance.ID, agent.OwnerID, "running", true); err != nil {
+		// Marked running under the owner's quota rather than after asking about it:
+		// the refusal above answers "may this start", and this is what makes the
+		// answer still true at the moment the capacity is taken.
+		if _, err := o.store.StartRuntimeWithinQuota(ctx, instance.ID, agent.OwnerID, spec.Profile.ID, true); err != nil {
+			if errors.Is(err, quota.ErrExceeded) {
+				// A limit that filled between the two is a wait, not a failure, for
+				// the same reason the refusal above is.
+				return nil, fmt.Errorf("%w: %s", ErrRuntimeQuota, err.Error())
+			}
 			return nil, err
 		}
 	}
