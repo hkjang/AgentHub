@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hkjang/AgentHub/internal/agentserver"
 	"github.com/hkjang/AgentHub/internal/modelprobe"
@@ -167,6 +168,25 @@ func (s *Server) readiness(w http.ResponseWriter, r *http.Request) {
 		add(readinessItem{Area: "실행", Name: "워커", Verdict: "ok", Detail: detail, Fix: "/admin/execution"})
 	})
 
+	// The schedules. Every trigger overdue at once is the scheduler not running,
+	// which looks from every screen exactly like a quiet week — the console
+	// answers, the agents are there, and nothing happens. It is the same silence
+	// as having no workers, which this list already names.
+	run(func() {
+		overdue, total, err := s.store.OverdueTriggers(r.Context(), overdueGrace)
+		if err != nil || total == 0 {
+			return
+		}
+		if overdue == 0 {
+			add(readinessItem{Area: "실행", Name: "예약 실행", Verdict: "ok",
+				Detail: fmt.Sprintf("예약 트리거 %d개가 제때 실행되고 있습니다.", total), Fix: "/agents"})
+			return
+		}
+		add(readinessItem{Area: "실행", Name: "예약 실행", Verdict: "overdue",
+			Detail: fmt.Sprintf("예약 트리거 %d개 중 %d개가 실행 시각을 %s 이상 지났습니다. 스케줄러가 도는 워커가 없거나 표현식이 맞지 않습니다.",
+				total, overdue, overdueGrace), Fix: "/admin/execution"})
+	})
+
 	// The agent servers, which are the one dependency this platform does not run
 	// and cannot restart. A pool that has gone away looks exactly like a pool
 	// nobody has used yet, and the tasks pointed at it fail one at a time.
@@ -224,6 +244,11 @@ func (s *Server) readiness(w http.ResponseWriter, r *http.Request) {
 		map[string]any{"checked": len(items), "problems": problems})
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "problems": problems})
 }
+
+// overdueGrace is how late a schedule may be before it is worth reporting. Wide
+// enough that a worker restarting, or a sweep that ran a minute late, is not an
+// incident.
+const overdueGrace = 15 * time.Minute
 
 // readinessRank keeps the list in the order somebody would fix things: nothing
 // runs without the cluster, nobody logs in without the identity provider, and

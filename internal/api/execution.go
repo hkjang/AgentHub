@@ -853,12 +853,25 @@ func decodedImage(item store.AgentArtifact) ([]byte, bool) {
 
 func (s *Server) agentTriggers(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
-	items, err := s.store.AgentTriggers(r.Context(), u.ID, chi.URLParam(r, "id"))
+	agentID := chi.URLParam(r, "id")
+	items, err := s.store.AgentTriggers(r.Context(), u.ID, agentID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	// What each of them has actually produced. A trigger that says it fired an
+	// hour ago and a trigger whose every task has failed for a week look the same
+	// without this.
+	health, err := s.store.TriggerHealthFor(r.Context(), u.ID, agentID)
+	if err != nil {
+		// The list is still worth showing: not knowing the record is what every
+		// version before this one did.
+		s.logger.Warn("trigger history could not be read", "error", err)
+		writeJSON(w, http.StatusOK, map[string]any{"items": items})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "health": health,
+		"windowDays": int(store.TriggerHealthWindow.Hours() / 24)})
 }
 
 func (s *Server) saveAgentTrigger(w http.ResponseWriter, r *http.Request) {

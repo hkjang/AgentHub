@@ -155,3 +155,11 @@ export type AgentServer = {
 /** What a Goal author sees of those servers: names, networks and health, never
  *  addresses. */
 export type UsableAgentServer = { id:string; name:string; networkZone:string; health:AgentServer['health']; kind:string }
+
+/** What a trigger has produced lately. A trigger records when it last fired and
+ *  nothing about what came of it, so a schedule firing every hour into a task
+ *  that fails every hour reads exactly like one that works. */
+export type TriggerHealth = {
+  triggerId:string; tasks:number; failed:number
+  lastStatus?:string; lastError?:string; lastAt?:string
+}

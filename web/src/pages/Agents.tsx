@@ -6,7 +6,7 @@ import { api } from '../api'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, GuidePanel, Loading, PageHeader, StatusBadge } from '../components/UI'
 import { useTerms } from '../viewmode'
 import { RUNNER_VERDICT_LABELS, RUNTIME_TYPES, descriptor, relativeTime, runnerExperienceOf, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
-import type { Agent, AgentGoal, AgentMemory, AgentRelease, AgentTrigger, AgentVersion, ExecutionMode, ExternalApp, MCPBundle, MCPServerRef, MCPToolPolicy, ModelEndpoint, RuntimeFlow, RuntimeProfile, UsableAgentServer, Workspace } from '../types'
+import type { Agent, AgentGoal, AgentMemory, AgentRelease, AgentTrigger, AgentVersion, ExecutionMode, ExternalApp, MCPBundle, MCPServerRef, MCPToolPolicy, ModelEndpoint, RuntimeFlow, RuntimeProfile, TriggerHealth, UsableAgentServer, Workspace } from '../types'
 
 /** What the chosen way of running has done on this deployment.
  *
@@ -16,6 +16,26 @@ import type { Agent, AgentGoal, AgentMemory, AgentRelease, AgentTrigger, AgentVe
  *
  *  "안 해 봄" is deliberately quiet: most deployments will never use most of
  *  these, so it marks the absence of evidence rather than the choice. */
+/** What a trigger has produced lately.
+ *
+ *  It says nothing when a trigger has produced nothing: that is not a failure —
+ *  a weekly schedule simply may not have been due — and the "last fired" line
+ *  above already answers whether it runs at all. */
+function TriggerRecord({ health, days, fired }: { health?: TriggerHealth; days: number; fired?: string }) {
+  if (!health || health.tasks === 0) {
+    // Enabled, never fired, and nothing to show: worth saying once, because it is
+    // the state where somebody thinks automation is running and it is not.
+    if (!fired) return <small className="trigger-record">아직 한 번도 실행되지 않았습니다</small>
+    return null
+  }
+  const failed = health.failed ?? 0
+  const tone = failed === 0 ? 'ok' : failed >= health.tasks ? 'bad' : 'warn'
+  return <small className={`trigger-record ${tone}`}>
+    최근 {days}일 {health.tasks}건{failed > 0 ? ` · 실패 ${failed}건` : ''}
+    {failed >= health.tasks && health.lastError ? ` · ${health.lastError.slice(0, 60)}` : ''}
+  </small>
+}
+
 function RunnerVerdict({ runner }: { runner: string }) {
   const experience = runnerExperienceOf(runner)
   if (!experience) return null
@@ -301,6 +321,11 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
   const [mode,setMode]=useState<ExecutionMode>('interactive')
   const [goal,setGoal]=useState<AgentGoal|null>(null)
   const [triggers,setTriggers]=useState<AgentTrigger[]>([])
+  // What each trigger has actually produced. Without it a schedule that fires
+  // every hour into a task that fails every hour reads exactly like one that
+  // works.
+  const [triggerHealth,setTriggerHealth]=useState<Record<string,TriggerHealth>>({})
+  const [triggerWindow,setTriggerWindow]=useState(7)
   const [memories,setMemories]=useState<AgentMemory[]>([])
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
@@ -322,7 +347,7 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
     try{
       const [goalResult,triggerResult,memoryResult,policyResult,appResult,serverResult]=await Promise.all([
         api.get<{goal:AgentGoal;executionMode:ExecutionMode}>(`/api/v1/agents/${agent.id}/goal`),
-        api.get<{items?:AgentTrigger[]}>(`/api/v1/agents/${agent.id}/triggers`),
+        api.get<{items?:AgentTrigger[];health?:Record<string,TriggerHealth>;windowDays?:number}>(`/api/v1/agents/${agent.id}/triggers`),
         api.get<{items?:AgentMemory[]}>(`/api/v1/agents/${agent.id}/memories`),
         api.get<{items?:MCPToolPolicy[];servers?:MCPServerRef[]}>(`/api/v1/agents/${agent.id}/mcp-policies`),
         // Offered to every agent: an external application runs somewhere the
@@ -333,7 +358,7 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
         // do has nothing to do with this agent's runtime.
         api.get<{items?:UsableAgentServer[]}>('/api/v1/agent-servers'),
       ])
-      setGoal(goalResult.goal); setMode(goalResult.executionMode); setTriggers(triggerResult.items??[]); setMemories(memoryResult.items??[])
+      setGoal(goalResult.goal); setMode(goalResult.executionMode); setTriggers(triggerResult.items??[]); setTriggerHealth(triggerResult.health??{}); setTriggerWindow(triggerResult.windowDays??7); setMemories(memoryResult.items??[])
       setPolicies(policyResult.items??[]); setMcpServers(policyResult.servers??[]); setApps(appResult.items??[])
       setServers(serverResult.items??[])
     }catch(e){ setError(e instanceof Error?e.message:'목표 설정을 불러오지 못했습니다.') }
@@ -703,6 +728,7 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
                 :trigger.type==='event'?`이벤트 · ${EVENT_TYPES.find(([value])=>value===trigger.eventType)?.[1]??trigger.eventType}`
                 :'수동'}</small>
               {trigger.nextFireAt&&<small>다음 실행 {new Date(trigger.nextFireAt).toLocaleString('ko-KR')}</small>}
+              <TriggerRecord health={triggerHealth[trigger.id]} days={triggerWindow} fired={trigger.lastFiredAt}/>
             </div>
             <StatusBadge status={trigger.enabled?'active':'disabled'}/>
             <button className="danger" title="삭제" onClick={()=>void removeTrigger(trigger.id)}><Trash2 size={15}/></button>
