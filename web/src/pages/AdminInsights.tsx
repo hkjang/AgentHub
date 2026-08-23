@@ -246,6 +246,11 @@ type ReadinessItem = { area: string; name: string; verdict: string; detail: stri
  * somebody else's service, and a screen that quietly probes five external
  * systems on every load is a screen that gets blamed for their outages.
  */
+/** The verdicts that mean nothing needs doing, kept in step with the platform's
+ *  own list. They disagreed: the summary counted an enforced egress policy as
+ *  fine while the row beside it was drawn in red. */
+const READY = new Set(['ok', 'enforced'])
+
 function Readiness() {
   const [items, setItems] = useState<ReadinessItem[]>()
   const [problems, setProblems] = useState(0)
@@ -261,7 +266,7 @@ function Readiness() {
   }
   return <section className="panel readiness">
     <div className="panel-header">
-      <div><h2>배포 점검</h2><p>클러스터, SSO, 모델 엔드포인트, MCP 서버에게 지금 동작하는지 직접 물어봅니다.</p></div>
+      <div><h2>배포 점검</h2><p>클러스터, SSO, 모델 엔드포인트, 에이전트 서버, MCP 서버, 그리고 이 배포의 워커에게 지금 동작하는지 직접 물어봅니다.</p></div>
       <button className="button ghost" disabled={busy} onClick={() => void ask()}>
         <Stethoscope size={16} />{busy ? '점검 중…' : '지금 점검'}
       </button>
@@ -272,7 +277,7 @@ function Readiness() {
       : <>
         <p className="readiness-summary">{problems === 0 ? `${items.length}가지 모두 정상입니다.` : `${items.length}가지 중 ${problems}가지에 문제가 있습니다.`}</p>
         <ul className="readiness-list">{items.map((item) => (
-          <li key={`${item.area}-${item.name}`} className={item.verdict === 'ok' ? 'ok' : 'bad'}>
+          <li key={`${item.area}-${item.name}`} className={READY.has(item.verdict) ? 'ok' : 'bad'}>
             <Link to={item.fix}><b>{item.area}</b> {item.name}</Link>
             <span>{item.detail}</span>
           </li>

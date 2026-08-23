@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hkjang/AgentHub/internal/agentserver"
 	"github.com/hkjang/AgentHub/internal/modelprobe"
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/store"
@@ -166,6 +167,30 @@ func (s *Server) readiness(w http.ResponseWriter, r *http.Request) {
 		add(readinessItem{Area: "실행", Name: "워커", Verdict: "ok", Detail: detail, Fix: "/admin/execution"})
 	})
 
+	// The agent servers, which are the one dependency this platform does not run
+	// and cannot restart. A pool that has gone away looks exactly like a pool
+	// nobody has used yet, and the tasks pointed at it fail one at a time.
+	run(func() {
+		servers, err := s.store.AgentServers(r.Context())
+		if err != nil {
+			return
+		}
+		asked := 0
+		for _, server := range servers {
+			if !server.Enabled {
+				continue
+			}
+			asked++
+			health, detail := agentserver.Probe(r.Context(), server.BaseURL)
+			add(readinessItem{Area: "에이전트 서버", Name: server.Name, Verdict: agentServerVerdict(health),
+				Detail: detail, Fix: "/admin/agent-servers"})
+		}
+		// Nothing registered is not a fault. Unlike a model endpoint, a deployment
+		// that never sends work to somebody else's machine is complete without one,
+		// so this says nothing rather than inventing a problem.
+		_ = asked
+	})
+
 	// Shared MCP servers. The ones that run inside a runtime Pod answer
 	// "not_checkable", which is true and not worth a row here.
 	run(func() {
@@ -213,8 +238,20 @@ func readinessRank(area string) int {
 		return 2
 	case "실행":
 		return 3
+	case "에이전트 서버":
+		return 4
 	}
-	return 4
+	return 5
+}
+
+// agentServerVerdict translates the probe's word into this page's vocabulary, so
+// a working server reads as "ok" beside the others rather than as a word only
+// that one page uses.
+func agentServerVerdict(health string) string {
+	if health == agentserver.Healthy {
+		return "ok"
+	}
+	return health
 }
 
 // pauseReason repeats the sentence somebody typed when they paused, because "실행이
