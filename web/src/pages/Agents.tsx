@@ -52,6 +52,19 @@ function TriggerRejections({ trigger }: { trigger: AgentTrigger }) {
   </small>
 }
 
+/** Whether an event trigger's filter is the reason nothing happens.
+ *
+ *  Silence has two causes here and they need opposite fixes: the event never
+ *  happened, or it happened and the filter did not match. */
+function TriggerReach({ trigger, reach, days }: { trigger: AgentTrigger; reach?: {published:number;matched:number}; days: number }) {
+  if (trigger.type !== 'event' || !reach) return null
+  if (reach.published === 0) return <small className="trigger-record">최근 {days}일 이 이벤트가 발생하지 않았습니다</small>
+  if (reach.matched === 0) return <small className="trigger-record bad">
+    이 이벤트 {reach.published}건이 있었지만 필터에 맞은 건 없습니다 — 필터 값을 확인해 주세요
+  </small>
+  return <small className="trigger-record ok">최근 {days}일 이벤트 {reach.published}건 중 {reach.matched}건이 이 트리거로 왔습니다</small>
+}
+
 function RunnerVerdict({ runner }: { runner: string }) {
   const experience = runnerExperienceOf(runner)
   if (!experience) return null
@@ -342,6 +355,10 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
   // works.
   const [triggerHealth,setTriggerHealth]=useState<Record<string,TriggerHealth>>({})
   const [triggerWindow,setTriggerWindow]=useState(7)
+  // For event triggers: how much of what happened could have reached them. A
+  // filter that matches nothing and an event that never happens look identical
+  // without it.
+  const [triggerReach,setTriggerReach]=useState<Record<string,{published:number;matched:number}>>({})
   const [memories,setMemories]=useState<AgentMemory[]>([])
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
@@ -363,7 +380,7 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
     try{
       const [goalResult,triggerResult,memoryResult,policyResult,appResult,serverResult]=await Promise.all([
         api.get<{goal:AgentGoal;executionMode:ExecutionMode}>(`/api/v1/agents/${agent.id}/goal`),
-        api.get<{items?:AgentTrigger[];health?:Record<string,TriggerHealth>;windowDays?:number}>(`/api/v1/agents/${agent.id}/triggers`),
+        api.get<{items?:AgentTrigger[];health?:Record<string,TriggerHealth>;reach?:Record<string,{published:number;matched:number}>;windowDays?:number}>(`/api/v1/agents/${agent.id}/triggers`),
         api.get<{items?:AgentMemory[]}>(`/api/v1/agents/${agent.id}/memories`),
         api.get<{items?:MCPToolPolicy[];servers?:MCPServerRef[]}>(`/api/v1/agents/${agent.id}/mcp-policies`),
         // Offered to every agent: an external application runs somewhere the
@@ -374,7 +391,7 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
         // do has nothing to do with this agent's runtime.
         api.get<{items?:UsableAgentServer[]}>('/api/v1/agent-servers'),
       ])
-      setGoal(goalResult.goal); setMode(goalResult.executionMode); setTriggers(triggerResult.items??[]); setTriggerHealth(triggerResult.health??{}); setTriggerWindow(triggerResult.windowDays??7); setMemories(memoryResult.items??[])
+      setGoal(goalResult.goal); setMode(goalResult.executionMode); setTriggers(triggerResult.items??[]); setTriggerHealth(triggerResult.health??{}); setTriggerWindow(triggerResult.windowDays??7); setTriggerReach(triggerResult.reach??{}); setMemories(memoryResult.items??[])
       setPolicies(policyResult.items??[]); setMcpServers(policyResult.servers??[]); setApps(appResult.items??[])
       setServers(serverResult.items??[])
     }catch(e){ setError(e instanceof Error?e.message:'목표 설정을 불러오지 못했습니다.') }
@@ -746,6 +763,7 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
               {trigger.nextFireAt&&<small>다음 실행 {new Date(trigger.nextFireAt).toLocaleString('ko-KR')}</small>}
               <TriggerRecord health={triggerHealth[trigger.id]} days={triggerWindow} fired={trigger.lastFiredAt}/>
               <TriggerRejections trigger={trigger}/>
+              <TriggerReach trigger={trigger} reach={triggerReach[trigger.id]} days={triggerWindow}/>
             </div>
             <StatusBadge status={trigger.enabled?'active':'disabled'}/>
             <button className="danger" title="삭제" onClick={()=>void removeTrigger(trigger.id)}><Trash2 size={15}/></button>

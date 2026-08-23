@@ -147,3 +147,72 @@ func TestEveryKindOfTriggerRecordsThatItFired(t *testing.T) {
 		}
 	}
 }
+
+// An event trigger that matches nothing and an event that never happens are
+// opposite problems, and they look identical: no tasks, no errors, nothing.
+func TestAnEventTriggersReachSeparatesTwoSilences(t *testing.T) {
+	body, err := os.ReadFile("triggerhealth.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	at := strings.Index(source, "func (s *Store) EventReachFor(")
+	if at < 0 {
+		t.Fatal("EventReachFor is gone; this guard is reading nothing")
+	}
+	query := source[at:]
+	if end := strings.Index(query, "\nfunc "); end >= 0 {
+		query = query[:end]
+	}
+	// How many events of the type happened at all, whatever their payload. That
+	// is the half that says "the filter is wrong" rather than "nothing happened".
+	if !strings.Contains(query, "e.type = t.event_type") {
+		t.Error("reach does not count the events this trigger's type produced")
+	}
+	// And how many actually reached it. Deliveries rather than tasks: a trigger
+	// can match and still fail to create a task, and this question is about the
+	// filter.
+	if !strings.Contains(query, "event_deliveries") {
+		t.Error("reach counts tasks rather than deliveries, so a matched event that failed afterwards reads as a filter that missed")
+	}
+	if !strings.Contains(query, "t.type = 'event'") {
+		t.Error("reach is computed for triggers that have no filter to be wrong")
+	}
+}
+
+// TestAFilterFieldNobodyPublishesIsSaidAndNotRefused — a filter is matched by
+// containment, so a misspelled field matches nothing, silently, for ever. The
+// evidence is what this deployment has published, which is evidence and not
+// proof: a correct filter on a new deployment must still save.
+func TestAFilterFieldNobodyPublishesIsSaidAndNotRefused(t *testing.T) {
+	body, err := os.ReadFile("../api/execution.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	at := strings.Index(source, "func unseenFilterKeys(")
+	if at < 0 {
+		t.Fatal("the filter check is gone; this guard is reading nothing")
+	}
+	check := source[at:]
+	if end := strings.Index(check, "\nfunc "); end >= 0 {
+		check = check[:end]
+	}
+	// No evidence means no complaint.
+	if !strings.Contains(check, "len(seen) == 0") {
+		t.Error("a deployment that has published nothing still complains about the filter")
+	}
+	// And the complaint never becomes a refusal: the save path must not return an
+	// error for it.
+	saveAt := strings.Index(source, "func (s *Server) saveAgentTrigger(")
+	save := source[saveAt:]
+	if end := strings.Index(save, "\nfunc "); end >= 0 {
+		save = save[:end]
+	}
+	if strings.Contains(save, "writeError(w, http.StatusBadRequest, \"unseen_filter") {
+		t.Error("a filter this deployment has not seen is refused rather than reported")
+	}
+	if !strings.Contains(save, "notice") {
+		t.Error("the filter warning is computed and then not told to anybody")
+	}
+}

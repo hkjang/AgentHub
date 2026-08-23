@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -870,7 +871,14 @@ func (s *Server) agentTriggers(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"items": items})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "health": health,
+	// And, for the event triggers, what they could have reacted to. A filter that
+	// matches nothing looks exactly like an event that never happens, and those
+	// are opposite problems.
+	reach, err := s.store.EventReachFor(r.Context(), u.ID, agentID)
+	if err != nil {
+		s.logger.Warn("event trigger reach could not be read", "error", err)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "health": health, "reach": reach,
 		"windowDays": int(store.TriggerHealthWindow.Hours() / 24)})
 }
 
@@ -899,6 +907,9 @@ func (s *Server) saveAgentTrigger(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_trigger_type", "Trigger 유형을 확인해 주세요.")
 		return
 	}
+	// Filter fields this deployment has never published on that event type. Read
+	// while validating, reported after saving.
+	var unseen []string
 	if trigger.Type == "event" {
 		// An unknown event type would leave a trigger that looks armed but can
 		// never fire, so it is rejected at save time.
@@ -913,6 +924,12 @@ func (s *Server) saveAgentTrigger(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "invalid_event_filter", "이벤트 필터는 JSON 객체여야 합니다.")
 				return
 			}
+			// A filter is matched by containment, so a field nobody publishes matches
+			// nothing — silently, for ever, and invisibly at the one moment somebody
+			// could fix it. What this deployment has actually seen on that event type
+			// is the best evidence available, and it is evidence rather than proof:
+			// this says so and saves anyway.
+			unseen = unseenFilterKeys(r.Context(), s, u.ID, trigger.EventType, filter)
 		}
 	} else {
 		trigger.EventType, trigger.EventFilter = "", nil
@@ -939,7 +956,46 @@ func (s *Server) saveAgentTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.store.Audit(r.Context(), &u, "trigger.save", "trigger", saved.ID, "success", clientIP(r), map[string]any{"agentId": agent.ID, "type": saved.Type})
+	if len(unseen) > 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"trigger": saved, "notice": unseenNotice(unseen)})
+		return
+	}
 	writeJSON(w, http.StatusOK, saved)
+}
+
+// unseenFilterKeys names the filter fields this deployment has never published on
+// that event type.
+//
+// Not a refusal: an event may carry a field that simply has not appeared in the
+// last two hundred, and refusing a correct filter because this deployment is new
+// would be worse than the mistake it prevents.
+func unseenFilterKeys(ctx context.Context, s *Server, ownerID, eventType string, filter map[string]any) []string {
+	if len(filter) == 0 {
+		return nil
+	}
+	seen, err := s.store.EventPayloadKeys(ctx, ownerID, eventType)
+	if err != nil || len(seen) == 0 {
+		// Nothing published yet, or the question could not be asked. Either way
+		// there is no evidence to offer, and inventing some would be worse.
+		return nil
+	}
+	known := map[string]bool{}
+	for _, key := range seen {
+		known[key] = true
+	}
+	unseen := []string{}
+	for key := range filter {
+		if !known[key] {
+			unseen = append(unseen, key)
+		}
+	}
+	sort.Strings(unseen)
+	return unseen
+}
+
+func unseenNotice(unseen []string) string {
+	return "저장했습니다. 다만 이 배포가 이 이벤트에서 본 적 없는 필드로 거르고 있습니다: " +
+		strings.Join(unseen, ", ") + " — 필터는 포함 관계로 맞춰 보므로, 이름이 틀렸다면 아무 이벤트에도 반응하지 않습니다."
 }
 
 func (s *Server) deleteAgentTrigger(w http.ResponseWriter, r *http.Request) {

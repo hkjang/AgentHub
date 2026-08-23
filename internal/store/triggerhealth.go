@@ -129,3 +129,82 @@ func (s *Store) RecordTriggerFired(ctx context.Context, triggerID string) error 
 	_, err := s.pool.Exec(ctx, `UPDATE agent_triggers SET last_fired_at = now() WHERE id = $1`, triggerID)
 	return err
 }
+
+// EventTriggerReach is what an event trigger could have reacted to.
+//
+// An event trigger with a filter that matches nothing behaves exactly like one
+// nobody has ever used: no tasks, no errors, nothing. The two are opposite
+// problems — one needs the filter corrected, the other needs the event to start
+// happening — and the platform can tell them apart, because it published the
+// events itself.
+type EventTriggerReach struct {
+	// Published is how many events of this trigger's type this owner saw in the
+	// window, whatever their payload.
+	Published int `json:"published"`
+	// Matched is how many of those actually reached this trigger.
+	Matched int `json:"matched"`
+}
+
+// EventReachFor counts, per event trigger, what its type produced and how much
+// of it got through the filter.
+//
+// Deliveries are the measure of "got through" rather than tasks: a trigger can
+// match an event and still fail to create a task, and this question is about the
+// filter rather than about what happened afterwards.
+func (s *Store) EventReachFor(ctx context.Context, ownerID, agentID string) (map[string]EventTriggerReach, error) {
+	since := time.Now().UTC().Add(-TriggerHealthWindow)
+	rows, err := s.pool.Query(ctx, `
+		SELECT t.id,
+		       (SELECT count(*) FROM platform_events e
+		         WHERE e.type = t.event_type AND e.owner_id = t.owner_id AND e.created_at >= $1),
+		       (SELECT count(*) FROM event_deliveries d
+		         JOIN platform_events e ON e.id = d.event_id
+		         WHERE d.trigger_id = t.id AND e.created_at >= $1)
+		FROM agent_triggers t
+		WHERE t.type = 'event'
+		  AND ($2 = '' OR t.owner_id = $2)
+		  AND ($3 = '' OR t.agent_id = $3)`, since, ownerID, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	reach := map[string]EventTriggerReach{}
+	for rows.Next() {
+		var id string
+		var item EventTriggerReach
+		if err := rows.Scan(&id, &item.Published, &item.Matched); err != nil {
+			return nil, err
+		}
+		reach[id] = item
+	}
+	return reach, rows.Err()
+}
+
+// EventPayloadKeys are the fields this deployment has actually seen on events of
+// one type.
+//
+// A filter is matched with containment, so a key nobody publishes matches
+// nothing, silently, for ever — and the mistake is invisible at the moment it is
+// made, which is the moment somebody could fix it. Recent events are not proof
+// of what a type can carry, so this informs rather than refuses.
+func (s *Store) EventPayloadKeys(ctx context.Context, ownerID, eventType string) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT k FROM (
+			SELECT jsonb_object_keys(payload) AS k FROM platform_events
+			WHERE type = $1 AND owner_id = $2 AND jsonb_typeof(payload) = 'object'
+			ORDER BY created_at DESC LIMIT 200
+		) keys ORDER BY k`, eventType, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	keys := []string{}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
+}
