@@ -1,0 +1,11 @@
+-- Which agents a task fans out to.
+--
+-- The fabric's whole point is that one task goes to several coding agents at
+-- once, each in its own checkout, and the results are compared. Naming them on
+-- the Goal is what turns "run this task" into "run this task four ways".
+--
+-- Empty means no workers: the fabric still records the task and the checkout,
+-- and a person can attach workers by hand from the runtime's terminal. That is
+-- the honest default while an agent needs an account on the host that this
+-- platform cannot create.
+ALTER TABLE agent_goals ADD COLUMN IF NOT EXISTS orca_agents text NOT NULL DEFAULT '';

@@ -118,7 +118,7 @@ func (o *Orchestrator) runOrca(ctx context.Context, run *store.AgentRun, task st
 	}
 	run.StepCount = 1
 
-	summary, fabricErr := fabric.dispatch(ctx, task, agent, prompt)
+	summary, fabricErr := fabric.dispatch(ctx, task, goal, prompt)
 	record.DurationMs = time.Since(startedAt).Milliseconds()
 	record.Output = summary
 	if fabricErr != nil {
@@ -154,6 +154,7 @@ type orcaSession struct {
 	taskID       string
 	terminal     string
 	worktreePath string
+	worktreeName string
 	branch       string
 	retryable    bool
 }
@@ -208,7 +209,7 @@ func (s *orcaSession) readEnvelope(stdout, stderr string, into any) error {
 // Run must be bound before tasks exist, or `task-list` answers `run_required`
 // rather than an empty list. Those two refusals are why this is a sequence and
 // not four independent calls.
-func (s *orcaSession) dispatch(ctx context.Context, task store.AgentTask, agent store.Agent, prompt string) (string, error) {
+func (s *orcaSession) dispatch(ctx context.Context, task store.AgentTask, goal store.AgentGoal, prompt string) (string, error) {
 	// The runtime's own workspace is what the fabric checks out from. The
 	// descriptor names it because every runtime mounts it in the same place.
 	workspace := strings.TrimSpace(runtimetype.Describe(s.runtimeType).Workspace)
@@ -225,6 +226,7 @@ func (s *orcaSession) dispatch(ctx context.Context, task store.AgentTask, agent 
 	}
 
 	name := orcaWorkspaceName(task)
+	s.worktreeName = name
 	var worktree orcaWorktree
 	if err := s.call(ctx, &worktree, "worktree", "create", "--repo", "id:"+repo.Repo.ID, "--name", name, "--json"); err != nil {
 		return "", err
@@ -252,15 +254,177 @@ func (s *orcaSession) dispatch(ctx context.Context, task store.AgentTask, agent 
 	}
 	s.taskID = fabricTask.Task.ID
 
-	if err := s.orchestrator.store.SaveOrcaDispatch(ctx, store.OrcaDispatch{
+	s.record(ctx, store.OrcaDispatch{
 		RunID: s.run.ID, OrcaRunID: s.runID, OrcaTaskID: s.taskID,
 		Terminal: s.terminal, Worktree: s.worktreePath, Branch: s.branch,
-		Role: agent.Name, Status: "dispatched",
-	}); err != nil {
+		Role: "coordinator", Status: "bound",
+	})
+
+	workers, workerErr := s.fanOut(ctx, goal)
+	head := fmt.Sprintf("실행 패브릭에 작업을 만들었습니다 — Run %s, Task %s, 작업 사본 %s (%s)",
+		s.runID, s.taskID, s.worktreePath, s.branch)
+	if workerErr != nil {
+		return head, workerErr
+	}
+	if workers == 0 {
+		return head + ". 워커는 아직 없습니다 — Goal에 에이전트를 지정하거나 런타임 터미널에서 직접 붙이세요.", nil
+	}
+	return fmt.Sprintf("%s. 워커 %d개를 각자의 작업 사본에 붙였습니다.", head, workers), nil
+}
+
+// fanOut starts one worker per agent the Goal names, each in its own checkout.
+//
+// This is what the fabric is for: the same task, worked several ways at once,
+// compared afterwards. A Goal that names nobody is not an error — the task and
+// the checkout are still recorded and a person can attach workers from the
+// runtime's own terminal — because an agent needs an account on the host that
+// this platform cannot create.
+func (s *orcaSession) fanOut(ctx context.Context, goal store.AgentGoal) (int, error) {
+	started := 0
+	for _, name := range OrcaAgentNames(goal.OrcaAgents) {
+		var worker struct {
+			Dispatch struct {
+				ID string `json:"id"`
+			} `json:"dispatch"`
+			Worktree struct {
+				Path   string `json:"path"`
+				Branch string `json:"branch"`
+			} `json:"worktree"`
+		}
+		// The sender must be the coordinator terminal bound to this Task's Run —
+		// any other handle is answered `consumer_fenced` — which is why the
+		// session keeps the handle it created rather than looking one up.
+		err := s.call(ctx, &worker, "orchestration", "worker-start",
+			"--from", s.terminal, "--task", s.taskID, "--agent", name,
+			"--worktree", "new-child", "--name", s.workerName(name), "--json")
+		if err != nil {
+			s.record(ctx, store.OrcaDispatch{
+				RunID: s.run.ID, OrcaRunID: s.runID, OrcaTaskID: s.taskID,
+				Role: name, Status: "refused", Detail: trimmed(err.Error(), 400),
+			})
+			return started, orcaWorkerFailure(name, err)
+		}
+		// `ok` means the fabric accepted the dispatch, not that the worker is
+		// running. Measured: worker-start answered ok with a dispatch id, and the
+		// same dispatch was `failed` / `agent_prompt_stalled` eighteen seconds
+		// later — the agent was not on the host and the terminal died with a shell
+		// error. Reporting "started N workers" on the strength of that ok is
+		// exactly the claim this platform keeps removing, so the fabric is asked
+		// what actually became of it.
+		status, detail := s.workerStatus(ctx, worker.Dispatch.ID)
+		s.record(ctx, store.OrcaDispatch{
+			RunID: s.run.ID, OrcaRunID: s.runID, OrcaTaskID: s.taskID,
+			Terminal: worker.Dispatch.ID, Worktree: worker.Worktree.Path, Branch: worker.Worktree.Branch,
+			Role: name, Status: status, Detail: detail,
+		})
+		if status == "failed" {
+			return started, fmt.Errorf("%s 워커가 시작 직후 실패했습니다(%s). 이 호스트에 %s 가 설치·로그인돼 있는지 확인해 주세요 — 패브릭은 디스패치를 받아들이고 나서 실패를 기록합니다.", name, detail, name)
+		}
+		started++
+	}
+	return started, nil
+}
+
+// workerStatus asks the fabric what became of a dispatch it just accepted.
+//
+// Accepting a dispatch and running a worker are different events, and the second
+// one can fail on its own — most obviously when the agent is not installed on the
+// host, where the launch dies in the worker's terminal with a shell error and the
+// fabric records `agent_prompt_stalled`. This is the difference between the
+// platform reporting what happened and reporting what it asked for.
+func (s *orcaSession) workerStatus(ctx context.Context, dispatchID string) (string, string) {
+	if dispatchID == "" {
+		return "dispatched", ""
+	}
+	var shown struct {
+		Dispatch struct {
+			Status      string `json:"status"`
+			LastFailure string `json:"last_failure"`
+		} `json:"dispatch"`
+	}
+	if err := s.call(ctx, &shown, "orchestration", "worker-show", "--dispatch", dispatchID, "--json"); err != nil {
+		// Not knowing is not the same as failing, and saying "failed" here would
+		// fail a task because one inspection call did not answer.
+		return "dispatched", "상태를 확인하지 못했습니다: " + trimmed(err.Error(), 200)
+	}
+	return orcaWorkerOutcome(shown.Dispatch.Status, shown.Dispatch.LastFailure)
+}
+
+// orcaWorkerOutcome reads one worker-show record.
+//
+// Kept apart from the call so the decision can be checked against the records a
+// live fabric actually produced. A record with no status means the fabric has not
+// settled it yet, which is "dispatched" — not "failed", and not "running" either.
+func orcaWorkerOutcome(status, lastFailure string) (string, string) {
+	if strings.TrimSpace(status) == "" {
+		return "dispatched", ""
+	}
+	return status, lastFailure
+}
+
+// orcaWorkerFailure says what to do about a refusal rather than repeating its
+// code.
+//
+// `agent_unconfigured` is the one an operator will actually meet: the fabric
+// starts a vendor's coding agent, and that agent needs an account registered on
+// the host through the vendor's own interactive login. No image carries that and
+// this platform cannot perform it, so the honest answer names the command and
+// the place rather than the error.
+func orcaWorkerFailure(name string, err error) error {
+	if strings.Contains(err.Error(), "agent_unconfigured") {
+		return fmt.Errorf("이 호스트에 %s 계정이 등록돼 있지 않아 워커를 시작하지 못했습니다. "+
+			"런타임 터미널에서 `orca account add --agent %s` 로 먼저 로그인해 주세요 — 벤더 로그인이라 플랫폼이 대신 할 수 없습니다.", name, name)
+	}
+	if strings.Contains(err.Error(), "consumer_fenced") {
+		return fmt.Errorf("%s 워커를 시작할 권한이 이 터미널에 없습니다. 이 작업의 코디네이터 터미널이 살아 있는지 확인해 주세요.", name)
+	}
+	return fmt.Errorf("%s 워커를 시작하지 못했습니다: %w", name, err)
+}
+
+// workerName is the checkout each worker gets, and it has to differ per agent or
+// two workers land in one place and edit each other's files — which is the exact
+// thing separate checkouts exist to prevent.
+func (s *orcaSession) workerName(agent string) string {
+	base := strings.TrimPrefix(s.worktreeName, "agenthub-")
+	return "agenthub-" + base + "-" + orcaSafeName(agent)
+}
+
+func (s *orcaSession) record(ctx context.Context, dispatch store.OrcaDispatch) {
+	if err := s.orchestrator.store.SaveOrcaDispatch(ctx, dispatch); err != nil {
 		s.orchestrator.logger.Error("an orca dispatch could not be recorded", "run", s.run.ID, "error", err)
 	}
-	return fmt.Sprintf("실행 패브릭에 작업을 만들었습니다 — Run %s, Task %s, 작업 사본 %s (%s)",
-		s.runID, s.taskID, s.worktreePath, s.branch), nil
+}
+
+// orcaAgentNames reads the Goal's list, dropping anything that could not be an
+// agent id. The names go on a command line as arguments, and one that is a
+// sentence would fail with a message about flags rather than about the agent.
+// OrcaAgentNames is exported so the API can clean the same list the runner will
+// read, rather than each keeping its own idea of what an agent id may contain.
+func OrcaAgentNames(list string) []string {
+	names := []string{}
+	for _, raw := range strings.Split(list, ",") {
+		name := orcaSafeName(raw)
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// orcaSafeName keeps what an agent id can be made of.
+func orcaSafeName(raw string) string {
+	kept := strings.Builder{}
+	for _, char := range strings.TrimSpace(strings.ToLower(raw)) {
+		switch {
+		case char >= 'a' && char <= 'z', char >= '0' && char <= '9', char == '-', char == '_':
+			kept.WriteRune(char)
+		}
+	}
+	name := kept.String()
+	if len(name) > 40 {
+		name = name[:40]
+	}
+	return name
 }
 
 // orcaWorkspaceName is the checkout's name in the fabric.

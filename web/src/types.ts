@@ -60,6 +60,7 @@ export type AgentGoal = {
   reviewPath?: string
   reviewExclude?: string
   reviewFailOn?: '' | 'critical' | 'high' | 'medium' | 'low'
+  orcaAgents?: string
   toolPolicy?: { deny?: string[]; allow?: string[] }
 }
 /** One located observation from a code review. The severity and category are the

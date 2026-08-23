@@ -245,6 +245,15 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 		// The mode still decides everything else.
 		return nil
 	}
+	if goal.Runner == store.RunnerOrca {
+		// Names that could not be an agent id are dropped here rather than at the
+		// fabric, which would answer about flags instead of about the agent.
+		goal.OrcaAgents = strings.Join(execution.OrcaAgentNames(goal.OrcaAgents), ",")
+		if len(goal.OrcaAgents) > 200 {
+			return errors.New("에이전트 목록이 너무 깁니다")
+		}
+		return nil
+	}
 	if goal.Runner == store.RunnerReview {
 		return validateReview(goal)
 	}

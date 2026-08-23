@@ -426,6 +426,16 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
             <small>Workflow 앱은 이름 붙은 입력을 받습니다. 앱에서 정의한 변수 이름을 넣으세요. 비우면 <code>input</code> 을 사용합니다.</small>
           </label>}
         </>}
+        {goal.runner==='orca'&&<>
+          <label><span>동시에 붙일 에이전트</span>
+            <input value={goal.orcaAgents??''} onChange={(e)=>update({orcaAgents:e.target.value})} placeholder="예) claude,codex"/>
+            <small>쉼표로 나열하면 각 에이전트가 <b>자기 작업 사본</b>에서 같은 일을 합니다. 비워 두면 작업과 작업 사본만 만들고 워커는 붙이지 않습니다 — 런타임 터미널에서 직접 붙일 수 있습니다.</small>
+          </label>
+          <div className="notice">
+            워커를 띄우려면 그 에이전트 계정이 <b>런타임 호스트에 등록</b>돼 있어야 합니다. 벤더 로그인이라 플랫폼이 대신 할 수 없습니다 —
+            런타임 터미널에서 <code>orca account add --agent claude</code> 처럼 먼저 로그인해 주세요. 등록돼 있지 않으면 작업이 그 사실을 알려 주며 실패합니다.
+          </div>
+        </>}
         {goal.runner==='review'&&<>
           <label><span>리뷰 대상</span>
             <select value={goal.reviewMode??'workspace'} onChange={(e)=>update({reviewMode:e.target.value as AgentGoal['reviewMode']})}>

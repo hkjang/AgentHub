@@ -109,11 +109,38 @@ way and both are contract, not accident:
   `claude` and `codex`, and `orca account add --agent claude|codex` runs the
   vendor's own login interactively.
 
-That second one is the real limit, and it is worth being plain about: **the
-fabric cannot start a coding agent that has no account on the host.** A worker
-needs a vendor subscription registered through an interactive login, which no
-image can carry and AgentHub cannot perform. The fan-out was therefore not
-demonstrated end to end here.
+`agent_unconfigured` came from passing an agent name the fabric does not know,
+not from a missing account — an earlier note here said otherwise and was wrong.
+
+## What actually happens when the agent is not installed
+
+Followed up further, and this is the finding that matters for the runner.
+`worker-start --agent claude` on a host with no Claude installed answers:
+
+```json
+{"ok":true, ...}
+```
+
+It creates the checkout (`agenthub-abc123-claude`) and a dispatch, and returns.
+The worker then dies in its own terminal with a shell error, and the fabric
+records that honestly — but only where somebody asks:
+
+```
+$ orca orchestration worker-show --dispatch ctx_89f6893800fe --json
+"status":"failed", "last_failure":"agent_prompt_stalled",
+"dispatched_at":"2026-08-23 05:48:20", "completed_at":"2026-08-23 05:48:38"
+```
+
+So **an accepted dispatch is not a running worker.** A runner that counts the
+`ok` reports starting workers that never ran — which is the exact class of claim
+this platform keeps removing, and the first version of this runner did it. It
+asks `worker-show` now and records what the fabric says became of each dispatch.
+
+The fan-out is therefore still not demonstrated end to end: the checkouts and
+dispatches are real, the workers need the agent installed and logged in on the
+host. What is different from the earlier note is where the wall is — not at
+`worker-start`, which accepts, but eighteen seconds later in the worker's own
+terminal.
 
 ## Model calls do go through the gateway
 
