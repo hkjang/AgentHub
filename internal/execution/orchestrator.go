@@ -266,6 +266,14 @@ func (o *Orchestrator) run(ctx context.Context, run *store.AgentRun, task store.
 			return outcome
 		}
 		return o.evaluate(ctx, run, task, agent, goal, model, transcript)
+	case store.RunnerOrca:
+		// The fabric's answer is what its own records say happened, and the
+		// evaluator judges that the way it judges any other backend's answer.
+		transcript, outcome := o.runOrca(ctx, run, task, agent, goal, acquired)
+		if outcome.Status != "" {
+			return outcome
+		}
+		return o.evaluate(ctx, run, task, agent, goal, model, transcript)
 	case store.RunnerReview:
 		// A review is the one backend the evaluator has nothing to add to. Its
 		// verdict is already an answer to a specific question — is anything at or

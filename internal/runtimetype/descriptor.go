@@ -106,6 +106,12 @@ type Descriptor struct {
 // all: what to compare, what to leave out, how much it may spend. The wrapper
 // prepares the model connection on every run rather than at start, so a review
 // never quietly uses the gateway or model that was configured yesterday.
+// Orca is driven entirely through its CLI, which speaks RPC to the runtime in
+// the same Pod. The runner appends the subcommand and its flags.
+var orcaCommands = map[string][]string{
+	RunnerOrca: {"/usr/local/bin/agenthub-orca-run"},
+}
+
 var openCodeReviewCommands = map[string][]string{
 	RunnerReview: {"/usr/local/bin/agenthub-ocr-run"},
 }
@@ -259,6 +265,25 @@ var descriptors = map[string]Descriptor{
 		BrowserUI: true, Terminal: false, ToolLoop: false, MCPConfigured: false, ProxiedUI: true,
 		HostSessionOnly: true,
 	},
+	Orca: {
+		Type: Orca, Code: "OR", Label: "Orca",
+		Summary: "여러 코딩 에이전트를 한 작업에 동시에 붙이는 실행 패브릭. 각자 자기 git 작업 사본에서 일합니다.",
+		BestFor: "한 가지 일을 여러 에이전트에게 동시에 시켜 보고 결과를 비교해야 할 때",
+		Strengths: []string{
+			"에이전트마다 격리된 git worktree — 서로의 변경을 밟지 않음",
+			"작업·디스패치·워커 상태가 남아 누가 무엇을 했는지 되짚을 수 있음",
+			"의존성이 있는 작업을 DAG로 조정",
+			"터미널을 그대로 열어 손으로 확인할 수 있음",
+		},
+		Watchouts: []string{
+			"이 런타임이 시작할 수 있는 에이전트는 이미지가 가진 것뿐입니다",
+			"자체 인증이 없는 브라우저 터미널이라 플랫폼 프록시로만 공개됩니다",
+			"정책·쿼터·감사·최종 판정은 AgentHub가 갖습니다 — 이 런타임에 위임하지 않습니다",
+		},
+		Workspace: "/workspace", Port: 7681,
+		BrowserUI: true, Terminal: true, ToolLoop: true, MCPConfigured: false, ProxiedUI: true,
+		Runners: []string{RunnerOrca}, Commands: orcaCommands,
+	},
 	OpenCodeReview: {
 		Type: OpenCodeReview, Code: "CR", Label: "Open Code Review",
 		Summary: "코드리뷰 전용 엔진. 무엇을 읽을지·어떤 규칙을 적용할지는 규칙이 정하고, 판단이 필요한 부분만 모델에게 묻습니다.",
@@ -308,6 +333,14 @@ const (
 	// RunnerACP speaks the Agent Client Protocol to whatever agent the runtime
 	// was given, which is how one adapter serves many agents.
 	RunnerACP = "acp"
+	// RunnerOrca hands a task to an execution fabric that runs several coding
+	// agents at once, each in its own git worktree, and reports which did what.
+	//
+	// It is a backend rather than a runtime because a runtime is one Pod running
+	// one agent, and that shape cannot express fan-out. AgentHub keeps policy,
+	// quota, content inspection, audit, the model gateway and the final verdict;
+	// the fabric owns worker coordination inside one task.
+	RunnerOrca = "orca"
 	// RunnerReview hands a diff to a review engine and keeps what it found as
 	// findings on real lines, rather than as prose about the code.
 	//

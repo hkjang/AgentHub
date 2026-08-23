@@ -393,6 +393,7 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
             {runners.includes('cli')&&<option value="cli">에이전트 실행 — Runtime의 코딩 에이전트가 작업공간에서 직접 수행</option>}
             {runners.includes('acp')&&<option value="acp">ACP 실행 — 같은 에이전트와 프로토콜로 대화하며, 도구 요청마다 플랫폼이 답합니다</option>}
             {runners.includes('investigate')&&<option value="investigate">조사 실행 — 관측 데이터를 조회해 근본 원인을 찾고, 근거를 실행 기록에 남깁니다</option>}
+            {runners.includes('orca')&&<option value="orca">실행 패브릭 — 여러 코딩 에이전트를 각자 격리된 작업 사본에서 조정합니다</option>}
             {runners.includes('review')&&<option value="review">코드 리뷰 — 변경분을 리뷰해 파일·줄 단위 지적을 남기고, 정한 심각도 이상이면 작업을 실패로 판정합니다</option>}
             {apps.length>0&&<option value="dify">외부 앱 실행 — 사내에 이미 있는 앱(Dify 등)에 작업을 맡김</option>}
           </select>
@@ -404,6 +405,8 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
             ?'런타임의 에이전트를 헤드리스로 실행합니다. 최대 단계·도구 호출·실행 시간이 에이전트 자체 예산으로 전달되고, 토큰 사용량은 실제 값이 기록됩니다.'
             :goal.runner==='investigate'
             ?'런타임의 조사 에이전트가 알림·메트릭·로그를 직접 조회합니다. 조회 하나하나가 실행 기록의 단계로 남아 결론의 근거를 나중에 확인할 수 있고, 토큰 사용량은 실제 값이 기록됩니다.'
+            :goal.runner==='orca'
+            ?'작업을 실행 패브릭에 넘깁니다. 에이전트마다 별도의 git 작업 사본이 만들어져 서로의 변경을 밟지 않고, 어느 작업이 어느 사본에서 돌았는지가 실행 기록에 남습니다. 정책·쿼터·감사·완료 판정은 그대로 AgentHub가 갖습니다. 패브릭이 시작할 수 있는 에이전트는 그 이미지가 가진 것뿐이고, 토큰은 그 에이전트들의 런타임에서 계량됩니다.'
             :goal.runner==='review'
             ?'런타임의 리뷰 엔진이 변경분을 읽습니다. 어떤 파일을 볼지와 어떤 규칙을 적용할지는 엔진이 정하고, 판단이 필요한 부분만 모델에게 묻습니다. 결과는 요약이 아니라 파일·줄·심각도를 가진 지적 목록으로 남고, 토큰 사용량은 실제 값이 기록됩니다.'
             :goal.runner==='acp'

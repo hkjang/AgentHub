@@ -31,6 +31,9 @@ var (
 	// a newer git than the shared base image has, which is one of the reasons it
 	// is built and published on its own.
 	OpenCodeReviewVersion = "0.1.0-dev"
+	// OrcaVersion is the execution fabric image. It carries an Electron
+	// application and is published on its own schedule.
+	OrcaVersion = "0.1.0-dev"
 )
 
 type Info struct {

@@ -183,7 +183,7 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 	if goal.Runner == "" {
 		goal.Runner = store.RunnerProse
 	}
-	if !contains([]string{store.RunnerProse, store.RunnerFlow, store.RunnerCLI, store.RunnerDify, store.RunnerACP, store.RunnerInvestigate, store.RunnerReview}, goal.Runner) {
+	if !contains([]string{store.RunnerProse, store.RunnerFlow, store.RunnerCLI, store.RunnerDify, store.RunnerACP, store.RunnerInvestigate, store.RunnerReview, store.RunnerOrca}, goal.Runner) {
 		return errors.New("실행 방식을 확인해 주세요")
 	}
 	// Kept whatever the runner is, so switching back and forth in the console does

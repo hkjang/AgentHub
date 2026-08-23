@@ -1,0 +1,81 @@
+# syntax=docker/dockerfile:1.7
+#
+# The Orca runtime image.
+#
+# Orca is not a coding agent. It is the layer that runs several of them at once,
+# each in its own git worktree, and keeps the task, dispatch and worker state
+# that says which did what. AgentHub keeps policy, quota, content inspection,
+# audit, the model gateway and the final verdict; Orca owns coordination inside
+# one task.
+#
+# It ships as an Electron application, and `serve` is its supported headless
+# mode. The AppImage is extracted at build time rather than run through FUSE,
+# because a container has no FUSE device — the vendor documents this exact path.
+# Xvfb is here because Electron needs a display even with no window; Orca starts
+# it itself when DISPLAY is unset.
+#
+# The library list was established by starting the binary until it started, not
+# copied from a template: each of these was named by a loader error.
+ARG ORCA_VERSION=1.4.188
+FROM ubuntu:24.04
+
+USER root
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates curl file jq git openssh-client tini ripgrep less procps \
+      xvfb zlib1g-dev \
+      libglib2.0-0t64 libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 \
+      libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+      libgbm1 libpango-1.0-0 libcairo2 libasound2t64 libgtk-3-0t64 \
+ && rm -rf /var/lib/apt/lists/*
+
+ARG ORCA_VERSION
+RUN mkdir -p /opt/orca \
+ && curl -fsSL -o /opt/orca/orca-linux.AppImage \
+      "https://github.com/stablyai/orca/releases/download/v${ORCA_VERSION}/orca-linux.AppImage" \
+ && chmod +x /opt/orca/orca-linux.AppImage \
+ && cd /opt/orca && ./orca-linux.AppImage --appimage-extract >/dev/null \
+ && rm -f /opt/orca/orca-linux.AppImage \
+ && test -x /opt/orca/squashfs-root/AppRun
+
+# ttyd puts the terminal in a browser, on loopback: the token-checking proxy
+# sidecar is the only way in.
+ARG TTYD_VERSION=1.7.7
+ARG TTYD_SHA256_X86_64=8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55
+ARG TTYD_SHA256_AARCH64=
+RUN arch="$(uname -m)"; \
+    case "${arch}" in \
+      x86_64) asset="ttyd.x86_64"; sum="${TTYD_SHA256_X86_64}" ;; \
+      aarch64) asset="ttyd.aarch64"; sum="${TTYD_SHA256_AARCH64}" ;; \
+      *) echo "unsupported architecture ${arch}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /usr/local/bin/ttyd "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/${asset}"; \
+    if [ -n "${sum}" ]; then echo "${sum}  /usr/local/bin/ttyd" | sha256sum -c -; \
+    else echo "no checksum pinned for ${arch}; refusing to ship an unverified binary" >&2; exit 1; fi \
+ && chmod 0755 /usr/local/bin/ttyd
+
+RUN useradd --uid 10000 --create-home --home-dir /home/agent --shell /bin/bash agent \
+ && mkdir -p /workspace /home/agent/.local/bin /home/agent/orca \
+ && chown -R 10000:10000 /workspace /home/agent /opt/orca
+
+COPY deploy/runtime/agenthub-report-config.sh /usr/local/bin/agenthub-report-config
+COPY deploy/runtime/orca-serve.sh /usr/local/bin/agenthub-orca-serve
+COPY deploy/runtime/orca-run.sh /usr/local/bin/agenthub-orca-run
+COPY deploy/runtime/orca-shell.sh /usr/local/bin/agenthub-orca-shell
+COPY deploy/runtime/orca-toolchain.sh /etc/profile.d/agenthub-toolchain.sh
+RUN chmod 0755 /usr/local/bin/agenthub-report-config /usr/local/bin/agenthub-orca-serve \
+      /usr/local/bin/agenthub-orca-run /usr/local/bin/agenthub-orca-shell \
+ && chmod 0644 /etc/profile.d/agenthub-toolchain.sh
+
+USER 10000:10000
+ENV PATH=/home/agent/.local/bin:$PATH \
+    HOME=/home/agent \
+    AGENTHUB_RUNTIME_TYPE=orca \
+    AGENTHUB_WORKSPACE=/workspace \
+    ORCA_ROOT=/opt/orca/squashfs-root \
+    ORCA_PORT=6768 \
+    LIBGL_ALWAYS_SOFTWARE=1
+WORKDIR /workspace
+EXPOSE 7681 6768
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/usr/local/bin/ttyd", "--port", "7681", "--interface", "127.0.0.1", "--writable", "/usr/local/bin/agenthub-orca-shell"]

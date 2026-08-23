@@ -48,12 +48,14 @@ const (
 	EnvDefaultQwenCodeImage = "AGENTHUB_DEFAULT_QWENCODE_IMAGE"
 	// EnvDefaultOpenCodeReviewImage overrides the review engine image.
 	EnvDefaultOpenCodeReviewImage = "AGENTHUB_DEFAULT_OPENCODEREVIEW_IMAGE"
-	EnvDefaultJupyterImage        = "AGENTHUB_DEFAULT_JUPYTER_IMAGE"
-	EnvDefaultNodeREDImage        = "AGENTHUB_DEFAULT_NODERED_IMAGE"
-	EnvDefaultN8NImage            = "AGENTHUB_DEFAULT_N8N_IMAGE"
-	EnvDefaultGooseImage          = "AGENTHUB_DEFAULT_GOOSE_IMAGE"
-	EnvDefaultHolmesImage         = "AGENTHUB_DEFAULT_HOLMES_IMAGE"
-	EnvDefaultBrowserCode         = "AGENTHUB_DEFAULT_BROWSERCODE_IMAGE"
+	// EnvDefaultOrcaImage overrides the execution fabric image.
+	EnvDefaultOrcaImage    = "AGENTHUB_DEFAULT_ORCA_IMAGE"
+	EnvDefaultJupyterImage = "AGENTHUB_DEFAULT_JUPYTER_IMAGE"
+	EnvDefaultNodeREDImage = "AGENTHUB_DEFAULT_NODERED_IMAGE"
+	EnvDefaultN8NImage     = "AGENTHUB_DEFAULT_N8N_IMAGE"
+	EnvDefaultGooseImage   = "AGENTHUB_DEFAULT_GOOSE_IMAGE"
+	EnvDefaultHolmesImage  = "AGENTHUB_DEFAULT_HOLMES_IMAGE"
+	EnvDefaultBrowserCode  = "AGENTHUB_DEFAULT_BROWSERCODE_IMAGE"
 )
 
 // DefaultRuntimeImage is the image a runtime of this type starts from when no
@@ -87,6 +89,11 @@ func DefaultRuntimeImage(runtimeType string) string {
 			return override
 		}
 		return "agenthub-opencodereview:v" + strings.TrimSuffix(buildinfo.OpenCodeReviewVersion, "-dev")
+	case runtimetype.Orca:
+		if override := strings.TrimSpace(os.Getenv(EnvDefaultOrcaImage)); override != "" {
+			return override
+		}
+		return "agenthub-orca:v" + strings.TrimSuffix(buildinfo.OrcaVersion, "-dev")
 	case runtimetype.Jupyter:
 		if override := strings.TrimSpace(os.Getenv(EnvDefaultJupyterImage)); override != "" {
 			return override

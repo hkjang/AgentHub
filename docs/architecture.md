@@ -1306,6 +1306,56 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## A backend that runs other agents
+
+Every backend before this one runs one agent. Orca runs several, each in its own
+git checkout, and keeps the task and dispatch state that says which did what.
+That is why it is a runner and not a twelfth runtime type: a runtime is one Pod
+running one agent, and that shape cannot express fan-out.
+
+The division is the whole design. AgentHub keeps what it has always kept — who
+may run this, against which model, under which policy, what it cost, what the
+trail says, and whether the task passed. The fabric owns coordination inside one
+task and nothing outside it. A platform that delegated the verdict would have
+delegated the thing it exists to hold.
+
+### What was established before any of this was written
+
+Orca is an Electron application, which is exactly the shape that turned out to
+block Maka. It does not block here: `serve` is a documented headless mode with a
+versioned JSON ready contract, it starts Xvfb itself, and the AppImage runs
+extracted so a container needs no FUSE device. All of it was run in a plain
+container before a descriptor existed — the whole chain, from `repo add` through
+`worktree create` and `terminal create` to `run-create` and `task-create`, with
+`task-list --json` returning the task and its provenance. The findings are in
+`docs/decisions/orca-runtime.md`, including the Electron libraries, which were
+established by starting the binary until it started rather than copied from a
+template.
+
+### Two refusals decide the order of operations
+
+Every orchestration command is RPC to the runtime and needs a **sender
+terminal**; without one the answer is `no_active_sender_terminal`. And a Run must
+be bound before tasks exist: `task-list` without one answers `run_required`
+rather than an empty list — which is the good kind of refusal, since an empty
+list and "you never bound a Run" mean opposite things.
+
+So the runner is a sequence, not four independent calls: checkout, then terminal,
+then Run, then Task. Those refusals are also what the tests are built from, using
+the envelopes the real CLI produced, because they are the contract.
+
+### Output that is not an envelope is not a refusal
+
+The CLI answers JSON for everything including failures, so a refusal is a code
+and a sentence. Something that is not an envelope at all is a broken runtime —
+reporting it as the fabric declining would make a fabric that failed to start
+look like a task it turned down.
+
+### The checkout is named after the task, not its title
+
+Two tasks with the same title must not land in the same checkout, and a title is
+a person's sentence which may contain anything at all.
+
 ## One review agent, every pull request
 
 A review Goal named its two branches, so reviewing proposals meant an agent per

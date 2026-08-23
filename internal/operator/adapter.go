@@ -238,6 +238,16 @@ func qwenCodeStart(build adapterBuild) string {
 		"/usr/local/bin/agenthub-qwencode-shell"
 }
 
+// orcaStart serves the fabric's terminal under the runtime's own path. The
+// fabric's runtime itself is a sidecar, so a person closing this shell does not
+// take the workers with it.
+func orcaStart(build adapterBuild) string {
+	return "exec /usr/local/bin/ttyd --port 7681 --interface 127.0.0.1 --writable " +
+		"--base-path /" + build.runtimeID() + " " +
+		"--client-option titleFixed=AgentHub " +
+		"/usr/local/bin/agenthub-orca-shell"
+}
+
 // openCodeReviewStart serves the review engine's terminal under the runtime's
 // own path, the same way the coding agents' terminals are served. There is no
 // chat here: what a person gets is a shell in the workspace with the connection
@@ -467,6 +477,43 @@ var runtimeAdapters = map[string]runtimeAdapter{
 				}, &corev1.Probe{
 					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
 					InitialDelaySeconds: 60, PeriodSeconds: 30, TimeoutSeconds: 3, FailureThreshold: 4,
+				}
+		},
+	},
+	runtimetype.Orca: {
+		Type:    runtimetype.Orca,
+		Command: []string{"/bin/sh", "-ec"},
+		ArgsFor: func(build adapterBuild) []string { return []string{orcaStart(build)} },
+		Env: func(build adapterBuild) []corev1.EnvVar {
+			return []corev1.EnvVar{
+				{Name: "ORCA_ROOT", Value: "/opt/orca/squashfs-root"},
+				{Name: "ORCA_PORT", Value: "6768"},
+				// Electron needs a display even with no window. Orca starts Xvfb
+				// itself when this is unset, which is what a Pod wants.
+				{Name: "LIBGL_ALWAYS_SOFTWARE", Value: "1"},
+			}
+		},
+		Sidecars: func(build adapterBuild) []corev1.Container {
+			// The fabric's own runtime runs beside the terminal rather than inside
+			// it: a person closing their shell must not take the workers with it.
+			return []corev1.Container{
+				{
+					Name: "orca-runtime", Image: build.image(), ImagePullPolicy: corev1.PullIfNotPresent,
+					Command: []string{"/usr/local/bin/agenthub-orca-serve"}, Env: build.Env,
+					SecurityContext: restrictedContainerSecurityContext(build.Value.Security.ReadOnlyRootFilesystem),
+					VolumeMounts:    homeAndConfigMounts,
+				},
+				runtimeProxyContainer("orca-proxy", build.Name, build.sidecarImage(), "http://127.0.0.1:7681"),
+			}
+		},
+		Probes: func(build adapterBuild) (*corev1.Probe, *corev1.Probe) {
+			command := qwenCodeHealthCommand(build)
+			return &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 10, PeriodSeconds: 5, TimeoutSeconds: 3, FailureThreshold: 36,
+				}, &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 90, PeriodSeconds: 30, TimeoutSeconds: 3, FailureThreshold: 4,
 				}
 		},
 	},

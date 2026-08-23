@@ -179,10 +179,13 @@ const (
 	StepInvestigate = "investigate"
 	// StepReview is one pass of a review engine over a diff.
 	StepReview = "review"
+	// StepOrca is one task handed to the execution fabric, with what its workers
+	// did recorded beneath it.
+	StepOrca = "orca"
 )
 
 // RunStepTypes is every type the platform writes.
-var RunStepTypes = []string{StepPlan, StepReasoning, StepTool, StepArtifact, StepCompletion, StepDelegation, StepFlow, StepCLI, StepExternal, StepACP, StepInvestigate, StepReview}
+var RunStepTypes = []string{StepPlan, StepReasoning, StepTool, StepArtifact, StepCompletion, StepDelegation, StepFlow, StepCLI, StepExternal, StepACP, StepInvestigate, StepReview, StepOrca}
 
 // The two places a task's work can happen.
 const (
@@ -206,6 +209,9 @@ const (
 	// result is not prose: it produces findings that point at a file and a line,
 	// and the run is judged by what it found rather than by what it said.
 	RunnerReview = "review"
+	// RunnerOrca hands a task to an execution fabric that coordinates several
+	// coding agents, each in its own git worktree.
+	RunnerOrca = "orca"
 )
 
 // reviewModeOrDefault keeps the database's check constraint from refusing a goal
@@ -430,7 +436,7 @@ func WithLegacyNames(item AgentGoal) AgentGoal {
 
 func runnerOrDefault(value string) string {
 	switch value {
-	case RunnerFlow, RunnerCLI, RunnerDify, RunnerACP, RunnerInvestigate, RunnerReview:
+	case RunnerFlow, RunnerCLI, RunnerDify, RunnerACP, RunnerInvestigate, RunnerReview, RunnerOrca:
 		return value
 	}
 	return RunnerProse

@@ -79,6 +79,7 @@ export const RUNNER_LABELS: Record<string, string> = {
   acp: 'ACP로 에이전트와 대화하며 수행',
   investigate: '조사하고 근거와 함께 결론을 남김',
   review: '변경분을 리뷰하고 파일·줄 단위 지적을 남김',
+  orca: '여러 에이전트를 각자 작업 사본에서 동시에 돌림',
 }
 
 export function runnerSummary(runners?: string[]) {
