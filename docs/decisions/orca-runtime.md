@@ -153,10 +153,30 @@ $ echo GW=$OPENAI_BASE_URL AN=$ANTHROPIC_BASE_URL AH=$AGENTHUB_MODEL_BASE_URL
 GW=http://gateway.agenthub.svc/v1 AN=http://gateway.agenthub.svc/v1 AH=http://gateway.agenthub.svc/v1
 ```
 
-Those are the names Codex and Claude Code read for their endpoint, so pointing
-them at the AgentHub gateway on the runtime container puts every worker's model
-call behind the same policy, content inspection, quota and audit as everything
-else. `OPENAI_BASE_URL` is already in the shared runtime environment;
+**Inheriting is not honouring, and that correction matters.** The variables do
+arrive; whether an agent uses them is a separate question, answered per agent.
+Codex 0.149.0 does not read `OPENAI_BASE_URL`: given it, the agent still opened
+`wss://api.openai.com/v1/responses` and failed with 401. A platform that had
+claimed the gateway on the strength of the variable would have been wrong in the
+one direction that matters, with every worker's prompt going to a vendor.
+
+What codex honours is a provider in its own configuration, so the image writes
+one at start from `AGENTHUB_MODEL_BASE_URL`. With that in place, and the gateway
+replaced by a request log:
+
+```
+POST /v1/responses  auth=Bearer agenthub-issued-key
+POST /v1/responses  auth=Bearer agenthub-issued-key
+```
+
+The requests arrive at the gateway carrying the key this platform issued.
+`wire_api = "chat"` is refused outright by this version — it names `responses` in
+the error — and every value has to be quoted, or the agent stops at "Error
+loading config.toml" with nothing naming the platform that wrote it. Both were
+met on the way.
+
+The environment variables stay because they are the documented mechanism for the
+agents that do read them, but they are not the enforcement. `OPENAI_BASE_URL` is already in the shared runtime environment;
 `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY` are added by the Orca adapter,
 because no other runtime needed them and without them a Claude worker would talk
 to a vendor directly with nothing on this platform seeing the call.

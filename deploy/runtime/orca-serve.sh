@@ -15,6 +15,13 @@ root="${ORCA_ROOT:-/opt/orca/squashfs-root}"
 port="${ORCA_PORT:-6768}"
 log="${ORCA_LOG:-/home/agent/.orca-serve.log}"
 
+# The agents this fabric can start are pointed at the gateway before it is
+# reachable, so a worker cannot be dispatched into a window where the config is
+# not there yet.
+if [ -x /usr/local/bin/agenthub-orca-agents-configure ]; then
+  /usr/local/bin/agenthub-orca-agents-configure || true
+fi
+
 mkdir -p "$(dirname "$log")"
 LIBGL_ALWAYS_SOFTWARE=1 "$root/AppRun" serve --port "$port" --json >"$log" 2>&1 &
 runtime=$!

@@ -491,16 +491,21 @@ var runtimeAdapters = map[string]runtimeAdapter{
 				// Electron needs a display even with no window. Orca starts Xvfb
 				// itself when this is unset, which is what a Pod wants.
 				{Name: "LIBGL_ALWAYS_SOFTWARE", Value: "1"},
-				// This is how the fabric's workers are kept behind the gateway.
+				// Inheriting the environment is not the same as honouring it.
 				//
-				// A terminal the fabric creates inherits this container's
-				// environment — verified by reading the variables back out of a
-				// live worker terminal — and the coding agents it starts read
-				// exactly these names for their endpoint. OPENAI_BASE_URL is
-				// already in the shared environment; ANTHROPIC_BASE_URL is not,
-				// because no other runtime needed it, and without it a Claude
-				// worker would talk to a vendor directly and none of this
-				// platform's policy, metering or audit would see the call.
+				// A terminal the fabric creates does inherit this container's
+				// variables — measured by reading them back out of a live worker
+				// terminal — but an agent only uses them if it reads them, and
+				// codex 0.149.0 does not: given OPENAI_BASE_URL it still opened
+				// wss://api.openai.com/v1/responses and failed with 401. What it
+				// honours is a provider in its own configuration file, which the
+				// image writes at start; with that, its requests arrive at the
+				// gateway carrying the key this platform issued.
+				//
+				// These stay because they are the documented mechanism for the
+				// agents that do read them, and because an agent reaching a
+				// vendor directly would be outside every policy, quota and audit
+				// this platform has. They are not, on their own, the enforcement.
 				{Name: "ANTHROPIC_BASE_URL", Value: build.Value.Model.BaseURL},
 				{Name: "ANTHROPIC_API_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: build.Name}, Key: "model-api-key"}}},
