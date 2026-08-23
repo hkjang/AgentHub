@@ -121,6 +121,64 @@ func TestNoDocumentIsAnErrorRatherThanACleanReview(t *testing.T) {
 	}
 }
 
+// Resolution rests on which files the review actually read, so a file the engine
+// failed on must not be in that list. If it were, a file nobody could review
+// would close every finding in it and look like a morning's good work.
+func TestAFileTheEngineFailedOnIsNotAFileItRead(t *testing.T) {
+	parsed, err := parseReview(fixture(t, "review-all-failed.json"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.Manifest.Coverage.Selected) == 0 || len(parsed.Manifest.Coverage.Failed) == 0 {
+		t.Fatal("this fixture is meant to have a selected file that failed")
+	}
+	if read := reviewedPaths(parsed); len(read) != 0 {
+		t.Errorf("%v count as read in a run where every file failed", read)
+	}
+}
+
+// A finding is the same finding across runs, and the key is what decides it.
+func TestAFindingKeepsItsIdentityWhileTheCodeDoes(t *testing.T) {
+	finding := store.ReviewFinding{
+		FilePath: "internal/auth/token.go", Category: "security", Severity: "critical",
+		ExistingCode: "\t_, err := db.Exec(\"DELETE FROM sessions WHERE id = \" + id)",
+		Message:      "사용자 입력이 SQL 문자열에 직접 결합됩니다.",
+		StartLine:    13,
+	}
+	base := store.ReviewFingerprint(finding)
+
+	// The line moved and the model said it differently. Same problem, same key —
+	// this is the case that used to raise a duplicate every review.
+	moved := finding
+	moved.StartLine, moved.Message = 41, "SQL 문자열에 사용자 입력이 그대로 이어붙습니다."
+	if store.ReviewFingerprint(moved) != base {
+		t.Error("a finding on the same code got a new identity because the line moved or the wording changed")
+	}
+	// The code changed. That is a different problem, and treating it as the same
+	// one would hide it behind a decision somebody made about the old code.
+	edited := finding
+	edited.ExistingCode = "\t_, err := db.Exec(\"DELETE FROM sessions WHERE id = ?\", id)"
+	if store.ReviewFingerprint(edited) == base {
+		t.Error("changing the offending code left the finding's identity unchanged")
+	}
+	// A finding raised somewhere else, or judged differently, is not this one.
+	for _, other := range []store.ReviewFinding{
+		{FilePath: "internal/auth/other.go", Category: finding.Category, Severity: finding.Severity, ExistingCode: finding.ExistingCode},
+		{FilePath: finding.FilePath, Category: "style", Severity: finding.Severity, ExistingCode: finding.ExistingCode},
+		{FilePath: finding.FilePath, Category: finding.Category, Severity: "low", ExistingCode: finding.ExistingCode},
+	} {
+		if store.ReviewFingerprint(other) == base {
+			t.Errorf("a different finding shares this one's identity: %+v", other)
+		}
+	}
+	// With no code to anchor to, the message is all there is.
+	noCode := finding
+	noCode.ExistingCode = ""
+	if store.ReviewFingerprint(noCode) == base {
+		t.Error("a finding with no code anchor took the same identity as one with code")
+	}
+}
+
 func TestTheCommandSaysWhatToCompare(t *testing.T) {
 	base := []string{"/usr/local/bin/agenthub-ocr-run"}
 	for _, one := range []struct {

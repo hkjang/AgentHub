@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strconv"
 	"strings"
@@ -53,6 +55,12 @@ type ReviewFinding struct {
 	DecidedAt *time.Time `json:"decidedAt,omitempty"`
 	Source    string     `json:"source"`
 	CreatedAt time.Time  `json:"createdAt"`
+	// Fingerprint is what makes this the same finding across runs.
+	Fingerprint string `json:"-"`
+	// LastSeenRunID is the most recent review that still reported it;
+	// ResolvedAt is when a review that read the file stopped reporting it.
+	LastSeenRunID string     `json:"lastSeenRunId,omitempty"`
+	ResolvedAt    *time.Time `json:"resolvedAt,omitempty"`
 }
 
 // ReviewRun is what the review covered — the claim its findings rest on.
@@ -61,47 +69,80 @@ type ReviewFinding struct {
 // empty list, and they mean opposite things. This is how the console tells them
 // apart without asking anybody to read a log.
 type ReviewRun struct {
-	RunID         string    `json:"runId"`
-	Mode          string    `json:"mode"`
-	BaseRef       string    `json:"baseRef"`
-	HeadRef       string    `json:"headRef"`
-	ResolvedBase  string    `json:"resolvedBase"`
-	ResolvedHead  string    `json:"resolvedHead"`
-	FilesSelected int       `json:"filesSelected"`
-	FilesReviewed int       `json:"filesReviewed"`
-	FilesFailed   int       `json:"filesFailed"`
-	SessionID     string    `json:"sessionId"`
-	EngineVersion string    `json:"engineVersion"`
-	Status        string    `json:"status"`
+	RunID         string `json:"runId"`
+	Mode          string `json:"mode"`
+	BaseRef       string `json:"baseRef"`
+	HeadRef       string `json:"headRef"`
+	ResolvedBase  string `json:"resolvedBase"`
+	ResolvedHead  string `json:"resolvedHead"`
+	FilesSelected int    `json:"filesSelected"`
+	FilesReviewed int    `json:"filesReviewed"`
+	FilesFailed   int    `json:"filesFailed"`
+	SessionID     string `json:"sessionId"`
+	EngineVersion string `json:"engineVersion"`
+	Status        string `json:"status"`
+	// ReviewedPaths are the files this run actually read. Resolution rests on it:
+	// a finding the latest review no longer reports is evidence of a fix only if
+	// that review read the file.
+	ReviewedPaths []string  `json:"reviewedPaths"`
 	CreatedAt     time.Time `json:"createdAt"`
 }
 
-const reviewFindingColumns = `id,run_id,COALESCE(task_id,''),agent_id,owner_id,file_path,start_line,end_line,severity,category,message,existing_code,suggestion,status,decided_by,decided_at,source,created_at,COALESCE(fix_task_id,'')`
+const reviewFindingColumns = `id,run_id,COALESCE(task_id,''),agent_id,owner_id,file_path,start_line,end_line,severity,category,message,existing_code,suggestion,status,decided_by,decided_at,source,created_at,COALESCE(fix_task_id,''),fingerprint,COALESCE(last_seen_run_id,''),resolved_at`
 
 func scanReviewFinding(row pgx.Row) (ReviewFinding, error) {
 	var item ReviewFinding
 	err := row.Scan(&item.ID, &item.RunID, &item.TaskID, &item.AgentID, &item.OwnerID, &item.FilePath,
 		&item.StartLine, &item.EndLine, &item.Severity, &item.Category, &item.Message,
 		&item.ExistingCode, &item.Suggestion, &item.Status, &item.DecidedBy, &item.DecidedAt,
-		&item.Source, &item.CreatedAt, &item.FixTaskID)
+		&item.Source, &item.CreatedAt, &item.FixTaskID, &item.Fingerprint, &item.LastSeenRunID, &item.ResolvedAt)
 	return item, err
 }
 
 // SaveReviewRun records what one review covered.
 func (s *Store) SaveReviewRun(ctx context.Context, item ReviewRun) error {
 	_, err := s.pool.Exec(ctx, `INSERT INTO review_runs
-		(run_id,mode,base_ref,head_ref,resolved_base,resolved_head,files_selected,files_reviewed,files_failed,session_id,engine_version,status)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		(run_id,mode,base_ref,head_ref,resolved_base,resolved_head,files_selected,files_reviewed,files_failed,session_id,engine_version,status,reviewed_paths)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		ON CONFLICT(run_id) DO UPDATE SET mode=excluded.mode,base_ref=excluded.base_ref,head_ref=excluded.head_ref,
 			resolved_base=excluded.resolved_base,resolved_head=excluded.resolved_head,files_selected=excluded.files_selected,
 			files_reviewed=excluded.files_reviewed,files_failed=excluded.files_failed,session_id=excluded.session_id,
-			engine_version=excluded.engine_version,status=excluded.status`,
+			engine_version=excluded.engine_version,status=excluded.status,reviewed_paths=excluded.reviewed_paths`,
 		item.RunID, item.Mode, item.BaseRef, item.HeadRef, item.ResolvedBase, item.ResolvedHead,
-		item.FilesSelected, item.FilesReviewed, item.FilesFailed, item.SessionID, item.EngineVersion, item.Status)
+		item.FilesSelected, item.FilesReviewed, item.FilesFailed, item.SessionID, item.EngineVersion, item.Status, item.ReviewedPaths)
 	return err
 }
 
+// ReviewFingerprint is what makes a finding the same finding across runs.
+//
+// Deliberately not built from the message. That is a model's prose, and a
+// rewording between two runs of the same review would orphan the old finding and
+// raise a new one — wrong in both directions at once, and wrong in a way that
+// looks like the fix worked. It is built from the code the finding points at,
+// which the engine took from the diff rather than from a model, together with
+// the file and how the finding was classified.
+//
+// The consequence worth knowing: if the offending line is edited but the problem
+// remains, this reads as one finding resolved and another raised. That is the
+// safe direction — it says something changed, which is true — and it is why the
+// severity and category are in the key as well.
+func ReviewFingerprint(finding ReviewFinding) string {
+	anchor := strings.TrimSpace(finding.ExistingCode)
+	if anchor == "" {
+		anchor = strings.TrimSpace(finding.Message)
+	}
+	sum := sha256.Sum256([]byte(finding.FilePath + "|" + finding.Category + "|" + finding.Severity + "|" + anchor))
+	return hex.EncodeToString(sum[:])
+}
+
 // SaveReviewFindings writes one review's findings.
+//
+// A finding is one problem, not one sighting of it: reviewing the same branch
+// twice used to show every problem twice, and three times after the third run,
+// on the screen that exists to say what is still open. A finding this agent has
+// already reported is updated rather than added — its lines move as the file
+// changes — and whatever a person decided about it is left alone. Somebody who
+// said "false positive" is not told again every morning.
 //
 // The whole set is written or none of it is: a console showing four of eleven
 // findings with nothing to say the rest were lost is worse than one showing that
@@ -122,20 +163,51 @@ func (s *Store) SaveReviewFindings(ctx context.Context, items []ReviewFinding) e
 		if item.Source == "" {
 			item.Source = "open-code-review"
 		}
+		if item.Fingerprint == "" {
+			item.Fingerprint = ReviewFingerprint(item)
+		}
 		var taskID *string
 		if item.TaskID != "" {
 			taskID = &item.TaskID
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO review_findings
-			(id,run_id,task_id,agent_id,owner_id,file_path,start_line,end_line,severity,category,message,existing_code,suggestion,source)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+			(id,run_id,task_id,agent_id,owner_id,file_path,start_line,end_line,severity,category,message,existing_code,suggestion,source,fingerprint,last_seen_run_id)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$2)
+			ON CONFLICT (agent_id, fingerprint) DO UPDATE SET
+				last_seen_run_id=excluded.run_id,
+				start_line=excluded.start_line, end_line=excluded.end_line,
+				message=excluded.message, suggestion=excluded.suggestion,
+				resolved_at=NULL`,
 			item.ID, item.RunID, taskID, item.AgentID, item.OwnerID, item.FilePath,
 			item.StartLine, item.EndLine, item.Severity, item.Category, item.Message,
-			item.ExistingCode, item.Suggestion, item.Source); err != nil {
+			item.ExistingCode, item.Suggestion, item.Source, item.Fingerprint); err != nil {
 			return err
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+// ResolveMissingFindings closes what this review read and no longer reports.
+//
+// This is the only thing on the platform that may say a finding is fixed without
+// a person saying so, and it rests on one fact: a review that read the file did
+// not report it. A finding whose file the run never opened is left alone —
+// otherwise excluding a directory, or a file the engine failed on, would close
+// every finding in it and look like a morning's good work.
+//
+// Only open findings are touched. A decision somebody made is theirs.
+func (s *Store) ResolveMissingFindings(ctx context.Context, agentID, runID string, reviewedPaths []string, seen []string) (int, error) {
+	if agentID == "" || len(reviewedPaths) == 0 {
+		return 0, nil
+	}
+	tag, err := s.pool.Exec(ctx, `UPDATE review_findings
+		SET status='fixed', resolved_at=now(), last_seen_run_id=COALESCE(last_seen_run_id,$2)
+		WHERE agent_id=$1 AND status='open' AND file_path = ANY($3) AND NOT (fingerprint = ANY($4))`,
+		agentID, runID, reviewedPaths, seen)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 // ReviewFindings lists one review's findings, worst first.
@@ -277,11 +349,11 @@ func (s *Store) ReviewFindingsFor(ctx context.Context, filter ReviewFindingFilte
 func (s *Store) ReviewRunByID(ctx context.Context, runID string) (ReviewRun, error) {
 	var item ReviewRun
 	err := s.pool.QueryRow(ctx, `SELECT run_id,mode,base_ref,head_ref,resolved_base,resolved_head,
-		files_selected,files_reviewed,files_failed,session_id,engine_version,status,created_at
+		files_selected,files_reviewed,files_failed,session_id,engine_version,status,reviewed_paths,created_at
 		FROM review_runs WHERE run_id=$1`, runID).
 		Scan(&item.RunID, &item.Mode, &item.BaseRef, &item.HeadRef, &item.ResolvedBase, &item.ResolvedHead,
 			&item.FilesSelected, &item.FilesReviewed, &item.FilesFailed, &item.SessionID, &item.EngineVersion,
-			&item.Status, &item.CreatedAt)
+			&item.Status, &item.ReviewedPaths, &item.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ReviewRun{}, ErrNotFound
 	}

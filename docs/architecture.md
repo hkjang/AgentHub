@@ -1306,6 +1306,50 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## A finding is one problem, not one sighting of it
+
+Every review run inserted every comment as a new row, so reviewing the same
+branch twice showed each problem twice — and three times after the third run — on
+the screen that exists to answer what is still open. It was counting sightings.
+
+A finding has an identity across runs now, and what that identity is built from
+is the whole question. Not the message: that is a model's prose, and a rewording
+between two runs of the same review would orphan the old finding and raise a new
+one — wrong in both directions at once, and wrong in the direction that looks
+like the fix worked. It is built from the code the finding points at, which the
+engine took from the diff rather than from a model, together with the file and
+how the finding was classified.
+
+The consequence worth knowing: if the offending line is edited and the problem
+remains, this reads as one finding resolved and another raised. That is the safe
+direction — something did change — and it is why severity and category are in the
+key too, so a finding re-judged as critical does not hide behind a decision
+somebody made when it was a style note.
+
+### The one place the platform may close a finding by itself
+
+A review that read the file and did not report the finding is evidence. A file
+the review never opened is not, so a finding on a file this run did not read is
+left exactly where it was — otherwise excluding a directory, or a file the engine
+failed on, would close every finding in it and look like a morning's good work.
+A file the engine *selected and failed on* does not count as read, for the same
+reason.
+
+Decisions are never overwritten. A finding somebody dismissed keeps its decision
+and is not raised again by the next review: being told every morning about
+something you have already called a false positive is how a person learns to
+ignore the whole screen.
+
+### The migration that failed on the first database it met
+
+The unique index cannot be created while duplicates exist, and every deployment
+that ran a review twice has some. Writing the index first is a migration that
+fails on exactly the sites that used the feature — which is how this was found,
+on the deployment used to demonstrate the duplication in the first place. The
+duplicates are collapsed first: the row carrying a person's decision is kept,
+because that is work and the others are only sightings; among undecided rows the
+earliest is kept, so the finding keeps the date it was first reported.
+
 ## Finding and fixing are two runtimes' work
 
 The review engine reads and reports; it does not edit. A coding agent edits. What

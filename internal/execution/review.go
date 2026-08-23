@@ -214,19 +214,25 @@ func (o *Orchestrator) runReview(ctx context.Context, run *store.AgentRun, task 
 	// The coverage goes in first. A review with no findings and a review that
 	// read nothing both produce an empty list, and they mean opposite things —
 	// so what was covered is recorded even when saving the findings fails.
+	// The files this run actually read, which is what resolution rests on. A
+	// selected file that failed was not read, so it is not in this list.
+	reviewed := reviewedPaths(parsed)
 	coverage := store.ReviewRun{
 		RunID: run.ID, Mode: parsed.Manifest.Input.Mode, BaseRef: parsed.Manifest.Input.RequestedFrom,
 		HeadRef: parsed.Manifest.Input.RequestedHead, ResolvedBase: parsed.Manifest.Input.ResolvedBase,
 		ResolvedHead:  parsed.Manifest.Input.ResolvedHead,
 		FilesSelected: len(parsed.Manifest.Coverage.Selected), FilesReviewed: parsed.Summary.FilesReviewed,
 		FilesFailed: len(parsed.Manifest.Coverage.Failed), SessionID: parsed.SessionID,
-		EngineVersion: parsed.Manifest.Execution.OCRVersion, Status: parsed.Status,
+		EngineVersion: parsed.Manifest.Execution.OCRVersion, Status: parsed.Status, ReviewedPaths: reviewed,
 	}
 	if coverage.Mode == "" {
 		coverage.Mode = reviewMode(goal)
 	}
 	if err := o.store.SaveReviewRun(ctx, coverage); err != nil {
 		o.logger.Error("review coverage could not be recorded", "run", run.ID, "error", err)
+	}
+	for index := range findings {
+		findings[index].Fingerprint = store.ReviewFingerprint(findings[index])
 	}
 	if err := o.store.SaveReviewFindings(ctx, findings); err != nil {
 		record.Status, record.Error = "failed", err.Error()
@@ -237,7 +243,22 @@ func (o *Orchestrator) runReview(ctx context.Context, run *store.AgentRun, task 
 			Failure: "리뷰 결과를 저장하지 못했습니다: " + err.Error()}
 	}
 
+	// What this review read and no longer reports is fixed. It is the one place
+	// the platform may say so without a person: a review that opened the file and
+	// did not raise the finding is evidence, where a file nobody read is not.
+	seen := make([]string, 0, len(findings))
+	for index := range findings {
+		seen = append(seen, findings[index].Fingerprint)
+	}
+	resolved, resolveErr := o.store.ResolveMissingFindings(ctx, agent.ID, run.ID, reviewed, seen)
+	if resolveErr != nil {
+		o.logger.Error("earlier findings could not be resolved", "run", run.ID, "error", resolveErr)
+	}
+
 	summary := reviewSummary(parsed, findings)
+	if resolved > 0 {
+		summary += fmt.Sprintf(" — 이전 지적 %d건은 더 이상 보고되지 않아 해결로 표시했습니다", resolved)
+	}
 	record.Output = summary
 	if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
 		o.logger.Error("review step could not be recorded", "run", run.ID, "error", storeErr)
@@ -245,7 +266,7 @@ func (o *Orchestrator) runReview(ctx context.Context, run *store.AgentRun, task 
 	o.event(ctx, *run, "review.completed", summary, map[string]any{
 		"durationMs": elapsed, "findings": len(findings),
 		"filesReviewed": parsed.Summary.FilesReviewed, "filesFailed": len(parsed.Manifest.Coverage.Failed),
-		"sessionId": parsed.SessionID, "totalTokens": parsed.Summary.TotalTokens,
+		"sessionId": parsed.SessionID, "totalTokens": parsed.Summary.TotalTokens, "resolved": resolved,
 	})
 
 	// The gate. A review that finds something serious and reports success is a
@@ -264,6 +285,25 @@ func (o *Orchestrator) runReview(ctx context.Context, run *store.AgentRun, task 
 			Failure: "리뷰가 끝나지 못했습니다: " + strings.TrimSpace(parsed.Message)}
 	}
 	return []string{summary}, Outcome{}
+}
+
+// reviewedPaths are the files this run actually read.
+//
+// A selected file that failed was not read. Counting it as read would let a file
+// the engine could not open close every finding in it, which looks exactly like
+// a morning's good work and is the opposite of one.
+func reviewedPaths(parsed reviewResult) []string {
+	failed := map[string]bool{}
+	for _, item := range parsed.Manifest.Coverage.Failed {
+		failed[item.Path] = true
+	}
+	paths := []string{}
+	for _, item := range parsed.Manifest.Coverage.Selected {
+		if !failed[item.Path] {
+			paths = append(paths, item.Path)
+		}
+	}
+	return paths
 }
 
 // parseReview reads the engine's document.
