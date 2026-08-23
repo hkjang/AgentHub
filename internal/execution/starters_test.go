@@ -85,7 +85,15 @@ func TestTheConsolePathsStillCheckTheQuota(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(body), "CheckRuntimeQuota") {
+		// Either form counts: asking the quota, or taking capacity under it. The
+		// second is what these paths do now — the check and the write in one act,
+		// because asking and then writing let two starts arriving together each see
+		// room for the last runtime. Naming only the old function would have made
+		// this guard fail for the change that strengthened what it guards.
+		source := string(body)
+		if !strings.Contains(source, "CheckRuntimeQuota") &&
+			!strings.Contains(source, "StartRuntimeWithinQuota") &&
+			!strings.Contains(source, "CreateRuntimeWithinQuota") {
 			t.Errorf("api/%s starts a runtime and never checks the runtime quota", file)
 		}
 	}

@@ -212,14 +212,14 @@ func (s *Server) spawnNow(r *http.Request, agent store.Agent) (store.Runtime, er
 		if specErr != nil {
 			return existing, specErr
 		}
-		if err := s.store.CheckRuntimeQuota(r.Context(), agent.OwnerID, spec.Profile.ID); err != nil {
-			return existing, err
-		}
-		startErr := s.spawner.Start(r.Context(), spec)
-		updated, updateErr := s.store.UpdateRuntimeDesiredState(r.Context(), existing.ID, agent.OwnerID, "running", true)
+		// The quota is held while the runtime is marked running, rather than asked
+		// and then written: two starts arriving together each used to see room for
+		// the last one.
+		updated, updateErr := s.store.StartRuntimeWithinQuota(r.Context(), existing.ID, agent.OwnerID, spec.Profile.ID, true)
 		if updateErr != nil {
 			return existing, updateErr
 		}
+		startErr := s.spawner.Start(r.Context(), spec)
 		if startErr != nil {
 			return updated, startErr
 		}
@@ -231,10 +231,7 @@ func (s *Server) spawnNow(r *http.Request, agent store.Agent) (store.Runtime, er
 	if agent.RuntimeProfileID != nil {
 		profileID = *agent.RuntimeProfileID
 	}
-	if err := s.store.CheckRuntimeQuota(r.Context(), agent.OwnerID, profileID); err != nil {
-		return store.Runtime{}, err
-	}
-	rt, err := s.store.CreateRuntime(r.Context(), agent, "pending")
+	rt, err := s.store.CreateRuntimeWithinQuota(r.Context(), agent, "pending", profileID)
 	if err != nil {
 		return rt, err
 	}
@@ -345,14 +342,24 @@ func (s *Server) runtimeAction(state string) http.HandlerFunc {
 			writeStoreError(w, err)
 			return
 		}
+		// Marked first, under the owner's quota. The quota belongs to whoever owns
+		// the runtime, not whoever pressed start: an administrator acting on another
+		// user's agent must not spend their own allowance nor let the owner exceed
+		// theirs. Holding it while the state is written is what stops two starts
+		// arriving together from both taking the last one.
+		var rt store.Runtime
 		if state == "running" && current.DesiredState != "running" {
-			// The quota belongs to whoever owns the runtime, not whoever pressed
-			// start: an administrator acting on another user's agent must not spend
-			// their own allowance nor let the owner exceed theirs.
-			if err := s.store.CheckRuntimeQuota(r.Context(), agent.OwnerID, spec.Profile.ID); err != nil {
+			rt, err = s.store.StartRuntimeWithinQuota(r.Context(), chi.URLParam(r, "id"), u.ID, spec.Profile.ID, u.Role == "admin")
+			if errors.Is(err, quota.ErrExceeded) {
 				writeError(w, http.StatusConflict, "quota_exceeded", err.Error())
 				return
 			}
+		} else {
+			rt, err = s.store.UpdateRuntimeDesiredState(r.Context(), chi.URLParam(r, "id"), u.ID, state, u.Role == "admin")
+		}
+		if err != nil {
+			writeStoreError(w, err)
+			return
 		}
 		if state == "running" {
 			err = s.spawner.Start(r.Context(), spec)
@@ -360,11 +367,6 @@ func (s *Server) runtimeAction(state string) http.HandlerFunc {
 			err = s.spawner.Stop(r.Context(), spec)
 		}
 		if err != nil && !errors.Is(err, runtime.ErrNotConfigured) {
-			writeStoreError(w, err)
-			return
-		}
-		rt, err := s.store.UpdateRuntimeDesiredState(r.Context(), chi.URLParam(r, "id"), u.ID, state, u.Role == "admin")
-		if err != nil {
 			writeStoreError(w, err)
 			return
 		}

@@ -813,15 +813,49 @@ func (s *Store) LatestRuntimeForAgent(ctx context.Context, agentID string) (Runt
 	return r, err
 }
 
+// CreateRuntimeWithinQuota creates one while holding the owner's runtime quota,
+// so the check and the write are the same act.
+func (s *Store) CreateRuntimeWithinQuota(ctx context.Context, agent Agent, status, profileID string) (Runtime, error) {
+	var created Runtime
+	err := s.ClaimRuntimeCapacity(ctx, agent.OwnerID, profileID, "", func(tx pgx.Tx) error {
+		var inner error
+		created, inner = insertRuntime(ctx, tx, agent, status)
+		return inner
+	})
+	return created, err
+}
+
+// StartRuntimeWithinQuota flips an existing runtime to running under the same
+// lock. Starting a stopped runtime takes capacity exactly as creating one does,
+// and it was the path with no claim at all.
+func (s *Store) StartRuntimeWithinQuota(ctx context.Context, id, ownerID, profileID string, admin bool) (Runtime, error) {
+	var started Runtime
+	err := s.ClaimRuntimeCapacity(ctx, ownerID, profileID, id, func(tx pgx.Tx) error {
+		var inner error
+		started, inner = updateDesiredState(ctx, tx, id, ownerID, "running", admin)
+		return inner
+	})
+	return started, err
+}
+
 func (s *Store) CreateRuntime(ctx context.Context, agent Agent, status string) (Runtime, error) {
+	return insertRuntime(ctx, s.pool, agent, status)
+}
+
+func insertRuntime(ctx context.Context, db querier, agent Agent, status string) (Runtime, error) {
 	id := uuid.NewString()
 	crd := "agent-" + strings.ToLower(strings.ReplaceAll(agent.OwnerID[:8]+"-"+agent.ID[:8], "_", "-"))
 	var r Runtime
-	err := s.pool.QueryRow(ctx, `INSERT INTO agent_runtimes(id,agent_id,owner_id,status,desired_state,crd_name) VALUES($1,$2,$3,$4,'running',$5) RETURNING id,agent_id,owner_id,status,desired_state,crd_name,pod_name,node_name,endpoint,restart_count,failure_reason,last_activity_at,started_at,stopped_at,warm_until,created_at,updated_at`, id, agent.ID, agent.OwnerID, status, crd).Scan(&r.ID, &r.AgentID, &r.OwnerID, &r.Status, &r.DesiredState, &r.CRDName, &r.PodName, &r.NodeName, &r.Endpoint, &r.RestartCount, &r.FailureReason, &r.LastActivityAt, &r.StartedAt, &r.StoppedAt, &r.WarmUntil, &r.CreatedAt, &r.UpdatedAt)
+	err := db.QueryRow(ctx, `INSERT INTO agent_runtimes(id,agent_id,owner_id,status,desired_state,crd_name) VALUES($1,$2,$3,$4,'running',$5) RETURNING id,agent_id,owner_id,status,desired_state,crd_name,pod_name,node_name,endpoint,restart_count,failure_reason,last_activity_at,started_at,stopped_at,warm_until,created_at,updated_at`, id, agent.ID, agent.OwnerID, status, crd).Scan(&r.ID, &r.AgentID, &r.OwnerID, &r.Status, &r.DesiredState, &r.CRDName, &r.PodName, &r.NodeName, &r.Endpoint, &r.RestartCount, &r.FailureReason, &r.LastActivityAt, &r.StartedAt, &r.StoppedAt, &r.WarmUntil, &r.CreatedAt, &r.UpdatedAt)
 	return r, err
 }
 
 func (s *Store) UpdateRuntimeDesiredState(ctx context.Context, id, ownerID, state string, admin bool) (Runtime, error) {
+	return updateDesiredState(ctx, s.pool, id, ownerID, state, admin)
+}
+
+// updateDesiredState writes the state, whether or not a quota lock is being held.
+func updateDesiredState(ctx context.Context, db querier, id, ownerID, state string, admin bool) (Runtime, error) {
 	if state != "running" && state != "stopped" && state != "deleted" {
 		return Runtime{}, fmt.Errorf("invalid desired state %q", state)
 	}
@@ -837,7 +871,7 @@ func (s *Store) UpdateRuntimeDesiredState(ctx context.Context, id, ownerID, stat
 	}
 	query += ` RETURNING id,agent_id,owner_id,status,desired_state,crd_name,pod_name,node_name,endpoint,restart_count,failure_reason,last_activity_at,started_at,stopped_at,warm_until,created_at,updated_at`
 	var r Runtime
-	err := s.pool.QueryRow(ctx, query, args...).Scan(&r.ID, &r.AgentID, &r.OwnerID, &r.Status, &r.DesiredState, &r.CRDName, &r.PodName, &r.NodeName, &r.Endpoint, &r.RestartCount, &r.FailureReason, &r.LastActivityAt, &r.StartedAt, &r.StoppedAt, &r.WarmUntil, &r.CreatedAt, &r.UpdatedAt)
+	err := db.QueryRow(ctx, query, args...).Scan(&r.ID, &r.AgentID, &r.OwnerID, &r.Status, &r.DesiredState, &r.CRDName, &r.PodName, &r.NodeName, &r.Endpoint, &r.RestartCount, &r.FailureReason, &r.LastActivityAt, &r.StartedAt, &r.StoppedAt, &r.WarmUntil, &r.CreatedAt, &r.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Runtime{}, ErrNotFound
 	}

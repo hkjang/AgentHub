@@ -293,12 +293,16 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, request rpcRequ
 			err = specErr
 			break
 		}
+		// Marked first, under the owner's quota — charged to the runtime's owner for
+		// the same reason as the REST path, and held while the state is written so
+		// two starts arriving together cannot both take the last one.
 		if action == "start" && current.DesiredState != "running" {
-			// Charged to the runtime's owner for the same reason as the REST path.
-			if quotaErr := s.store.CheckRuntimeQuota(r.Context(), agent.OwnerID, runtimeSpec.Profile.ID); quotaErr != nil {
-				err = quotaErr
-				break
-			}
+			value, err = s.store.StartRuntimeWithinQuota(r.Context(), runtimeID, user.ID, runtimeSpec.Profile.ID, false)
+		} else {
+			value, err = s.store.UpdateRuntimeDesiredState(r.Context(), runtimeID, user.ID, desired, false)
+		}
+		if err != nil {
+			break
 		}
 		if action == "start" {
 			err = s.spawner.Start(r.Context(), runtimeSpec)
@@ -308,7 +312,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, request rpcRequ
 		if err != nil && !errors.Is(err, appRuntime.ErrNotConfigured) {
 			break
 		}
-		value, err = s.store.UpdateRuntimeDesiredState(r.Context(), runtimeID, user.ID, desired, false)
+		err = nil
 	default:
 		s.rpcErrorFor(w, request.ID, -32602, "Unknown tool", map[string]any{"name": params.Name}, modern)
 		return
