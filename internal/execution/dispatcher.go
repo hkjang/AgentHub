@@ -117,6 +117,11 @@ func (d *Dispatcher) deliver(ctx context.Context, event store.PlatformEvent) {
 			d.logger.Info("event already delivered to this subscriber", "event", event.ID, "trigger", trigger.ID)
 		default:
 			delivered++
+			// The same record the scheduler keeps: an event trigger that has
+			// started a hundred tasks used to read "never fired".
+			if err := d.store.RecordTriggerFired(finish, trigger.ID); err != nil {
+				d.logger.Warn("an event firing could not be recorded", "trigger", trigger.ID, "error", err)
+			}
 			d.logger.Info("event task queued", "event", event.ID, "type", event.Type, "trigger", trigger.ID, "task", task.ID)
 		}
 	}

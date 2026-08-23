@@ -126,3 +126,24 @@ func TestTheOverdueQueryAsksForATypeThatExists(t *testing.T) {
 		t.Errorf("the overdue query asks for type %q, which the database never holds (허용: %s) — it would report nothing forever and read as healthy", asked, allowed)
 	}
 }
+
+// TestEveryKindOfTriggerRecordsThatItFired — only the scheduler did, through the
+// statement that also advances the next firing. So a webhook that had accepted a
+// thousand deliveries read "never fired", and so did every event trigger; the
+// console line that says exactly that was therefore wrong for two of the three
+// kinds.
+func TestEveryKindOfTriggerRecordsThatItFired(t *testing.T) {
+	for _, source := range []struct{ kind, file string }{
+		{"웹훅", "../api/execution.go"},
+		{"이벤트", "../execution/dispatcher.go"},
+	} {
+		body, err := os.ReadFile(source.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), "RecordTriggerFired(") {
+			t.Errorf("%s 트리거는 작업을 만들고도 발화한 사실을 남기지 않습니다 (%s) — 화면에는 '아직 한 번도 실행되지 않았습니다' 로 남습니다",
+				source.kind, source.file)
+		}
+	}
+}

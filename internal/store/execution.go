@@ -327,8 +327,14 @@ type AgentTrigger struct {
 	// watch a single subject rather than every event of that type.
 	EventType   string          `json:"eventType"`
 	EventFilter json.RawMessage `json:"eventFilter,omitempty"`
-	CreatedAt   time.Time       `json:"createdAt"`
-	UpdatedAt   time.Time       `json:"updatedAt"`
+	// What this trigger has refused, and why. A rejection used to be a line in
+	// the server log: the caller saw 401 and the owner saw an empty trigger, so
+	// neither could see the other's half of the problem.
+	RejectedCount  int        `json:"rejectedCount"`
+	LastRejection  string     `json:"lastRejection,omitempty"`
+	LastRejectedAt *time.Time `json:"lastRejectedAt,omitempty"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
 }
 
 type AgentTask struct {
@@ -1259,11 +1265,11 @@ func (s *Store) ArtifactByID(ctx context.Context, id, ownerID string) (AgentArti
 
 // --- Triggers ---
 
-const triggerColumns = `id,agent_id,owner_id,name,type,enabled,schedule,timezone,task_title,task_input,priority,last_fired_at,next_fire_at,webhook_secret <> '',event_type,event_filter,created_at,updated_at`
+const triggerColumns = `id,agent_id,owner_id,name,type,enabled,schedule,timezone,task_title,task_input,priority,last_fired_at,next_fire_at,webhook_secret <> '',event_type,event_filter,rejected_count,last_rejection,last_rejected_at,created_at,updated_at`
 
 func scanTrigger(row pgx.Row) (AgentTrigger, error) {
 	var item AgentTrigger
-	err := row.Scan(&item.ID, &item.AgentID, &item.OwnerID, &item.Name, &item.Type, &item.Enabled, &item.Schedule, &item.Timezone, &item.TaskTitle, &item.TaskInput, &item.Priority, &item.LastFiredAt, &item.NextFireAt, &item.HasSecret, &item.EventType, &item.EventFilter, &item.CreatedAt, &item.UpdatedAt)
+	err := row.Scan(&item.ID, &item.AgentID, &item.OwnerID, &item.Name, &item.Type, &item.Enabled, &item.Schedule, &item.Timezone, &item.TaskTitle, &item.TaskInput, &item.Priority, &item.LastFiredAt, &item.NextFireAt, &item.HasSecret, &item.EventType, &item.EventFilter, &item.RejectedCount, &item.LastRejection, &item.LastRejectedAt, &item.CreatedAt, &item.UpdatedAt)
 	return item, err
 }
 

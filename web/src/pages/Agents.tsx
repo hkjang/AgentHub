@@ -36,6 +36,22 @@ function TriggerRecord({ health, days, fired }: { health?: TriggerHealth; days: 
   </small>
 }
 
+/** What this trigger turned away.
+ *
+ *  The loudest case is a trigger that has refused something more recently than it
+ *  has accepted anything: somebody is calling, and it is not working. That is
+ *  invisible from both ends otherwise — the caller has a 401 and the owner has an
+ *  empty trigger. */
+function TriggerRejections({ trigger }: { trigger: AgentTrigger }) {
+  const count = trigger.rejectedCount ?? 0
+  if (count === 0 || !trigger.lastRejectedAt) return null
+  const stale = trigger.lastFiredAt ? new Date(trigger.lastFiredAt) > new Date(trigger.lastRejectedAt) : false
+  return <small className={`trigger-record ${stale ? '' : 'bad'}`}>
+    거절 {count}건 · 마지막 {new Date(trigger.lastRejectedAt).toLocaleString('ko-KR')}
+    {trigger.lastRejection ? ` · ${trigger.lastRejection}` : ''}
+  </small>
+}
+
 function RunnerVerdict({ runner }: { runner: string }) {
   const experience = runnerExperienceOf(runner)
   if (!experience) return null
@@ -729,6 +745,7 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
                 :'수동'}</small>
               {trigger.nextFireAt&&<small>다음 실행 {new Date(trigger.nextFireAt).toLocaleString('ko-KR')}</small>}
               <TriggerRecord health={triggerHealth[trigger.id]} days={triggerWindow} fired={trigger.lastFiredAt}/>
+              <TriggerRejections trigger={trigger}/>
             </div>
             <StatusBadge status={trigger.enabled?'active':'disabled'}/>
             <button className="danger" title="삭제" onClick={()=>void removeTrigger(trigger.id)}><Trash2 size={15}/></button>

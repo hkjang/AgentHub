@@ -958,6 +958,15 @@ func (s *Server) deleteAgentTrigger(w http.ResponseWriter, r *http.Request) {
 // This is the only unauthenticated route in the API, so it verifies an HMAC over
 // the raw body before doing anything else and never reveals whether the trigger
 // exists.
+// rejectedWebhook keeps what was turned away where the trigger's owner can see
+// it. The caller is told nothing more than before — the reason is for the person
+// who owns the trigger, not for whoever is knocking.
+func (s *Server) rejectedWebhook(r *http.Request, triggerID, reason string) {
+	if err := s.store.RecordTriggerRejection(r.Context(), triggerID, reason); err != nil {
+		s.logger.Warn("a webhook rejection could not be recorded", "trigger", triggerID, "error", err)
+	}
+}
+
 func (s *Server) triggerWebhook(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxWebhookBody))
@@ -968,12 +977,14 @@ func (s *Server) triggerWebhook(w http.ResponseWriter, r *http.Request) {
 	secret, err := s.store.TriggerSecret(r.Context(), id)
 	if err != nil || secret == "" {
 		s.logger.Warn("webhook rejected", "trigger", id, "reason", "unknown trigger or no secret")
+		s.rejectedWebhook(r, id, store.RejectedNoSecret)
 		writeError(w, http.StatusUnauthorized, "unauthorized", "서명을 확인할 수 없습니다.")
 		return
 	}
 	signature := strings.TrimSpace(r.Header.Get("X-AgentHub-Signature"))
 	if !validSignature(secret, body, signature) {
 		s.logger.Warn("webhook rejected", "trigger", id, "reason", "signature mismatch")
+		s.rejectedWebhook(r, id, store.RejectedSignature)
 		writeError(w, http.StatusUnauthorized, "unauthorized", "서명을 확인할 수 없습니다.")
 		return
 	}
@@ -989,16 +1000,22 @@ func (s *Server) triggerWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	if !first {
 		s.logger.Warn("webhook rejected", "trigger", id, "reason", "replayed delivery")
+		s.rejectedWebhook(r, id, store.RejectedReplay)
 		writeError(w, http.StatusConflict, "duplicate_delivery",
 			"이미 처리한 요청입니다. 같은 본문을 다시 보내면 같은 서명이 되므로 중복으로 처리됩니다.")
 		return
 	}
 	trigger, err := s.store.AgentTriggerByID(r.Context(), id)
 	if err != nil {
+		// The trigger was there when its secret was read and is not there now.
+		// Rare, and still a refusal: recording it is what keeps this list of
+		// reasons an honest account of what this endpoint did.
+		s.rejectedWebhook(r, id, store.RejectedNoSecret)
 		writeError(w, http.StatusUnauthorized, "unauthorized", "서명을 확인할 수 없습니다.")
 		return
 	}
 	if !trigger.Enabled {
+		s.rejectedWebhook(r, id, store.RejectedDisabled)
 		writeError(w, http.StatusConflict, "trigger_disabled", "비활성화된 Trigger입니다.")
 		return
 	}
@@ -1022,6 +1039,12 @@ func (s *Server) triggerWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.store.RecordWebhookTask(r.Context(), id, signature, task.ID); err != nil {
 		s.logger.Warn("webhook delivery could not be linked to its task", "trigger", id, "task", task.ID, "error", err)
+	}
+	// This trigger has now done something. Only the scheduler used to record
+	// that, so a webhook that had accepted a thousand deliveries still read
+	// "never fired" — beside a rejection count that did move.
+	if err := s.store.RecordTriggerFired(r.Context(), id); err != nil {
+		s.logger.Warn("a webhook firing could not be recorded", "trigger", id, "error", err)
 	}
 	s.logger.Info("webhook task queued", "trigger", trigger.ID, "task", task.ID, "agent", trigger.AgentID)
 	writeJSON(w, http.StatusAccepted, map[string]any{"taskId": task.ID})

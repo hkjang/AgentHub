@@ -97,6 +97,9 @@ export type AgentTrigger = {
   schedule: string; timezone: string; taskTitle: string; taskInput: string; priority: string
   lastFiredAt?: string; nextFireAt?: string; hasSecret: boolean
   eventType?: string; eventFilter?: Record<string, unknown>
+  /** What this trigger turned away, and why. A rejection used to be a server log
+   *  line: the caller saw 401 and the owner saw an empty trigger. */
+  rejectedCount?: number; lastRejection?: string; lastRejectedAt?: string
 }
 export type MCPServerRef = { id: string; name: string; mode: string; riskLevel?: string }
 export type MCPToolPolicy = {

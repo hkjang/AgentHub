@@ -93,3 +93,39 @@ func (s *Store) OverdueTriggers(ctx context.Context, grace time.Duration) (overd
 		time.Now().UTC().Add(-grace)).Scan(&overdue, &total)
 	return overdue, total, err
 }
+
+// The reasons a webhook is turned away, in the words its owner needs. They are
+// deliberately about what to change: a signature mismatch is a secret somebody
+// has to compare, a replay is a sender retrying, a disabled trigger is a switch.
+const (
+	RejectedSignature = "서명이 맞지 않습니다"
+	RejectedNoSecret  = "서명을 확인할 설정이 없습니다"
+	RejectedReplay    = "이미 처리한 요청입니다"
+	RejectedDisabled  = "꺼져 있는 트리거입니다"
+)
+
+// RecordTriggerRejection keeps what a trigger turned away.
+//
+// On the trigger's own row, not in a table: this endpoint is reachable by
+// anybody who knows the address, and history that strangers can append to is
+// history that fills a disk. A counter and the latest reason answer the question
+// an owner actually has — is something calling this, and why is it not working —
+// without giving the caller a way to write anything but a number.
+func (s *Store) RecordTriggerRejection(ctx context.Context, triggerID, reason string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE agent_triggers
+		SET rejected_count = rejected_count + 1, last_rejection = $2, last_rejected_at = now()
+		WHERE id = $1`, triggerID, reason)
+	return err
+}
+
+// RecordTriggerFired stamps a trigger that has just started work.
+//
+// Only the scheduler used to do this, through the statement that also advances
+// the next firing — so a webhook trigger that had accepted a thousand deliveries
+// still read "never fired", and so did every event trigger. The schedule is not
+// touched here: these two have nothing to advance, and the fact worth recording
+// is simply that this trigger did something.
+func (s *Store) RecordTriggerFired(ctx context.Context, triggerID string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE agent_triggers SET last_fired_at = now() WHERE id = $1`, triggerID)
+	return err
+}
