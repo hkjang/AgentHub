@@ -126,7 +126,7 @@ func run(logger *slog.Logger) error {
 		}
 	}
 
-	errs := make(chan error, 5)
+	errs := make(chan error, 6)
 	go func() { errs <- worker.Run(ctx) }()
 
 	if os.Getenv(envDisableScheduler) != "true" {
@@ -146,6 +146,13 @@ func run(logger *slog.Logger) error {
 	// each worker needs no coordination.
 	caretaker := execution.NewCaretaker(db, logger)
 	go func() { errs <- caretaker.Run(ctx) }()
+
+	// The agent servers are asked again on a timer. Their health was recorded
+	// when somebody pressed a button and then kept forever, which made a machine
+	// verified in March look like one verified an hour ago — to the console, and
+	// to placement, which prefers a healthy server over an unchecked one.
+	watch := execution.NewServerWatch(db, logger)
+	go func() { errs <- watch.Run(ctx) }()
 
 	// The runtime warm pool claims each runtime before starting it, so several
 	// workers running it cannot start the same Pod twice.

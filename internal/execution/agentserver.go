@@ -211,16 +211,19 @@ func chooseAgentServer(servers []store.AgentServer, goal store.AgentGoal, load m
 		if zone != "" && !strings.EqualFold(server.NetworkZone, zone) {
 			continue
 		}
-		// Unknown health is not the same as unhealthy — a server nobody has checked
-		// yet may work — but a server that failed its last check is not sent work.
-		if server.Health == "unreachable" || server.Health == "refused" {
-			continue
-		}
 		// Full is full. Capacity zero means the operator did not say, which is not
 		// the same as no room and is treated as unbounded — refusing work because
 		// nobody typed a number would be the platform inventing a limit.
 		if server.Capacity > 0 && load[server.ID] >= server.Capacity {
 			full++
+			continue
+		}
+		// Unknown health is not the same as unhealthy — a server nobody has checked
+		// yet may work — but a server that failed its last check is not sent work.
+		// An answer old enough to be about a different machine is not acted on in
+		// either direction: it neither excludes a server that may have recovered
+		// nor recommends one that may have stopped.
+		if freshAgentServerHealth(server) && (server.Health == "unreachable" || server.Health == "refused") {
 			continue
 		}
 		candidates = append(candidates, server)
@@ -246,16 +249,43 @@ func chooseAgentServer(servers []store.AgentServer, goal store.AgentGoal, load m
 	return best, ""
 }
 
+// knownGood is a server this platform has recently seen working. Recently
+// matters: the check is refreshed on a timer, and preferring a machine because
+// of an answer from months ago is preferring a memory.
+func knownGood(server store.AgentServer) bool {
+	return server.Health == "healthy" && freshAgentServerHealth(server)
+}
+
+// freshAgentServerHealth says whether the last answer is recent enough to act
+// on.
+//
+// The window is generous against the sweep that produces these answers: a
+// deployment whose sweep is briefly behind should not have its whole pool go
+// unknown at once. A deployment with no sweep running — an older worker, or none
+// — ends up treating every answer as unknown, which is the honest reading of a
+// record nothing is maintaining.
+func freshAgentServerHealth(server store.AgentServer) bool {
+	if server.CheckedAt == nil {
+		return false
+	}
+	return time.Since(*server.CheckedAt) <= agentServerHealthTTL
+}
+
+// agentServerHealthTTL is how long a check speaks for. Six sweeps at the
+// default interval: long enough that a slow sweep does not blank the pool,
+// short enough that "healthy" always means this hour rather than this quarter.
+const agentServerHealthTTL = 30 * time.Minute
+
 // betterAgentServer says whether one machine should be preferred over another.
 //
 // Health first: a machine that answered its last check is known to work, and an
 // unchecked one is only a guess. Then load, so work spreads instead of piling
 // onto whichever server happened to be registered first.
 func betterAgentServer(candidate, best store.AgentServer, load map[string]int) bool {
-	if candidate.Health == "healthy" && best.Health != "healthy" {
+	if knownGood(candidate) && !knownGood(best) {
 		return true
 	}
-	if candidate.Health != "healthy" && best.Health == "healthy" {
+	if !knownGood(candidate) && knownGood(best) {
 		return false
 	}
 	return load[candidate.ID] < load[best.ID]

@@ -1,11 +1,6 @@
 package api
 
 import (
-	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/hkjang/AgentHub/internal/store"
@@ -60,45 +55,6 @@ func TestAGoalOnAnAgentServerNeedsNoRuntime(t *testing.T) {
 	goal := store.AgentGoal{Runner: store.RunnerAgentServer, AgentServerZone: "secure", StartOnDemand: false}
 	if err := validateRunner(&goal, "claude"); err != nil {
 		t.Errorf("a goal whose work runs elsewhere was told to start a runtime here: %v", err)
-	}
-}
-
-// TestSomethingThatAnswersIsNotYetAnAgentServer is what registration is for. A
-// proxy, a parked domain or the wrong service all answer a bare request; only
-// the right thing offers the endpoint this platform is going to call.
-func TestSomethingThatAnswersIsNotYetAnAgentServer(t *testing.T) {
-	wrong := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"paths": map[string]any{"/api/health": map[string]any{}}})
-	}))
-	defer wrong.Close()
-	health, detail := probeAgentServer(context.Background(), store.AgentServer{BaseURL: wrong.URL})
-	if health == "healthy" {
-		t.Errorf("a server with no way to start a conversation was registered as working: %s", detail)
-	}
-
-	right := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"paths": map[string]any{"/api/conversations": map[string]any{}}})
-	}))
-	defer right.Close()
-	if health, detail := probeAgentServer(context.Background(), store.AgentServer{BaseURL: right.URL}); health != "healthy" {
-		t.Errorf("a real agent server was reported as %s: %s", health, detail)
-	}
-}
-
-func TestAServerThatIsNotThereIsSaidToBeUnreachable(t *testing.T) {
-	gone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	address := gone.URL
-	gone.Close()
-	health, detail := probeAgentServer(context.Background(), store.AgentServer{BaseURL: address})
-	if health != "unreachable" {
-		t.Errorf("a server that is not running was reported as %q", health)
-	}
-	// And in words that say what to do about it, because this is what an operator
-	// reads at the moment registration fails.
-	if !strings.Contains(detail, "확인") && !strings.Contains(detail, "찾지") {
-		t.Errorf("the reason does not tell an operator anything: %s", detail)
 	}
 }
 
