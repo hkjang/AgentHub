@@ -34,6 +34,8 @@ var (
 	// OrcaVersion is the execution fabric image. It carries an Electron
 	// application and is published on its own schedule.
 	OrcaVersion = "0.3.0-dev"
+	// PiVersion is the image carrying the RPC-driven coding agent.
+	PiVersion = "0.1.0-dev"
 )
 
 type Info struct {

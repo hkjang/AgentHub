@@ -49,7 +49,9 @@ const (
 	// EnvDefaultOpenCodeReviewImage overrides the review engine image.
 	EnvDefaultOpenCodeReviewImage = "AGENTHUB_DEFAULT_OPENCODEREVIEW_IMAGE"
 	// EnvDefaultOrcaImage overrides the execution fabric image.
-	EnvDefaultOrcaImage    = "AGENTHUB_DEFAULT_ORCA_IMAGE"
+	EnvDefaultOrcaImage = "AGENTHUB_DEFAULT_ORCA_IMAGE"
+	// EnvDefaultPiImage overrides the RPC-driven coding agent image.
+	EnvDefaultPiImage      = "AGENTHUB_DEFAULT_PI_IMAGE"
 	EnvDefaultJupyterImage = "AGENTHUB_DEFAULT_JUPYTER_IMAGE"
 	EnvDefaultNodeREDImage = "AGENTHUB_DEFAULT_NODERED_IMAGE"
 	EnvDefaultN8NImage     = "AGENTHUB_DEFAULT_N8N_IMAGE"
@@ -89,6 +91,11 @@ func DefaultRuntimeImage(runtimeType string) string {
 			return override
 		}
 		return "agenthub-opencodereview:v" + strings.TrimSuffix(buildinfo.OpenCodeReviewVersion, "-dev")
+	case runtimetype.Pi:
+		if override := strings.TrimSpace(os.Getenv(EnvDefaultPiImage)); override != "" {
+			return override
+		}
+		return "agenthub-pi:v" + strings.TrimSuffix(buildinfo.PiVersion, "-dev")
 	case runtimetype.Orca:
 		if override := strings.TrimSpace(os.Getenv(EnvDefaultOrcaImage)); override != "" {
 			return override

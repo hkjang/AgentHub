@@ -80,6 +80,7 @@ export const RUNNER_LABELS: Record<string, string> = {
   investigate: '조사하고 근거와 함께 결론을 남김',
   review: '변경분을 리뷰하고 파일·줄 단위 지적을 남김',
   orca: '여러 에이전트를 각자 작업 사본에서 동시에 돌림',
+  rpc: '일하는 도중에 말을 걸 수 있는 프로토콜 실행',
 }
 
 export function runnerSummary(runners?: string[]) {

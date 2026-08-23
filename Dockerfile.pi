@@ -1,0 +1,74 @@
+# syntax=docker/dockerfile:1.7
+#
+# The Pi runtime image.
+#
+# Pi is a coding agent with four ways in — interactive, print, JSON and RPC — and
+# it is the RPC mode that makes it worth a runtime of its own here: a long-lived
+# process this platform can steer, ask, interrupt and inspect while it works,
+# rather than a command that is started and waited for.
+#
+# It is deliberately small. Pi's own documentation is plain that it has no
+# filesystem, process, network or credential sandbox of its own and runs with the
+# permissions of whoever started it — so the Pod is the boundary, and this image
+# carries a coding toolchain rather than a machine.
+ARG NODE_IMAGE=22-bookworm-slim
+FROM node:${NODE_IMAGE}
+
+ARG PI_VERSION=0.84.2
+ARG TTYD_VERSION=1.7.7
+ARG TTYD_SHA256_X86_64=8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55
+ARG TTYD_SHA256_AARCH64=
+
+USER root
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      git ca-certificates curl openssh-client tini jq ripgrep less procps \
+      python3 python3-venv \
+ && npm install --global --ignore-scripts "@earendil-works/pi-coding-agent@${PI_VERSION}" \
+ && npm cache clean --force \
+ && arch="$(uname -m)"; \
+    case "${arch}" in \
+      x86_64) asset="ttyd.x86_64"; sum="${TTYD_SHA256_X86_64}" ;; \
+      aarch64) asset="ttyd.aarch64"; sum="${TTYD_SHA256_AARCH64}" ;; \
+      *) echo "unsupported architecture ${arch}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /usr/local/bin/ttyd "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/${asset}"; \
+    if [ -n "${sum}" ]; then echo "${sum}  /usr/local/bin/ttyd" | sha256sum -c -; \
+    else echo "no checksum pinned for ${arch}; refusing to ship an unverified binary" >&2; exit 1; fi \
+ && chmod 0755 /usr/local/bin/ttyd \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /workspace /home/agent/.pi/agent/sessions \
+ && chown -R 10000:10000 /workspace /home/agent \
+ && pi --version
+
+# A coding agent that cannot install a package is half an agent, and the default
+# security profile mounts the root filesystem read-only — so the environment the
+# agent installs into lives on the home volume, which is writable and survives.
+ARG AGENT_TOOLCHAIN="pip setuptools wheel ruff pytest httpx requests pyyaml"
+RUN python3 -m venv /opt/agenthub/venv \
+ && /opt/agenthub/venv/bin/pip install --no-cache-dir --upgrade ${AGENT_TOOLCHAIN} \
+ && mkdir -p /home/agent/.npm-global /home/agent/.cache \
+ && chown -R 10000:10000 /opt/agenthub /home/agent
+
+COPY deploy/runtime/agenthub-report-config.sh /usr/local/bin/agenthub-report-config
+COPY deploy/runtime/pi-configure.sh /usr/local/bin/agenthub-pi-configure
+COPY deploy/runtime/pi-run.sh /usr/local/bin/agenthub-pi-run
+COPY deploy/runtime/pi-shell.sh /usr/local/bin/agenthub-pi-shell
+COPY deploy/runtime/pi-toolchain.sh /etc/profile.d/agenthub-toolchain.sh
+RUN chmod 0755 /usr/local/bin/agenthub-report-config /usr/local/bin/agenthub-pi-configure \
+      /usr/local/bin/agenthub-pi-run /usr/local/bin/agenthub-pi-shell \
+ && chmod 0644 /etc/profile.d/agenthub-toolchain.sh
+
+USER 10000:10000
+ENV PATH=/home/agent/.venv/bin:/opt/agenthub/venv/bin:/home/agent/.npm-global/bin:$PATH \
+    HOME=/home/agent \
+    AGENTHUB_RUNTIME_TYPE=pi \
+    AGENTHUB_WORKSPACE=/workspace \
+    npm_config_prefix=/home/agent/.npm-global \
+    npm_config_cache=/home/agent/.npm \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONUNBUFFERED=1
+WORKDIR /workspace
+EXPOSE 7681
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/usr/local/bin/ttyd", "--port", "7681", "--interface", "127.0.0.1", "--writable", "/usr/local/bin/agenthub-pi-shell"]

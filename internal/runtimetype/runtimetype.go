@@ -20,6 +20,9 @@ const (
 	// pipeline decides what to read and which rules apply, and a model is asked
 	// only about the parts that need judgement.
 	OpenCodeReview = "opencodereview"
+	// Pi is a coding agent this platform speaks a protocol to rather than starts
+	// and waits for: it can be steered, asked and interrupted while it works.
+	Pi = "pi"
 	// Orca runs several coding agents at once, each in its own git worktree, and
 	// keeps the task and dispatch state that says which did what.
 	Orca   = "orca"
@@ -29,7 +32,7 @@ const (
 // Supported lists every runtime type accepted by the API, the database check
 // constraints and the AgentRuntime CRD enum. Keep this in sync with
 // deploy/kubernetes/crd.yaml and the runtime_type CHECK constraints.
-var Supported = []string{OpenCode, Hermes, QwenPaw, QwenCode, Goose, Holmes, BrowserCode, Jupyter, Langflow, NodeRED, N8N, OpenCodeReview, Orca, Custom}
+var Supported = []string{OpenCode, Hermes, QwenPaw, QwenCode, Goose, Holmes, BrowserCode, Jupyter, Langflow, NodeRED, N8N, OpenCodeReview, Orca, Pi, Custom}
 
 // IsSupported reports whether value names a runtime adapter AgentHub can spawn.
 func IsSupported(value string) bool {
@@ -48,7 +51,7 @@ func Port(value string) int32 {
 		return 8642
 	case Langflow:
 		return 7860
-	case QwenCode, Goose, Holmes, BrowserCode, OpenCodeReview, Orca:
+	case QwenCode, Goose, Holmes, BrowserCode, OpenCodeReview, Orca, Pi:
 		// ttyd, which is what puts the agent's terminal in a browser.
 		return 7681
 	case NodeRED:
@@ -73,7 +76,7 @@ const GatewayPort int32 = 9119
 // who reached the port.
 func UsesGatewayProxy(value string) bool {
 	switch value {
-	case Hermes, QwenPaw, Langflow, QwenCode, Goose, Holmes, BrowserCode, NodeRED, N8N, Jupyter, OpenCodeReview, Orca:
+	case Hermes, QwenPaw, Langflow, QwenCode, Goose, Holmes, BrowserCode, NodeRED, N8N, Jupyter, OpenCodeReview, Orca, Pi:
 		return true
 	}
 	return false

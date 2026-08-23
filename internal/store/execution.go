@@ -187,10 +187,12 @@ const (
 	// StepOrca is one task handed to the execution fabric, with what its workers
 	// did recorded beneath it.
 	StepOrca = "orca"
+	// StepRPC is one conversation with a long-lived agent process.
+	StepRPC = "rpc"
 )
 
 // RunStepTypes is every type the platform writes.
-var RunStepTypes = []string{StepPlan, StepReasoning, StepTool, StepArtifact, StepCompletion, StepDelegation, StepFlow, StepCLI, StepExternal, StepACP, StepInvestigate, StepReview, StepOrca}
+var RunStepTypes = []string{StepPlan, StepReasoning, StepTool, StepArtifact, StepCompletion, StepDelegation, StepFlow, StepCLI, StepExternal, StepACP, StepInvestigate, StepReview, StepOrca, StepRPC}
 
 // The two places a task's work can happen.
 const (
@@ -217,6 +219,10 @@ const (
 	// RunnerOrca hands a task to an execution fabric that coordinates several
 	// coding agents, each in its own git worktree.
 	RunnerOrca = "orca"
+	// RunnerRPC speaks a line protocol to a long-lived agent process — commands
+	// in, events out — so the work can be redirected, asked and interrupted while
+	// it happens rather than only started and waited for.
+	RunnerRPC = "rpc"
 )
 
 // reviewModeOrDefault keeps the database's check constraint from refusing a goal
@@ -441,7 +447,7 @@ func WithLegacyNames(item AgentGoal) AgentGoal {
 
 func runnerOrDefault(value string) string {
 	switch value {
-	case RunnerFlow, RunnerCLI, RunnerDify, RunnerACP, RunnerInvestigate, RunnerReview, RunnerOrca:
+	case RunnerFlow, RunnerCLI, RunnerDify, RunnerACP, RunnerInvestigate, RunnerReview, RunnerOrca, RunnerRPC:
 		return value
 	}
 	return RunnerProse

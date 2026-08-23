@@ -108,6 +108,15 @@ type Descriptor struct {
 // never quietly uses the gateway or model that was configured yesterday.
 // Orca is driven entirely through its CLI, which speaks RPC to the runtime in
 // the same Pod. The runner appends the subcommand and its flags.
+// Pi is driven over its RPC mode. The runner adds the provider and model, which
+// name this deployment's gateway rather than a vendor.
+// Only the protocol for now. Pi also has a print mode, and offering it would be
+// claiming the platform knows how to read it — the guard that refused this said
+// so, which is what it is for.
+var piCommands = map[string][]string{
+	RunnerRPC: {"/usr/local/bin/agenthub-pi-run", "--mode", "rpc"},
+}
+
 var orcaCommands = map[string][]string{
 	RunnerOrca: {"/usr/local/bin/agenthub-orca-run"},
 }
@@ -265,6 +274,26 @@ var descriptors = map[string]Descriptor{
 		BrowserUI: true, Terminal: false, ToolLoop: false, MCPConfigured: false, ProxiedUI: true,
 		HostSessionOnly: true,
 	},
+	Pi: {
+		Type: Pi, Code: "PI", Label: "Pi",
+		Summary: "일하는 도중에 말을 걸 수 있는 코딩 에이전트. 방향을 바꾸거나, 이어서 시키거나, 멈추게 할 수 있습니다.",
+		BestFor: "오래 걸리는 코드 작업 — 시켜 놓고 지켜보다 중간에 방향을 잡아 주는 일",
+		Strengths: []string{
+			"읽기·쓰기·편집·셸을 갖춘 자체 도구 루프",
+			"실행 중에 방향 수정·후속 지시·중단을 받아들임",
+			"메시지마다 실제 토큰과 비용을 알려 주므로 그대로 계량됨",
+			"세션이 파일로 남아 Pod를 다시 띄워도 이어서 함",
+			"컨텍스트가 차면 스스로 압축하고, 시켜서 압축할 수도 있음",
+		},
+		Watchouts: []string{
+			"자체 파일·프로세스·네트워크 권한 장치가 없습니다 — 격리는 전적으로 Pod와 네트워크 정책이 합니다",
+			"자체 인증이 없는 브라우저 터미널이라 플랫폼 프록시로만 공개됩니다",
+			"프로젝트 안의 설정·스킬을 신뢰할지는 플랫폼이 정합니다 — 런타임이 스스로 승인하지 않습니다",
+		},
+		Workspace: "/workspace", Port: 7681,
+		BrowserUI: true, Terminal: true, ToolLoop: true, MCPConfigured: false, ProxiedUI: true,
+		Runners: []string{RunnerRPC}, Commands: piCommands,
+	},
 	Orca: {
 		Type: Orca, Code: "OR", Label: "Orca",
 		Summary: "여러 코딩 에이전트를 한 작업에 동시에 붙이는 실행 패브릭. 각자 자기 git 작업 사본에서 일합니다.",
@@ -333,6 +362,18 @@ const (
 	// RunnerACP speaks the Agent Client Protocol to whatever agent the runtime
 	// was given, which is how one adapter serves many agents.
 	RunnerACP = "acp"
+	// RunnerRPC speaks a line protocol to a long-lived agent process: commands in,
+	// events out, for as long as the work takes.
+	//
+	// It is not named after the agent that prompted it. The shape — JSON lines on
+	// stdin and stdout, a command acknowledged and then a stream of events — is
+	// what several agents offer, and a backend named for one of them would have
+	// to be copied for the next.
+	//
+	// What it buys over running a command and waiting is that the work can be
+	// spoken to while it happens: redirected, asked a follow-up, interrupted,
+	// asked what it is doing.
+	RunnerRPC = "rpc"
 	// RunnerOrca hands a task to an execution fabric that runs several coding
 	// agents at once, each in its own git worktree, and reports which did what.
 	//

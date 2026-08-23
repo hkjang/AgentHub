@@ -1306,6 +1306,44 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Speaking to an agent while it works
+
+The headless backend starts a command and waits for it. This one keeps a process
+open and holds a conversation: JSON lines in, JSON lines out, for as long as the
+work takes. What that buys is that the work can be spoken to — redirected, asked
+a follow-up, interrupted, asked what it is doing — rather than only started and
+read afterwards.
+
+It is named `rpc`, for the shape, not for the agent that prompted it. Commands
+acknowledged and then a stream of events is what several agents offer, and a
+backend named after one of them would be copied for the next.
+
+### Two things the agent's own events settle
+
+**Usage is real, per message.** Every event carries input, output, cache reads and
+writes and a total. A run through this backend is metered from the agent's own
+numbers rather than described as unmetered — and left unmetered rather than shown
+as zero when the agent says nothing.
+
+**`agent_end` is not the end.** It carries `willRetry`, so a turn ending is not
+the work ending; `agent_settled` is what says nothing further is coming. A runner
+that stopped at the first would cut off a retry the agent was about to make, and
+a test built from the recorded stream fails if it ever does.
+
+### The endpoint is checked, not believed
+
+This is the second agent in a row that ignores `OPENAI_BASE_URL` and goes to its
+vendor — the gateway is enforced by a provider in the agent's own configuration,
+written by the image. Having been wrong about that once, the runner does not
+trust the configuration either: when the conversation settles it asks the agent
+where it is actually pointed, and a mismatch is logged and put on the run's
+timeline. Configuring an endpoint and verifying one are different acts, and only
+the second is evidence.
+
+Project-local settings and skills are refused. A repository that can turn on its
+own extensions is a repository that can run whatever it likes inside the Pod, and
+that decision belongs to the platform rather than to the checkout.
+
 ## A backend that runs other agents
 
 Every backend before this one runs one agent. Orca runs several, each in its own

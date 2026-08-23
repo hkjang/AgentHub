@@ -238,6 +238,14 @@ func qwenCodeStart(build adapterBuild) string {
 		"/usr/local/bin/agenthub-qwencode-shell"
 }
 
+// piStart serves the agent's terminal under the runtime's own path.
+func piStart(build adapterBuild) string {
+	return "exec /usr/local/bin/ttyd --port 7681 --interface 127.0.0.1 --writable " +
+		"--base-path /" + build.runtimeID() + " " +
+		"--client-option titleFixed=AgentHub " +
+		"/usr/local/bin/agenthub-pi-shell"
+}
+
 // orcaStart serves the fabric's terminal under the runtime's own path. The
 // fabric's runtime itself is a sidecar, so a person closing this shell does not
 // take the workers with it.
@@ -469,6 +477,42 @@ var runtimeAdapters = map[string]runtimeAdapter{
 		},
 		// Checked from inside the container: ttyd is on loopback, so a probe from
 		// the kubelet could never connect.
+		Probes: func(build adapterBuild) (*corev1.Probe, *corev1.Probe) {
+			command := qwenCodeHealthCommand(build)
+			return &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 5, PeriodSeconds: 5, TimeoutSeconds: 3, FailureThreshold: 24,
+				}, &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 60, PeriodSeconds: 30, TimeoutSeconds: 3, FailureThreshold: 4,
+				}
+		},
+	},
+	runtimetype.Pi: {
+		Type:    runtimetype.Pi,
+		Command: []string{"/bin/sh", "-ec"},
+		ArgsFor: func(build adapterBuild) []string { return []string{piStart(build)} },
+		Env: func(build adapterBuild) []corev1.EnvVar {
+			// The endpoint reaches the agent through the file the configure step
+			// writes, not through these — Pi ignores OPENAI_BASE_URL and goes to
+			// the vendor, which was measured. These are what that step reads.
+			return []corev1.EnvVar{{Name: "AGENTHUB_MODEL_NAME", Value: build.Value.Model.Name}}
+		},
+		InitContainers: func(build adapterBuild) []corev1.Container {
+			// Written at start as well as on every run, so a runtime that cannot
+			// reach its gateway fails where somebody is watching rather than on
+			// the first task at three in the morning.
+			return []corev1.Container{{
+				Name: "pi-config-init", Image: build.image(), ImagePullPolicy: corev1.PullIfNotPresent,
+				Command: []string{"/usr/local/bin/agenthub-pi-configure"}, Env: build.Env,
+				Resources:       initResources("200m", "256Mi"),
+				SecurityContext: restrictedContainerSecurityContext(build.Value.Security.ReadOnlyRootFilesystem),
+				VolumeMounts:    homeAndConfigMounts,
+			}}
+		},
+		Sidecars: func(build adapterBuild) []corev1.Container {
+			return []corev1.Container{runtimeProxyContainer("pi-proxy", build.Name, build.sidecarImage(), "http://127.0.0.1:7681")}
+		},
 		Probes: func(build adapterBuild) (*corev1.Probe, *corev1.Probe) {
 			command := qwenCodeHealthCommand(build)
 			return &corev1.Probe{
