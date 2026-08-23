@@ -33,7 +33,7 @@ var (
 	OpenCodeReviewVersion = "0.1.0-dev"
 	// OrcaVersion is the execution fabric image. It carries an Electron
 	// application and is published on its own schedule.
-	OrcaVersion = "0.2.0-dev"
+	OrcaVersion = "0.3.0-dev"
 )
 
 type Info struct {
