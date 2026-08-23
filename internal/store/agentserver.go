@@ -108,11 +108,15 @@ func (s *Store) AgentServerByID(ctx context.Context, id string) (AgentServer, er
 	return item, err
 }
 
-// DeleteAgentServer removes one.
+// DeleteAgentServer removes one, unless a Goal is pointing at it.
+//
+// The refusal is the database's: a Goal that names this machine holds a
+// reference, and the delete fails rather than turning that Goal into one that
+// will take any machine in any network.
 func (s *Store) DeleteAgentServer(ctx context.Context, id string) error {
 	tag, err := s.pool.Exec(ctx, `DELETE FROM agent_servers WHERE id=$1`, id)
 	if err != nil {
-		return err
+		return translateDeleteError(err, "agent server")
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound

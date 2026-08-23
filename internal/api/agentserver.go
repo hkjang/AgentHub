@@ -102,7 +102,7 @@ func (s *Server) deleteAgentServer(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	id := chi.URLParam(r, "id")
 	if err := s.store.DeleteAgentServer(r.Context(), id); err != nil {
-		writeStoreError(w, err)
+		writeDeleteError(w, err, "이 에이전트 서버를 지정한 Goal이 있어 삭제할 수 없습니다. 그 Goal의 실행 위치를 먼저 바꿔 주세요.")
 		return
 	}
 	s.store.Audit(r.Context(), &u, "agent_server.delete", "agent_server", id, "success", clientIP(r), nil)
