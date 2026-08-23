@@ -73,14 +73,17 @@ type rpcUsage struct {
 
 // rpcResult is what one conversation produced.
 type rpcResult struct {
-	Answer     string
-	Tokens     int
-	Turns      int
-	ToolCalls  int
-	SessionID  string
-	Provider   string
-	BaseURL    string
-	StopReason string
+	Answer string
+	Tokens int
+	// Priced apart, so carried apart onto the step the usage report adds up.
+	InputTokens  int
+	OutputTokens int
+	Turns        int
+	ToolCalls    int
+	SessionID    string
+	Provider     string
+	BaseURL      string
+	StopReason   string
 }
 
 // runRPC hands the task to a long-lived agent process and keeps what it said.
@@ -144,7 +147,8 @@ func (o *Orchestrator) runRPC(ctx context.Context, run *store.AgentRun, task sto
 	record := store.AgentRunStep{
 		RunID: run.ID, Sequence: 1, Type: store.StepRPC,
 		Title: "에이전트 실행", Input: prompt, Status: "succeeded", DurationMs: elapsed,
-		Output: result.Answer,
+		Output:       result.Answer,
+		PromptTokens: result.InputTokens, CompletionTokens: result.OutputTokens,
 	}
 	run.StepCount = 1
 	// Real usage, reported per message by the agent itself, so this is metered
@@ -273,7 +277,12 @@ func (o *Orchestrator) speakRPC(ctx context.Context, run *store.AgentRun, sessio
 				result.Answer = text
 			}
 			if event.Message.Usage.TotalTokens > result.Tokens {
+				// The agent reports a running total, so the largest is the answer
+				// rather than the sum. The split is taken from the same message, so
+				// the two always describe the same moment.
 				result.Tokens = event.Message.Usage.TotalTokens
+				result.InputTokens = event.Message.Usage.Input + event.Message.Usage.CacheRead + event.Message.Usage.CacheWrite
+				result.OutputTokens = event.Message.Usage.Output
 			}
 			result.StopReason = event.Message.StopReason
 		case "agent_settled":

@@ -333,6 +333,11 @@ func (o *Orchestrator) runReview(ctx context.Context, run *store.AgentRun, task 
 		return nil, Outcome{Status: store.TaskFailed, Failure: parseErr.Error()}
 	}
 
+	// On the step as well as the run: the usage report adds up steps, so tokens
+	// kept only on the run are spend no report can see — on a run that says it was
+	// metered.
+	record.PromptTokens, record.CompletionTokens = parsed.Summary.InputTokens, parsed.Summary.OutputTokens
+
 	// A review reports real usage, so it is metered like any other work. A run
 	// that reported nothing is left unmetered rather than looking free.
 	run.TotalTokens += parsed.Summary.TotalTokens

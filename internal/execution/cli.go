@@ -113,6 +113,10 @@ func (o *Orchestrator) runCLI(ctx context.Context, run *store.AgentRun, task sto
 
 	parsed, parseErr := adapter.Parse(result.Stdout, result.Stderr, result.ExitCode)
 	record.Output = parsed.Result
+	// On the step, not only on the run: the usage report adds up steps, so tokens
+	// recorded only on the run are spend no report can see — on a run that says it
+	// was metered.
+	record.PromptTokens, record.CompletionTokens = parsed.InputTokens, parsed.OutputTokens
 	if parseErr != nil {
 		record.Status, record.Error = "failed", parseErr.Error()
 	}

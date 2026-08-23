@@ -38,7 +38,12 @@ type agentServerRun struct {
 	Answer         string
 	Status         string
 	Tokens         int
-	Actions        int
+	// The split the server itself reports. Kept apart because the two are priced
+	// apart, and because a step with no tokens on it is a run the usage report
+	// counts as costing nothing while its own record says otherwise.
+	InputTokens  int
+	OutputTokens int
+	Actions      int
 }
 
 // runAgentServer hands the task to a registered server and keeps what it said.
@@ -76,6 +81,11 @@ func (o *Orchestrator) runAgentServer(ctx context.Context, run *store.AgentRun, 
 		RunID: run.ID, Sequence: 1, Type: store.StepAgentServer,
 		Title: "에이전트 서버 실행", Input: prompt, Status: "succeeded", DurationMs: elapsed,
 		Output: result.Answer,
+		// On the step, not only on the run: the usage report adds up steps, so a
+		// run whose tokens live only on the run itself is spend the report cannot
+		// see — and it says nothing about that, because the run claims to be
+		// metered.
+		PromptTokens: result.InputTokens, CompletionTokens: result.OutputTokens,
 	}
 	run.StepCount = 1
 	// Real usage, as the server's own metrics report it. Left unmetered rather
@@ -500,10 +510,12 @@ func (c *agentServerClient) hold(ctx context.Context, notes agentServerNotes, go
 			return result, err
 		}
 		result.Status = info.ExecutionStatus
-		result.Tokens = 0
+		result.Tokens, result.InputTokens, result.OutputTokens = 0, 0, 0
 		for _, usage := range info.Stats.UsageToMetrics {
-			result.Tokens += usage.AccumulatedTokenUsage.PromptTokens + usage.AccumulatedTokenUsage.CompletionTokens
+			result.InputTokens += usage.AccumulatedTokenUsage.PromptTokens
+			result.OutputTokens += usage.AccumulatedTokenUsage.CompletionTokens
 		}
+		result.Tokens = result.InputTokens + result.OutputTokens
 		switch info.ExecutionStatus {
 		case "finished":
 			var final struct {
