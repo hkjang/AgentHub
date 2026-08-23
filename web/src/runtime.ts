@@ -85,6 +85,25 @@ export const RUNNER_LABELS: Record<string, string> = {
   rpc: '일하는 도중에 말을 걸 수 있는 프로토콜 실행',
 }
 
+/** What each way of running has done on this deployment.
+ *
+ *  The same question as the runtime types, about the other choice a person makes.
+ *  Loaded once with the descriptors, because the goal form already has those and
+ *  a second fetch to answer "has this ever worked here" would be a request per
+ *  agent somebody opens. */
+export type RunnerExperience = { runner:string; verdict:'proven'|'failing'|'untried'; detail:string; runs:number; completed:number }
+let runnerExperience: Record<string, RunnerExperience> = {}
+export function setRunnerExperience(value: Record<string, RunnerExperience> | undefined) {
+  runnerExperience = value ?? {}
+}
+export const runnerExperienceOf = (runner: string) => runnerExperience[runner]
+
+export const RUNNER_VERDICT_LABELS: Record<string, string> = {
+  proven: '이 배포에서 확인됨',
+  failing: '완료된 적 없음',
+  untried: '안 해 봄',
+}
+
 /** What to call a type's history on this deployment.
  *
  *  Deliberately about the past. "확인됨" means one ran here; it does not promise

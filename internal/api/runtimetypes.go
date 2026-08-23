@@ -51,7 +51,49 @@ func (s *Server) runtimeTypes(w http.ResponseWriter, r *http.Request) {
 		entry["experience"] = runtimeExperienceOf(experiences[descriptor.Type])
 		items = append(items, entry)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	// The same question about the other choice a person makes. Nine ways of
+	// running are offered and, on the deployment this was written against, eight
+	// of them had never produced a single step.
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "runners": s.runnerExperience(r)})
+}
+
+// runnerExperience is what each way of running has done here.
+func (s *Server) runnerExperience(r *http.Request) map[string]any {
+	experiences, err := s.store.RunnerExperiences(r.Context())
+	if err != nil {
+		s.logger.Warn("runner history could not be read", "error", err)
+		return nil
+	}
+	answer := map[string]any{}
+	for _, runner := range store.Runners {
+		answer[runner] = runnerVerdictOf(runner, experiences[runner])
+	}
+	return answer
+}
+
+// runnerVerdictOf turns what a backend has done into what to say about it.
+//
+// The same asymmetry as the runtime types: inventing bad news steers somebody
+// away from something that works, and calling something proven that never ran is
+// the failure this platform removes. A backend used and never completing is the
+// case worth naming — it is neither untried nor working.
+func runnerVerdictOf(runner string, experience store.RunnerExperience) map[string]any {
+	verdict, detail := "untried", "이 배포에서 아직 이 방식으로 실행해 본 적이 없습니다."
+	switch {
+	case experience.Completed > 0:
+		verdict = "proven"
+		detail = fmt.Sprintf("이 배포에서 %d번 완료됐습니다.", experience.Completed)
+	case experience.Runs > 0 && experience.LastFailure != "":
+		verdict = "failing"
+		detail = fmt.Sprintf("%d번 실행됐지만 완료된 적이 없습니다. 마지막 오류: %s", experience.Runs, experience.LastFailure)
+	case experience.Runs > 0:
+		verdict = "failing"
+		detail = fmt.Sprintf("%d번 실행됐지만 완료된 적이 없습니다.", experience.Runs)
+	}
+	return map[string]any{
+		"runner": runner, "verdict": verdict, "detail": detail,
+		"runs": experience.Runs, "completed": experience.Completed, "lastAt": experience.LastAt,
+	}
 }
 
 // runtimeFailureStatus names the observed states that mean something went wrong.

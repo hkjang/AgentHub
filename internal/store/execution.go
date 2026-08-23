@@ -236,6 +236,41 @@ func reviewModeOrDefault(mode string) string {
 	return "workspace"
 }
 
+// RunnerStepType names the step a backend writes on a run's timeline.
+//
+// It is the link between "which way of running was chosen" and "what this
+// deployment has actually done", because a run does not record its runner — it
+// records the steps the runner wrote, and the type of those steps is the
+// runner's fingerprint. A backend added without an entry here has no evidence
+// trail, which a guard refuses.
+func RunnerStepType(runner string) string {
+	switch runner {
+	case RunnerProse:
+		return StepReasoning
+	case RunnerFlow:
+		return StepFlow
+	case RunnerCLI:
+		return StepCLI
+	case RunnerACP:
+		return StepACP
+	case RunnerDify:
+		return StepExternal
+	case RunnerInvestigate:
+		return StepInvestigate
+	case RunnerReview:
+		return StepReview
+	case RunnerOrca:
+		return StepOrca
+	case RunnerRPC:
+		return StepRPC
+	}
+	return ""
+}
+
+// Runners is every way a task can be run, in the order a person meets them.
+var Runners = []string{RunnerProse, RunnerCLI, RunnerACP, RunnerRPC, RunnerInvestigate,
+	RunnerReview, RunnerOrca, RunnerFlow, RunnerDify}
+
 // DefaultAgentGoal is what an agent without an explicit goal runs with, so a
 // manual task on a plain interactive agent still executes sensibly.
 func DefaultAgentGoal(agentID string) AgentGoal {

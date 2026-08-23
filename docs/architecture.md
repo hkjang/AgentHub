@@ -1306,6 +1306,29 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Nine ways of running, and which of them has worked here
+
+The same question about the other choice a person makes. Nine execution backends
+are offered and, on the deployment this was written against, eight of them had
+never produced a single step — everything that has ever run here reasoned.
+
+A run does not record which backend produced it. It records the steps that
+backend wrote, and their type is the backend's fingerprint, so the evidence comes
+from counting steps rather than from asking a run what it was. That has a useful
+consequence: a backend cannot claim experience it did not write down.
+
+It also has a hole worth guarding. A backend with no step type leaves no trail at
+all — it can never be shown to have worked here and reads as never used, for
+ever. Two backends sharing a step type is worse: one is credited with the other's
+runs. Both are refused by a guard that reads the runner and step lists out of the
+migrations that enforce them.
+
+The third verdict here is the one the runtime types did not need: **used and
+never completed**. That is neither untried nor working, and it is the state
+somebody most needs to see before choosing — a backend that has run ten times and
+finished nothing is a backend with a problem, and the last error it gave is
+carried with the count.
+
 ## Fifteen choices that are not equal
 
 The console offers fifteen runtime types and every one of them looks equally

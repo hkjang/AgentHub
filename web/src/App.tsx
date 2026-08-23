@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { api, UNAUTHORIZED_EVENT } from './api'
 import { setViewModeScope } from './viewmode'
-import { setRuntimeDescriptors, type RuntimeDescriptor } from './runtime'
+import { setRunnerExperience, setRuntimeDescriptors, type RunnerExperience, type RuntimeDescriptor } from './runtime'
 import type { User, Version } from './types'
 import { AppShell } from './components/AppShell'
 import { Login } from './pages/Login'
@@ -54,8 +54,8 @@ export function App() {
       api.get<Capabilities>('/api/v1/capabilities').then(setCapabilities).catch(() => undefined)
       // What each runtime is and is good at comes from the platform, so the
       // console cannot describe an adapter this build does not have.
-      api.get<{items: RuntimeDescriptor[]}>('/api/v1/runtime-types')
-        .then((value) => setRuntimeDescriptors(value.items)).catch(() => undefined)
+      api.get<{items: RuntimeDescriptor[]; runners?: Record<string, RunnerExperience>}>('/api/v1/runtime-types')
+        .then((value) => { setRuntimeDescriptors(value.items); setRunnerExperience(value.runners) }).catch(() => undefined)
     } catch { setUser(null); setViewModeScope('') }
   }, [])
 

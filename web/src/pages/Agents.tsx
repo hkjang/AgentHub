@@ -5,8 +5,24 @@ import { useAuth } from '../App'
 import { api } from '../api'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, GuidePanel, Loading, PageHeader, StatusBadge } from '../components/UI'
 import { useTerms } from '../viewmode'
-import { RUNTIME_TYPES, descriptor, relativeTime, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
+import { RUNNER_VERDICT_LABELS, RUNTIME_TYPES, descriptor, relativeTime, runnerExperienceOf, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
 import type { Agent, AgentGoal, AgentMemory, AgentRelease, AgentTrigger, AgentVersion, ExecutionMode, ExternalApp, MCPBundle, MCPServerRef, MCPToolPolicy, ModelEndpoint, RuntimeFlow, RuntimeProfile, Workspace } from '../types'
+
+/** What the chosen way of running has done on this deployment.
+ *
+ *  Nine are offered and they look equally available, which is only true where
+ *  every one has been used. On a deployment that has only ever reasoned, choosing
+ *  a code review means being the first — worth knowing before rather than after.
+ *
+ *  "안 해 봄" is deliberately quiet: most deployments will never use most of
+ *  these, so it marks the absence of evidence rather than the choice. */
+function RunnerVerdict({ runner }: { runner: string }) {
+  const experience = runnerExperienceOf(runner)
+  if (!experience || experience.verdict === 'untried') return null
+  return <span className={`experience-tag ${experience.verdict === 'failing' ? 'failed' : 'proven'}`} title={experience.detail}>
+    {RUNNER_VERDICT_LABELS[experience.verdict] ?? experience.verdict}
+  </span>
+}
 
 export function Agents({runtimeOnly=false}:{runtimeOnly?:boolean}) {
   const t = useTerms()
@@ -386,7 +402,7 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
       <label><span>제약</span><textarea rows={2} value={goal.constraints} onChange={(e)=>update({constraints:e.target.value})} placeholder="예) 운영 DB에 쓰기 금지"/></label>
 
       {(runners.length>0||apps.length>0)&&<fieldset><legend>실행 방식</legend>
-        <label><span>자동 실행이 하는 일</span>
+        <label><span>자동 실행이 하는 일 <RunnerVerdict runner={goal.runner??'prose'}/></span>
           <select value={goal.runner??'prose'} onChange={(e)=>update({runner:e.target.value as AgentGoal['runner']})}>
             <option value="prose">추론 루프 — 모델과 대화하며 진행하고, 런타임 작업은 사람에게 인계</option>
             {runners.includes('flow')&&<option value="flow">흐름 실행 — Runtime에 저장된 Langflow 흐름을 실행하고 결과를 기록</option>}
