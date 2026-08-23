@@ -111,12 +111,18 @@ type PlatformSpend struct {
 	// How much of the window the bill actually covers. A run whose agent reported
 	// nothing contributes no tokens to any figure above, so a total without this
 	// number reads as a complete bill when it is not.
-	Runs          int          `json:"runs"`
-	UnmeteredRuns int          `json:"unmeteredRuns"`
-	Users         []SpendRow   `json:"users"`
-	Agents        []SpendRow   `json:"agents"`
-	Models        []SpendRow   `json:"models"`
-	Daily         []UsagePoint `json:"daily"`
+	Runs          int `json:"runs"`
+	UnmeteredRuns int `json:"unmeteredRuns"`
+	// UnrecordedRuns counts runs that say they metered real usage and left none of
+	// it on their steps, which is what every number above is built from. An
+	// unmetered run admits it does not know; these look ordinary and make the
+	// bill quietly short. Zero is the ordinary answer.
+	UnrecordedRuns   int          `json:"unrecordedRuns"`
+	UnrecordedTokens int64        `json:"unrecordedTokens"`
+	Users            []SpendRow   `json:"users"`
+	Agents           []SpendRow   `json:"agents"`
+	Models           []SpendRow   `json:"models"`
+	Daily            []UsagePoint `json:"daily"`
 }
 
 // PlatformOverview is the whole picture for one window.
@@ -393,6 +399,18 @@ func (s *Store) PlatformSpend(ctx context.Context, from, to time.Time, limit int
 	if err := s.pool.QueryRow(ctx, `SELECT count(*), count(*) FILTER (WHERE metering IN ('unmetered', 'context_only'))
 		FROM agent_runs WHERE started_at >= $1 AND started_at < $2`, from, to).
 		Scan(&spend.Runs, &spend.UnmeteredRuns); err != nil {
+		return PlatformSpend{}, err
+	}
+	// And the runs whose own record disagrees with the steps this bill is built
+	// from. Counted here as well as in the per-owner report, because this is the
+	// number a bill is reconciled against and the export is written from.
+	if err := s.pool.QueryRow(ctx, `SELECT count(*), COALESCE(sum(r.total_tokens), 0)
+		FROM agent_runs r
+		WHERE r.started_at >= $1 AND r.started_at < $2
+		  AND r.metering = $3 AND r.total_tokens > 0
+		  AND COALESCE((SELECT sum(s.prompt_tokens + s.completion_tokens)
+		                FROM agent_run_steps s WHERE s.run_id = r.id), 0) = 0`, from, to, MeteringAgent).
+		Scan(&spend.UnrecordedRuns, &spend.UnrecordedTokens); err != nil {
 		return PlatformSpend{}, err
 	}
 

@@ -58,10 +58,22 @@ type UsageReport struct {
 	// covers. A total is not evidence unless it says what it could not see: an
 	// agent that spends in its own process and reports nothing leaves a run whose
 	// real cost is absent from every number above.
-	Runs          int          `json:"runs"`
-	UnmeteredRuns int          `json:"unmeteredRuns"`
-	Agents        []UsageRow   `json:"agents"`
-	Daily         []UsagePoint `json:"daily"`
+	Runs          int `json:"runs"`
+	UnmeteredRuns int `json:"unmeteredRuns"`
+	// UnrecordedRuns counts runs that say they metered real usage and left none of
+	// it where this report reads. It is a different silence from the one above: an
+	// unmetered run admits it does not know, while these carry a token count on
+	// the run and nothing on the steps the totals are built from — so the numbers
+	// come out confidently short.
+	//
+	// It exists because that was true of four backends at once, and nothing said
+	// so: the report showed zero beside runs whose own records said otherwise.
+	// Zero here is the ordinary answer; anything else means the totals above are
+	// missing that much.
+	UnrecordedRuns   int          `json:"unrecordedRuns"`
+	UnrecordedTokens int64        `json:"unrecordedTokens"`
+	Agents           []UsageRow   `json:"agents"`
+	Daily            []UsagePoint `json:"daily"`
 }
 
 // attachUnmetered marks the rows whose numbers are incomplete, and adds a row for
@@ -192,6 +204,9 @@ func (s *Store) Usage(ctx context.Context, ownerID, agentID string, from, to tim
 	if err := s.attachUnmetered(ctx, &report, ownerID, agentID, from, to); err != nil {
 		return UsageReport{}, err
 	}
+	if err := s.attachUnrecorded(ctx, &report, ownerID, agentID, from, to); err != nil {
+		return UsageReport{}, err
+	}
 
 	daily, err := s.pool.Query(ctx, `
 		SELECT date_trunc('day', s.created_at) AS day,
@@ -216,4 +231,27 @@ func (s *Store) Usage(ctx context.Context, ownerID, agentID string, from, to tim
 		report.Daily = append(report.Daily, point)
 	}
 	return report, daily.Err()
+}
+
+// attachUnrecorded counts the runs whose own record disagrees with what this
+// report can see.
+//
+// A run that says metering=agent claims somebody counted real usage. The totals
+// are built from steps, so a run carrying tokens with none on its steps is spend
+// this report is confidently short of — and, unlike an unmetered run, nothing
+// about it looks unusual. Saying how much is missing is the difference between a
+// total and a total that can be trusted.
+func (s *Store) attachUnrecorded(ctx context.Context, report *UsageReport, ownerID, agentID string, from, to time.Time) error {
+	return s.pool.QueryRow(ctx, `
+		SELECT count(*), COALESCE(sum(r.total_tokens), 0)
+		FROM agent_runs r
+		WHERE r.started_at >= $1 AND r.started_at < $2
+		  AND ($3 = '' OR r.owner_id = $3)
+		  AND ($4 = '' OR r.agent_id = $4)
+		  AND r.metering = $5
+		  AND r.total_tokens > 0
+		  AND COALESCE((SELECT sum(s.prompt_tokens + s.completion_tokens)
+		                FROM agent_run_steps s WHERE s.run_id = r.id), 0) = 0`,
+		from, to, ownerID, agentID, MeteringAgent).
+		Scan(&report.UnrecordedRuns, &report.UnrecordedTokens)
 }

@@ -164,6 +164,13 @@ func (s *Server) adminSpendExport(w http.ResponseWriter, r *http.Request) {
 						boolText(row.Priced)})
 				}
 			}
+			// The bill says how short it is, in the file somebody reconciles from.
+			// A spreadsheet that adds up to less than the work done, with nothing in
+			// it to say so, is the same confident zero the report exists to avoid.
+			if spend.UnrecordedRuns > 0 {
+				_ = out.Write(noticeRow(fmt.Sprintf("실행 %d건은 사용량이 단계에 기록되지 않아 이 합계에 빠져 있습니다(약 %d 토큰).",
+					spend.UnrecordedRuns, spend.UnrecordedTokens), 9))
+			}
 			for _, point := range spend.Daily {
 				_ = out.Write([]string{"일자", point.Day.Format("2006-01-02"), "",
 					"", strconv.FormatInt(point.InputTokens, 10), strconv.FormatInt(point.OutputTokens, 10),

@@ -22,7 +22,7 @@ type Overview = {
   execution: { tasks: Record<string, number>; runs: number; completed: number; failed: number; deadLetter: number; blocked: number; retried: number; successRate: number; medianDurationMs: number; p95DurationMs: number }
   queue: { ready: number; running: number; workers: number; status: Record<string, number> }
   events: { pending: number; retrying: number; deadLetter: number; delivered: number; oldestPendingSeconds: number }
-  spend: { currency: string; currencies?: string[]; inputTokens: number; outputTokens: number; cost: number; unpricedTokens: number; runs: number; unmeteredRuns: number; users: SpendRow[]; agents: SpendRow[]; models: SpendRow[]; daily: UsagePoint[] }
+  spend: { currency: string; currencies?: string[]; inputTokens: number; outputTokens: number; cost: number; unpricedTokens: number; runs: number; unmeteredRuns: number; unrecordedRuns?: number; unrecordedTokens?: number; users: SpendRow[]; agents: SpendRow[]; models: SpendRow[]; daily: UsagePoint[] }
   oldestQueuedSeconds: number
   quota: { windowDays: number; maxRunning: number; tokenBudget: number; costBudget: number }
   quotaPressure?: { id: string; name: string; limit: string; used: number; allowed: number; percent: number }[]
@@ -82,6 +82,10 @@ function attention(overview: Overview) {
   })
   // A bill is not evidence unless it says what it could not see.
   if (overview.spend.unmeteredRuns > 0) items.push({ level: 'warn', to: '/tasks', text: `실행 ${number(overview.spend.runs)}건 중 ${number(overview.spend.unmeteredRuns)}건은 에이전트가 사용량을 알려주지 않아 이 금액에 들어 있지 않습니다.` })
+  // A different silence from the one above: these runs counted their usage and
+  // left it where the bill does not read, so the total is short by a number the
+  // platform can name.
+  if ((overview.spend.unrecordedRuns ?? 0) > 0) items.push({ level: 'warn', to: '/tasks', text: `실행 ${number(overview.spend.unrecordedRuns ?? 0)}건은 사용량을 기록했지만 집계 대상에 남기지 않아 약 ${number(overview.spend.unrecordedTokens ?? 0)} 토큰이 이 금액에서 빠져 있습니다.` })
   // Said before somebody is refused rather than after. The department screen has
   // the same numbers, but only for whoever went looking at it.
   for (const pressure of overview.quotaPressure ?? []) {
