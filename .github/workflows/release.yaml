@@ -210,7 +210,6 @@ jobs:
           OPENCODEREVIEW_TAG: ${{ steps.runtimes.outputs.opencodereview_tag }}
           ORCA_TAG: ${{ steps.runtimes.outputs.orca_tag }}
           OPENCODEREVIEW_CHANGED: ${{ steps.runtimes.outputs.opencodereview_changed }}
-          ORCA_TAG: ${{ steps.runtimes.outputs.orca_tag }}
           ORCA_CHANGED: ${{ steps.runtimes.outputs.orca_changed }}
           NODERED_VERSION: ${{ steps.runtimes.outputs.nodered_version }}
           NODERED_TAG: ${{ steps.runtimes.outputs.nodered_tag }}
@@ -305,7 +304,6 @@ jobs:
           OPENCODEREVIEW_TAG: ${{ steps.runtimes.outputs.opencodereview_tag }}
           ORCA_TAG: ${{ steps.runtimes.outputs.orca_tag }}
           OPENCODEREVIEW_CHANGED: ${{ steps.runtimes.outputs.opencodereview_changed }}
-          ORCA_TAG: ${{ steps.runtimes.outputs.orca_tag }}
           ORCA_CHANGED: ${{ steps.runtimes.outputs.orca_changed }}
           NODERED_TAG: ${{ steps.runtimes.outputs.nodered_tag }}
           NODERED_CHANGED: ${{ steps.runtimes.outputs.nodered_changed }}
@@ -438,7 +436,6 @@ jobs:
           OPENCODEREVIEW_TAG: ${{ steps.runtimes.outputs.opencodereview_tag }}
           ORCA_TAG: ${{ steps.runtimes.outputs.orca_tag }}
           OPENCODEREVIEW_CHANGED: ${{ steps.runtimes.outputs.opencodereview_changed }}
-          ORCA_TAG: ${{ steps.runtimes.outputs.orca_tag }}
           ORCA_CHANGED: ${{ steps.runtimes.outputs.orca_changed }}
           NODERED_TAG: ${{ steps.runtimes.outputs.nodered_tag }}
           NODERED_CHANGED: ${{ steps.runtimes.outputs.nodered_changed }}
