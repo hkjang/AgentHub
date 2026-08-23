@@ -23,6 +23,12 @@ var ErrNotConfigured = errors.New("Kubernetes runtime is not configured")
 // optional capability, so this is reported separately from a genuine failure.
 var ErrSnapshotsUnsupported = errors.New("cluster does not provide CSI VolumeSnapshot support")
 
+// ErrSnapshotMissing means this cluster does snapshots and does not have this
+// one. It used to be reported as the cluster lacking snapshot support, which
+// sent an operator to install a CRD that was already installed — while the real
+// answer was that the thing they were about to restore from is gone.
+var ErrSnapshotMissing = errors.New("snapshot no longer exists in the cluster")
+
 // EnvDefaultBaseImage overrides the runtime base image used when an
 // administrator has not approved one in Admin ▸ Resources ▸ Images. Offline
 // sites that retag the bundled image need this escape hatch.

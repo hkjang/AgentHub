@@ -934,14 +934,41 @@ func (k *KubernetesSpawner) Snapshot(ctx context.Context, spec SnapshotSpec) err
 // snapshotSupportError distinguishes "this cluster has no CSI snapshot support"
 // from a real failure. The API server answers a request against a missing CRD
 // with a plain 404, which is otherwise indistinguishable from a missing object.
+// snapshotSupportError separates two answers a 404 can carry.
+//
+// A cluster with no snapshot CRD and a snapshot somebody deleted both come back
+// as "not found", and both used to be reported as the cluster lacking support —
+// which sends an operator to install something already installed while the real
+// news is that what they were about to restore from is gone.
+//
+// They are told apart by what the answer names. Kubernetes reports a missing
+// object with its name in the status details; a missing resource type has no
+// object to name.
 func snapshotSupportError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if meta.IsNoMatchError(err) || apierrors.IsNotFound(err) {
+	if meta.IsNoMatchError(err) {
+		return fmt.Errorf("%w: %v", ErrSnapshotsUnsupported, err)
+	}
+	if apierrors.IsNotFound(err) {
+		if named(err) {
+			return fmt.Errorf("%w: %v", ErrSnapshotMissing, err)
+		}
 		return fmt.Errorf("%w: %v", ErrSnapshotsUnsupported, err)
 	}
 	return err
+}
+
+// named says whether a Kubernetes error is about one object rather than a whole
+// resource type.
+func named(err error) bool {
+	var status apierrors.APIStatus
+	if !errors.As(err, &status) {
+		return false
+	}
+	details := status.Status().Details
+	return details != nil && details.Name != ""
 }
 
 func (k *KubernetesSpawner) SnapshotStatus(ctx context.Context, spec SnapshotSpec) (string, int64, error) {

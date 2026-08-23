@@ -532,11 +532,25 @@ func (s *Server) workspaceSnapshots(w http.ResponseWriter, r *http.Request) {
 	}
 	changed := false
 	for _, item := range items {
-		if item.Status != "pending" && item.Status != "provisioning" {
+		// Ones still being made, and ones that claim to be restorable. The second
+		// was never re-asked, so a snapshot deleted in the cluster stayed "ready"
+		// here — and the only way to find out was to restore from it, which is the
+		// moment somebody has already deleted the thing they meant to get back.
+		if item.Status != "pending" && item.Status != "provisioning" && item.Status != "ready" {
 			continue
 		}
 		status, size, statusErr := s.spawner.SnapshotStatus(r.Context(), runtime.SnapshotSpec{Name: item.StorageRef})
+		if errors.Is(statusErr, runtime.ErrSnapshotMissing) {
+			// The cluster does snapshots and does not have this one.
+			if s.store.UpdateWorkspaceSnapshotStatus(r.Context(), item.ID, "missing", item.SizeBytes) == nil {
+				changed = true
+			}
+			continue
+		}
 		if statusErr != nil || status == "" {
+			continue
+		}
+		if status == item.Status {
 			continue
 		}
 		if s.store.UpdateWorkspaceSnapshotStatus(r.Context(), item.ID, status, size) == nil {
@@ -612,6 +626,19 @@ func (s *Server) restoreWorkspaceSnapshot(w http.ResponseWriter, r *http.Request
 	if err := s.store.CheckWorkspaceQuota(r.Context(), u.ID, source.SizeGB); err != nil {
 		writeError(w, http.StatusConflict, "quota_exceeded", err.Error())
 		return
+	}
+	// Asked of the cluster before anything is created here. A snapshot row that
+	// says "ready" is this platform's memory of a thing somebody else stores, and
+	// restoring from one that has since been deleted fails halfway — after the
+	// workspace row exists, at the moment its owner is counting on it.
+	if snapshot, _, lookupErr := s.store.WorkspaceSnapshotByID(r.Context(), u.ID, chi.URLParam(r, "id")); lookupErr == nil {
+		_, _, statusErr := s.spawner.SnapshotStatus(r.Context(), runtime.SnapshotSpec{Name: snapshot.StorageRef})
+		if errors.Is(statusErr, runtime.ErrSnapshotMissing) {
+			_ = s.store.UpdateWorkspaceSnapshotStatus(r.Context(), snapshot.ID, "missing", snapshot.SizeBytes)
+			writeError(w, http.StatusConflict, "snapshot_missing",
+				"이 Snapshot이 클러스터에 더 이상 없습니다. 목록에는 남아 있었지만 실제 저장본은 삭제된 상태라 복원할 수 없습니다.")
+			return
+		}
 	}
 	workspace, err := s.store.RestoreWorkspaceSnapshot(r.Context(), u.ID, chi.URLParam(r, "id"), input.Name)
 	if err != nil {

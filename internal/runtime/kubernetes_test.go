@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
@@ -48,7 +49,16 @@ func TestLabelValue(t *testing.T) {
 }
 
 func TestSnapshotSupportErrorClassifiesMissingCRD(t *testing.T) {
-	missing := apierrors.NewNotFound(schema.GroupResource{Group: "snapshot.storage.k8s.io", Resource: "volumesnapshots"}, "snap-1")
+	// A cluster without the CRD answers about the resource type, with no object to
+	// name. This used to be written as NewNotFound(..., "snap-1"), which is how
+	// Kubernetes reports one missing object — so the fixture said "this snapshot
+	// is gone" while the assertion said "this cluster cannot do snapshots", and
+	// the code satisfied both by conflating them. Restoring from a deleted
+	// snapshot therefore told an operator to install a CRD that was already there.
+	missing := &apierrors.StatusError{ErrStatus: metav1.Status{
+		Status: metav1.StatusFailure, Code: 404, Reason: metav1.StatusReasonNotFound,
+		Message: "the server could not find the requested resource",
+	}}
 	if !errors.Is(snapshotSupportError(missing), ErrSnapshotsUnsupported) {
 		t.Fatal("a missing VolumeSnapshot CRD must report snapshots as unsupported")
 	}
