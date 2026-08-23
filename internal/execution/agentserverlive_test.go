@@ -33,6 +33,19 @@ type quietNotes struct {
 	actions int
 	tools   []string
 	failure error
+	// What this stands in for is the platform's answer to the server's gate: a
+	// person, or a policy. The test supplies it directly so the gate itself is
+	// what is being checked.
+	answer func(pendingAction) bool
+	asked  []pendingAction
+}
+
+func (n *quietNotes) decide(_ context.Context, action pendingAction) (bool, error) {
+	n.asked = append(n.asked, action)
+	if n.answer == nil {
+		return true, nil
+	}
+	return n.answer(action), nil
 }
 
 func (n *quietNotes) activity(_ context.Context, _ string, actions int, tools []string) {
@@ -181,4 +194,169 @@ func writeCompletion(w http.ResponseWriter, message map[string]any) {
 		"choices": []map[string]any{{"index": 0, "message": message, "finish_reason": reason}},
 		"usage":   map[string]any{"prompt_tokens": 12, "completion_tokens": 6, "total_tokens": 18},
 	})
+}
+
+// TestLiveAgentServerHoldsEachActionForAnAnswer is the property that makes this
+// backend usable where it matters: the machine is somebody else's, and the
+// platform still decides what runs on it.
+//
+// Both answers are exercised. An approval that only ever says yes proves the
+// conversation continues, not that the gate exists — a server that ignored the
+// answer entirely would pass that test.
+func TestLiveAgentServerHoldsEachActionForAnAnswer(t *testing.T) {
+	base := os.Getenv("AGENTHUB_AGENT_SERVER")
+	callback := os.Getenv("AGENTHUB_AGENT_SERVER_CALLBACK")
+	if base == "" || callback == "" {
+		t.Skip("no agent server to talk to")
+	}
+
+	for _, decision := range []struct {
+		name     string
+		allow    bool
+		ranIt    bool
+		endsWell bool
+	}{
+		{name: "허용", allow: true, ranIt: true, endsWell: true},
+		{name: "거부", allow: false, ranIt: false, endsWell: false},
+	} {
+		t.Run(decision.name, func(t *testing.T) {
+			var mutex sync.Mutex
+			ran := false
+			gateway := toolGatewayFor(t, func(body map[string]any) {
+				mutex.Lock()
+				defer mutex.Unlock()
+				// Whether the action actually happened, read from the tool result the
+				// server sent back — not from the request that asked for it, which
+				// carries the same text whether or not anything ran.
+				if toolResultMentions(body, "AGENTHUB-ACTION-RAN") {
+					ran = true
+				}
+			})
+			defer gateway.Close()
+			_, port, err := net.SplitHostPort(strings.TrimPrefix(gateway.URL, "http://"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(2 * time.Second)
+
+			client := &agentServerClient{base: strings.TrimRight(base, "/"), http: &http.Client{Timeout: 60 * time.Second}}
+			notes := &quietNotes{answer: func(pendingAction) bool { return decision.allow }}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer cancel()
+
+			goal := store.AgentGoal{MaxSteps: 4, MaxDurationSeconds: 90, AgentServerDir: "workspace/gate", ApprovalRequired: true}
+			result, err := client.hold(ctx, notes, goal,
+				"Run the command you are given, then finish.",
+				resolvedModel{BaseURL: "http://" + callback + ":" + port + "/v1", ModelName: "openai/agenthub-model", APIKey: "agenthub-issued-key"})
+
+			if len(notes.asked) == 0 {
+				t.Fatal("the agent ran without asking; the gate was never reached")
+			}
+			// What the person is shown has to be the thing that would run. An empty
+			// rendering is an approval of nothing.
+			if !strings.Contains(notes.asked[0].Detail, "AGENTHUB-ACTION-RAN") {
+				t.Errorf("the pending action was shown as %q, which does not say what would run", notes.asked[0].Detail)
+			}
+			if notes.asked[0].Tool == "" {
+				t.Error("the pending action does not name the tool it would use")
+			}
+
+			mutex.Lock()
+			defer mutex.Unlock()
+			if ran != decision.ranIt {
+				if decision.allow {
+					t.Error("an approved command did not run")
+				} else {
+					t.Error("a refused command ran anyway; the answer did not reach the server")
+				}
+			}
+			if decision.endsWell {
+				if err != nil {
+					t.Fatalf("the conversation did not finish: %v", err)
+				}
+				if result.Status != "finished" {
+					t.Errorf("the conversation ended as %q", result.Status)
+				}
+				return
+			}
+			// A refusal is not a timeout and must not be reported as one: the agent
+			// stops where it was refused, and the run has to say that is what
+			// happened.
+			if err == nil {
+				t.Fatal("a refused run was reported as a success")
+			}
+			if !strings.Contains(err.Error(), "승인") {
+				t.Errorf("a refused run failed with %q, which does not say it was refused", err)
+			}
+		})
+	}
+}
+
+// toolGatewayFor stands in for the gateway and drives the agent toward one
+// action: the first turn asks for a command, everything after it finishes.
+func toolGatewayFor(t *testing.T, saw func(map[string]any)) *httptest.Server {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "0.0.0.0:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mutex sync.Mutex
+	turn := 0
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		saw(body)
+		mutex.Lock()
+		turn++
+		asking := turn == 2 && mentionsTool(body, "terminal")
+		mutex.Unlock()
+		if asking {
+			writeCompletion(w, map[string]any{"role": "assistant", "content": nil, "tool_calls": []map[string]any{{
+				"id": "act_1", "type": "function",
+				"function": map[string]any{"name": "terminal", "arguments": `{"command":"echo AGENTHUB-ACTION-RAN"}`},
+			}}})
+			return
+		}
+		if mentionsTool(body, "finish") {
+			writeCompletion(w, map[string]any{"role": "assistant", "content": nil, "tool_calls": []map[string]any{{
+				"id": "fin_1", "type": "function",
+				"function": map[string]any{"name": "finish", "arguments": `{"message":"게이트-확인"}`},
+			}}})
+			return
+		}
+		writeCompletion(w, map[string]any{"role": "assistant", "content": "게이트-확인"})
+	}))
+	server.Listener.Close()
+	server.Listener = listener
+	server.Start()
+	return server
+}
+
+func mentionsTool(body map[string]any, name string) bool {
+	tools, _ := body["tools"].([]any)
+	for _, entry := range tools {
+		tool, _ := entry.(map[string]any)
+		function, _ := tool["function"].(map[string]any)
+		if found, _ := function["name"].(string); found == name {
+			return true
+		}
+	}
+	return false
+}
+
+// toolResultMentions looks for text the machine produced, in the one place only
+// the machine can have put it: a message the server sends back as a tool result.
+func toolResultMentions(body map[string]any, text string) bool {
+	messages, _ := body["messages"].([]any)
+	for _, entry := range messages {
+		message, _ := entry.(map[string]any)
+		if role, _ := message["role"].(string); role != "tool" {
+			continue
+		}
+		raw, _ := json.Marshal(message["content"])
+		if strings.Contains(string(raw), text) {
+			return true
+		}
+	}
+	return false
 }

@@ -1,0 +1,13 @@
+-- A gated call can now come from work that has no runtime.
+--
+-- Approval was built for the egress gateway inside a Pod, so every gated call
+-- named the runtime it came from. Work handed to a registered agent server has
+-- no Pod here — the platform holds the conversation over HTTP — and refusing to
+-- record its approvals would mean the one backend that most needs a human gate
+-- is the one that cannot have one.
+--
+-- The gateway's own lookup is scoped by runtime and stays that way: a row with
+-- no runtime can never match `runtime_id = <token's runtime>`, so opening this
+-- column does not open the gateway path to it. The platform reads those rows
+-- in-process instead.
+ALTER TABLE tool_approvals ALTER COLUMN runtime_id DROP NOT NULL;

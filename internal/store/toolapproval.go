@@ -88,6 +88,7 @@ func (s *Store) CreateToolApproval(ctx context.Context, item ToolApproval, reaso
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	approvalID := uuid.NewString()
+	resourceID := approvalResource(item)
 	payload := map[string]any{
 		"server": item.ServerName, "tool": item.ToolName, "arguments": item.Arguments,
 		"agentId": item.AgentID, "runtimeId": item.RuntimeID,
@@ -97,7 +98,7 @@ func (s *Store) CreateToolApproval(ctx context.Context, item ToolApproval, reaso
 	err = tx.QueryRow(ctx, `INSERT INTO approvals(id,requester_id,reviewer_id,resource_type,resource_id,action,reason,payload)
 		SELECT $1,$2,manager_id,'tool',$3,$4,$5,$6 FROM users WHERE id=$2
 		RETURNING id,status,created_at`,
-		approvalID, item.OwnerID, item.RuntimeID, "tool.call:"+item.ServerName+"/"+item.ToolName, reason, raw).
+		approvalID, item.OwnerID, resourceID, "tool.call:"+item.ServerName+"/"+item.ToolName, reason, raw).
 		Scan(&approval.ID, &approval.Status, &approval.CreatedAt)
 	if err != nil {
 		return ToolApproval{}, err
@@ -108,7 +109,7 @@ func (s *Store) CreateToolApproval(ctx context.Context, item ToolApproval, reaso
 	}
 	err = tx.QueryRow(ctx, `INSERT INTO tool_approvals(id,approval_id,runtime_id,agent_id,owner_id,server_name,tool_name,arguments)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING created_at`,
-		item.ID, approval.ID, item.RuntimeID, item.AgentID, item.OwnerID, item.ServerName, item.ToolName, item.Arguments).
+		item.ID, approval.ID, nullText(item.RuntimeID), item.AgentID, item.OwnerID, item.ServerName, item.ToolName, item.Arguments).
 		Scan(&item.CreatedAt)
 	if err != nil {
 		return ToolApproval{}, err
@@ -121,9 +122,30 @@ func (s *Store) CreateToolApproval(ctx context.Context, item ToolApproval, reaso
 	return item, nil
 }
 
+// ToolApprovalDecision is what the platform itself waits on.
+//
+// Unscoped, and deliberately not reachable from the gateway route: the caller is
+// this process, holding a conversation on a machine that has no runtime here, so
+// there is no runtime to scope by. The gateway keeps ToolApprovalStatus, whose
+// runtime clause a row with no runtime can never satisfy.
+func (s *Store) ToolApprovalDecision(ctx context.Context, id string) (string, error) {
+	var status string
+	err := s.pool.QueryRow(ctx, `SELECT a.status FROM tool_approvals t JOIN approvals a ON a.id = t.approval_id
+		WHERE t.id=$1`, id).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return status, err
+}
+
 // ToolApprovalStatus is what the waiting gateway polls for. It is scoped to the
 // runtime that asked, so one runtime's token cannot read another's decisions.
 func (s *Store) ToolApprovalStatus(ctx context.Context, id, runtimeID string) (ToolApproval, error) {
+	if runtimeID == "" {
+		// Nothing to scope by means nothing may be read. A caller with no runtime is
+		// the gateway of no Pod.
+		return ToolApproval{}, ErrNotFound
+	}
 	var item ToolApproval
 	err := s.pool.QueryRow(ctx, `SELECT t.id,t.approval_id,t.runtime_id,t.agent_id,t.owner_id,t.server_name,t.tool_name,t.arguments,a.status,t.created_at
 		FROM tool_approvals t JOIN approvals a ON a.id = t.approval_id
@@ -133,4 +155,18 @@ func (s *Store) ToolApprovalStatus(ctx context.Context, id, runtimeID string) (T
 		return ToolApproval{}, ErrNotFound
 	}
 	return item, err
+}
+
+// approvalResource is what the reviewer is being asked about.
+//
+// Usually the runtime the call came from. Work held on a registered agent server
+// has no runtime here, and the agent is what the decision is really about —
+// something has to be named either way, because an approval attached to nothing
+// cannot be reviewed. The column says so too, which is how the omission was
+// found: a run failed on a not-null violation rather than asking anybody.
+func approvalResource(item ToolApproval) string {
+	if item.RuntimeID != "" {
+		return item.RuntimeID
+	}
+	return item.AgentID
 }

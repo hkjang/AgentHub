@@ -102,12 +102,12 @@ func TestAServerThatIsNotThereIsSaidToBeUnreachable(t *testing.T) {
 	}
 }
 
-// TestAPolicyThisBackendCannotHonourIsRefused is the rule this platform keeps
-// re-learning: a field the API accepts and the runner ignores is a policy hole
-// that reads as a policy.
-func TestAPolicyThisBackendCannotHonourIsRefused(t *testing.T) {
+// TestAGoalThatWantsAPersonIsAccepted is the other half of the same rule. The
+// backend can now hold each action while somebody answers, so refusing the
+// policy would be the platform declining work it can do.
+func TestAGoalThatWantsAPersonIsAccepted(t *testing.T) {
 	goal := store.AgentGoal{Runner: store.RunnerAgentServer, AgentServerZone: "secure", ApprovalRequired: true}
-	if err := validateRunner(&goal, "claude"); err == nil {
-		t.Error("a goal demanding human approval was accepted for a backend that runs to the end on its own")
+	if err := validateRunner(&goal, "claude"); err != nil {
+		t.Errorf("a goal asking a person to approve each action was refused: %v", err)
 	}
 }

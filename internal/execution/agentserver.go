@@ -69,7 +69,7 @@ func (o *Orchestrator) runAgentServer(ctx context.Context, run *store.AgentRun, 
 	})
 
 	client := &agentServerClient{base: strings.TrimRight(server.BaseURL, "/"), http: &http.Client{Timeout: 60 * time.Second}}
-	result, convErr := client.hold(ctx, runNotes{orchestrator: o, run: run}, goal, prompt, model)
+	result, convErr := client.hold(ctx, runNotes{orchestrator: o, run: run, agent: agent, goal: goal}, goal, prompt, model)
 	elapsed := time.Since(startedAt).Milliseconds()
 
 	record := store.AgentRunStep{
@@ -211,18 +211,44 @@ type agentServerClient struct {
 type agentServerNotes interface {
 	activity(ctx context.Context, conversationID string, actions int, tools []string)
 	trouble(ctx context.Context, conversationID string, err error)
+	// decide answers the server's approval gate. It is on this interface rather
+	// than inside the client because the answer is a platform decision — a person,
+	// a policy — and none of that belongs to HTTP.
+	decide(ctx context.Context, action pendingAction) (bool, error)
+}
+
+// pendingAction is what the agent is waiting to be allowed to do.
+type pendingAction struct {
+	ConversationID string
+	Tool           string
+	// What it would do, rendered for whoever answers. The full action can be long
+	// and can carry a secret, so this is a trimmed reading of it, the same way a
+	// gated tool call is shown.
+	Detail string
+	// The server's own risk word for the action, kept as it wrote it.
+	Risk string
 }
 
 // runNotes writes what the client saw onto a run.
 type runNotes struct {
 	orchestrator *Orchestrator
 	run          *store.AgentRun
+	agent        store.Agent
+	goal         store.AgentGoal
 }
 
 func (n runNotes) activity(ctx context.Context, conversationID string, actions int, tools []string) {
 	n.orchestrator.event(ctx, *n.run, "agentserver.activity", "에이전트 서버에서 한 일입니다.", map[string]any{
 		"conversationId": conversationID, "actions": actions, "tools": tools,
 	})
+}
+
+// decide asks whoever the Goal says should answer.
+//
+// The server has an approval gate of its own; this is the platform answering it,
+// which is the only arrangement in which there is one authority rather than two.
+func (n runNotes) decide(ctx context.Context, action pendingAction) (bool, error) {
+	return n.orchestrator.askAboutServerAction(ctx, n.run, n.agent, n.goal, action)
 }
 
 func (n runNotes) trouble(ctx context.Context, conversationID string, err error) {
@@ -299,6 +325,11 @@ func (c *agentServerClient) hold(ctx context.Context, notes agentServerNotes, go
 	}()
 
 	deadline := time.Now().Add(agentServerTimeout(goal))
+	// Whether this platform has refused something. It changes what an idle
+	// conversation means: the agent stops where it was refused and goes idle, so
+	// without this the run would poll a finished conversation until its deadline
+	// and report a timeout for a decision somebody made deliberately.
+	refused := false
 	for {
 		if time.Now().After(deadline) {
 			return result, errors.New("에이전트 서버가 제한 시간 안에 끝내지 못했습니다")
@@ -344,11 +375,100 @@ func (c *agentServerClient) hold(ctx context.Context, notes agentServerNotes, go
 		case "error":
 			result.Actions = c.recordEvents(ctx, notes, created.ID)
 			return result, errors.New("에이전트 서버에서 실행이 실패했습니다")
+		case "idle":
+			if refused {
+				result.Actions = c.recordEvents(ctx, notes, created.ID)
+				return result, errors.New("승인되지 않은 작업이 있어 에이전트 서버 실행이 중단됐습니다")
+			}
+		case "waiting_for_confirmation":
+			// The agent is holding its own question. Whoever the Goal says answers it,
+			// and the answer goes back to the server; until then this loop waits, so
+			// the run's own deadline is the time somebody has to decide.
+			allowed, err := c.answerConfirmation(ctx, notes, created.ID)
+			if err != nil {
+				return result, err
+			}
+			if !allowed {
+				refused = true
+			}
+		case "stuck":
+			// The server's own word for an agent going in circles. Without this the
+			// run would poll a conversation that has stopped making progress until
+			// the deadline, and report a timeout for something the server already
+			// diagnosed.
+			result.Actions = c.recordEvents(ctx, notes, created.ID)
+			return result, errors.New("에이전트 서버가 같은 일을 반복해 멈춰 있다고 판단했습니다")
 		case "stopped", "paused":
 			result.Actions = c.recordEvents(ctx, notes, created.ID)
 			return result, errors.New("에이전트 서버에서 실행이 멈췄습니다: " + info.ExecutionStatus)
 		}
 	}
+}
+
+// answerConfirmation asks the platform about the action the agent is waiting on,
+// and tells the server what was decided.
+//
+// The pending action is read from the server rather than guessed: what a person
+// is being asked to allow has to be the thing that will actually run.
+func (c *agentServerClient) answerConfirmation(ctx context.Context, notes agentServerNotes, conversationID string) (bool, error) {
+	action, err := c.pendingAction(ctx, conversationID)
+	if err != nil {
+		return false, err
+	}
+	allowed, err := notes.decide(ctx, action)
+	if err != nil {
+		return false, err
+	}
+	answer := map[string]any{"accept": allowed}
+	if !allowed {
+		answer["reason"] = "이 배포의 승인 정책이 허용하지 않았습니다."
+	}
+	if err := c.call(ctx, http.MethodPost, "/api/conversations/"+conversationID+"/events/respond_to_confirmation", answer, nil); err != nil {
+		return false, err
+	}
+	return allowed, nil
+}
+
+// pendingAction reads what the agent is waiting to be allowed to do.
+func (c *agentServerClient) pendingAction(ctx context.Context, conversationID string) (pendingAction, error) {
+	var found struct {
+		Items []struct {
+			Kind         string          `json:"kind"`
+			ToolName     string          `json:"tool_name"`
+			SecurityRisk string          `json:"security_risk"`
+			Action       json.RawMessage `json:"action"`
+		} `json:"items"`
+	}
+	// Newest first: the action being waited on is the last one the agent asked for.
+	path := "/api/conversations/" + conversationID + "/events/search?limit=20&sort_order=TIMESTAMP_DESC"
+	if err := c.call(ctx, http.MethodGet, path, nil, &found); err != nil {
+		return pendingAction{}, err
+	}
+	for _, item := range found.Items {
+		if item.Kind != "ActionEvent" {
+			continue
+		}
+		return pendingAction{
+			ConversationID: conversationID,
+			Tool:           item.ToolName,
+			Detail:         trimAction(string(item.Action)),
+			Risk:           item.SecurityRisk,
+		}, nil
+	}
+	// The server says it is waiting and does not say for what. Refusing is the
+	// only safe reading: approving an action nobody can see is not approval.
+	return pendingAction{}, errors.New("에이전트 서버가 무엇을 기다리는지 알려주지 않았습니다")
+}
+
+// trimAction renders an action for whoever answers. It is trimmed because the
+// full action can be long and can carry a secret, the same reason a gated tool
+// call is shown trimmed.
+func trimAction(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if len(raw) > 400 {
+		return raw[:400] + "…"
+	}
+	return raw
 }
 
 // recordEvents brings what the agent did onto this run's timeline.
@@ -430,15 +550,40 @@ func agentServerStart(goal store.AgentGoal, prompt string, model resolvedModel) 
 	if workingDir == "" {
 		workingDir = "workspace/project"
 	}
+	// Stop before each action when the Goal wants a person to answer. Left at the
+	// server's own default otherwise, which is never to ask — a gate nobody
+	// switched on must not start holding work.
+	policy := "NeverConfirm"
+	if goal.ApprovalRequired {
+		policy = "AlwaysConfirm"
+	}
 	return map[string]any{
-		"workspace": map[string]any{"kind": "LocalWorkspace", "working_dir": workingDir},
+		"workspace":           map[string]any{"kind": "LocalWorkspace", "working_dir": workingDir},
+		"confirmation_policy": map[string]any{"kind": policy},
 		"initial_message": map[string]any{"role": "user",
 			"content": []map[string]any{{"type": "text", "text": prompt}}},
 		"max_iterations": agentServerIterations(goal),
-		"agent": map[string]any{"kind": "Agent", "llm": map[string]any{
+		"agent": map[string]any{"kind": "Agent", "tools": agentServerTools(), "llm": map[string]any{
 			"model": model.ModelName, "api_key": model.APIKey, "base_url": model.BaseURL,
 			"usage_id": "agent",
 		}},
+	}
+}
+
+// agentServerTools is what the agent is allowed to do on that machine.
+//
+// Named rather than left to the server. An agent started without a tool list
+// gets only "finish" and "think" — it can talk and stop, and a Goal handed to it
+// would come back with an answer and no work done. And the other direction
+// matters more: which tools exist on somebody else's machine is a platform
+// decision, so the browser set is deliberately absent — a browser inside a
+// sandbox this deployment does not run is a bigger surface than a shell, and it
+// should be switched on deliberately rather than inherited.
+func agentServerTools() []map[string]any {
+	return []map[string]any{
+		{"name": "terminal", "params": map[string]any{}},
+		{"name": "file_editor", "params": map[string]any{}},
+		{"name": "task_tracker", "params": map[string]any{}},
 	}
 }
 
@@ -472,3 +617,63 @@ func agentServerRetryable(err error) bool {
 	}
 	return false
 }
+
+// askAboutServerAction is the platform answering the server's gate.
+//
+// The Goal decides who answers. When it asks for a person, the request is
+// recorded as an approval like any other gated call — the same queue, the same
+// notification, the same audit — and the conversation waits, bounded by the
+// run's own deadline. A task nobody is watching must not hold a machine
+// somewhere else open forever.
+func (o *Orchestrator) askAboutServerAction(ctx context.Context, run *store.AgentRun, agent store.Agent, goal store.AgentGoal, action pendingAction) (bool, error) {
+	if !goal.ApprovalRequired {
+		// The gate was not asked for. It is on anyway only if somebody configured
+		// the server that way, and the platform's answer is its approval mode.
+		return acpAllows(approvalMode(goal), "execute"), nil
+	}
+	what := strings.TrimSpace(action.Tool)
+	if what == "" {
+		what = "도구"
+	}
+	pending, err := o.store.CreateToolApproval(ctx, store.ToolApproval{
+		AgentID: agent.ID, OwnerID: agent.OwnerID,
+		ServerName: agent.Name, ToolName: what,
+		Arguments: action.Detail,
+	}, "에이전트 서버에서 실행 중 승인을 요청했습니다: "+what)
+	if err != nil {
+		return false, err
+	}
+	o.event(ctx, *run, "agentserver.permission.asked", "사람의 승인을 기다립니다: "+what, map[string]any{
+		"tool": what, "risk": action.Risk, "approvalId": pending.ApprovalID,
+		"conversationId": action.ConversationID, "action": action.Detail,
+	})
+
+	ticker := time.NewTicker(agentServerApprovalPoll)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false, errors.New("승인을 기다리는 동안 실행 시간이 끝났습니다")
+		case <-ticker.C:
+			decided, statusErr := o.store.ToolApprovalDecision(ctx, pending.ID)
+			if statusErr != nil {
+				return false, statusErr
+			}
+			switch decided {
+			case "approved":
+				o.event(ctx, *run, "agentserver.permission.answered", "요청을 승인했습니다: "+what,
+					map[string]any{"tool": what, "allowed": true, "approvalId": pending.ApprovalID})
+				return true, nil
+			case "rejected", "expired", "cancelled":
+				o.event(ctx, *run, "agentserver.permission.answered", "요청을 승인하지 않았습니다: "+what,
+					map[string]any{"tool": what, "allowed": false, "decision": decided, "approvalId": pending.ApprovalID})
+				return false, nil
+			}
+		}
+	}
+}
+
+// How often the platform looks for a decision. Often enough that a person who
+// answers does not sit watching a spinner, rarely enough that a run waiting
+// overnight is not a query every second.
+const agentServerApprovalPoll = 3 * time.Second

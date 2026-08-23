@@ -235,14 +235,6 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 		if len(goal.AgentServerDir) > 200 {
 			return errors.New("작업 디렉터리 경로가 너무 깁니다")
 		}
-		// The server has an approval gate of its own and this platform cannot yet
-		// answer it: a conversation runs to its end there and only the result comes
-		// back. A Goal that asks a person to approve each step would be accepted and
-		// then not honoured, which is worse than being told it cannot be — so it is
-		// refused here rather than silently downgraded.
-		if goal.ApprovalRequired {
-			return errors.New("에이전트 서버 실행은 아직 단계마다 사람 승인을 받을 수 없습니다. 승인 요구를 끄거나 다른 실행 방식을 선택해 주세요")
-		}
 		return nil
 	}
 	descriptor := runtimetype.Describe(runtimeType)
