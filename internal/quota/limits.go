@@ -138,7 +138,11 @@ func CheckHeld(scope string, limits Limits, held Held, addCPU, addMemory int) er
 // CheckStorage reports why one more workspace of this size cannot be created.
 func CheckStorage(scope string, limits Limits, usedGB, addGB int) error {
 	if limits.MaxStorageGB > 0 && usedGB+addGB > limits.MaxStorageGB {
-		return fmt.Errorf("%s Storage Quota(%dGB)를 초과합니다", scopeName(scope), limits.MaxStorageGB)
+		// exceeded, like every other refusal here. This one was a bare error, so a
+		// caller asking "was this a limit saying no, or a failure to evaluate one"
+		// — the question this package's sentinel exists for — got the wrong answer
+		// for storage alone, and turned a refusal into an internal failure.
+		return exceeded("%s Storage Quota(%dGB)를 초과합니다", scopeName(scope), limits.MaxStorageGB)
 	}
 	return nil
 }

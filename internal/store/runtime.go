@@ -293,8 +293,38 @@ func (s *Store) Workspaces(ctx context.Context, ownerID string, admin bool) ([]W
 	return items, rows.Err()
 }
 
+// CreateWorkspaceWithinQuota creates one while holding the owner's storage
+// quota, so the check and the write are the same act.
+//
+// The API used to ask the quota and then create, which let two requests arriving
+// together each see room for the last of it. The old pair is still here for
+// callers that are not taking storage.
+func (s *Store) CreateWorkspaceWithinQuota(ctx context.Context, ownerID string, item Workspace) (Workspace, error) {
+	var created Workspace
+	err := s.ClaimWorkspaceStorage(ctx, ownerID, item.SizeGB, func(tx pgx.Tx) error {
+		var inner error
+		created, inner = insertWorkspace(ctx, tx, ownerID, item)
+		return inner
+	})
+	return created, err
+}
+
 func (s *Store) CreateWorkspace(ctx context.Context, ownerID string, item Workspace) (Workspace, error) {
 	item.ID, item.OwnerID = uuid.NewString(), ownerID
+	if item.Type == "" {
+		item.Type = "empty"
+	}
+	if item.SizeGB == 0 {
+		item.SizeGB = 10
+	}
+	return insertWorkspace(ctx, s.pool, ownerID, item)
+}
+
+// insertWorkspace writes the row, whether or not a quota lock is being held.
+func insertWorkspace(ctx context.Context, db querier, ownerID string, item Workspace) (Workspace, error) {
+	if item.ID == "" {
+		item.ID, item.OwnerID = uuid.NewString(), ownerID
+	}
 	if item.Type == "" {
 		item.Type = "empty"
 	}
@@ -305,7 +335,7 @@ func (s *Store) CreateWorkspace(ctx context.Context, ownerID string, item Worksp
 	if item.GitCredentialSecretID != nil && item.GitCredentialKind == "" {
 		item.GitCredentialKind = "token"
 	}
-	err := s.pool.QueryRow(ctx, `INSERT INTO workspaces(id,owner_id,name,type,size_gb,repository_url,branch,pvc_name,status,git_credential_secret_id,git_credential_kind,git_credential_username) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'ready',$9,$10,$11) RETURNING status,created_at,updated_at`, item.ID, item.OwnerID, item.Name, item.Type, item.SizeGB, item.RepositoryURL, item.Branch, item.PVCName, item.GitCredentialSecretID, item.GitCredentialKind, item.GitCredentialUsername).Scan(&item.Status, &item.CreatedAt, &item.UpdatedAt)
+	err := db.QueryRow(ctx, `INSERT INTO workspaces(id,owner_id,name,type,size_gb,repository_url,branch,pvc_name,status,git_credential_secret_id,git_credential_kind,git_credential_username) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'ready',$9,$10,$11) RETURNING status,created_at,updated_at`, item.ID, item.OwnerID, item.Name, item.Type, item.SizeGB, item.RepositoryURL, item.Branch, item.PVCName, item.GitCredentialSecretID, item.GitCredentialKind, item.GitCredentialUsername).Scan(&item.Status, &item.CreatedAt, &item.UpdatedAt)
 	err = conflictIfTaken(err, "같은 이름의 작업공간이 이미 있습니다. 다른 이름을 쓰세요")
 	return item, err
 }
@@ -381,8 +411,13 @@ func (s *Store) RestoreWorkspaceSnapshot(ctx context.Context, ownerID, snapshotI
 		return Workspace{}, errors.New("snapshot is not ready to restore")
 	}
 	item := Workspace{ID: uuid.NewString(), OwnerID: ownerID, Name: name, Type: "snapshot", SizeGB: source.SizeGB, PVCName: "workspace-" + uuid.NewString()[:8], SourceSnapshotID: &snapshot.ID, Status: "ready"}
-	err = s.pool.QueryRow(ctx, `INSERT INTO workspaces(id,owner_id,name,type,size_gb,pvc_name,source_snapshot_id,status) VALUES($1,$2,$3,'snapshot',$4,$5,$6,'ready') RETURNING created_at,updated_at`, item.ID, item.OwnerID, item.Name, item.SizeGB, item.PVCName, snapshot.ID).Scan(&item.CreatedAt, &item.UpdatedAt)
-	err = conflictIfTaken(err, "같은 이름의 작업공간이 이미 있습니다. 다른 이름을 쓰세요")
+	// A restore takes storage like any other workspace, so it is claimed the same
+	// way: the quota is held while the row is written rather than asked before it.
+	err = s.ClaimWorkspaceStorage(ctx, ownerID, item.SizeGB, func(tx pgx.Tx) error {
+		inner := tx.QueryRow(ctx, `INSERT INTO workspaces(id,owner_id,name,type,size_gb,pvc_name,source_snapshot_id,status) VALUES($1,$2,$3,'snapshot',$4,$5,$6,'ready') RETURNING created_at,updated_at`,
+			item.ID, item.OwnerID, item.Name, item.SizeGB, item.PVCName, snapshot.ID).Scan(&item.CreatedAt, &item.UpdatedAt)
+		return conflictIfTaken(inner, "같은 이름의 작업공간이 이미 있습니다. 다른 이름을 쓰세요")
+	})
 	return item, err
 }
 

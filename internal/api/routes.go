@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/hkjang/AgentHub/internal/policy"
+	"github.com/hkjang/AgentHub/internal/quota"
 	"github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/runtimeenv"
 	"github.com/hkjang/AgentHub/internal/runtimespec"
@@ -489,10 +490,9 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	if item.SizeGB == 0 {
 		item.SizeGB = 10
 	}
-	if err := s.store.CheckWorkspaceQuota(r.Context(), u.ID, item.SizeGB); err != nil {
-		writeError(w, http.StatusConflict, "quota_exceeded", err.Error())
-		return
-	}
+	// The quota is not asked here any more. Asking and then creating let two
+	// requests arriving together each see room for the last of it; the creation
+	// below holds the quota while it writes.
 	if item.GitCredentialSecretID != nil && strings.TrimSpace(*item.GitCredentialSecretID) != "" {
 		if item.Type != "git" {
 			writeError(w, http.StatusBadRequest, "invalid_git_credential", "Git Credential은 Git Repository Workspace에만 연결할 수 있습니다.")
@@ -514,7 +514,11 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	} else {
 		item.GitCredentialSecretID, item.GitCredentialKind, item.GitCredentialUsername = nil, "", ""
 	}
-	created, err := s.store.CreateWorkspace(r.Context(), u.ID, item)
+	created, err := s.store.CreateWorkspaceWithinQuota(r.Context(), u.ID, item)
+	if errors.Is(err, quota.ErrExceeded) {
+		writeError(w, http.StatusConflict, "quota_exceeded", err.Error())
+		return
+	}
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -623,10 +627,9 @@ func (s *Server) restoreWorkspaceSnapshot(w http.ResponseWriter, r *http.Request
 		writeStoreError(w, err)
 		return
 	}
-	if err := s.store.CheckWorkspaceQuota(r.Context(), u.ID, source.SizeGB); err != nil {
-		writeError(w, http.StatusConflict, "quota_exceeded", err.Error())
-		return
-	}
+	// Not asked here: the restore below holds the quota while it writes, so two
+	// restores arriving together cannot both take the last of it.
+	_ = source
 	// Asked of the cluster before anything is created here. A snapshot row that
 	// says "ready" is this platform's memory of a thing somebody else stores, and
 	// restoring from one that has since been deleted fails halfway — after the
@@ -641,6 +644,10 @@ func (s *Server) restoreWorkspaceSnapshot(w http.ResponseWriter, r *http.Request
 		}
 	}
 	workspace, err := s.store.RestoreWorkspaceSnapshot(r.Context(), u.ID, chi.URLParam(r, "id"), input.Name)
+	if errors.Is(err, quota.ErrExceeded) {
+		writeError(w, http.StatusConflict, "quota_exceeded", err.Error())
+		return
+	}
 	if err != nil {
 		writeStoreError(w, err)
 		return
