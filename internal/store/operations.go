@@ -336,6 +336,29 @@ func (s *Store) Cleanup(ctx context.Context, policy RetentionPolicy, dryRun bool
 		{name: "notifications", days: policy.NotificationDays,
 			count:  `SELECT count(*) FROM notifications WHERE read_at IS NOT NULL AND read_at < $1`,
 			delete: `DELETE FROM notifications WHERE read_at IS NOT NULL AND read_at < $1`},
+		// A workflow run is a run. It was never swept and cascades from nothing that
+		// is, so on a deployment that runs workflows this table grew for as long as
+		// the deployment lived — while the screen said history was kept for thirty
+		// days.
+		{name: "workflow-runs", days: policy.RunDays,
+			count:  `SELECT count(*) FROM workflow_runs WHERE finished_at IS NOT NULL AND finished_at < $1`,
+			delete: `DELETE FROM workflow_runs WHERE finished_at IS NOT NULL AND finished_at < $1`},
+		// One row per webhook this deployment accepted, kept so the same delivery is
+		// not run twice. Past the window nothing is going to be replayed.
+		{name: "webhook-deliveries", days: policy.EventDays,
+			count:  `SELECT count(*) FROM webhook_deliveries WHERE created_at < $1`,
+			delete: `DELETE FROM webhook_deliveries WHERE created_at < $1`},
+		// Decided approvals only. A pending one is still work — the same rule that
+		// keeps an unread notice and an undelivered event — and the decision itself
+		// is in the audit trail, which is swept on its own longer clock.
+		{name: "approvals", days: policy.AuditDays,
+			count:  `SELECT count(*) FROM approvals WHERE status <> 'pending' AND COALESCE(decided_at, created_at) < $1`,
+			delete: `DELETE FROM approvals WHERE status <> 'pending' AND COALESCE(decided_at, created_at) < $1`},
+		// The one-time tickets that let a browser open a runtime. They are useless
+		// the moment they expire; keeping them was an accident of nobody sweeping.
+		{name: "launch-tickets", days: policy.EventDays,
+			count:  `SELECT count(*) FROM runtime_launch_tickets WHERE expires_at < $1`,
+			delete: `DELETE FROM runtime_launch_tickets WHERE expires_at < $1`},
 	}
 	for _, sweep := range sweeps {
 		if sweep.days <= 0 {
