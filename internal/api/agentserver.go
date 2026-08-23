@@ -123,7 +123,7 @@ func (s *Server) checkAgentServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	health, detail := agentserver.Probe(r.Context(), server.BaseURL)
-	if err := s.store.RecordAgentServerHealth(r.Context(), server.ID, health, detail); err != nil {
+	if _, _, err := s.store.RecordAgentServerHealth(r.Context(), server.ID, health, detail); err != nil {
 		s.logger.Warn("agent server health could not be recorded", "server", server.ID, "error", err)
 	}
 	s.store.Audit(r.Context(), &u, "agent_server.check", "agent_server", server.ID, health, clientIP(r),

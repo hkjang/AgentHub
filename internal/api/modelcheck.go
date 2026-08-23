@@ -33,7 +33,7 @@ func (s *Server) modelCheck(w http.ResponseWriter, r *http.Request) {
 	verdict, detail, models := modelprobe.Ask(r.Context(), endpoint.BaseURL, key, endpoint.DefaultModel)
 	// Kept, so the answer survives the page reload that used to erase it — and so
 	// the readiness advice elsewhere can say whether anybody has ever asked.
-	if err := s.store.RecordModelEndpointHealth(r.Context(), endpoint.ID, verdict, detail); err != nil {
+	if _, _, err := s.store.RecordModelEndpointHealth(r.Context(), endpoint.ID, verdict, detail); err != nil {
 		s.logger.Warn("a model endpoint's health could not be recorded", "endpoint", endpoint.ID, "error", err)
 	}
 	s.store.Audit(r.Context(), &u, "model.check", "model", endpoint.ID, verdict, clientIP(r),

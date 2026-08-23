@@ -17,6 +17,26 @@ type Notification struct {
 	CreatedAt   time.Time  `json:"createdAt"`
 }
 
+// AdminIDs are the accounts that get told when this deployment's own dependencies
+// change. Active administrators only: a notice to a disabled account is a notice
+// nobody reads.
+func (s *Store) AdminIDs(ctx context.Context) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id FROM users WHERE role='admin' AND status='active'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (s *Store) CreateNotification(ctx context.Context, userID, kind, title, message, resourceURL string) error {
 	_, err := s.pool.Exec(ctx, `INSERT INTO notifications(id,user_id,type,title,message,resource_url) VALUES($1,$2,$3,$4,$5,$6)`, uuid.NewString(), userID, kind, title, message, resourceURL)
 	return err

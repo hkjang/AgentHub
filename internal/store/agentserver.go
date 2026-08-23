@@ -120,15 +120,35 @@ func (s *Store) DeleteAgentServer(ctx context.Context, id string) error {
 	return nil
 }
 
-// RecordAgentServerHealth keeps what a check found.
+// RecordAgentServerHealth keeps what a check found, and says whether that was
+// news.
 //
 // Kept rather than asked on every read: a console listing ten servers must not
 // make ten outbound calls, and an operator needs to see the last answer even when
 // the server has since stopped answering at all.
-func (s *Store) RecordAgentServerHealth(ctx context.Context, id, health, detail string) error {
-	_, err := s.pool.Exec(ctx, `UPDATE agent_servers SET health=$2, health_detail=$3, checked_at=now() WHERE id=$1`,
-		id, health, detail)
-	return err
+//
+// The verdict is compared inside the write on purpose. Every worker runs the
+// sweep, so several of them notice the same machine going down within the same
+// second; if each read the old value and then decided, each would announce it.
+// Only the statement that actually changed the value reports a change, and the
+// database decides which one that was.
+func (s *Store) RecordAgentServerHealth(ctx context.Context, id, health, detail string) (was string, changed bool, err error) {
+	// The old value comes from a locked read in the same statement, so two workers
+	// writing the same verdict at the same moment cannot both see a change: the
+	// second waits for the first, re-reads the row it was made to wait for, and
+	// finds nothing left to change.
+	err = s.pool.QueryRow(ctx, `UPDATE agent_servers s SET health=$2, health_detail=$3, checked_at=now()
+		FROM (SELECT id, health FROM agent_servers WHERE id=$1 FOR UPDATE) old
+		WHERE s.id = old.id AND old.health IS DISTINCT FROM $2
+		RETURNING old.health`, id, health, detail).Scan(&was)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The verdict is what it already was. The check still happened, so the time
+		// is recorded — an answer confirmed a minute ago is not the same fact as one
+		// from a month ago, and freshness is what placement reads.
+		_, err = s.pool.Exec(ctx, `UPDATE agent_servers SET health_detail=$2, checked_at=now() WHERE id=$1`, id, detail)
+		return health, false, err
+	}
+	return was, err == nil, err
 }
 
 // AgentServerLoad is how many runs each server is holding right now.

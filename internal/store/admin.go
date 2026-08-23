@@ -434,9 +434,20 @@ func (s *Store) UpdateUserGovernance(ctx context.Context, id, role, status strin
 	return scanUser(s.pool.QueryRow(ctx, `UPDATE users SET role=$1,status=$2,manager_id=$3,updated_at=now() WHERE id=$4 RETURNING `+userColumns, role, status, managerID, id))
 }
 
-// RecordModelEndpointHealth keeps what a check found.
-func (s *Store) RecordModelEndpointHealth(ctx context.Context, id, health, detail string) error {
-	_, err := s.pool.Exec(ctx, `UPDATE model_endpoints SET health=$2, health_detail=$3, checked_at=now() WHERE id=$1`,
-		id, health, detail)
-	return err
+// RecordModelEndpointHealth keeps what a check found, and says whether that was
+// news.
+//
+// The comparison happens inside the write for the same reason as the agent
+// servers': every worker sweeps, so several notice the same endpoint going down
+// at once, and only the statement that actually changed the value gets to say so.
+func (s *Store) RecordModelEndpointHealth(ctx context.Context, id, health, detail string) (was string, changed bool, err error) {
+	err = s.pool.QueryRow(ctx, `UPDATE model_endpoints e SET health=$2, health_detail=$3, checked_at=now()
+		FROM (SELECT id, health FROM model_endpoints WHERE id=$1 FOR UPDATE) old
+		WHERE e.id = old.id AND old.health IS DISTINCT FROM $2
+		RETURNING old.health`, id, health, detail).Scan(&was)
+	if errors.Is(err, pgx.ErrNoRows) {
+		_, err = s.pool.Exec(ctx, `UPDATE model_endpoints SET health_detail=$2, checked_at=now() WHERE id=$1`, id, detail)
+		return health, false, err
+	}
+	return was, err == nil, err
 }
