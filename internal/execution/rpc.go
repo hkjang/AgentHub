@@ -325,7 +325,7 @@ func (o *Orchestrator) deliverDirectives(ctx context.Context, run *store.AgentRu
 				continue
 			}
 			for _, directive := range pending {
-				line, marshalErr := json.Marshal(map[string]any{"type": directive.Kind, "message": directive.Message})
+				line, marshalErr := directiveLine(directive)
 				if marshalErr != nil {
 					continue
 				}
@@ -342,6 +342,17 @@ func (o *Orchestrator) deliverDirectives(ctx context.Context, run *store.AgentRu
 			}
 		}
 	}
+}
+
+// directiveLine is the line the agent is sent.
+//
+// Kept apart from the delivery so it can be compared with what the agent was
+// observed accepting. The two halves of this feature were established
+// separately — that the agent takes a steer, and that the platform records and
+// claims one — and the shape of this line is the join between them. A join
+// nobody checks is where the two working halves stop adding up.
+func directiveLine(directive store.RunDirective) ([]byte, error) {
+	return json.Marshal(map[string]any{"type": directive.Kind, "message": directive.Message})
 }
 
 // rpcDirectiveInterval is how long somebody's words may wait.

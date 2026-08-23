@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/hkjang/AgentHub/internal/store"
 )
 
 // These lines are what the agent actually wrote.
@@ -141,3 +143,55 @@ func TestOnlyTheConversationFailingIsRetried(t *testing.T) {
 type errorString string
 
 func (e errorString) Error() string { return string(e) }
+
+// The line the platform sends has to be the line the agent was seen accepting.
+//
+// The two halves of steering were established separately: the agent takes a
+// steer and a follow_up mid-conversation, and the platform records and claims
+// what somebody said. This is the join, and a join nobody checks is where two
+// working halves stop adding up.
+//
+// The expected strings are what was typed at the agent by hand, and answered
+// with {"command":"steer","success":true} and {"command":"follow_up","success":true}.
+func TestTheDirectiveLineIsWhatTheAgentAccepted(t *testing.T) {
+	for _, one := range []struct {
+		directive store.RunDirective
+		want      string
+	}{
+		{store.RunDirective{Kind: "steer", Message: "실제로는 repository layer를 먼저 분리해"},
+			`{"message":"실제로는 repository layer를 먼저 분리해","type":"steer"}`},
+		{store.RunDirective{Kind: "follow_up", Message: "그 다음 테스트를 추가해"},
+			`{"message":"그 다음 테스트를 추가해","type":"follow_up"}`},
+	} {
+		line, err := directiveLine(one.directive)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(line) != one.want {
+			t.Errorf("the platform sends %s\nthe agent was seen accepting %s", line, one.want)
+		}
+		// One line. The protocol is newline-delimited, so a message with a newline
+		// in it would be read as two commands — the second of them nonsense.
+		if strings.Contains(string(line), "\n") {
+			t.Errorf("the line carries a newline and would be read as two commands: %s", line)
+		}
+	}
+
+	// A message with a newline is what a person typing into a text box produces,
+	// and it must survive as one line.
+	line, err := directiveLine(store.RunDirective{Kind: "steer", Message: "먼저 이것\n그 다음 저것"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(line), "\n") {
+		t.Errorf("a message with a newline was not escaped into one line: %s", line)
+	}
+	// And it is still the same command, not a different one.
+	var decoded map[string]string
+	if err := json.Unmarshal(line, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["type"] != "steer" || !strings.Contains(decoded["message"], "그 다음 저것") {
+		t.Errorf("the escaped line no longer carries the directive: %v", decoded)
+	}
+}
