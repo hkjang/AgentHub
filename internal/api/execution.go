@@ -132,7 +132,7 @@ func validateReview(goal *store.AgentGoal) error {
 	if goal.ReviewMode == "" {
 		goal.ReviewMode = "workspace"
 	}
-	if !contains([]string{"workspace", "range", "commit", "scan"}, goal.ReviewMode) {
+	if !contains([]string{"workspace", "range", "commit", "scan", "trigger"}, goal.ReviewMode) {
 		return errors.New("리뷰 대상을 확인해 주세요")
 	}
 	switch goal.ReviewMode {
@@ -147,6 +147,12 @@ func validateReview(goal *store.AgentGoal) error {
 		if goal.ReviewHeadRef == "" {
 			return errors.New("리뷰할 커밋을 입력해 주세요")
 		}
+	case "trigger":
+		// The refs come from whatever queues the task, so there is nothing to ask
+		// for here. What the payload must carry is checked when the task runs and
+		// named in the failure, which is the only place it can be: the trigger may
+		// not exist yet when the Goal is saved.
+		goal.ReviewBaseRef, goal.ReviewHeadRef = "", ""
 	}
 	// A git ref is not a place to accept shell metacharacters. The command is
 	// executed as argv rather than through a shell, so this is not what stops an

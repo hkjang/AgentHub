@@ -1306,6 +1306,37 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## One review agent, every pull request
+
+A review Goal named its two branches, so reviewing proposals meant an agent per
+branch — somebody creating an agent for every pull request and deleting it after,
+or more likely not reviewing proposals at all.
+
+In `trigger` mode the refs come from the task. A CI job posting to the webhook
+trigger controls the body it sends, so it says which change to review, and the
+platform does not have to know GitHub's payload shape from GitLab's from
+Bitbucket's — nor does a site running an internal Git server have to wait for an
+adapter that names it. `from`/`to` and `base`/`head` are both accepted, and
+`commit`/`sha`, because a CI job should not have to learn which word this
+platform prefers.
+
+Three refusals hold it up, and they are the part worth reading.
+
+A Goal that names its own branches is never redirected by a payload. Otherwise a
+scheduled review of one branch becomes a review of anything, for anyone who can
+reach the webhook — and that route is unauthenticated by design, held up by an
+HMAC over the body.
+
+A payload with no target fails the task and says what was missing. Falling back
+to the workspace would review whatever the runtime happened to contain and file
+it as a review of the proposal.
+
+A ref that cannot be one is refused. The command is argv rather than a shell
+string, so this is not what stops an injection; it is what stops a payload field
+that happens to contain a sentence from becoming a review that failed for reasons
+nobody can read. It matters more here than on the Goal, because these refs come
+from outside the platform where the Goal's came from a person at a form.
+
 ## A finding is one problem, not one sighting of it
 
 Every review run inserted every comment as a new row, so reviewing the same

@@ -54,7 +54,7 @@ export type AgentGoal = {
   approvalMode: 'plan' | 'default' | 'auto-edit' | 'auto' | 'yolo'
   externalAppId: string
   externalInputKey: string
-  reviewMode?: 'workspace' | 'range' | 'commit' | 'scan'
+  reviewMode?: 'workspace' | 'range' | 'commit' | 'scan' | 'trigger'
   reviewBaseRef?: string
   reviewHeadRef?: string
   reviewPath?: string

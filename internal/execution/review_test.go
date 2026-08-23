@@ -179,6 +179,98 @@ func TestAFindingKeepsItsIdentityWhileTheCodeDoes(t *testing.T) {
 	}
 }
 
+// One review agent, every pull request.
+//
+// The refs arrive in the body a CI job posts to the webhook trigger, and the
+// trigger appends that body after its own instruction — so this reads a task
+// input that looks like a real one rather than a bare document.
+func TestATriggerSaysWhatToReview(t *testing.T) {
+	payload := `PR 리뷰를 실행합니다.
+
+# Webhook payload
+{"event":"pull_request","number":42,"from":"main","to":"feature/login","repository":{"name":"agenthub"}}`
+	goal, err := resolveReviewTargets(store.AgentGoal{ReviewMode: "trigger"}, store.AgentTask{Input: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if goal.ReviewMode != "range" || goal.ReviewBaseRef != "main" || goal.ReviewHeadRef != "feature/login" {
+		t.Fatalf("the trigger's branches did not reach the review: %+v", goal)
+	}
+	// base/head are what most forges call them, and a CI job should not have to
+	// know which word this platform prefers.
+	goal, err = resolveReviewTargets(store.AgentGoal{ReviewMode: "trigger"},
+		store.AgentTask{Input: `{"base":"release/1.2","head":"hotfix/token"}`})
+	if err != nil || goal.ReviewBaseRef != "release/1.2" || goal.ReviewHeadRef != "hotfix/token" {
+		t.Fatalf("base/head were not accepted: %+v (%v)", goal, err)
+	}
+	goal, err = resolveReviewTargets(store.AgentGoal{ReviewMode: "trigger"}, store.AgentTask{Input: `{"sha":"9f2c1ab"}`})
+	if err != nil || goal.ReviewMode != "commit" || goal.ReviewHeadRef != "9f2c1ab" {
+		t.Fatalf("a commit payload did not become a commit review: %+v (%v)", goal, err)
+	}
+}
+
+// A payload that says nothing has to fail saying what was missing. Reviewing the
+// workspace instead would report on whatever the runtime happened to contain and
+// call it a review of the proposal.
+func TestATriggerWithNoTargetFailsAndSaysWhatIsMissing(t *testing.T) {
+	_, err := resolveReviewTargets(store.AgentGoal{ReviewMode: "trigger"},
+		store.AgentTask{Input: `{"event":"ping","repository":{"name":"agenthub"}}`})
+	if err == nil {
+		t.Fatal("a payload with no branches was accepted; the review would have run against something else")
+	}
+	for _, want := range []string{"from", "to", "commit"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the failure does not say the payload needs %q: %s", want, err)
+		}
+	}
+}
+
+// A Goal that names its branches means them. Letting a payload redirect it would
+// turn a scheduled review of one branch into a review of anything, for anyone who
+// can reach the webhook.
+func TestAPayloadCannotRedirectAGoalThatNamesItsBranches(t *testing.T) {
+	goal, err := resolveReviewTargets(
+		store.AgentGoal{ReviewMode: "range", ReviewBaseRef: "main", ReviewHeadRef: "develop"},
+		store.AgentTask{Input: `{"from":"attacker","to":"anything"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if goal.ReviewBaseRef != "main" || goal.ReviewHeadRef != "develop" {
+		t.Fatalf("a payload redirected a Goal that named its own branches: %+v", goal)
+	}
+}
+
+// The refs come from outside the platform here, where the Goal's own came from a
+// person at a form.
+func TestARefFromAPayloadIsRefusedWhenItCannotBeOne(t *testing.T) {
+	for _, payload := range []string{
+		`{"from":"main","to":"feature; rm -rf /"}`,
+		`{"from":"main","to":"a branch with spaces"}`,
+		`{"commit":"$(whoami)"}`,
+		`{"from":"main","to":"` + strings.Repeat("x", 300) + `"}`,
+	} {
+		if _, err := resolveReviewTargets(store.AgentGoal{ReviewMode: "trigger"}, store.AgentTask{Input: payload}); err == nil {
+			t.Errorf("accepted a ref that cannot be one: %s", payload)
+		}
+	}
+}
+
+// The trigger appends each delivery after its own instruction, so the payload is
+// the last object and it is the one that changes per delivery.
+func TestTheLastPayloadWins(t *testing.T) {
+	input := `{"from":"old","to":"stale"}
+
+# Webhook payload
+{"from":"main","to":"feature/new"}`
+	goal, err := resolveReviewTargets(store.AgentGoal{ReviewMode: "trigger"}, store.AgentTask{Input: input})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if goal.ReviewHeadRef != "feature/new" {
+		t.Fatalf("an earlier object in the input won: %+v", goal)
+	}
+}
+
 func TestTheCommandSaysWhatToCompare(t *testing.T) {
 	base := []string{"/usr/local/bin/agenthub-ocr-run"}
 	for _, one := range []struct {

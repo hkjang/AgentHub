@@ -213,7 +213,7 @@ const (
 // did not.
 func reviewModeOrDefault(mode string) string {
 	switch mode {
-	case "workspace", "range", "commit", "scan":
+	case "workspace", "range", "commit", "scan", "trigger":
 		return mode
 	}
 	return "workspace"

@@ -90,6 +90,140 @@ type reviewComment struct {
 	Severity       string `json:"severity"`
 }
 
+// resolveReviewTargets settles what this run compares.
+//
+// Only a Goal in `trigger` mode looks at the task: a Goal that names its
+// branches means them, and letting a payload quietly redirect it would make a
+// scheduled review of main reviewable into something else by anyone who can
+// reach the webhook.
+func resolveReviewTargets(goal store.AgentGoal, task store.AgentTask) (store.AgentGoal, error) {
+	if goal.ReviewMode != "trigger" {
+		return goal, nil
+	}
+	from, to, commit := reviewTargetsFromTask(task.Input)
+	switch {
+	case commit != "":
+		if !safeRef(commit) {
+			return goal, errors.New("트리거가 보낸 커밋 이름을 쓸 수 없습니다: " + trimmed(commit, 60))
+		}
+		goal.ReviewMode, goal.ReviewHeadRef = "commit", commit
+	case from != "" && to != "":
+		if !safeRef(from) || !safeRef(to) {
+			return goal, errors.New("트리거가 보낸 브랜치 이름을 쓸 수 없습니다: " + trimmed(from, 40) + " → " + trimmed(to, 40))
+		}
+		goal.ReviewMode, goal.ReviewBaseRef, goal.ReviewHeadRef = "range", from, to
+	default:
+		return goal, errors.New("트리거가 리뷰할 대상을 알려주지 않았습니다. 웹훅 본문에 {\"from\":\"main\",\"to\":\"feature/x\"} 또는 {\"commit\":\"<sha>\"} 를 담아 주세요(base/head, sha 도 받습니다).")
+	}
+	return goal, nil
+}
+
+// trimmed shortens a value for a message without letting a whole payload into it.
+func trimmed(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if len(value) > limit {
+		return value[:limit] + "…"
+	}
+	return value
+}
+
+// reviewTargetsFromTask reads the change a task asks to review.
+//
+// A Goal in `trigger` mode names no branches: the task does. A CI job posting to
+// the webhook trigger controls the body it sends, so it says which change to
+// review — which means the platform does not have to know GitHub's payload shape
+// from GitLab's from Bitbucket's, and a site with an internal Git server is not
+// waiting for an adapter that names it.
+//
+// The last JSON object in the task input wins, because the webhook trigger
+// appends the delivered payload after the trigger's own instruction and the
+// payload is the part that changes per delivery.
+func reviewTargetsFromTask(input string) (from, to, commit string) {
+	for _, candidate := range jsonObjects(input) {
+		var payload struct {
+			From   string `json:"from"`
+			To     string `json:"to"`
+			Base   string `json:"base"`
+			Head   string `json:"head"`
+			Commit string `json:"commit"`
+			SHA    string `json:"sha"`
+		}
+		if err := json.Unmarshal([]byte(candidate), &payload); err != nil {
+			continue
+		}
+		// base/head are what most forges call them; from/to are what the review
+		// engine calls them. Both are accepted so a CI job can use either word
+		// without the platform being clever about which one it meant.
+		if payload.From != "" || payload.Base != "" {
+			from = firstNonEmpty(payload.From, payload.Base)
+		}
+		if payload.To != "" || payload.Head != "" {
+			to = firstNonEmpty(payload.To, payload.Head)
+		}
+		if payload.Commit != "" || payload.SHA != "" {
+			commit = firstNonEmpty(payload.Commit, payload.SHA)
+		}
+	}
+	return from, to, commit
+}
+
+// jsonObjects finds the top-level JSON objects in a block of text, in order.
+//
+// The task input is prose with a payload appended, not a document, so this reads
+// what is there rather than requiring the whole input to be JSON.
+func jsonObjects(input string) []string {
+	found := []string{}
+	depth, start, inString, escaped := 0, -1, false, false
+	for index, char := range input {
+		switch {
+		case escaped:
+			escaped = false
+		case char == '\\' && inString:
+			escaped = true
+		case char == '"':
+			inString = !inString
+		case inString:
+		case char == '{':
+			if depth == 0 {
+				start = index
+			}
+			depth++
+		case char == '}':
+			if depth > 0 {
+				depth--
+				if depth == 0 && start >= 0 {
+					found = append(found, input[start:index+1])
+					start = -1
+				}
+			}
+		}
+	}
+	return found
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+// safeRef refuses what cannot be a git ref.
+//
+// The command is executed as argv rather than through a shell, so this is not
+// what stops an injection. It is what stops a payload field that happens to
+// contain a sentence from becoming a review that failed for reasons nobody can
+// read — and this input arrives from outside the platform, where the Goal's own
+// refs came from a person at a form.
+func safeRef(ref string) bool {
+	if ref == "" || len(ref) > 200 {
+		return false
+	}
+	return !strings.ContainsAny(ref, " \t\n\"'`$;|&<>\\")
+}
+
 // reviewCommand builds the engine's argv from the Goal.
 //
 // The Goal says what to compare and the engine is told nothing else about how to
@@ -152,6 +286,13 @@ func (o *Orchestrator) runReview(ctx context.Context, run *store.AgentRun, task 
 		return nil, Outcome{Status: store.TaskFailed, Retryable: true, Failure: "Runtime 사양을 만들지 못했습니다: " + err.Error()}
 	}
 
+	// A `trigger` Goal takes its refs from the task, so resolve them before the
+	// command is built and fail here — naming what the payload must carry —
+	// rather than reviewing the workspace and calling it a pull request.
+	goal, targetErr := resolveReviewTargets(goal, task)
+	if targetErr != nil {
+		return nil, Outcome{Status: store.TaskFailed, Failure: targetErr.Error()}
+	}
 	argv := reviewCommand(command, goal)
 	ctx, span := telemetry.Start(ctx, "review.run",
 		attribute.String("agenthub.runtime.id", acquired.runtimeID),
@@ -361,7 +502,7 @@ func blockingFindings(findings []store.ReviewFinding, failOn string) []store.Rev
 
 func reviewMode(goal store.AgentGoal) string {
 	switch goal.ReviewMode {
-	case "range", "commit", "scan":
+	case "range", "commit", "scan", "trigger":
 		return goal.ReviewMode
 	}
 	return "workspace"
@@ -379,6 +520,8 @@ func reviewTarget(goal store.AgentGoal) string {
 			return "전체 점검: " + path
 		}
 		return "저장소 전체 점검"
+	case "trigger":
+		return "트리거가 지정한 변경분"
 	}
 	return "작업공간의 변경분"
 }

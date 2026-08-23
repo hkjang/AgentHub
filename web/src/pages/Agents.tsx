@@ -430,6 +430,7 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
               <option value="range">브랜치 비교 — 두 브랜치 사이의 변경분</option>
               <option value="commit">커밋 하나</option>
               <option value="scan">저장소 전체 점검 — diff 없이 파일을 그대로</option>
+              <option value="trigger">트리거가 지정 — PR/MR 웹훅이 알려주는 변경분</option>
             </select>
             <small>브랜치 비교는 두 브랜치의 공통 조상부터 비교하므로, 그 사이에 base에 들어간 남의 변경은 지적하지 않습니다.</small>
           </label>
@@ -440,6 +441,11 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
           {goal.reviewMode==='commit'&&<label><span>커밋</span>
             <input value={goal.reviewHeadRef??''} onChange={(e)=>update({reviewHeadRef:e.target.value.trim()})} placeholder="예) 9f2c1ab 또는 태그"/>
           </label>}
+          {goal.reviewMode==='trigger'&&<div className="notice">
+            리뷰할 브랜치를 이 화면에서 정하지 않습니다. 이 에이전트의 <b>웹훅 트리거</b> 로 들어오는 요청 본문이 알려 줍니다 —
+            <code>{'{"from":"main","to":"feature/x"}'}</code> 또는 <code>{'{"commit":"<sha>"}'}</code> (<code>base</code>/<code>head</code>/<code>sha</code> 도 받습니다).
+            그래서 PR 하나마다 에이전트를 만들 필요가 없습니다. 본문에 대상이 없으면 그 작업은 무엇이 빠졌는지 알려 주며 실패합니다.
+          </div>}
           {goal.reviewMode==='scan'&&<label><span>경로 (선택)</span>
             <input value={goal.reviewPath??''} onChange={(e)=>update({reviewPath:e.target.value.trim()})} placeholder="예) internal/auth"/>
             <small>비우면 저장소 전체를 봅니다. 전체 점검은 변경분 리뷰보다 훨씬 많은 토큰을 씁니다.</small>
