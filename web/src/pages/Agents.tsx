@@ -18,10 +18,28 @@ import type { Agent, AgentGoal, AgentMemory, AgentRelease, AgentTrigger, AgentVe
  *  these, so it marks the absence of evidence rather than the choice. */
 function RunnerVerdict({ runner }: { runner: string }) {
   const experience = runnerExperienceOf(runner)
-  if (!experience || experience.verdict === 'untried') return null
+  if (!experience) return null
+  const missing = experience.missing ?? []
+  if (missing.length > 0) return <span className="experience-tag missing"
+    title={missing.map((piece) => `${piece.what} → ${piece.where}`).join('\n')}>준비 필요</span>
+  if (experience.verdict === 'untried') return null
   return <span className={`experience-tag ${experience.verdict === 'failing' ? 'failed' : 'proven'}`} title={experience.detail}>
     {RUNNER_VERDICT_LABELS[experience.verdict] ?? experience.verdict}
   </span>
+}
+
+/** What has to change before the chosen way of running can work here.
+ *
+ *  Beside the picker rather than in a tooltip: this is the moment somebody is
+ *  deciding, and a choice that cannot run is worth interrupting for. It says
+ *  nothing when nothing is missing. */
+function RunnerMissing({ runner }: { runner: string }) {
+  const missing = runnerExperienceOf(runner)?.missing ?? []
+  if (missing.length === 0) return null
+  return <div className="notice missing-notice">
+    <strong>이 실행 방식은 아직 이 배포에서 쓸 수 없습니다.</strong>
+    <ul>{missing.map((piece) => <li key={piece.what}>{piece.what} <em>{piece.where}</em></li>)}</ul>
+  </div>
 }
 
 export function Agents({runtimeOnly=false}:{runtimeOnly?:boolean}) {
@@ -441,6 +459,7 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
             ?'같은 에이전트를 Agent Client Protocol로 실행합니다. 에이전트가 도구를 쓰기 전마다 묻고, 승인 모드에 따라 플랫폼이 답한 내용이 실행 기록에 남습니다. 아래 자율성에서 승인을 요구하면 읽기가 아닌 요청은 사람에게 넘어갑니다. 토큰 사용량은 에이전트가 알려줄 때만 집계합니다.'
             :'기존 방식입니다. 파일 편집이나 명령 실행이 필요하면 사람에게 인계합니다.'}</small>
         </label>
+        <RunnerMissing runner={goal.runner??'prose'}/>
         {goal.runner==='dify'&&<>
           <label><span>외부 앱</span>
             <select value={goal.externalAppId??''} onChange={(e)=>update({externalAppId:e.target.value})}>

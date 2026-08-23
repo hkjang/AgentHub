@@ -14,7 +14,14 @@ export type RuntimeDescriptor = {
   browserUi?: boolean; terminal?: boolean; toolLoop?: boolean; mcpConfigured?: boolean; proxiedUi?: boolean
   hostSessionOnly?: boolean; runners?: string[]; coarseToolKinds?: boolean
   /** What this deployment has seen this type do. Absent on an older control plane. */
-  experience?: { verdict:'proven'|'attempted'|'failed'|'untried'; detail:string; attempts:number; started:number; approvedImages:number }
+  experience?: {
+    verdict:'proven'|'attempted'|'failed'|'untried'; detail:string; attempts:number; started:number; approvedImages:number
+    /** What would have to change here before this could run. Empty when nothing
+     *  is missing — a list of reassurances beside every choice buries the one
+     *  entry that needs attention. */
+    missing?: { what:string; where:string }[]
+    missingSummary?: string
+  }
   bestFor?: string
 }
 
@@ -91,7 +98,13 @@ export const RUNNER_LABELS: Record<string, string> = {
  *  Loaded once with the descriptors, because the goal form already has those and
  *  a second fetch to answer "has this ever worked here" would be a request per
  *  agent somebody opens. */
-export type RunnerExperience = { runner:string; verdict:'proven'|'failing'|'untried'; detail:string; runs:number; completed:number }
+export type RunnerExperience = {
+  runner:string; verdict:'proven'|'failing'|'untried'; detail:string; runs:number; completed:number
+  /** What would have to change here before this way of running could be used.
+   *  Empty when nothing is missing. */
+  missing?: { what:string; where:string }[]
+  missingSummary?: string
+}
 let runnerExperience: Record<string, RunnerExperience> = {}
 export function setRunnerExperience(value: Record<string, RunnerExperience> | undefined) {
   runnerExperience = value ?? {}

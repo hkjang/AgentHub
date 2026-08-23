@@ -29,3 +29,5 @@
 
 .status-cell{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .blocked-tag{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:6px;background:#ffe2e7;color:#c43b52;font-size:11px;font-weight:650;cursor:help;white-space:nowrap}
+
+.experience-tag.missing{background:#fff4e5;color:#a05a00}.missing-notice ul{margin:6px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:4px}.missing-notice li{font-size:12px;line-height:1.55}.missing-notice em{font-style:normal;color:#6746e8;font-weight:650;white-space:nowrap}

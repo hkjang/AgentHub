@@ -32,6 +32,10 @@ func (s *Server) runtimeTypes(w http.ResponseWriter, r *http.Request) {
 	// person choosing finds out by creating an agent, pressing start and reading
 	// a failure. The platform knows what has happened here and has never put it
 	// beside the choice.
+	// What this deployment is missing before each choice can be used. Read once:
+	// the answer is about the deployment, not about one runtime, and asking it
+	// per type would be the same four queries fifteen times.
+	state := s.readDeploymentState(r.Context())
 	experiences, err := s.store.RuntimeTypeExperiences(r.Context())
 	if err != nil {
 		// Not knowing the history is not a reason to refuse the list. The choice
@@ -48,17 +52,23 @@ func (s *Server) runtimeTypes(w http.ResponseWriter, r *http.Request) {
 		if marshalErr == nil {
 			_ = json.Unmarshal(body, &entry)
 		}
-		entry["experience"] = runtimeExperienceOf(experiences[descriptor.Type])
+		experience := runtimeExperienceOf(experiences[descriptor.Type])
+		// Beside "this has never run here", what would have to change for it to.
+		// The verdict alone stops where the operator's question starts.
+		missing := runtimeMissing(descriptor, state)
+		experience["missing"] = missing
+		experience["missingSummary"] = missingSummary(missing)
+		entry["experience"] = experience
 		items = append(items, entry)
 	}
 	// The same question about the other choice a person makes. Nine ways of
 	// running are offered and, on the deployment this was written against, eight
 	// of them had never produced a single step.
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "runners": s.runnerExperience(r)})
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "runners": s.runnerExperience(r, state)})
 }
 
 // runnerExperience is what each way of running has done here.
-func (s *Server) runnerExperience(r *http.Request) map[string]any {
+func (s *Server) runnerExperience(r *http.Request, state deploymentState) map[string]any {
 	experiences, err := s.store.RunnerExperiences(r.Context())
 	if err != nil {
 		s.logger.Warn("runner history could not be read", "error", err)
@@ -66,7 +76,11 @@ func (s *Server) runnerExperience(r *http.Request) map[string]any {
 	}
 	answer := map[string]any{}
 	for _, runner := range store.Runners {
-		answer[runner] = runnerVerdictOf(runner, experiences[runner])
+		verdict := runnerVerdictOf(runner, experiences[runner])
+		missing := runnerMissing(runner, state)
+		verdict["missing"] = missing
+		verdict["missingSummary"] = missingSummary(missing)
+		answer[runner] = verdict
 	}
 	return answer
 }

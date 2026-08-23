@@ -18,7 +18,14 @@ import type { RuntimeProfile, Template, Workspace } from '../types'
  *  it is the quietest of the four. */
 function ExperienceTag({ type }: { type: string }) {
   const experience = descriptor(type).experience
-  if (!experience || experience.verdict === 'untried') return null
+  if (!experience) return null
+  // What is missing outranks what has happened. "안 해 봄" is the absence of
+  // evidence; "준비 필요" is a thing somebody can go and fix, and the two used to
+  // look identical on this screen.
+  const missing = experience.missing ?? []
+  if (missing.length > 0) return <span className="experience-tag missing"
+    title={missing.map((piece) => `${piece.what} → ${piece.where}`).join('\n')}>준비 필요</span>
+  if (experience.verdict === 'untried') return null
   return <span className={`experience-tag ${experience.verdict}`} title={experience.detail}>
     {EXPERIENCE_LABELS[experience.verdict] ?? experience.verdict}
   </span>
