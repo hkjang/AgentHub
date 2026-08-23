@@ -1306,6 +1306,39 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Fifteen choices that are not equal
+
+The console offers fifteen runtime types and every one of them looks equally
+available. That is only true on a deployment where every one has been set up.
+Somewhere without the image for a type loaded, or without cluster credentials,
+they are not equal at all — and the person choosing found out by creating an
+agent, pressing start and reading a failure.
+
+The platform already knew and had never put it together. It records every runtime
+it ever created, what state it reached, and what it said when it did not. Beside
+each type in the catalogue now: has one run here, was one tried, did the last one
+fail and with what.
+
+The verdicts are about the past, not the future. "확인됨" means one ran here; it
+does not promise the next will, because the cluster may have changed since. And
+"안 해 봄" is not a warning — most deployments will never use most of these — it
+is the absence of evidence, said plainly rather than left to look like approval.
+
+### Getting a verdict wrong is asymmetric
+
+Saying "failed" about something that did not fail invents bad news and steers
+somebody away from a type nobody had trouble with. Saying "proven" about
+something that never ran is the failure this platform keeps removing: a choice
+that looks available and is not.
+
+The first version did the first of those. Two runtimes on the deployment this was
+built against both sat at status `stopped`; one had started and one never had,
+and both were reported as failures. A runtime that was created and stopped
+without ever coming up did not fail — nothing broke, it was simply never brought
+up — and the person choosing needs that difference. The states a runtime passes
+through on the way, and the state it reaches when somebody stops it on purpose,
+are not failures either.
+
 ## Getting a person's words into a running conversation
 
 The person is at a browser. The conversation is held by a worker process

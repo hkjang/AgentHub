@@ -13,6 +13,8 @@ export type RuntimeDescriptor = {
   workspace?: string; port?: number
   browserUi?: boolean; terminal?: boolean; toolLoop?: boolean; mcpConfigured?: boolean; proxiedUi?: boolean
   hostSessionOnly?: boolean; runners?: string[]; coarseToolKinds?: boolean
+  /** What this deployment has seen this type do. Absent on an older control plane. */
+  experience?: { verdict:'proven'|'attempted'|'failed'|'untried'; detail:string; attempts:number; started:number; approvedImages:number }
   bestFor?: string
 }
 
@@ -81,6 +83,19 @@ export const RUNNER_LABELS: Record<string, string> = {
   review: '변경분을 리뷰하고 파일·줄 단위 지적을 남김',
   orca: '여러 에이전트를 각자 작업 사본에서 동시에 돌림',
   rpc: '일하는 도중에 말을 걸 수 있는 프로토콜 실행',
+}
+
+/** What to call a type's history on this deployment.
+ *
+ *  Deliberately about the past. "확인됨" means one ran here; it does not promise
+ *  the next one will, because the cluster may have changed. "안 해 봄" is not a
+ *  warning — most deployments will never use most of these — it is the absence of
+ *  evidence, said plainly rather than left to look like approval. */
+export const EXPERIENCE_LABELS: Record<string, string> = {
+  proven: '이 배포에서 확인됨',
+  attempted: '만들어졌지만 실행된 적 없음',
+  failed: '마지막 시도 실패',
+  untried: '안 해 봄',
 }
 
 export function runnerSummary(runners?: string[]) {
