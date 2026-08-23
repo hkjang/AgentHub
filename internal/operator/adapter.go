@@ -491,6 +491,19 @@ var runtimeAdapters = map[string]runtimeAdapter{
 				// Electron needs a display even with no window. Orca starts Xvfb
 				// itself when this is unset, which is what a Pod wants.
 				{Name: "LIBGL_ALWAYS_SOFTWARE", Value: "1"},
+				// This is how the fabric's workers are kept behind the gateway.
+				//
+				// A terminal the fabric creates inherits this container's
+				// environment — verified by reading the variables back out of a
+				// live worker terminal — and the coding agents it starts read
+				// exactly these names for their endpoint. OPENAI_BASE_URL is
+				// already in the shared environment; ANTHROPIC_BASE_URL is not,
+				// because no other runtime needed it, and without it a Claude
+				// worker would talk to a vendor directly and none of this
+				// platform's policy, metering or audit would see the call.
+				{Name: "ANTHROPIC_BASE_URL", Value: build.Value.Model.BaseURL},
+				{Name: "ANTHROPIC_API_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: build.Name}, Key: "model-api-key"}}},
 			}
 		},
 		Sidecars: func(build adapterBuild) []corev1.Container {

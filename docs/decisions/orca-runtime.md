@@ -88,3 +88,51 @@ runtime logged `spawn codex ENOENT` at startup and continued. What is proved is
 the orchestration layer AgentHub drives, not the agents Orca drives. That is the
 next thing to establish, with one real agent, before anything claims a
 best-of-N.
+
+## The fan-out, and the two things it needs
+
+Followed up 2026-08-23. `worker-start` is the fan-out primitive and takes exactly
+the shape the integration wants:
+
+```
+orca orchestration worker-start --task <id> --agent <agent> \
+  --worktree new-child --name <name> [--model <id>] [--effort <level>]
+```
+
+One task, N workers, each getting its own checkout. Two refusals were met on the
+way and both are contract, not accident:
+
+- `consumer_fenced` — worker-start must come from the coordinator terminal bound
+  to that Task's Run, not any terminal. So the runner has to keep the handle it
+  created rather than looking one up.
+- `agent_unconfigured` — the agent must be configured on the host. The agents are
+  `claude` and `codex`, and `orca account add --agent claude|codex` runs the
+  vendor's own login interactively.
+
+That second one is the real limit, and it is worth being plain about: **the
+fabric cannot start a coding agent that has no account on the host.** A worker
+needs a vendor subscription registered through an interactive login, which no
+image can carry and AgentHub cannot perform. The fan-out was therefore not
+demonstrated end to end here.
+
+## Model calls do go through the gateway
+
+This was the one thing that would have made the integration unacceptable, and it
+holds. A terminal the fabric creates inherits the runtime container's
+environment. Read back out of a live worker terminal:
+
+```
+$ echo GW=$OPENAI_BASE_URL AN=$ANTHROPIC_BASE_URL AH=$AGENTHUB_MODEL_BASE_URL
+GW=http://gateway.agenthub.svc/v1 AN=http://gateway.agenthub.svc/v1 AH=http://gateway.agenthub.svc/v1
+```
+
+Those are the names Codex and Claude Code read for their endpoint, so pointing
+them at the AgentHub gateway on the runtime container puts every worker's model
+call behind the same policy, content inspection, quota and audit as everything
+else. `OPENAI_BASE_URL` is already in the shared runtime environment;
+`ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY` are added by the Orca adapter,
+because no other runtime needed them and without them a Claude worker would talk
+to a vendor directly with nothing on this platform seeing the call.
+
+What that does **not** do is remove the account requirement. The endpoint is the
+platform's; the agent still refuses to start until an account exists on the host.
