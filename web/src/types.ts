@@ -48,7 +48,7 @@ export type AgentGoal = {
   keepWarmSeconds: number
   resumeFromCheckpoint: boolean
   tokenBudget: number
-  runner: 'prose' | 'flow' | 'cli' | 'dify' | 'acp' | 'investigate' | 'review' | 'orca' | 'rpc'
+  runner: 'prose' | 'flow' | 'cli' | 'dify' | 'acp' | 'investigate' | 'review' | 'orca' | 'rpc' | 'agentserver'
   flowId: string
   flowOutputComponent: string
   approvalMode: 'plan' | 'default' | 'auto-edit' | 'auto' | 'yolo'
@@ -61,6 +61,9 @@ export type AgentGoal = {
   reviewExclude?: string
   reviewFailOn?: '' | 'critical' | 'high' | 'medium' | 'low'
   orcaAgents?: string
+  agentServerId?: string
+  agentServerZone?: string
+  agentServerDir?: string
   toolPolicy?: { deny?: string[]; allow?: string[] }
 }
 /** One located observation from a code review. The severity and category are the
@@ -139,3 +142,16 @@ export type Department = { id: string; name: string; description: string; quota:
 export type UserQuota = { ownerId: string; username: string; quota: Limits; note: string; updatedAt: string }
 export type EffectiveQuota = { ownerId: string; departmentId?: string; department?: string; platform: Limits; inherited: Limits; personal: Limits; effective: Limits; held: Held; departmentQuota: { perMember: Limits; total: Limits }; departmentHeld: Held }
 export type ManagedUser = User & { status: string; managerId?: string; departmentId?: string; lastLoginAt?: string; createdAt: string }
+
+/** A server this deployment may send work to. It is not a runtime the platform
+ *  starts — it is capacity somebody else runs, which is why an administrator
+ *  registers it and why what matters about it is where it sits. */
+export type AgentServer = {
+  id:string; name:string; baseUrl:string; kind:string; networkZone:string
+  capacity:number; enabled:boolean
+  health:'unknown'|'healthy'|'unreachable'|'refused'; healthDetail?:string
+  checkedAt?:string; createdAt:string; updatedAt:string
+}
+/** What a Goal author sees of those servers: names, networks and health, never
+ *  addresses. */
+export type UsableAgentServer = { id:string; name:string; networkZone:string; health:AgentServer['health']; kind:string }

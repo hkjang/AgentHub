@@ -172,6 +172,7 @@ func (s *Server) apiRoutes() []Route {
 		read("/agents/{id}/memories", "Agents", "Read an Agent's stored memories", s.agentMemories),
 		read("/agents/{id}/flows", "Agents", "List the flows the Agent's runtime holds", s.agentFlows),
 		read("/external-apps", "Platform", "Applications a Goal can send work to", s.externalApps),
+		read("/agent-servers", "Platform", "Agent servers a Goal can send work to", s.usableAgentServers),
 		write(http.MethodDelete, "/memories/{id}", "Agents", "Delete a stored memory", s.deleteMemory),
 
 		// --- Runtimes ---
@@ -322,6 +323,10 @@ func (s *Server) apiRoutes() []Route {
 		admin(http.MethodGet, "/admin/network-profiles", "Administration", "List network profiles", s.adminPolicyProfiles("network")),
 		admin(http.MethodPost, "/admin/network-profiles", "Administration", "Create or update a network profile", s.savePolicyProfile("network")),
 		admin(http.MethodDelete, "/admin/network-profiles/{id}", "Administration", "Delete a network profile", s.deleteAdminResource("network-profiles")),
+		admin(http.MethodGet, "/admin/agent-servers", "Administration", "Agent servers this deployment may send work to", s.agentServers),
+		admin(http.MethodPost, "/admin/agent-servers", "Administration", "Register or update an agent server", s.saveAgentServer),
+		admin(http.MethodDelete, "/admin/agent-servers/{id}", "Administration", "Remove an agent server", s.deleteAgentServer),
+		admin(http.MethodPost, "/admin/agent-servers/{id}/check", "Administration", "Ask an agent server whether it is working", s.checkAgentServer),
 		admin(http.MethodGet, "/admin/users", "Administration", "List users", s.adminUsers),
 		admin(http.MethodPut, "/admin/users/{id}", "Administration", "Update a user's role, status or manager", s.updateUser),
 	}

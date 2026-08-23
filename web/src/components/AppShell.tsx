@@ -54,6 +54,7 @@ const groups: NavGroup[] = [
     { to: '/admin/runtime-images', label: '런타임 이미지', icon: Boxes, keywords: 'runtime image registry 이미지' , term: 'runtimeImages' },
     { to: '/admin/models', label: '모델 엔드포인트', icon: Sparkles, keywords: 'model endpoint llm vllm ollama 모델' },
     { to: '/admin/external-apps', label: '외부 앱', icon: Sparkles, keywords: 'dify external app workflow 외부 앱 연동' },
+    { to: '/admin/agent-servers', label: '에이전트 서버', icon: Network, keywords: 'agent server openhands backend sandbox 에이전트 서버 실행 백엔드' },
     { to: '/admin/mcp', label: 'MCP 서버', icon: Network, keywords: 'mcp server 서버' , term: 'mcpServers' },
     { to: '/admin/mcp-bundles', label: 'MCP 번들 관리', icon: Boxes, keywords: 'mcp bundle 번들' , term: 'mcpBundlesAdmin' },
     { to: '/admin/users', label: '사용자 · 팀', icon: UsersRound, keywords: 'user team role 권한 사용자' },

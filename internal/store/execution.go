@@ -144,6 +144,16 @@ type AgentGoal struct {
 	// the fabric records the task and nobody works on it yet, which is what a
 	// host without registered agent accounts can honestly do.
 	OrcaAgents string `json:"orcaAgents"`
+	// AgentServerID pins this goal's work to one registered server. Empty lets
+	// placement choose, which is what a site with several servers wants.
+	AgentServerID string `json:"agentServerId"`
+	// AgentServerZone narrows that choice to one network — "anywhere inside the
+	// secure network" — which is what an operator usually means when they care
+	// where work runs.
+	AgentServerZone string `json:"agentServerZone"`
+	// AgentServerDir is where the agent works on that server, relative to its own
+	// workspace root. Empty means the server's default.
+	AgentServerDir string `json:"agentServerDir"`
 	// ToolPolicy names tools rather than kinds, for the runs where the kind does
 	// not distinguish anything.
 	ToolPolicy ACPToolPolicy `json:"toolPolicy"`
@@ -189,10 +199,13 @@ const (
 	StepOrca = "orca"
 	// StepRPC is one conversation with a long-lived agent process.
 	StepRPC = "rpc"
+	// StepAgentServer is one conversation held on a server this platform does not
+	// run, kept here so the work leaves an evidence trail on this side too.
+	StepAgentServer = "agentserver"
 )
 
 // RunStepTypes is every type the platform writes.
-var RunStepTypes = []string{StepPlan, StepReasoning, StepTool, StepArtifact, StepCompletion, StepDelegation, StepFlow, StepCLI, StepExternal, StepACP, StepInvestigate, StepReview, StepOrca, StepRPC}
+var RunStepTypes = []string{StepPlan, StepReasoning, StepTool, StepArtifact, StepCompletion, StepDelegation, StepFlow, StepCLI, StepExternal, StepACP, StepInvestigate, StepReview, StepOrca, StepRPC, StepAgentServer}
 
 // The two places a task's work can happen.
 const (
@@ -219,6 +232,11 @@ const (
 	// RunnerOrca hands a task to an execution fabric that coordinates several
 	// coding agents, each in its own git worktree.
 	RunnerOrca = "orca"
+	// RunnerAgentServer hands the task to a server somebody else runs. Nothing
+	// starts here: the machine is registered capacity, reached over its own API,
+	// and this platform stays the authority on whether the work was allowed, what
+	// model it may call and whether the task is done.
+	RunnerAgentServer = "agentserver"
 	// RunnerRPC speaks a line protocol to a long-lived agent process — commands
 	// in, events out — so the work can be redirected, asked and interrupted while
 	// it happens rather than only started and waited for.
@@ -263,13 +281,15 @@ func RunnerStepType(runner string) string {
 		return StepOrca
 	case RunnerRPC:
 		return StepRPC
+	case RunnerAgentServer:
+		return StepAgentServer
 	}
 	return ""
 }
 
 // Runners is every way a task can be run, in the order a person meets them.
 var Runners = []string{RunnerProse, RunnerCLI, RunnerACP, RunnerRPC, RunnerInvestigate,
-	RunnerReview, RunnerOrca, RunnerFlow, RunnerDify}
+	RunnerReview, RunnerOrca, RunnerAgentServer, RunnerFlow, RunnerDify}
 
 // DefaultAgentGoal is what an agent without an explicit goal runs with, so a
 // manual task on a plain interactive agent still executes sensibly.
@@ -435,8 +455,8 @@ const (
 func (s *Store) AgentGoalByID(ctx context.Context, agentID string) (AgentGoal, error) {
 	item := AgentGoal{AgentID: agentID}
 	var success, failure, toolPolicy []byte
-	err := s.pool.QueryRow(ctx, `SELECT description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint,token_budget,runner,flow_id,flow_output_component,approval_mode,COALESCE(external_app_id,''),external_input_key,review_mode,review_base_ref,review_head_ref,review_path,review_exclude,review_fail_on,orca_agents,tool_policy FROM agent_goals WHERE agent_id=$1`, agentID).
-		Scan(&item.Description, &success, &failure, &item.Constraints, &item.MaxSteps, &item.MaxToolCalls, &item.MaxDurationSeconds, &item.MaxRetries, &item.StartOnDemand, &item.StopAfterTask, &item.CompletionStrategy, &item.ConcurrencyPolicy, &item.MaxConcurrentRuns, &item.PlannerMode, &item.ApprovalRequired, &item.MaxDelegationDepth, &item.WarmupSeconds, &item.KeepWarmSeconds, &item.ResumeFromCheckpoint, &item.TokenBudget, &item.Runner, &item.FlowID, &item.FlowOutputComponent, &item.ApprovalMode, &item.ExternalAppID, &item.ExternalInputKey, &item.ReviewMode, &item.ReviewBaseRef, &item.ReviewHeadRef, &item.ReviewPath, &item.ReviewExclude, &item.ReviewFailOn, &item.OrcaAgents, &toolPolicy)
+	err := s.pool.QueryRow(ctx, `SELECT description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint,token_budget,runner,flow_id,flow_output_component,approval_mode,COALESCE(external_app_id,''),external_input_key,review_mode,review_base_ref,review_head_ref,review_path,review_exclude,review_fail_on,orca_agents,COALESCE(agent_server_id,''),agent_server_zone,agent_server_dir,tool_policy FROM agent_goals WHERE agent_id=$1`, agentID).
+		Scan(&item.Description, &success, &failure, &item.Constraints, &item.MaxSteps, &item.MaxToolCalls, &item.MaxDurationSeconds, &item.MaxRetries, &item.StartOnDemand, &item.StopAfterTask, &item.CompletionStrategy, &item.ConcurrencyPolicy, &item.MaxConcurrentRuns, &item.PlannerMode, &item.ApprovalRequired, &item.MaxDelegationDepth, &item.WarmupSeconds, &item.KeepWarmSeconds, &item.ResumeFromCheckpoint, &item.TokenBudget, &item.Runner, &item.FlowID, &item.FlowOutputComponent, &item.ApprovalMode, &item.ExternalAppID, &item.ExternalInputKey, &item.ReviewMode, &item.ReviewBaseRef, &item.ReviewHeadRef, &item.ReviewPath, &item.ReviewExclude, &item.ReviewFailOn, &item.OrcaAgents, &item.AgentServerID, &item.AgentServerZone, &item.AgentServerDir, &toolPolicy)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WithLegacyNames(DefaultAgentGoal(agentID)), nil
 	}
@@ -459,10 +479,10 @@ func (s *Store) PutAgentGoal(ctx context.Context, item AgentGoal) (AgentGoal, er
 	success, _ := json.Marshal(item.SuccessCriteria)
 	failure, _ := json.Marshal(item.FailureCriteria)
 	toolPolicy, _ := json.Marshal(cleanToolPolicy(item.ToolPolicy))
-	_, err := s.pool.Exec(ctx, `INSERT INTO agent_goals(agent_id,description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint,token_budget,runner,flow_id,flow_output_component,approval_mode,external_app_id,external_input_key,review_mode,review_base_ref,review_head_ref,review_path,review_exclude,review_fail_on,orca_agents,tool_policy)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
-		ON CONFLICT(agent_id) DO UPDATE SET description=excluded.description,success_criteria=excluded.success_criteria,failure_criteria=excluded.failure_criteria,constraints=excluded.constraints,max_steps=excluded.max_steps,max_tool_calls=excluded.max_tool_calls,max_duration_seconds=excluded.max_duration_seconds,max_retries=excluded.max_retries,start_on_demand=excluded.start_on_demand,stop_after_task=excluded.stop_after_task,completion_strategy=excluded.completion_strategy,concurrency_policy=excluded.concurrency_policy,max_concurrent_runs=excluded.max_concurrent_runs,planner_mode=excluded.planner_mode,approval_required=excluded.approval_required,max_delegation_depth=excluded.max_delegation_depth,warmup_seconds=excluded.warmup_seconds,keep_warm_seconds=excluded.keep_warm_seconds,resume_from_checkpoint=excluded.resume_from_checkpoint,token_budget=excluded.token_budget,runner=excluded.runner,flow_id=excluded.flow_id,flow_output_component=excluded.flow_output_component,approval_mode=excluded.approval_mode,external_app_id=excluded.external_app_id,external_input_key=excluded.external_input_key,review_mode=excluded.review_mode,review_base_ref=excluded.review_base_ref,review_head_ref=excluded.review_head_ref,review_path=excluded.review_path,review_exclude=excluded.review_exclude,review_fail_on=excluded.review_fail_on,orca_agents=excluded.orca_agents,tool_policy=excluded.tool_policy,updated_at=now()`,
-		item.AgentID, item.Description, success, failure, item.Constraints, item.MaxSteps, item.MaxToolCalls, item.MaxDurationSeconds, item.MaxRetries, item.StartOnDemand, item.StopAfterTask, item.CompletionStrategy, item.ConcurrencyPolicy, item.MaxConcurrentRuns, item.PlannerMode, item.ApprovalRequired, item.MaxDelegationDepth, item.WarmupSeconds, item.KeepWarmSeconds, item.ResumeFromCheckpoint, item.TokenBudget, runnerOrDefault(item.Runner), item.FlowID, item.FlowOutputComponent, approvalModeOrDefault(item.ApprovalMode), nullText(item.ExternalAppID), item.ExternalInputKey, reviewModeOrDefault(item.ReviewMode), item.ReviewBaseRef, item.ReviewHeadRef, item.ReviewPath, item.ReviewExclude, item.ReviewFailOn, item.OrcaAgents, toolPolicy)
+	_, err := s.pool.Exec(ctx, `INSERT INTO agent_goals(agent_id,description,success_criteria,failure_criteria,constraints,max_steps,max_tool_calls,max_duration_seconds,max_retries,start_on_demand,stop_after_task,completion_strategy,concurrency_policy,max_concurrent_runs,planner_mode,approval_required,max_delegation_depth,warmup_seconds,keep_warm_seconds,resume_from_checkpoint,token_budget,runner,flow_id,flow_output_component,approval_mode,external_app_id,external_input_key,review_mode,review_base_ref,review_head_ref,review_path,review_exclude,review_fail_on,orca_agents,agent_server_id,agent_server_zone,agent_server_dir,tool_policy)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38)
+		ON CONFLICT(agent_id) DO UPDATE SET description=excluded.description,success_criteria=excluded.success_criteria,failure_criteria=excluded.failure_criteria,constraints=excluded.constraints,max_steps=excluded.max_steps,max_tool_calls=excluded.max_tool_calls,max_duration_seconds=excluded.max_duration_seconds,max_retries=excluded.max_retries,start_on_demand=excluded.start_on_demand,stop_after_task=excluded.stop_after_task,completion_strategy=excluded.completion_strategy,concurrency_policy=excluded.concurrency_policy,max_concurrent_runs=excluded.max_concurrent_runs,planner_mode=excluded.planner_mode,approval_required=excluded.approval_required,max_delegation_depth=excluded.max_delegation_depth,warmup_seconds=excluded.warmup_seconds,keep_warm_seconds=excluded.keep_warm_seconds,resume_from_checkpoint=excluded.resume_from_checkpoint,token_budget=excluded.token_budget,runner=excluded.runner,flow_id=excluded.flow_id,flow_output_component=excluded.flow_output_component,approval_mode=excluded.approval_mode,external_app_id=excluded.external_app_id,external_input_key=excluded.external_input_key,review_mode=excluded.review_mode,review_base_ref=excluded.review_base_ref,review_head_ref=excluded.review_head_ref,review_path=excluded.review_path,review_exclude=excluded.review_exclude,review_fail_on=excluded.review_fail_on,orca_agents=excluded.orca_agents,agent_server_id=excluded.agent_server_id,agent_server_zone=excluded.agent_server_zone,agent_server_dir=excluded.agent_server_dir,tool_policy=excluded.tool_policy,updated_at=now()`,
+		item.AgentID, item.Description, success, failure, item.Constraints, item.MaxSteps, item.MaxToolCalls, item.MaxDurationSeconds, item.MaxRetries, item.StartOnDemand, item.StopAfterTask, item.CompletionStrategy, item.ConcurrencyPolicy, item.MaxConcurrentRuns, item.PlannerMode, item.ApprovalRequired, item.MaxDelegationDepth, item.WarmupSeconds, item.KeepWarmSeconds, item.ResumeFromCheckpoint, item.TokenBudget, runnerOrDefault(item.Runner), item.FlowID, item.FlowOutputComponent, approvalModeOrDefault(item.ApprovalMode), nullText(item.ExternalAppID), item.ExternalInputKey, reviewModeOrDefault(item.ReviewMode), item.ReviewBaseRef, item.ReviewHeadRef, item.ReviewPath, item.ReviewExclude, item.ReviewFailOn, item.OrcaAgents, nullText(item.AgentServerID), item.AgentServerZone, item.AgentServerDir, toolPolicy)
 	if err != nil {
 		return AgentGoal{}, err
 	}
@@ -482,7 +502,7 @@ func WithLegacyNames(item AgentGoal) AgentGoal {
 
 func runnerOrDefault(value string) string {
 	switch value {
-	case RunnerFlow, RunnerCLI, RunnerDify, RunnerACP, RunnerInvestigate, RunnerReview, RunnerOrca, RunnerRPC:
+	case RunnerFlow, RunnerCLI, RunnerDify, RunnerACP, RunnerInvestigate, RunnerReview, RunnerOrca, RunnerRPC, RunnerAgentServer:
 		return value
 	}
 	return RunnerProse

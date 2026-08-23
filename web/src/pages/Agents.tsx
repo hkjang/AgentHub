@@ -6,7 +6,7 @@ import { api } from '../api'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, GuidePanel, Loading, PageHeader, StatusBadge } from '../components/UI'
 import { useTerms } from '../viewmode'
 import { RUNNER_VERDICT_LABELS, RUNTIME_TYPES, descriptor, relativeTime, runnerExperienceOf, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
-import type { Agent, AgentGoal, AgentMemory, AgentRelease, AgentTrigger, AgentVersion, ExecutionMode, ExternalApp, MCPBundle, MCPServerRef, MCPToolPolicy, ModelEndpoint, RuntimeFlow, RuntimeProfile, Workspace } from '../types'
+import type { Agent, AgentGoal, AgentMemory, AgentRelease, AgentTrigger, AgentVersion, ExecutionMode, ExternalApp, MCPBundle, MCPServerRef, MCPToolPolicy, ModelEndpoint, RuntimeFlow, RuntimeProfile, UsableAgentServer, Workspace } from '../types'
 
 /** What the chosen way of running has done on this deployment.
  *
@@ -292,6 +292,7 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
   const [mcpServers,setMcpServers]=useState<MCPServerRef[]>([])
   const [flows,setFlows]=useState<RuntimeFlow[]>([])
   const [apps,setApps]=useState<ExternalApp[]>([])
+  const [servers,setServers]=useState<UsableAgentServer[]>([])
   const [flowError,setFlowError]=useState('')
   const [flowBusy,setFlowBusy]=useState(false)
   // What this agent's runtime can be handed a task with, straight from the
@@ -301,7 +302,7 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
 
   const load=useCallback(async()=>{
     try{
-      const [goalResult,triggerResult,memoryResult,policyResult,appResult]=await Promise.all([
+      const [goalResult,triggerResult,memoryResult,policyResult,appResult,serverResult]=await Promise.all([
         api.get<{goal:AgentGoal;executionMode:ExecutionMode}>(`/api/v1/agents/${agent.id}/goal`),
         api.get<{items?:AgentTrigger[]}>(`/api/v1/agents/${agent.id}/triggers`),
         api.get<{items?:AgentMemory[]}>(`/api/v1/agents/${agent.id}/memories`),
@@ -309,9 +310,14 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
         // Offered to every agent: an external application runs somewhere the
         // platform does not, so it does not depend on this agent's runtime.
         api.get<{items?:ExternalApp[]}>('/api/v1/external-apps'),
+        // Same reasoning as external apps: an agent server runs the work on a
+        // machine this deployment registered rather than starts, so what it can
+        // do has nothing to do with this agent's runtime.
+        api.get<{items?:UsableAgentServer[]}>('/api/v1/agent-servers'),
       ])
       setGoal(goalResult.goal); setMode(goalResult.executionMode); setTriggers(triggerResult.items??[]); setMemories(memoryResult.items??[])
       setPolicies(policyResult.items??[]); setMcpServers(policyResult.servers??[]); setApps(appResult.items??[])
+      setServers(serverResult.items??[])
     }catch(e){ setError(e instanceof Error?e.message:'목표 설정을 불러오지 못했습니다.') }
   },[agent.id])
   useEffect(()=>{void load()},[load])
@@ -401,7 +407,7 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
       </label>
       <label><span>제약</span><textarea rows={2} value={goal.constraints} onChange={(e)=>update({constraints:e.target.value})} placeholder="예) 운영 DB에 쓰기 금지"/></label>
 
-      {(runners.length>0||apps.length>0)&&<fieldset><legend>실행 방식</legend>
+      {(runners.length>0||apps.length>0||servers.length>0)&&<fieldset><legend>실행 방식</legend>
         <label><span>자동 실행이 하는 일 <RunnerVerdict runner={goal.runner??'prose'}/></span>
           <select value={goal.runner??'prose'} onChange={(e)=>update({runner:e.target.value as AgentGoal['runner']})}>
             <option value="prose">추론 루프 — 모델과 대화하며 진행하고, 런타임 작업은 사람에게 인계</option>
@@ -412,9 +418,12 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
             {runners.includes('rpc')&&<option value="rpc">프로토콜 실행 — 에이전트를 띄워 두고 대화하며 진행합니다</option>}
             {runners.includes('orca')&&<option value="orca">실행 패브릭 — 여러 코딩 에이전트를 각자 격리된 작업 사본에서 조정합니다</option>}
             {runners.includes('review')&&<option value="review">코드 리뷰 — 변경분을 리뷰해 파일·줄 단위 지적을 남기고, 정한 심각도 이상이면 작업을 실패로 판정합니다</option>}
+            {servers.length>0&&<option value="agentserver">에이전트 서버 — 등록한 서버가 자기 샌드박스에서 수행하고, 정책·모델·완료 판정은 플랫폼이 갖습니다</option>}
             {apps.length>0&&<option value="dify">외부 앱 실행 — 사내에 이미 있는 앱(Dify 등)에 작업을 맡김</option>}
           </select>
-          <small>{goal.runner==='dify'
+          <small>{goal.runner==='agentserver'
+            ?'작업을 등록한 에이전트 서버에 맡깁니다. 이 배포는 컨테이너를 띄우지 않습니다 — 대신 어떤 모델을 부를지, 무엇을 승인할지, 작업이 끝났는지는 그대로 플랫폼이 정합니다. 모델 호출은 이 배포의 게이트웨이로만 나가고, 서버가 보고한 사용량이 그대로 계량됩니다.'
+            :goal.runner==='dify'
             ?'플랫폼은 이 앱을 실행하지 않고 호출만 합니다. Runtime을 띄우지 않으며, 앱 안에서 일어나는 모델 호출은 그 배포의 몫이라 플랫폼 토큰 집계에 넣지 않습니다.'
             :goal.runner==='flow'
             ?'작업 입력이 흐름의 입력으로 들어가고, 흐름의 출력이 실행 기록과 완료 판정에 사용됩니다. 흐름 안에서 일어나는 모델 호출은 플랫폼이 계량하지 않습니다.'
@@ -444,6 +453,26 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
             <input value={goal.externalInputKey??''} onChange={(e)=>update({externalInputKey:e.target.value.trim()})} placeholder="예) query"/>
             <small>Workflow 앱은 이름 붙은 입력을 받습니다. 앱에서 정의한 변수 이름을 넣으세요. 비우면 <code>input</code> 을 사용합니다.</small>
           </label>}
+        </>}
+        {goal.runner==='agentserver'&&<>
+          <label><span>어디서 실행할지</span>
+            <select value={goal.agentServerId?`server:${goal.agentServerId}`:goal.agentServerZone?`zone:${goal.agentServerZone}`:''}
+              onChange={(e)=>{const v=e.target.value
+                update(v.startsWith('server:')?{agentServerId:v.slice(7),agentServerZone:''}
+                  :v.startsWith('zone:')?{agentServerId:'',agentServerZone:v.slice(5)}
+                  :{agentServerId:'',agentServerZone:''})}}>
+              <option value="">선택하세요</option>
+              {[...new Set(servers.map((s)=>s.networkZone).filter(Boolean))].map((zone)=>
+                <option key={`zone:${zone}`} value={`zone:${zone}`}>{zone} 네트워크 — 그 안에서 쓸 수 있는 서버를 고릅니다</option>)}
+              {servers.map((server)=><option key={server.id} value={`server:${server.id}`}>
+                {server.name}{server.networkZone?` · ${server.networkZone}`:''}{server.health==='healthy'?'':' · 연결 확인 필요'}</option>)}
+            </select>
+            <small>네트워크를 고르면 그 안에서 <b>연결이 확인된 서버</b>를 골라 보냅니다. 서버를 직접 고르면 그 서버에서만 실행되고, 그 서버가 꺼져 있으면 다른 곳으로 돌리지 않고 실패합니다 — 지정에는 이유가 있다고 보기 때문입니다.</small>
+          </label>
+          <label><span>작업 디렉터리 (선택)</span>
+            <input value={goal.agentServerDir??''} onChange={(e)=>update({agentServerDir:e.target.value.trim()})} placeholder="workspace/project"/>
+            <small>서버 작업 공간 안의 상대 경로입니다. 비우면 <code>workspace/project</code> 를 씁니다.</small>
+          </label>
         </>}
         {goal.runner==='orca'&&<>
           <label><span>동시에 붙일 에이전트</span>

@@ -183,7 +183,7 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 	if goal.Runner == "" {
 		goal.Runner = store.RunnerProse
 	}
-	if !contains([]string{store.RunnerProse, store.RunnerFlow, store.RunnerCLI, store.RunnerDify, store.RunnerACP, store.RunnerInvestigate, store.RunnerReview, store.RunnerOrca, store.RunnerRPC}, goal.Runner) {
+	if !contains([]string{store.RunnerProse, store.RunnerFlow, store.RunnerCLI, store.RunnerDify, store.RunnerACP, store.RunnerInvestigate, store.RunnerReview, store.RunnerOrca, store.RunnerRPC, store.RunnerAgentServer}, goal.Runner) {
 		return errors.New("실행 방식을 확인해 주세요")
 	}
 	// Kept whatever the runner is, so switching back and forth in the console does
@@ -210,6 +210,38 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 		}
 		if len(goal.ExternalInputKey) > 100 {
 			return errors.New("입력 변수 이름이 너무 깁니다")
+		}
+		return nil
+	}
+	goal.AgentServerID = strings.TrimSpace(goal.AgentServerID)
+	goal.AgentServerZone = strings.TrimSpace(goal.AgentServerZone)
+	goal.AgentServerDir = strings.TrimSpace(goal.AgentServerDir)
+	// An agent server is the other backend that starts nothing here. The machine
+	// is registered capacity somebody else runs, so this Goal needs no runtime and
+	// says nothing about the agent's runtime type.
+	if goal.Runner == store.RunnerAgentServer {
+		if goal.AgentServerID == "" && goal.AgentServerZone == "" {
+			return errors.New("작업을 맡길 에이전트 서버나 네트워크 구역을 지정해 주세요")
+		}
+		if goal.AgentServerID != "" && goal.AgentServerZone != "" {
+			return errors.New("에이전트 서버를 직접 지정했다면 네트워크 구역은 비워 주세요")
+		}
+		if strings.HasPrefix(goal.AgentServerDir, "/") || strings.Contains(goal.AgentServerDir, "..") {
+			// The directory is joined to the server's own workspace root. An absolute
+			// path or a climb out of it would put the agent somewhere on that machine
+			// that this deployment never meant to hand it.
+			return errors.New("작업 디렉터리는 서버 작업 공간 안의 상대 경로여야 합니다")
+		}
+		if len(goal.AgentServerDir) > 200 {
+			return errors.New("작업 디렉터리 경로가 너무 깁니다")
+		}
+		// The server has an approval gate of its own and this platform cannot yet
+		// answer it: a conversation runs to its end there and only the result comes
+		// back. A Goal that asks a person to approve each step would be accepted and
+		// then not honoured, which is worse than being told it cannot be — so it is
+		// refused here rather than silently downgraded.
+		if goal.ApprovalRequired {
+			return errors.New("에이전트 서버 실행은 아직 단계마다 사람 승인을 받을 수 없습니다. 승인 요구를 끄거나 다른 실행 방식을 선택해 주세요")
 		}
 		return nil
 	}

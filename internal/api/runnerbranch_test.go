@@ -90,6 +90,7 @@ func runnerConstantName(value string) string {
 		"RunnerProse": store.RunnerProse, "RunnerFlow": store.RunnerFlow, "RunnerCLI": store.RunnerCLI,
 		"RunnerDify": store.RunnerDify, "RunnerACP": store.RunnerACP, "RunnerInvestigate": store.RunnerInvestigate,
 		"RunnerReview": store.RunnerReview, "RunnerOrca": store.RunnerOrca, "RunnerRPC": store.RunnerRPC,
+		"RunnerAgentServer": store.RunnerAgentServer,
 	} {
 		if name == value {
 			return constant

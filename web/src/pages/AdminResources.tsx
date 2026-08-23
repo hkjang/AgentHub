@@ -12,7 +12,7 @@ import {
 } from "../components/UI";
 import { RUNTIME_TYPES, runtimeLabel } from "../runtime";
 
-type Kind = "profiles" | "images" | "models" | "apps" | "mcp" | "bundles";
+type Kind = "profiles" | "images" | "models" | "apps" | "mcp" | "bundles" | "servers";
 type Item = Record<string, unknown> & {
   id: string;
   name: string;
@@ -50,6 +50,13 @@ const meta: Record<
     endpoint: "external-apps",
     icon: Sparkles,
   },
+  servers: {
+    title: "에이전트 서버",
+    description:
+      "이 배포가 작업을 맡길 수 있는 서버입니다. 플랫폼이 띄우는 런타임이 아니라 이미 돌고 있는 기계라서, 어디에 있는지 — 개발망인지, 보안망인지 — 가 주소만큼 중요합니다. 등록한 뒤에는 연결 확인으로 실제로 대화를 시작할 수 있는 서버인지 물어보세요.",
+    endpoint: "agent-servers",
+    icon: Network,
+  },
   mcp: {
     title: "MCP 서버",
     description: "Shared, Dedicated, Sidecar MCP의 실행 및 승인 정책입니다.",
@@ -81,10 +88,20 @@ export function AdminResources({ kind }: { kind: Kind }) {
     setChecking(id);
     // The two registries answer the same question — is this thing actually there
     // — so they share one control and one place to read the answer.
-    const path = kind === "models" ? `/api/v1/admin/models/${id}/check` : `/api/v1/admin/mcp-servers/${id}/check`;
+    const path = kind === "models" ? `/api/v1/admin/models/${id}/check`
+      : kind === "servers" ? `/api/v1/admin/agent-servers/${id}/check`
+      : `/api/v1/admin/mcp-servers/${id}/check`;
     try {
-      const result = await api.post<{ verdict: string; detail: string; tools?: string[] }>(path);
-      setChecks((current) => ({ ...current, [id]: result }));
+      const result = await api.post<{ verdict?: string; detail?: string; tools?: string[]; health?: string; healthDetail?: string }>(path);
+      // An agent server answers with itself — what it is now, including what the
+      // check just found — so the whole card is refreshed rather than only the
+      // line under it.
+      setChecks((current) => ({ ...current, [id]: {
+        verdict: result.verdict ?? (result.health === "healthy" ? "ok" : "error"),
+        detail: result.detail ?? result.healthDetail ?? "",
+        tools: result.tools,
+      } }));
+      if (kind === "servers") void load();
     } catch (e) {
       setChecks((current) => ({
         ...current,
@@ -183,11 +200,13 @@ export function AdminResources({ kind }: { kind: Kind }) {
                 </p>
               )}
               <div className="card-actions">
-                {(kind === "models" || kind === "mcp") && (
+                {(kind === "models" || kind === "mcp" || kind === "servers") && (
                   <button
                     title={kind === "models"
                       ? "이 엔드포인트가 실제로 응답하는지, 지정한 모델을 제공하는지 확인합니다"
-                      : "이 서버가 실제로 응답하는지, 어떤 도구를 제공하는지 확인합니다"}
+                      : kind === "servers"
+                        ? "이 주소가 실제로 에이전트 서버인지, 대화를 시작할 수 있는지 확인합니다"
+                        : "이 서버가 실제로 응답하는지, 어떤 도구를 제공하는지 확인합니다"}
                     disabled={checking === String(item.id)}
                     onClick={() => void check(String(item.id))}
                   >
@@ -250,6 +269,7 @@ function summary(kind: Kind, item: Item) {
   if (kind === "images") return String(item.image || "");
   if (kind === "models") return String(item.baseUrl || "");
   if (kind === "apps") return String(item.description || item.baseUrl || "");
+  if (kind === "servers") return String(item.baseUrl || "");
   return String(item.description || item.endpoint || "MCP 구성");
 }
 function facts(kind: Kind, item: Item): [string, unknown][] {
@@ -284,6 +304,16 @@ function facts(kind: Kind, item: Item): [string, unknown][] {
       ["API 키", item.secretConfigured ? "설정됨" : "없음"],
       ["상태", item.enabled ? "Enabled" : "Disabled"],
     ];
+  if (kind === "servers")
+    return [
+      ["네트워크", item.networkZone || "구역 없음"],
+      ["동시 실행", item.capacity ? `${item.capacity}개` : "제한 없음"],
+      // What the last check found, and when. A row that says it works because
+      // somebody typed a URL is the claim this console keeps removing.
+      ["연결", item.checkedAt
+        ? `${healthWord(String(item.health))} · ${new Date(String(item.checkedAt)).toLocaleString("ko-KR")}`
+        : "아직 확인하지 않음"],
+    ];
   if (kind === "bundles")
     return [
       ["Servers", ((item.serverIds as string[]) || []).length],
@@ -304,6 +334,14 @@ function facts(kind: Kind, item: Item): [string, unknown][] {
     ["Risk", item.riskLevel],
     ["인증", auth],
   ];
+}
+
+// healthWord says what a check found in words rather than in a status name.
+function healthWord(health: string) {
+  return health === "healthy" ? "작업을 맡길 수 있음"
+    : health === "unreachable" ? "연결되지 않음"
+    : health === "refused" ? "에이전트 서버가 아님"
+    : "확인 필요";
 }
 
 function ResourceDrawer({
@@ -354,6 +392,15 @@ function ResourceDrawer({
               secret: "",
               enabled: true,
             }
+          : kind === "servers"
+            ? {
+                name: "",
+                baseUrl: "",
+                kind: "openhands",
+                networkZone: "",
+                capacity: 0,
+                enabled: true,
+              }
           : kind === "bundles"
             ? { name: "", description: "", serverIds: [], enabled: true }
             : {
@@ -607,6 +654,42 @@ function ResourceDrawer({
               form={form}
               update={update}
             />
+          </>
+        )}
+        {kind === "servers" && (
+          <>
+            <label>
+              <span>
+                주소 <b>*</b>
+              </span>
+              <input
+                required
+                type="url"
+                value={field("baseUrl")}
+                onChange={(e) => update("baseUrl", e.target.value)}
+                placeholder="http://agent-server.dev.internal:8000"
+              />
+              <small>에이전트 서버 API의 주소입니다. 등록한 뒤 <b>연결 확인</b>으로 실제로 대화를 시작할 수 있는지 확인하세요.</small>
+            </label>
+            <label>
+              <span>네트워크 구역</span>
+              <input
+                value={field("networkZone")}
+                onChange={(e) => update("networkZone", e.target.value)}
+                placeholder="예) dev, secure, gpu"
+              />
+              <small>이 배포가 쓰는 이름을 그대로 적으세요. 목표에서 구역을 고르면 그 안의 서버 중에서 고릅니다 — 보안망 작업이 개발망 기계로 새어 나가지 않게 하는 것이 이 칸의 목적입니다.</small>
+            </label>
+            <label>
+              <span>동시 실행 수</span>
+              <input
+                type="number"
+                min={0}
+                value={field("capacity")}
+                onChange={(e) => update("capacity", Number(e.target.value))}
+              />
+              <small>이 서버가 한 번에 들고 있을 대화 수입니다. 0 은 <b>모른다</b>는 뜻이고, 배치는 이를 제한 없음으로 봅니다.</small>
+            </label>
           </>
         )}
         {kind === "apps" && (

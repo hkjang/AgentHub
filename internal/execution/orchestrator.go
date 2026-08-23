@@ -274,6 +274,16 @@ func (o *Orchestrator) run(ctx context.Context, run *store.AgentRun, task store.
 			return outcome
 		}
 		return o.evaluate(ctx, run, task, agent, goal, model, transcript)
+	case store.RunnerAgentServer:
+		// Nothing was started here: the work is held on a machine this deployment
+		// registered rather than runs. Its answer is judged by the same criteria as
+		// any other backend's, which is what keeps the platform the authority on
+		// whether the task is done.
+		transcript, outcome := o.runAgentServer(ctx, run, task, agent, goal, model)
+		if outcome.Status != "" {
+			return outcome
+		}
+		return o.evaluate(ctx, run, task, agent, goal, model, transcript)
 	case store.RunnerOrca:
 		// The fabric's answer is what its own records say happened, and the
 		// evaluator judges that the way it judges any other backend's answer.
