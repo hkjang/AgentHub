@@ -245,6 +245,12 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 		// The mode still decides everything else.
 		return nil
 	}
+	if goal.Runner == store.RunnerRPC {
+		// Nothing more to ask. The conversation's bound is the Goal's own maximum
+		// duration, the model is the agent's, and what the agent may do is the
+		// runtime's security profile — none of which is a question at this form.
+		return nil
+	}
 	if goal.Runner == store.RunnerOrca {
 		// Names that could not be an agent id are dropped here rather than at the
 		// fabric, which would answer about flags instead of about the agent.
@@ -266,6 +272,14 @@ func validateRunner(goal *store.AgentGoal, runtimeType string) error {
 			return errors.New("사람 승인을 요구하는 목표에서는 승인 모드 yolo 를 쓸 수 없습니다. 승인 모드를 낮추거나 승인 요구를 끄세요. (ACP 실행에서는 플랫폼이 대신 물어볼 수 있어 함께 쓸 수 있습니다)")
 		}
 		return nil
+	}
+	// Everything that reaches here is the flow runner. It is the last branch
+	// rather than an explicit one, which is a trap: a runner added without its own
+	// branch falls in here and is told to pick a flow, which is nonsense for it and
+	// sends whoever saved it looking at the wrong screen. A guard checks that every
+	// runner the database accepts has a branch above this one.
+	if goal.Runner != store.RunnerFlow {
+		return fmt.Errorf("%s 실행 방식은 아직 이 화면에서 검사되지 않습니다", goal.Runner)
 	}
 	if goal.FlowID == "" {
 		return errors.New("실행할 흐름을 선택해 주세요")

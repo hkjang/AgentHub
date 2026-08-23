@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, Bot, Check, ClipboardList, Clock3, Coins, ExternalLink, ListChecks, Play, Plus, Radio, RefreshCw, RotateCcw, Square, Terminal } from 'lucide-react'
 import { api } from '../api'
 import { ReviewFindings } from '../components/ReviewFindings'
+import { RunDirectives } from '../components/RunDirectives'
 import { useAuth } from '../App'
 import { Link } from 'react-router-dom'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, GuideLegend, GuidePanel, Loading, PageHeader, StatusBadge, SuccessBanner, statusLabel, useEscape } from '../components/UI'
@@ -534,6 +535,8 @@ export function RunDrawer({ runId, close }: { runId: string; close: () => void }
     {plan && <section className="detail-section"><h4>실행 계획 <small>{plan.mode}</small></h4>
       <pre className="runtime-log-preview custom-scroll">{JSON.stringify(plan.steps, null, 1)}</pre>
     </section>}
+
+    {(steps.some((step) => step.type === 'rpc') || !run.finishedAt) && <RunDirectives runId={run.id} live={!run.finishedAt} />}
 
     {steps.some((step) => step.type === 'review') && <ReviewFindings runId={run.id} />}
 

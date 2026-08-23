@@ -219,6 +219,17 @@ func (o *Orchestrator) speakRPC(ctx context.Context, run *store.AgentRun, sessio
 		return result, fmt.Errorf("에이전트에 작업을 전달하지 못했습니다: %w", err)
 	}
 
+	// What somebody says to this run while it is going, delivered between events.
+	//
+	// A person at a browser cannot reach a conversation held by a worker process,
+	// so the platform carries it: the API records what they said and this puts it
+	// into the conversation. Between events rather than at any moment, because a
+	// line written into the middle of another would corrupt the conversation it
+	// is meant to steer.
+	directives, stopDirectives := context.WithCancel(ctx)
+	defer stopDirectives()
+	go o.deliverDirectives(directives, run, session)
+
 	deadline := time.Now().Add(rpcTimeout(goal))
 	lines := bufio.NewScanner(session.Stdout)
 	lines.Buffer(make([]byte, 0, 64*1024), rpcMaxLine)
@@ -239,6 +250,17 @@ func (o *Orchestrator) speakRPC(ctx context.Context, run *store.AgentRun, sessio
 					return result, errors.New("에이전트가 작업을 받아들이지 않았습니다: " + trimmed(event.Error, 200))
 				}
 				accepted = true
+			}
+			if event.Command == "steer" || event.Command == "follow_up" {
+				// The agent answering is what makes a directive delivered. A
+				// refusal recorded as a delivery would tell the person their words
+				// landed when the agent turned them down.
+				if event.Success != nil && !*event.Success {
+					o.logger.Warn("an agent refused a directive", "run", run.ID, "kind", event.Command, "error", event.Error)
+					o.event(ctx, *run, "rpc.directive_refused", "에이전트가 지시를 받아들이지 않았습니다: "+trimmed(event.Error, 160), map[string]any{
+						"kind": event.Command,
+					})
+				}
 			}
 			if event.Command == "get_state" {
 				result.SessionID = event.Data.SessionID
@@ -275,6 +297,62 @@ func (o *Orchestrator) speakRPC(ctx context.Context, run *store.AgentRun, sessio
 	// The stream ended without the agent saying it had settled, which is the
 	// process dying rather than the work finishing.
 	return result, errors.New("에이전트가 끝났다고 알리기 전에 연결이 끊겼습니다: " + trimmed(session.Stderr(), 200))
+}
+
+// deliverDirectives says what people have asked to say, until the run ends.
+//
+// It writes rather than reads: the conversation's answers come back on the same
+// stream everything else does, so a directive's acknowledgement is read by the
+// loop that reads everything, and this half only has to put the line in.
+//
+// The interval is a compromise nobody escapes: a person redirecting an agent
+// wants it heard now, and a query per second per running task is a cost the
+// database pays for every task whether or not anybody is watching. Two seconds
+// is close enough to now for somebody typing, and cheap enough to leave on.
+func (o *Orchestrator) deliverDirectives(ctx context.Context, run *store.AgentRun, session *appRuntime.Session) {
+	ticker := time.NewTicker(rpcDirectiveInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			pending, err := o.store.TakeRunDirectives(ctx, run.ID)
+			if err != nil {
+				// An unreadable database is not a reason to end a run. The
+				// directive stays unclaimed and the next tick tries again.
+				o.logger.Warn("directives for a running agent could not be read", "run", run.ID, "error", err)
+				continue
+			}
+			for _, directive := range pending {
+				line, marshalErr := json.Marshal(map[string]any{"type": directive.Kind, "message": directive.Message})
+				if marshalErr != nil {
+					continue
+				}
+				if _, writeErr := session.Stdin.Write(append(line, '\n')); writeErr != nil {
+					// The conversation is gone. Saying so on the directive is what
+					// tells the person their words never arrived — the delivered
+					// timestamp alone would claim they did.
+					_ = o.store.RecordDirectiveOutcome(context.WithoutCancel(ctx), directive.ID, "전달하지 못했습니다: "+writeErr.Error())
+					return
+				}
+				o.event(ctx, *run, "rpc.directive", directiveNote(directive), map[string]any{
+					"kind": directive.Kind, "directiveId": directive.ID,
+				})
+			}
+		}
+	}
+}
+
+// rpcDirectiveInterval is how long somebody's words may wait.
+const rpcDirectiveInterval = 2 * time.Second
+
+// directiveNote is what the run's timeline says about one.
+func directiveNote(directive store.RunDirective) string {
+	if directive.Kind == "follow_up" {
+		return "이어서 할 일을 전달했습니다: " + trimmed(directive.Message, 120)
+	}
+	return "진행 방향을 바꿔 전달했습니다: " + trimmed(directive.Message, 120)
 }
 
 // readOneRPCResponse reads until the state answer, so the endpoint check does not

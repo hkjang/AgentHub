@@ -134,6 +134,8 @@ func (s *Server) apiRoutes() []Route {
 		read("/capabilities", "Platform", "Features enabled on this deployment", s.capabilities),
 		read("/templates", "Platform", "Published Agent templates", s.templates),
 		read("/review-findings", "Code Review", "What every review has found and nobody has dealt with", s.reviewFindingList),
+		write(http.MethodPost, "/runs/{id}/steer", "Runs", "Say something to an agent that is still working", s.steerRun),
+		read("/runs/{id}/directives", "Runs", "What has been said to a run, and whether it arrived", s.runDirectives),
 		read("/runs/{id}/review", "Code Review", "What a code review found, and what it covered", s.reviewFindings),
 		write(http.MethodPost, "/review-findings/{id}/decision", "Code Review", "Accept, dismiss or close one finding", s.decideReviewFinding),
 		write(http.MethodPost, "/review-findings/{id}/fix", "Code Review", "Hand one finding to an agent that can change files", s.fixReviewFinding),

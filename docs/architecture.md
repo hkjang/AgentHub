@@ -1306,6 +1306,38 @@ Whether the agent would send an image at all was not assumed. A live test runs
 the real BrowserCode agent against a real Chromium, has it capture the page, and
 fails if what arrives is a sentence about a screenshot rather than a PNG.
 
+## Getting a person's words into a running conversation
+
+The person is at a browser. The conversation is held by a worker process
+somewhere else, possibly on another machine. Nothing connects them, which is why
+the only thing that could previously be done to a running task was to cancel it.
+
+The path is a table, and it follows the shape cancellation already uses: the API
+records what somebody said, and the worker notices between events. Between
+events rather than at any moment, because a line written into the middle of
+another would corrupt the very conversation it is meant to steer.
+
+Three things are kept apart on purpose.
+
+**Asked is not delivered.** The request records what somebody said; the delivery
+timestamp records that it was said. A console showing the first as the second
+would be claiming the agent had heard, so the screen shows "전달 대기" until the
+worker picks it up.
+
+**Delivered is not accepted.** The agent answers each directive, and a refusal
+recorded as a delivery would tell the person their words landed when the agent
+turned them down. The answer goes on the directive and on the run's timeline.
+
+**A finished run refuses.** Accepting a directive for work that has ended would
+leave somebody watching a line that is never delivered and never explained, so it
+is a not-found — the same answer as a run that is not theirs, because which run
+belongs to whom is not something to learn by asking.
+
+Claiming is done in the statement that returns the rows, so a worker that reads
+twice does not say the same thing twice. Being told "actually, do it the other
+way" a second time is worse than not being told, because the agent acts on it
+again.
+
 ## Speaking to an agent while it works
 
 The headless backend starts a command and waits for it. This one keeps a process
