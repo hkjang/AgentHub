@@ -126,6 +126,14 @@ func (o *Orchestrator) runOrca(ctx context.Context, run *store.AgentRun, task st
 	record.Output = inspected
 	if fabricErr != nil {
 		record.Status, record.Error = "failed", fabricErr.Error()
+		if inspectErr != nil {
+			// Two things went wrong and only one of them was being said. A run
+			// cancelled while its workers' words were refused stored an empty
+			// step and "워커 실행이 취소됐습니다" — measured live — so the empty
+			// step read as a run that produced nothing, when what happened is
+			// that the platform would not keep what it produced.
+			record.Error += " — " + inspectErr.Error()
+		}
 		if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 			o.logger.Error("orca step could not be recorded", "run", run.ID, "error", storeErr)
 		}
@@ -470,8 +478,12 @@ func (s *orcaSession) waitForWorkers(ctx context.Context, workers []orcaWorkerRe
 
 	settled := make(map[string]string, len(workers))
 	details := make(map[string]string, len(workers))
+	var latest map[string]orcaWorkerState
 	for {
 		states := s.workerStates(ctx)
+		if states != nil {
+			latest = states
+		}
 		for _, worker := range workers {
 			if _, done := settled[worker.Agent]; done {
 				continue
@@ -501,17 +513,90 @@ func (s *orcaSession) waitForWorkers(ctx context.Context, workers []orcaWorkerRe
 		}
 		select {
 		case <-ctx.Done():
+			s.gatherUnfinished(ctx, workers, settled, details, latest)
 			// The same sentence every other in-Pod backend gives, rather than
 			// "context deadline exceeded" — which is what this said until a live
 			// run produced exactly that.
 			return orcaWorkerSummary(workers, settled, details),
 				errors.New(runtimeExecFailure("워커 실행", ctx.Err(), goal))
 		case <-deadline.C:
+			s.gatherUnfinished(ctx, workers, settled, details, latest)
 			return orcaWorkerSummary(workers, settled, details),
 				errors.New("워커가 최대 실행 시간 안에 끝나지 않았습니다. 런타임 터미널에서 `orca status --json` 으로 이어서 확인할 수 있습니다")
 		case <-ticker.C:
 		}
 	}
+}
+
+// gatherUnfinished asks each worker that has not settled what it has said.
+//
+// A worker that has not settled is not a worker that has done nothing. The
+// fabric keeps its transcript and hands it back on request, and this platform
+// never asked: a run that ended on its time limit reported "codex: 아직 끝나지
+// 않았습니다" and threw away an answer that was sitting there. Measured on a
+// cluster — the worker's transcript held the answer while the run reported
+// nothing but a state.
+//
+// It reads on a context of its own because one of the two callers is the branch
+// where the run's context has just expired, and reading on that would fetch
+// nothing at exactly the moment there is something to fetch. The transcript is
+// only readable while the worker's process is alive, which is what an unsettled
+// worker is; a settled one's is already gone, and its own record says why it
+// ended.
+func (s *orcaSession) gatherUnfinished(ctx context.Context, workers []orcaWorkerRef, settled, details map[string]string, latest map[string]orcaWorkerState) {
+	if len(latest) == 0 {
+		return
+	}
+	read, cancel := recordContext(ctx)
+	defer cancel()
+	for _, worker := range workers {
+		if _, done := settled[worker.Agent]; done {
+			continue
+		}
+		state, found := latest[worker.WorkerName]
+		if !found || state.dispatchID == "" {
+			continue
+		}
+		if words := s.lastWords(read, state.dispatchID); words != "" {
+			details[worker.Agent] = words
+		}
+	}
+}
+
+// lastWords is the most recent thing a worker said, from the fabric's own
+// transcript of it.
+func (s *orcaSession) lastWords(ctx context.Context, dispatchID string) string {
+	var read struct {
+		Transcript struct {
+			Messages []struct {
+				Role   string `json:"role"`
+				Blocks []struct {
+					Text string `json:"text"`
+				} `json:"blocks"`
+			} `json:"messages"`
+		} `json:"transcript"`
+	}
+	if err := s.call(ctx, &read, "orchestration", "worker-read", "--dispatch", dispatchID, "--limit", "8", "--json"); err != nil {
+		// A worker whose process has gone answers `worker_identity_changed`, and
+		// not knowing what it said is not worth failing a run over.
+		return ""
+	}
+	messages := read.Transcript.Messages
+	for i := len(messages) - 1; i >= 0; i-- {
+		if !strings.EqualFold(strings.TrimSpace(messages[i].Role), "assistant") {
+			continue
+		}
+		var said []string
+		for _, block := range messages[i].Blocks {
+			if text := strings.TrimSpace(block.Text); text != "" {
+				said = append(said, text)
+			}
+		}
+		if len(said) > 0 {
+			return strings.Join(said, "\n")
+		}
+	}
+	return ""
 }
 
 // orcaWorkerSummary is one line per worker, in the fabric's own words.
@@ -520,7 +605,11 @@ func orcaWorkerSummary(workers []orcaWorkerRef, settled, details map[string]stri
 	for _, worker := range workers {
 		state, ok := settled[worker.Agent]
 		if !ok {
-			lines = append(lines, worker.Agent+": 아직 끝나지 않았습니다")
+			line := worker.Agent + ": 아직 끝나지 않았습니다"
+			if detail := strings.TrimSpace(details[worker.Agent]); detail != "" {
+				line += " — " + trimmed(detail, 200)
+			}
+			lines = append(lines, line)
 			continue
 		}
 		line := worker.Agent + ": " + state

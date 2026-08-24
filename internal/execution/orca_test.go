@@ -256,3 +256,80 @@ func TestEveryStateTheFabricSettlesIsAnEnding(t *testing.T) {
 		t.Error("a worker the fabric gave up on is counted as one that did the work")
 	}
 }
+
+// A worker that has not settled is not a worker that has done nothing.
+//
+// The fabric keeps each worker's transcript and hands it back on request, and
+// this platform never asked. A run that ended on its Goal's time limit said
+// "codex: 아직 끝나지 않았습니다" and nothing else — while the fabric's own
+// transcript of that worker held its answer, measured on a cluster.
+//
+// The transcript can only be read while the worker's process is alive, which is
+// what an unsettled worker is. That makes the run's last moment the only chance
+// to read it, including the moment its context has just expired.
+func TestWhatAnUnfinishedWorkerSaidIsGathered(t *testing.T) {
+	body, err := os.ReadFile("orca.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	at := strings.Index(source, "func (s *orcaSession) waitForWorkers(")
+	if at < 0 {
+		t.Fatal("the wait is gone; this guard is reading nothing")
+	}
+	wait := source[at:]
+	if end := strings.Index(wait, "\n// gatherUnfinished"); end >= 0 {
+		wait = wait[:end]
+	}
+	// Both ways out of the wait, because the one that mattered most in practice
+	// is the Goal's limit and the one that is easiest to forget is cancellation.
+	if strings.Count(wait, "s.gatherUnfinished(ctx, workers, settled, details, latest)") != 2 {
+		t.Error("a way out of the wait reports states without asking what the workers said")
+	}
+	if !strings.Contains(source, `"worker-read"`) {
+		t.Error("the fabric's transcript is never read, so an unfinished worker's answer is thrown away")
+	}
+	gather := source[strings.Index(source, "func (s *orcaSession) gatherUnfinished("):]
+	if end := strings.Index(gather, "\n// lastWords"); end >= 0 {
+		gather = gather[:end]
+	}
+	if !strings.Contains(gather, "recordContext(ctx)") {
+		t.Error("the transcript is read on the run's own context, which has expired in the branch that needs it most")
+	}
+	// And the line for an unfinished worker has somewhere to put it.
+	summary := source[strings.Index(source, "func orcaWorkerSummary("):]
+	if end := strings.Index(summary, "\n}\n"); end >= 0 {
+		summary = summary[:end]
+	}
+	unfinished := strings.Index(summary, "아직 끝나지 않았습니다")
+	detail := strings.Index(summary, "details[worker.Agent]")
+	if unfinished < 0 || detail < 0 || detail > strings.LastIndex(summary, "아직 끝나지 않았습니다")+400 && detail < unfinished {
+		t.Error("an unfinished worker's line has no room for what it said")
+	}
+}
+
+// Two things can go wrong at once, and only one of them was being said.
+//
+// A run cancelled while the scanner refused its workers' words stored an empty
+// step whose only explanation was "워커 실행이 취소됐습니다" — measured on a
+// cluster, with a card number in the fabric's summary. The output was dropped
+// for a reason nothing recorded, so an empty step read as a run that produced
+// nothing rather than one whose product was withheld.
+func TestARefusalIsSaidEvenWhenSomethingElseFailedToo(t *testing.T) {
+	body, err := os.ReadFile("orca.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	at := strings.Index(source, "if fabricErr != nil {")
+	if at < 0 {
+		t.Fatal("the fabric's failure path is gone; this guard is reading nothing")
+	}
+	branch := source[at:]
+	if end := strings.Index(branch, "\n\tif inspectErr != nil {"); end >= 0 {
+		branch = branch[:end]
+	}
+	if !strings.Contains(branch, "inspectErr") {
+		t.Error("a run that failed and was also refused records only the failure, so the missing output has no explanation")
+	}
+}

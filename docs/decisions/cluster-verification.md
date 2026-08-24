@@ -140,8 +140,12 @@ and each of them cost a run that proved nothing:
    the fabric's deadline for the whole fan-out, and a run that hits it reports a
    timeout rather than anything about the answer.
 
-**Still unproven:** that a fabric answer carrying sensitive text is refused
-before it is stored. The ordering is guarded and mutation-proven in
-`inspectorder_test.go`, and the same inspector is proven live on the ACP
-backend, but no orca run has yet produced an answer to block — the workers reach
-a terminal state now, and not a successful one.
+**Proven since:** a fabric answer carrying sensitive text is refused before it
+is stored. Once the platform gathered what its workers said, a card number in a
+worker's own words produced an empty step, the refusal recorded beside the
+cancellation, and no trace of the number in any step or event.
+
+**Why a worker rarely settles here:** the fabric tells each worker to report
+with `worker_done --outcome succeeded|failed`, exactly once. A real agent does
+it; the stub gateway answers one line and stops, so its workers stay `ready`
+until the Goal's limit. That is the rig, not the platform.
