@@ -62,7 +62,16 @@ func NewModel(db *store.Store, logger *slog.Logger) *Model {
 // the way in and the answer on the way out are inspected here — this is the last
 // place it can.
 func NewFlow(db *store.Store, logger *slog.Logger) *Model {
-	return &Model{store: db, logger: logger, action: policy.ActionWorkflowRun, event: "dlp.flow", subject: "흐름"}
+	// The subject is "에이전트" rather than "흐름" because this one inspector
+	// guards every backend the worker runs — cli, acp, rpc, orca, review and the
+	// agent server all pass their text through it. Naming it after the flow
+	// backend told somebody running an ACP agent that their "흐름 요청" had been
+	// blocked, which is a boundary they never used and a word they cannot act on.
+	//
+	// The event type stays dlp.flow: it is what past runs were recorded under,
+	// and a timeline that renames its own history is worse than one with an old
+	// name in it.
+	return &Model{store: db, logger: logger, action: policy.ActionWorkflowRun, event: "dlp.flow", subject: "에이전트"}
 }
 
 // config returns the scanner settings and the policy, cached.

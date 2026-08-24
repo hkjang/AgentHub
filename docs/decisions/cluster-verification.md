@@ -58,6 +58,7 @@ a platform bug until it is understood:
 | Forge credential check | a stored token is checked at save time and the account name comes back |
 | `orca` backend | the fabric creates its run, task and worktree in the runtime's own repository — after the mount that made that possible |
 | `rpc` backend | task completes with the agent's answer and real token usage; the agent declares its own tools to the gateway |
+| Content inspection | a card number in a task's input is blocked before it reaches the agent, the run says which class was found, and the task is not retried |
 | Refusing a tool | rejecting the approval stops the tool: the file is not written, and the run says the refusal is why the agent had nothing to say |
 | Tool approval on an in-Pod agent | with `사람 승인 요구` on, the agent's write is held: the run waits, AgentHub raises a pending approval naming the file, approving it lets the tool run — the file appears in the Pod — and the task completes |
 | Cancelling a running task | the stop button ends an in-Pod agent — checked on `rpc` and on `acp`, with the agent genuinely working first: the task and the run both read cancelled and no agent process is left in the Pod |
