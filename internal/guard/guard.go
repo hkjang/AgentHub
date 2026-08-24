@@ -28,6 +28,10 @@ import (
 // not a change anybody notices — while a database round trip per call would be.
 const settingsTTL = 5 * time.Second
 
+// settingsRead bounds the configuration read itself, which is a single row and
+// must not be able to hold a run open.
+const settingsRead = 3 * time.Second
+
 // Model is the inspector for text leaving the platform on a model call — and,
 // with NewFlow, for text handed to a runtime's own engine to execute. The two
 // differ only in which policy action decides and which audit trail records it;
@@ -87,15 +91,31 @@ func (m *Model) config(ctx context.Context) (dlp.Settings, policy.Document) {
 	if time.Now().Before(m.until) {
 		return m.settings, m.document
 	}
+	// The configuration is read on a context of its own. It was read on the
+	// caller's, and a caller is one task: when a run reached its time limit, the
+	// read failed with that run's expired deadline and the scanner reported
+	// itself unconfigured — measured live, as "DLP settings are unreadable; text
+	// is not being scanned" logged for a task that had merely run long. One
+	// task's clock is not a reason to stop inspecting anybody else's text.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), settingsRead)
+	defer cancel()
 	var settings dlp.Settings
+	failed := false
 	if err := m.store.Setting(ctx, dlp.SettingKey, &settings); err != nil && !errors.Is(err, store.ErrNotFound) {
 		m.logger.Warn("DLP settings are unreadable; text is not being scanned", "error", err)
-		settings = dlp.Settings{}
+		settings, failed = dlp.Settings{}, true
 	}
 	var document policy.Document
 	if err := m.store.Setting(ctx, policy.SettingKey, &document); err != nil && !errors.Is(err, store.ErrNotFound) {
 		m.logger.Warn("policy is unreadable; data class rules are not being applied", "error", err)
-		document = policy.Document{}
+		document, failed = policy.Document{}, true
+	}
+	// A failed read is not cached. Not scanning is the documented answer to a
+	// configuration nobody can read, but holding that answer for the full TTL
+	// would turn one unreadable moment into a window in which every other run
+	// goes uninspected, and would hide the cause: the next caller reads again.
+	if failed {
+		return settings, document
 	}
 	m.settings, m.document, m.until = settings, document, time.Now().Add(settingsTTL)
 	return settings, document

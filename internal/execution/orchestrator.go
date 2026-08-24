@@ -430,7 +430,7 @@ func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task stor
 		if err != nil {
 			record.Status, record.Error = "failed", err.Error()
 		}
-		if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
+		if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 			o.logger.Error("run step could not be recorded", "run", run.ID, "error", storeErr)
 		}
 		// The count is this attempt's own work; what it inherited is recorded
@@ -478,7 +478,7 @@ func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task stor
 				return transcript, Outcome{Status: store.TaskFailed, Failure: "런타임 인계를 기록하지 못했습니다: " + err.Error(), Retryable: true}
 			}
 			sequence++
-			if _, storeErr := o.store.AppendRunStep(ctx, store.AgentRunStep{
+			if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), store.AgentRunStep{
 				RunID: run.ID, Sequence: sequence, Type: "completion",
 				Title: "런타임 인계 요청", Output: note, Status: "succeeded",
 			}); storeErr != nil {
@@ -501,7 +501,7 @@ func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task stor
 			// Recorded as a step of its own, so a resumed attempt inherits what was
 			// delegated instead of handing the same work over a second time.
 			sequence++
-			if _, storeErr := o.store.AppendRunStep(ctx, store.AgentRunStep{
+			if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), store.AgentRunStep{
 				RunID: run.ID, Sequence: sequence, Type: "delegation",
 				Title: fmt.Sprintf("위임 %d건", len(delegations)), Output: note, Status: "succeeded",
 			}); storeErr != nil {
@@ -536,7 +536,33 @@ func (o *Orchestrator) complete(ctx context.Context, step workflow.Step, prompt 
 	return output, workflow.Usage{}, err
 }
 
+// recordContext detaches a write from the run it describes. A step and the
+// event that says what happened are written after the run ends, and when it
+// ended because its own deadline passed, that expired context would throw away
+// the only account of it: measured live, an orca run that reached its time
+// limit stored no step at all and logged "orca step could not be recorded:
+// context deadline exceeded" — the person saw a failed task with an empty
+// timeline, in exactly the case where they most needed to read what happened.
+//
+// The values (the tenant, the trace) are kept; only the cancellation is
+// dropped, and a short deadline of its own keeps a broken database from holding
+// a worker open.
+func recordContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+}
+
+// recordStepContext is recordContext for the step writes, which are statements
+// rather than calls and so cannot hand back a cancel. The timeout still bounds
+// them; the context is released when it fires.
+func recordStepContext(ctx context.Context) context.Context {
+	detached, cancel := recordContext(ctx)
+	time.AfterFunc(10*time.Second, cancel)
+	return detached
+}
+
 func (o *Orchestrator) event(ctx context.Context, run store.AgentRun, eventType, message string, details any) {
+	ctx, cancel := recordContext(ctx)
+	defer cancel()
 	if err := o.store.AppendRunEvent(ctx, run.ID, run.TaskID, eventType, message, details); err != nil {
 		o.logger.Warn("run event could not be recorded", "run", run.ID, "type", eventType, "error", err)
 	}

@@ -54,7 +54,7 @@ func (o *Orchestrator) plan(ctx context.Context, run *store.AgentRun, task store
 	output, usage, err := o.complete(ctx, step, b.String())
 	run.TotalTokens += usage.TotalTokens
 	run.StepCount++
-	if _, storeErr := o.store.AppendRunStep(ctx, store.AgentRunStep{
+	if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), store.AgentRunStep{
 		RunID: run.ID, Sequence: run.StepCount, Type: "plan", Title: "실행 계획",
 		Input: b.String(), Output: output, Status: stepStatus(err), Error: errorText(err),
 		PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,

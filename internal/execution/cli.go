@@ -102,7 +102,7 @@ func (o *Orchestrator) runCLI(ctx context.Context, run *store.AgentRun, task sto
 	run.StepCount = 1
 	if execErr != nil {
 		record.Status, record.Error = "failed", execErr.Error()
-		if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
+		if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 			o.logger.Error("cli step could not be recorded", "run", run.ID, "error", storeErr)
 		}
 		o.event(ctx, *run, "cli.failed", execErr.Error(), map[string]any{"runtimeId": acquired.runtimeID})
@@ -126,7 +126,7 @@ func (o *Orchestrator) runCLI(ctx context.Context, run *store.AgentRun, task sto
 	if parseErr != nil {
 		record.Status, record.Error = "failed", parseErr.Error()
 	}
-	if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
+	if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 		o.logger.Error("cli step could not be recorded", "run", run.ID, "error", storeErr)
 	}
 	// Unlike a flow, this reports real usage, so it is metered like any other work

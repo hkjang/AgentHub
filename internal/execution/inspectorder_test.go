@@ -25,6 +25,14 @@ func TestAnAnswerIsScannedBeforeItIsStored(t *testing.T) {
 		"rpc.go":         {"Output:       inspected,", "Output:       result.Answer,"},
 		"agentserver.go": {"Output: inspected,", "Output: result.Answer,"},
 		"investigate.go": {"record.Output = inspected", "record.Output = report.Conclusion"},
+		// flow and dify are why the inspector exists, and they were the two this
+		// guard did not name — so the fix that closed every other backend left
+		// them open and the guard reported success.
+		"flow.go": {"Output: inspected, Status:", "Output: answer, Status:"},
+		"dify.go": {"Output: inspected, Status:", "Output: answer, Status:"},
+		// The fabric's summary quotes each worker's own last words, and orca had
+		// no inbound scan at all — only its prompt was ever read.
+		"orca.go": {"record.Output = inspected", "record.Output = summary"},
 	} {
 		body, err := os.ReadFile(file)
 		if err != nil {

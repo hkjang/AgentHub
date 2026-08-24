@@ -117,7 +117,7 @@ func (o *Orchestrator) runAgentServer(ctx context.Context, run *store.AgentRun, 
 	}
 	if convErr != nil {
 		record.Status, record.Error = "failed", convErr.Error()
-		if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
+		if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 			o.logger.Error("agent server step could not be recorded", "run", run.ID, "error", storeErr)
 		}
 		o.event(ctx, *run, "agentserver.failed", convErr.Error(), map[string]any{
@@ -133,7 +133,7 @@ func (o *Orchestrator) runAgentServer(ctx context.Context, run *store.AgentRun, 
 		}
 		return nil, Outcome{Status: store.TaskFailed, Failure: convErr.Error(), Retryable: agentServerRetryable(convErr)}
 	}
-	if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
+	if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 		o.logger.Error("agent server step could not be recorded", "run", run.ID, "error", storeErr)
 	}
 

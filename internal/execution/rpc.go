@@ -168,7 +168,7 @@ func (o *Orchestrator) runRPC(ctx context.Context, run *store.AgentRun, task sto
 	}
 	if convErr != nil {
 		record.Status, record.Error = "failed", convErr.Error()
-		if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
+		if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 			o.logger.Error("rpc step could not be recorded", "run", run.ID, "error", storeErr)
 		}
 		o.event(ctx, *run, "rpc.failed", convErr.Error(), map[string]any{
@@ -176,7 +176,7 @@ func (o *Orchestrator) runRPC(ctx context.Context, run *store.AgentRun, task sto
 		})
 		return nil, Outcome{Status: store.TaskFailed, Failure: convErr.Error(), Retryable: rpcRetryable(convErr)}
 	}
-	if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
+	if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 		o.logger.Error("rpc step could not be recorded", "run", run.ID, "error", storeErr)
 	}
 

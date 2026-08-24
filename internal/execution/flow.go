@@ -99,14 +99,17 @@ func (o *Orchestrator) runFlow(ctx context.Context, run *store.AgentRun, task st
 	elapsed := time.Since(startedAt).Milliseconds()
 	telemetry.Fail(span, err)
 
+	inspected, inspectErr := o.inspectAnswer(ctx, step, answer)
 	record := store.AgentRunStep{
 		RunID: run.ID, Sequence: sequence, Type: store.StepFlow,
-		Title: "흐름 실행", Input: input, Output: answer, Status: "succeeded", DurationMs: elapsed,
+		Title: "흐름 실행", Input: input, Output: inspected, Status: "succeeded", DurationMs: elapsed,
 	}
 	if err != nil {
 		record.Status, record.Error = "failed", err.Error()
+	} else if inspectErr != nil {
+		record.Status, record.Error, record.Output = "failed", inspectErr.Error(), ""
 	}
-	if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
+	if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 		o.logger.Error("flow step could not be recorded", "run", run.ID, "error", storeErr)
 	}
 	run.StepCount = sequence
@@ -115,13 +118,10 @@ func (o *Orchestrator) runFlow(ctx context.Context, run *store.AgentRun, task st
 		return nil, Outcome{Status: store.TaskFailed, Failure: err.Error(), Retryable: retryableFlowError(err)}
 	}
 
-	if o.flowInspector != nil {
-		scanned, scanErr := o.flowInspector.Inbound(ctx, step, answer)
-		if scanErr != nil {
-			return nil, Outcome{Status: store.TaskFailed, Failure: scanErr.Error(), Retryable: !errors.Is(scanErr, workflow.ErrBlocked)}
-		}
-		answer = scanned
+	if inspectErr != nil {
+		return nil, Outcome{Status: store.TaskFailed, Failure: inspectErr.Error(), Retryable: !errors.Is(inspectErr, workflow.ErrBlocked)}
 	}
+	answer = inspected
 
 	// Whatever the runtime said about tokens is passed through as it said it. The
 	// platform does not meter a flow's model calls — they happen inside the flow,

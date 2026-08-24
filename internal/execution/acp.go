@@ -137,7 +137,7 @@ func (o *Orchestrator) runACP(ctx context.Context, run *store.AgentRun, task sto
 	if runErr != nil {
 		record.Status, record.Error = "failed", runErr.Error()
 	}
-	if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
+	if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 		o.logger.Error("acp step could not be recorded", "run", run.ID, "error", storeErr)
 	}
 	// Every tool the agent ran, and every permission answered on the operator's
@@ -810,7 +810,7 @@ func (o *Orchestrator) recordACPTools(ctx context.Context, run *store.AgentRun, 
 			RunID: run.ID, Sequence: index + 2, Type: store.StepTool,
 			Title: title, Output: acpToolOutcome(tool), Status: status,
 		}
-		if _, err := o.store.AppendRunStep(ctx, record); err != nil {
+		if _, err := o.store.AppendRunStep(recordStepContext(ctx), record); err != nil {
 			o.logger.Error("acp tool step could not be recorded", "run", run.ID, "error", err)
 			return
 		}

@@ -341,7 +341,7 @@ func (o *Orchestrator) runReview(ctx context.Context, run *store.AgentRun, task 
 	run.StepCount = 1
 	if execErr != nil {
 		record.Status, record.Error = "failed", execErr.Error()
-		if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
+		if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 			o.logger.Error("review step could not be recorded", "run", run.ID, "error", storeErr)
 		}
 		o.event(ctx, *run, "review.failed", execErr.Error(), map[string]any{"runtimeId": acquired.runtimeID})
@@ -352,7 +352,7 @@ func (o *Orchestrator) runReview(ctx context.Context, run *store.AgentRun, task 
 	parsed, parseErr := parseReview(result.Stdout, result.Stderr, result.ExitCode)
 	if parseErr != nil {
 		record.Status, record.Error = "failed", parseErr.Error()
-		if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
+		if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 			o.logger.Error("review step could not be recorded", "run", run.ID, "error", storeErr)
 		}
 		o.event(ctx, *run, "review.failed", parseErr.Error(), map[string]any{"exitCode": result.ExitCode})
@@ -438,7 +438,7 @@ func (o *Orchestrator) runReview(ctx context.Context, run *store.AgentRun, task 
 	}
 	if err := o.store.SaveReviewFindings(ctx, findings); err != nil {
 		record.Status, record.Error = "failed", err.Error()
-		if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
+		if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 			o.logger.Error("review step could not be recorded", "run", run.ID, "error", storeErr)
 		}
 		return nil, Outcome{Status: store.TaskFailed, Retryable: true,
@@ -469,7 +469,7 @@ func (o *Orchestrator) runReview(ctx context.Context, run *store.AgentRun, task 
 		summary += fmt.Sprintf(" — 이전 지적 %d건은 더 이상 보고되지 않아 해결로 표시했습니다", resolved)
 	}
 	record.Output = summary
-	if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
+	if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 		o.logger.Error("review step could not be recorded", "run", run.ID, "error", storeErr)
 	}
 	o.event(ctx, *run, "review.completed", summary, map[string]any{

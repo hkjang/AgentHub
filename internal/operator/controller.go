@@ -1842,6 +1842,21 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 		}
 		env = append(env, corev1.EnvVar{Name: mcpCredentialEnv(credentialKey), ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: credentialKey, Optional: ptr(true)}}})
 	}
+	// Git will not work in a repository whose directory belongs to somebody else,
+	// and a mounted volume's root belongs to root: the agent runs as uid 10000 and
+	// meets "detected dubious ownership" on the very repository this platform
+	// cloned for it, which orca — whose whole model is worktrees — reports as
+	// being unable to resolve a base ref. fsGroup cannot fix it; git compares the
+	// owning uid, not the group. The two mount roots are named one by one rather
+	// than with '*' so this trusts the agent's own workspace and home, and nothing
+	// else it may be given to read.
+	env = append(env,
+		corev1.EnvVar{Name: "GIT_CONFIG_COUNT", Value: "2"},
+		corev1.EnvVar{Name: "GIT_CONFIG_KEY_0", Value: "safe.directory"},
+		corev1.EnvVar{Name: "GIT_CONFIG_VALUE_0", Value: "/workspace"},
+		corev1.EnvVar{Name: "GIT_CONFIG_KEY_1", Value: "safe.directory"},
+		corev1.EnvVar{Name: "GIT_CONFIG_VALUE_1", Value: "/home/agent"},
+	)
 	adapter := adapterFor(value.Runtime.Type)
 	if value.Runtime.Type == runtimetype.Custom {
 		adapter.Command = value.Runtime.Command

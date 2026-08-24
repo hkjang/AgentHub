@@ -79,15 +79,18 @@ func (o *Orchestrator) runExternalApp(ctx context.Context, run *store.AgentRun, 
 	elapsed := time.Since(startedAt).Milliseconds()
 	telemetry.Fail(span, callErr)
 
+	inspected, inspectErr := o.inspectAnswer(ctx, step, answer)
 	record := store.AgentRunStep{
 		RunID: run.ID, Sequence: 1, Type: store.StepExternal,
-		Title: "외부 앱 실행: " + app.Name, Input: input, Output: answer, Status: "succeeded", DurationMs: elapsed,
+		Title: "외부 앱 실행: " + app.Name, Input: input, Output: inspected, Status: "succeeded", DurationMs: elapsed,
 	}
 	run.StepCount = 1
 	if callErr != nil {
 		record.Status, record.Error = "failed", callErr.Error()
+	} else if inspectErr != nil {
+		record.Status, record.Error, record.Output = "failed", inspectErr.Error(), ""
 	}
-	if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
+	if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 		o.logger.Error("external app step could not be recorded", "run", run.ID, "error", storeErr)
 	}
 	if callErr != nil {
@@ -95,13 +98,10 @@ func (o *Orchestrator) runExternalApp(ctx context.Context, run *store.AgentRun, 
 		return nil, Outcome{Status: store.TaskFailed, Failure: callErr.Error(), Retryable: retryableFlowError(callErr)}
 	}
 
-	if o.flowInspector != nil {
-		scanned, scanErr := o.flowInspector.Inbound(ctx, step, answer)
-		if scanErr != nil {
-			return nil, Outcome{Status: store.TaskFailed, Failure: scanErr.Error(), Retryable: !errors.Is(scanErr, workflow.ErrBlocked)}
-		}
-		answer = scanned
+	if inspectErr != nil {
+		return nil, Outcome{Status: store.TaskFailed, Failure: inspectErr.Error(), Retryable: !errors.Is(inspectErr, workflow.ErrBlocked)}
 	}
+	answer = inspected
 
 	// Dify counts the tokens its own app spent and says so. It is recorded as the
 	// app reported it and kept out of the platform's own metering, because those

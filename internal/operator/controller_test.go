@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1211,5 +1212,74 @@ func TestInitialisersCanReportTheirConfiguration(t *testing.T) {
 	// And the overlay's own variables reach the containers that need them.
 	if found["LANG"] != "ko_KR.UTF-8" {
 		t.Errorf("the overlay environment did not reach the initialiser: %#v", found)
+	}
+}
+
+// The platform clones a workspace repository for the agent and then runs the
+// agent as uid 10000, while the volume's mount point belongs to root. Git reads
+// that as a repository owned by somebody else and refuses every command in it —
+// measured on a cluster, where an orca task reported "실행 패브릭이
+// 거절했습니다(runtime_error): Could not resolve a default base ref for this
+// repo" and the workspace held a perfectly good clone that git would not touch.
+func TestTheAgentIsTrustedWithItsOwnWorkspaceRepository(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	controller := &Controller{client: client}
+	owner := &unstructured.Unstructured{}
+	owner.SetAPIVersion("agenthub.io/v1alpha1")
+	owner.SetKind("AgentRuntime")
+	owner.SetName("git-runtime")
+	owner.SetNamespace("agent-runtime-dev")
+	owner.SetUID(types.UID("test-owner"))
+	var value spec
+	value.Owner = "user-1"
+	value.Runtime.Type = "orca"
+	value.Runtime.Image = "agenthub-orca:v1"
+	value.Model.BaseURL = "http://gateway.svc:8000/v1"
+	value.Model.Name = "qwen"
+	if err := controller.ensureStatefulSet(context.Background(), "agent-runtime-dev", "git-runtime", "git-workspace", value, owner); err != nil {
+		t.Fatal(err)
+	}
+	statefulSet, err := client.AppsV1().StatefulSets("agent-runtime-dev").Get(context.Background(), "git-runtime", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var agent *corev1.Container
+	for i, container := range statefulSet.Spec.Template.Spec.Containers {
+		if container.Name == "agent" {
+			agent = &statefulSet.Spec.Template.Spec.Containers[i]
+		}
+	}
+	if agent == nil {
+		t.Fatal("the Pod has no agent container")
+	}
+	trusted := map[string]bool{}
+	for i, variable := range agent.Env {
+		if variable.Name != "safe.directory" && !strings.HasPrefix(variable.Name, "GIT_CONFIG_KEY_") {
+			continue
+		}
+		if variable.Value != "safe.directory" {
+			continue
+		}
+		// The value sits in the matching VALUE_n variable; find it by suffix.
+		suffix := strings.TrimPrefix(variable.Name, "GIT_CONFIG_KEY_")
+		for _, candidate := range agent.Env[i:] {
+			if candidate.Name == "GIT_CONFIG_VALUE_"+suffix {
+				trusted[candidate.Value] = true
+			}
+		}
+	}
+	for _, mount := range []string{"/workspace", "/home/agent"} {
+		if !trusted[mount] {
+			t.Errorf("git is not told to trust %s, so the agent cannot use a repository there", mount)
+		}
+	}
+	count := ""
+	for _, variable := range agent.Env {
+		if variable.Name == "GIT_CONFIG_COUNT" {
+			count = variable.Value
+		}
+	}
+	if count != strconv.Itoa(len(trusted)) {
+		t.Errorf("GIT_CONFIG_COUNT is %q but %d directories are named — git reads only the first %s", count, len(trusted), count)
 	}
 }

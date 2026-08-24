@@ -86,7 +86,7 @@ func (o *Orchestrator) runInvestigate(ctx context.Context, run *store.AgentRun, 
 	run.StepCount = 1
 	if execErr != nil {
 		record.Status, record.Error = "failed", execErr.Error()
-		if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
+		if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 			o.logger.Error("investigate step could not be recorded", "run", run.ID, "error", storeErr)
 		}
 		o.event(ctx, *run, "investigate.failed", execErr.Error(), map[string]any{"runtimeId": acquired.runtimeID})
@@ -106,7 +106,7 @@ func (o *Orchestrator) runInvestigate(ctx context.Context, run *store.AgentRun, 
 	if parseErr != nil {
 		record.Status, record.Error = "failed", parseErr.Error()
 	}
-	if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
+	if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 		o.logger.Error("investigate step could not be recorded", "run", run.ID, "error", storeErr)
 	}
 	// Real usage, reported by the agent itself, so an investigation is metered
@@ -398,7 +398,7 @@ func (o *Orchestrator) recordEvidence(ctx context.Context, run *store.AgentRun, 
 		if status == "failed" {
 			record.Error = item.Status
 		}
-		if _, err := o.store.AppendRunStep(ctx, record); err != nil {
+		if _, err := o.store.AppendRunStep(recordStepContext(ctx), record); err != nil {
 			o.logger.Error("investigation evidence could not be recorded", "run", run.ID, "error", err)
 			return
 		}

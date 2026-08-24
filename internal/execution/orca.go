@@ -120,18 +120,29 @@ func (o *Orchestrator) runOrca(ctx context.Context, run *store.AgentRun, task st
 
 	summary, fabricErr := fabric.dispatch(ctx, task, goal, prompt)
 	record.DurationMs = time.Since(startedAt).Milliseconds()
-	record.Output = summary
+	// What the fabric hands back quotes the workers, so it is an agent's words and
+	// is scanned like one — before it is stored, before it is put on the timeline.
+	inspected, inspectErr := o.inspectAnswer(ctx, step, summary)
+	record.Output = inspected
 	if fabricErr != nil {
 		record.Status, record.Error = "failed", fabricErr.Error()
-		if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
+		if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 			o.logger.Error("orca step could not be recorded", "run", run.ID, "error", storeErr)
 		}
 		o.event(ctx, *run, "orca.failed", fabricErr.Error(), map[string]any{"runtimeId": acquired.runtimeID})
 		return nil, Outcome{Status: store.TaskFailed, Failure: fabricErr.Error(), Retryable: fabric.retryable}
 	}
-	if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
+	if inspectErr != nil {
+		record.Status, record.Error, record.Output = "failed", inspectErr.Error(), ""
+	}
+	if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 		o.logger.Error("orca step could not be recorded", "run", run.ID, "error", storeErr)
 	}
+	if inspectErr != nil {
+		return nil, Outcome{Status: store.TaskFailed, Failure: inspectErr.Error(),
+			Retryable: !errors.Is(inspectErr, workflow.ErrBlocked)}
+	}
+	summary = inspected
 	o.event(ctx, *run, "orca.completed", summary, map[string]any{
 		"durationMs": record.DurationMs, "orcaRunId": fabric.runID, "orcaTaskId": fabric.taskID,
 		"worktree": fabric.worktreePath, "branch": fabric.branch,

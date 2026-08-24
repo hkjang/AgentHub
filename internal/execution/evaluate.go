@@ -171,7 +171,7 @@ func (o *Orchestrator) judgeVerdict(ctx context.Context, run *store.AgentRun, go
 	judgeSpan.End()
 	output, usage := structured.Output, structured.Usage
 	run.TotalTokens += usage.TotalTokens
-	if _, storeErr := o.store.AppendRunStep(ctx, store.AgentRunStep{
+	if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), store.AgentRunStep{
 		RunID: run.ID, Sequence: run.StepCount + 1, Type: "completion", Title: "완료 판정",
 		Input: b.String(), Output: output, Status: stepStatus(err), Error: errorText(err),
 		PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
