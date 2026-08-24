@@ -3,9 +3,11 @@ package workflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -135,3 +137,45 @@ func TestSchemaUnsupportedRecognisesTheRefusals(t *testing.T) {
 type errText string
 
 func (e errText) Error() string { return string(e) }
+
+// What a workflow step says when it fails is read by a person on the Workflows
+// screen, and it was Go talking about itself.
+//
+// Measured on a running deployment: a two-step workflow whose first step could
+// not reach the model recorded
+//
+//	Post "http://stub-gateway…/v1/chat/completions": dial tcp: lookup
+//	stub-gateway… on 127.0.0.11:53: no such host
+//
+// The package already knew how to speak to a person — its own blocked-content
+// error is a Korean sentence — and every other message here was English written
+// for whoever was reading a stack trace.
+func TestAStepSaysWhyItFailedInThePlatformsWords(t *testing.T) {
+	body, err := os.ReadFile("completion.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	for _, leftover := range []string{
+		`fmt.Errorf("agent %q has no model endpoint bound"`,
+		`fmt.Errorf("model gateway returned %d with an unreadable body"`,
+		`fmt.Errorf("model gateway returned %d: %s"`,
+		`fmt.Errorf("model gateway returned no completion")`,
+	} {
+		if strings.Contains(source, leftover) {
+			t.Errorf("a step still reports %s to a person", leftover)
+		}
+	}
+	if !strings.Contains(source, "modelCallReason(callErr)") {
+		t.Error("a transport failure is recorded as Go produced it, URL and resolver and all")
+	}
+	// And the reason itself survives: an operator needs to know it was refused
+	// rather than unreachable.
+	raw := errors.New(`Post "http://gw.svc/v1/chat/completions": dial tcp: lookup gw.svc on 127.0.0.11:53: no such host`)
+	if got := modelCallReason(raw); got != "no such host" {
+		t.Errorf("the reason a call failed reads as %q", got)
+	}
+	if got := modelCallReason(errors.New("context deadline exceeded")); got != "context deadline exceeded" {
+		t.Errorf("a message with nothing to trim was rewritten to %q", got)
+	}
+}

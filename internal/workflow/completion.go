@@ -148,7 +148,7 @@ func (m *ModelCompletion) CompleteWithUsage(ctx context.Context, step Step, prom
 
 func (m *ModelCompletion) complete(ctx context.Context, step Step, prompt string, schema *Schema) (string, Usage, error) {
 	if strings.TrimSpace(step.ModelBaseURL) == "" || strings.TrimSpace(step.ModelName) == "" {
-		return "", Usage{}, fmt.Errorf("agent %q has no model endpoint bound", step.AgentName)
+		return "", Usage{}, fmt.Errorf("%s 에이전트에 모델 엔드포인트가 연결되어 있지 않습니다. 에이전트 설정에서 모델을 지정해 주세요.", step.AgentName)
 	}
 	// Both halves are inspected: the instruction is written by a person and the
 	// prompt is assembled from task input and tool output, and a credential can
@@ -187,7 +187,7 @@ func (m *ModelCompletion) complete(ctx context.Context, step Step, prompt string
 	}
 	response, callErr := m.Client.Do(httpRequest)
 	if callErr != nil {
-		return "", Usage{}, callErr
+		return "", Usage{}, fmt.Errorf("모델을 부르지 못했습니다: %s", modelCallReason(callErr))
 	}
 	defer func() { _ = response.Body.Close() }()
 
@@ -201,17 +201,17 @@ func (m *ModelCompletion) complete(ctx context.Context, step Step, prompt string
 		Usage Usage `json:"usage"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
-		return "", Usage{}, fmt.Errorf("model gateway returned %d with an unreadable body", response.StatusCode)
+		return "", Usage{}, fmt.Errorf("모델 게이트웨이가 HTTP %d 로 답했고 본문을 읽을 수 없었습니다.", response.StatusCode)
 	}
 	if response.StatusCode >= 400 {
 		message := decoded.Error.Message
 		if message == "" {
 			message = response.Status
 		}
-		return "", Usage{}, fmt.Errorf("model gateway returned %d: %s", response.StatusCode, message)
+		return "", Usage{}, fmt.Errorf("모델 게이트웨이가 HTTP %d 로 거절했습니다: %s", response.StatusCode, message)
 	}
 	if len(decoded.Choices) == 0 {
-		return "", Usage{}, fmt.Errorf("model gateway returned no completion")
+		return "", Usage{}, fmt.Errorf("모델이 답을 돌려주지 않았습니다.")
 	}
 	answer := strings.TrimSpace(decoded.Choices[0].Message.Content)
 	if m.Inspector != nil {
@@ -240,4 +240,23 @@ func (m *ModelCompletion) inspectOutbound(ctx context.Context, step Step, system
 		return "", "", err
 	}
 	return inspectedSystem, inspectedPrompt, nil
+}
+
+// modelCallReason keeps what an operator can act on and drops what only
+// describes this platform's own plumbing.
+//
+// A step that could not reach the model recorded Go's own sentence — measured on
+// a workflow run: `Post "http://…/v1/chat/completions": dial tcp: lookup
+// stub-gateway… on 127.0.0.11:53: no such host`. What a person can do something
+// about is that the endpoint did not answer and why; the URL, the resolver and
+// the verb are this platform describing itself.
+func modelCallReason(err error) string {
+	message := err.Error()
+	if at := strings.Index(message, "\n"); at >= 0 {
+		message = message[:at]
+	}
+	if at := strings.LastIndex(message, ": "); at >= 0 && len(message)-at < 80 {
+		return message[at+2:]
+	}
+	return message
 }
