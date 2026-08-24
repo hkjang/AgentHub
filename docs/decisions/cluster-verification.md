@@ -57,6 +57,7 @@ a platform bug until it is understood:
 | Posting back | the finding is commented on that pull request, and the next review edits the same comment rather than adding one |
 | Forge credential check | a stored token is checked at save time and the account name comes back |
 | `orca` backend | the fabric creates its run, task and worktree in the runtime's own repository — after the mount that made that possible |
+| `cli` backend refusing an answer | the step says failed and why — it used to say succeeded with nothing in it |
 | readiness screen | a runtime deleted from the cluster is written off rather than reported as stuck — measured against a record twelve minutes stale |
 | `rpc` backend | task completes with the agent's answer and real token usage; the agent declares its own tools to the gateway |
 | Content inspection | a card number in a task's input is blocked before it reaches the agent, the run says which class was found, and the task is not retried |
