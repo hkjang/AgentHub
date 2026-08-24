@@ -220,3 +220,41 @@ func TestTheConsoleCanTellOneRefusalFromAnother(t *testing.T) {
 		t.Error("the console shows the refusal as an error banner with no way to answer it")
 	}
 }
+
+// And when somebody confirms, the platform writes down what they ended.
+//
+// A forced stop killed work that was running. In the audit log it read exactly
+// like stopping an idle runtime — while the task it ended said only that the
+// agent had quit, so between the two records there was nothing connecting a
+// dead task to the person who ended it.
+func TestForcingAStopRecordsWhatItEnded(t *testing.T) {
+	body, err := os.ReadFile("routes.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	for _, part := range []struct{ name, from, to string }{
+		{"stop", "func (s *Server) runtimeAction(", "\n// forceRequested"},
+		{"restart", "func (s *Server) restartRuntime(", "\nfunc "},
+	} {
+		at := strings.Index(source, part.from)
+		if at < 0 {
+			t.Fatalf("%s is gone; this guard is reading nothing", part.name)
+		}
+		handler := source[at:]
+		if end := strings.Index(handler, part.to); end >= 0 {
+			handler = handler[:end]
+		}
+		if !strings.Contains(handler, `"overrode"`) {
+			t.Errorf("a forced %s is audited exactly like one that ended nothing", part.name)
+		}
+		audit := strings.Index(handler, "s.store.Audit(")
+		if audit < 0 {
+			t.Errorf("%s is not audited at all", part.name)
+			continue
+		}
+		if strings.Contains(handler[audit:], "clientIP(r), nil)") {
+			t.Errorf("%s still audits with no detail, so the override is dropped", part.name)
+		}
+	}
+}

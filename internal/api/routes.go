@@ -368,10 +368,18 @@ func (s *Server) runtimeAction(state string) http.HandlerFunc {
 		// It is a confirmation rather than a refusal. Stopping a runtime that is
 		// misbehaving is exactly what this button is for, so the answer says what
 		// will break and takes force to mean the person meant it.
-		if state == "stopped" && !forceRequested(r) {
+		overrode := ""
+		if state == "stopped" {
 			if reason, busyErr := s.store.RuntimeBusy(r.Context(), current.ID, current.AgentID, ""); busyErr == nil && reason != "" {
-				writeError(w, http.StatusConflict, "runtime_busy", reason+". 그래도 정지하려면 다시 확인해 주세요.")
-				return
+				if !forceRequested(r) {
+					writeError(w, http.StatusConflict, "runtime_busy", reason+". 그래도 정지하려면 다시 확인해 주세요.")
+					return
+				}
+				// Confirmed, and written down. Somebody ended work that was
+				// running; the audit line for that must not read like the one for
+				// stopping an idle runtime, because the difference is the only
+				// explanation the task's own failure will ever have.
+				overrode = reason
 			}
 		}
 		var rt store.Runtime
@@ -400,7 +408,11 @@ func (s *Server) runtimeAction(state string) http.HandlerFunc {
 		// A person acting on the runtime takes it over from the warm pool, which
 		// must not then stop a workspace somebody is working in.
 		s.releaseWarmClaim(r.Context(), rt)
-		s.store.Audit(r.Context(), &u, "runtime."+state, "runtime", rt.ID, "success", clientIP(r), nil)
+		var detail map[string]any
+		if overrode != "" {
+			detail = map[string]any{"overrode": overrode, "forced": true}
+		}
+		s.store.Audit(r.Context(), &u, "runtime."+state, "runtime", rt.ID, "success", clientIP(r), detail)
 		writeJSON(w, 202, rt)
 	}
 }
@@ -436,11 +448,13 @@ func (s *Server) restartRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 	// A restart takes the Pod away exactly as a stop does, and takes the work on
 	// it with it.
-	if !forceRequested(r) {
-		if reason, busyErr := s.store.RuntimeBusy(r.Context(), current.ID, current.AgentID, ""); busyErr == nil && reason != "" {
+	overrode := ""
+	if reason, busyErr := s.store.RuntimeBusy(r.Context(), current.ID, current.AgentID, ""); busyErr == nil && reason != "" {
+		if !forceRequested(r) {
 			writeError(w, http.StatusConflict, "runtime_busy", reason+". 그래도 다시 시작하려면 확인해 주세요.")
 			return
 		}
+		overrode = reason
 	}
 	spec, err := s.runtimeSpec(r, current, agent)
 	if err != nil {
@@ -457,7 +471,11 @@ func (s *Server) restartRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.releaseWarmClaim(r.Context(), rt)
-	s.store.Audit(r.Context(), &u, "runtime.restart", "runtime", rt.ID, "success", clientIP(r), nil)
+	var detail map[string]any
+	if overrode != "" {
+		detail = map[string]any{"overrode": overrode, "forced": true}
+	}
+	s.store.Audit(r.Context(), &u, "runtime.restart", "runtime", rt.ID, "success", clientIP(r), detail)
 	writeJSON(w, 202, rt)
 }
 
