@@ -66,6 +66,30 @@ func (s *Server) readiness(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 
+	// Forge connections, from what is already recorded rather than by probing:
+	// a review that posts nothing is what a clean review looks like, so a broken
+	// connection is invisible everywhere except the tab it was configured on.
+	run(func() {
+		connections, err := s.store.UncertainSCMConnections(r.Context())
+		if err != nil {
+			return
+		}
+		for _, connection := range connections {
+			if connection.LastError != "" {
+				detail := connection.LastError
+				if len(detail) > 200 {
+					detail = detail[:200] + "…"
+				}
+				add(readinessItem{Area: "코드 호스트", Name: connection.Host + " (" + connection.Owner + ")",
+					Verdict: "failing", Detail: detail, Fix: "/developer"})
+				continue
+			}
+			add(readinessItem{Area: "코드 호스트", Name: connection.Host + " (" + connection.Owner + ")",
+				Verdict: "unknown", Detail: "한 번도 확인되지 않았습니다. 토큰을 다시 저장하면 그 자리에서 확인합니다.",
+				Fix: "/developer"})
+		}
+	})
+
 	// The cluster. Without it nothing runs at all, so it is first in the list
 	// however the checks finish.
 	run(func() {

@@ -126,3 +126,38 @@ func (s *Store) RecordSCMUse(ctx context.Context, id, failure string) error {
 		id, failure)
 	return err
 }
+
+// SCMConnectionHealth is one connection as the deployment's readiness sees it:
+// whose it is, which host, and what happened the last time it was used.
+type SCMConnectionHealth struct {
+	Host       string
+	Owner      string
+	LastError  string
+	LastUsedAt *time.Time
+}
+
+// UncertainSCMConnections lists the connections that are not known to work —
+// the ones whose last use failed, and the ones nothing has ever checked.
+//
+// No credential is read and nothing is probed: this reports what is already
+// recorded. A readiness button that borrowed people's tokens to talk to their
+// forges would be a different thing than the one an administrator pressed.
+func (s *Store) UncertainSCMConnections(ctx context.Context) ([]SCMConnectionHealth, error) {
+	rows, err := s.pool.Query(ctx, `SELECT c.host, u.username, c.last_error, c.last_used_at
+		FROM scm_connections c JOIN users u ON u.id = c.owner_id
+		WHERE c.last_error <> '' OR c.last_used_at IS NULL
+		ORDER BY u.username, c.host`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SCMConnectionHealth{}
+	for rows.Next() {
+		var item SCMConnectionHealth
+		if err := rows.Scan(&item.Host, &item.Owner, &item.LastError, &item.LastUsedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
