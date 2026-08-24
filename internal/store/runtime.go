@@ -132,6 +132,7 @@ type governanceSettings struct {
 	MaxCPUMillisPerUser int `json:"maxCpuMillisPerUser"`
 	MaxMemoryMBPerUser  int `json:"maxMemoryMbPerUser"`
 	MaxStorageGBPerUser int `json:"maxStorageGbPerUser"`
+	MaxGPUsPerUser      int `json:"maxGpusPerUser"`
 	// DefaultIdleTimeoutSeconds applies to a runtime whose agent has no profile.
 	// Every profile carries its own, so this is the floor under the ones that do
 	// not — and it was, until now, a field the console saved and nothing read.
@@ -151,15 +152,15 @@ func (s *Store) CheckRuntimeQuotaExcept(ctx context.Context, userID, profileID, 
 	if err != nil {
 		return err
 	}
-	var addCPU, addMemory int
-	if err := s.pool.QueryRow(ctx, `SELECT cpu_millis,memory_mb FROM runtime_profiles WHERE id=$1 AND enabled`, profileID).Scan(&addCPU, &addMemory); err != nil {
+	var addCPU, addMemory, addGPUs int
+	if err := s.pool.QueryRow(ctx, `SELECT cpu_millis,memory_mb,gpu_count FROM runtime_profiles WHERE id=$1 AND enabled`, profileID).Scan(&addCPU, &addMemory, &addGPUs); err != nil {
 		return err
 	}
-	if err := quota.CheckHeld(quota.ScopeUser, resolved.Effective, resolved.Held, addCPU, addMemory); err != nil {
+	if err := quota.CheckHeld(quota.ScopeUser, resolved.Effective, resolved.Held, addCPU, addMemory, addGPUs); err != nil {
 		return err
 	}
 	if resolved.DepartmentID != "" {
-		return quota.CheckHeld(quota.ScopeDepartment, resolved.DepartmentQ.Total, resolved.DepartmentHeld, addCPU, addMemory)
+		return quota.CheckHeld(quota.ScopeDepartment, resolved.DepartmentQ.Total, resolved.DepartmentHeld, addCPU, addMemory, addGPUs)
 	}
 	return nil
 }

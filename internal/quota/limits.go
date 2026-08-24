@@ -51,6 +51,11 @@ type Limits struct {
 	MaxCPUMillis int `json:"maxCpuMillis,omitempty"`
 	MaxMemoryMB  int `json:"maxMemoryMb,omitempty"`
 	MaxStorageGB int `json:"maxStorageGb,omitempty"`
+	// MaxGPUs is the scarcest of these by far. It joined the family when a
+	// profile's GPU count started reaching the Pod: until then nothing was
+	// granted, so nothing needed limiting, and a limit on CPU beside no limit at
+	// all on GPUs is the asymmetry that lets one person hold every card.
+	MaxGPUs int `json:"maxGpus,omitempty"`
 	// What may be run and spent, over the same window the usage report shows.
 	MaxRunningTasks int     `json:"maxRunningTasks,omitempty"`
 	TokenBudget     int64   `json:"tokenBudget,omitempty"`
@@ -114,6 +119,7 @@ type Held struct {
 	CPUMillis int `json:"cpuMillis"`
 	MemoryMB  int `json:"memoryMb"`
 	StorageGB int `json:"storageGb"`
+	GPUs      int `json:"gpus"`
 }
 
 // CheckHeld reports why one more runtime of this size cannot be started, or nil.
@@ -121,7 +127,7 @@ type Held struct {
 // The message names the scope, because "Runtime Quota를 초과합니다" with a
 // department's limit in it and a personal limit in mind is how somebody spends an
 // afternoon raising the wrong number.
-func CheckHeld(scope string, limits Limits, held Held, addCPU, addMemory int) error {
+func CheckHeld(scope string, limits Limits, held Held, addCPU, addMemory, addGPUs int) error {
 	who := scopeName(scope)
 	if limits.MaxRuntimes > 0 && held.Runtimes+1 > limits.MaxRuntimes {
 		return exceeded("%s Runtime Quota(%d개)를 초과합니다", who, limits.MaxRuntimes)
@@ -131,6 +137,9 @@ func CheckHeld(scope string, limits Limits, held Held, addCPU, addMemory int) er
 	}
 	if limits.MaxMemoryMB > 0 && held.MemoryMB+addMemory > limits.MaxMemoryMB {
 		return exceeded("%s Memory Quota(%dMB)를 초과합니다", who, limits.MaxMemoryMB)
+	}
+	if limits.MaxGPUs > 0 && held.GPUs+addGPUs > limits.MaxGPUs {
+		return exceeded("%s GPU Quota(%d개)를 초과합니다", who, limits.MaxGPUs)
 	}
 	return nil
 }

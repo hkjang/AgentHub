@@ -658,6 +658,9 @@ export type Limits = {
   maxCpuMillis?: number;
   maxMemoryMb?: number;
   maxStorageGb?: number;
+  // The scarcest dimension, and the last to get a limit: nothing was granted
+  // until a profile's GPU count started reaching the Pod.
+  maxGpus?: number;
   maxRunningTasks?: number;
   tokenBudget?: number;
   costBudget?: number;
@@ -667,6 +670,7 @@ export type Held = {
   cpuMillis: number;
   memoryMb: number;
   storageGb: number;
+  gpus: number;
 };
 export type Department = {
   id: string;

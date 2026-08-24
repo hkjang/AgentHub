@@ -21,7 +21,7 @@ func TestEveryLimitRefusesWithTheSentinel(t *testing.T) {
 		what string
 		err  error
 	}{
-		{"runtime", CheckHeld(ScopeUser, limits, held, 1000, 1024)},
+		{"runtime", CheckHeld(ScopeUser, limits, held, 1000, 1024, 0)},
 		{"storage", CheckStorage(ScopeUser, limits, held.StorageGB, 10)},
 	} {
 		if refusal.err == nil {

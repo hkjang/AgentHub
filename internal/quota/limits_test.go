@@ -40,7 +40,7 @@ func TestNoQuotaAnywhereLimitsNothing(t *testing.T) {
 	if !got.Empty() {
 		t.Errorf("limits = %#v, want none", got)
 	}
-	if err := CheckHeld(ScopeUser, got, Held{Runtimes: 9000, CPUMillis: 9_000_000}, 4000, 8192); err != nil {
+	if err := CheckHeld(ScopeUser, got, Held{Runtimes: 9000, CPUMillis: 9_000_000}, 4000, 8192, 0); err != nil {
 		t.Errorf("unlimited refused something: %v", err)
 	}
 	if err := CheckStorage(ScopeUser, got, 9000, 500); err != nil {
@@ -56,11 +56,11 @@ func TestARefusalNamesTheScopeItCameFrom(t *testing.T) {
 	limits := Limits{MaxRuntimes: 2, MaxCPUMillis: 4000, MaxMemoryMB: 4096, MaxStorageGB: 50}
 	held := Held{Runtimes: 2, CPUMillis: 4000, MemoryMB: 4096}
 
-	personal := CheckHeld(ScopeUser, limits, held, 0, 0)
+	personal := CheckHeld(ScopeUser, limits, held, 0, 0, 0)
 	if personal == nil || !strings.HasPrefix(personal.Error(), "사용자") {
 		t.Errorf("personal refusal = %v", personal)
 	}
-	departmental := CheckHeld(ScopeDepartment, limits, held, 0, 0)
+	departmental := CheckHeld(ScopeDepartment, limits, held, 0, 0, 0)
 	if departmental == nil || !strings.HasPrefix(departmental.Error(), "부서") {
 		t.Errorf("departmental refusal = %v", departmental)
 	}
@@ -75,14 +75,14 @@ func TestEachDimensionIsCheckedSeparately(t *testing.T) {
 	limits := Limits{MaxRuntimes: 10, MaxCPUMillis: 4000, MaxMemoryMB: 4096}
 	held := Held{Runtimes: 1, CPUMillis: 2000, MemoryMB: 4096}
 
-	if err := CheckHeld(ScopeUser, limits, held, 1000, 0); err != nil {
+	if err := CheckHeld(ScopeUser, limits, held, 1000, 0, 0); err != nil {
 		t.Errorf("a request within every limit was refused: %v", err)
 	}
-	err := CheckHeld(ScopeUser, limits, held, 0, 1024)
+	err := CheckHeld(ScopeUser, limits, held, 0, 1024, 0)
 	if err == nil || !strings.Contains(err.Error(), "Memory") {
 		t.Errorf("error = %v, want the memory limit named", err)
 	}
-	err = CheckHeld(ScopeUser, limits, held, 3000, 0)
+	err = CheckHeld(ScopeUser, limits, held, 3000, 0, 0)
 	if err == nil || !strings.Contains(err.Error(), "CPU") {
 		t.Errorf("error = %v, want the cpu limit named", err)
 	}
@@ -110,7 +110,7 @@ func TestADepartmentHoldsTwoDifferentLimits(t *testing.T) {
 // answers, and only one of them belongs in front of a person. Callers were left
 // comparing message text until this could be asked directly.
 func TestARefusalIsDistinguishableFromAFailureToCheck(t *testing.T) {
-	refusal := CheckHeld(ScopeUser, Limits{MaxRuntimes: 1}, Held{Runtimes: 1}, 0, 0)
+	refusal := CheckHeld(ScopeUser, Limits{MaxRuntimes: 1}, Held{Runtimes: 1}, 0, 0, 0)
 	if !errors.Is(refusal, ErrExceeded) {
 		t.Fatalf("a limit's refusal is not recognisable: %v", refusal)
 	}
@@ -126,7 +126,7 @@ func TestARefusalIsDistinguishableFromAFailureToCheck(t *testing.T) {
 	if errors.Is(errors.New("connection refused"), ErrExceeded) {
 		t.Error("an unrelated error was recognised as a quota refusal")
 	}
-	if err := CheckHeld(ScopeUser, Limits{MaxRuntimes: 5}, Held{Runtimes: 1}, 0, 0); err != nil {
+	if err := CheckHeld(ScopeUser, Limits{MaxRuntimes: 5}, Held{Runtimes: 1}, 0, 0, 0); err != nil {
 		t.Errorf("a request inside the limit was refused: %v", err)
 	}
 }
@@ -141,11 +141,11 @@ func TestARefusalIsDistinguishableFromAFailureToCheck(t *testing.T) {
 func TestTheRuntimeBeingStartedIsNotCountedTwice(t *testing.T) {
 	limits := Limits{MaxRuntimes: 1}
 	// Nothing else running: the one being started fits.
-	if err := CheckHeld(ScopeUser, limits, Held{Runtimes: 0}, 0, 0); err != nil {
+	if err := CheckHeld(ScopeUser, limits, Held{Runtimes: 0}, 0, 0, 0); err != nil {
 		t.Errorf("the first runtime was refused: %v", err)
 	}
 	// Its own record counted as held is what the wedge looked like.
-	if err := CheckHeld(ScopeUser, limits, Held{Runtimes: 1}, 0, 0); err == nil {
+	if err := CheckHeld(ScopeUser, limits, Held{Runtimes: 1}, 0, 0, 0); err == nil {
 		t.Error("a limit of one allowed a second runtime")
 	}
 }

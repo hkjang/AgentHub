@@ -34,10 +34,10 @@ func (s *Store) ClaimRuntimeCapacity(ctx context.Context, ownerID, profileID, ex
 	if err != nil {
 		return err
 	}
-	var addCPU, addMemory int
+	var addCPU, addMemory, addGPUs int
 	if profileID != "" {
-		if err := s.pool.QueryRow(ctx, `SELECT cpu_millis,memory_mb FROM runtime_profiles WHERE id=$1 AND enabled`, profileID).
-			Scan(&addCPU, &addMemory); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		if err := s.pool.QueryRow(ctx, `SELECT cpu_millis,memory_mb,gpu_count FROM runtime_profiles WHERE id=$1 AND enabled`, profileID).
+			Scan(&addCPU, &addMemory, &addGPUs); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
 	}
@@ -75,7 +75,7 @@ func (s *Store) ClaimRuntimeCapacity(ctx context.Context, ownerID, profileID, ex
 	if err != nil {
 		return err
 	}
-	if err := quota.CheckHeld(quota.ScopeUser, resolved.Effective, held, addCPU, addMemory); err != nil {
+	if err := quota.CheckHeld(quota.ScopeUser, resolved.Effective, held, addCPU, addMemory, addGPUs); err != nil {
 		return err
 	}
 	if departmentID != nil && *departmentID != "" {
@@ -83,7 +83,7 @@ func (s *Store) ClaimRuntimeCapacity(ctx context.Context, ownerID, profileID, ex
 		if err != nil {
 			return err
 		}
-		if err := quota.CheckHeld(quota.ScopeDepartment, resolved.DepartmentQ.Total, departmentHeld, addCPU, addMemory); err != nil {
+		if err := quota.CheckHeld(quota.ScopeDepartment, resolved.DepartmentQ.Total, departmentHeld, addCPU, addMemory, addGPUs); err != nil {
 			return err
 		}
 	}
@@ -103,12 +103,12 @@ func (s *Store) ClaimRuntimeCapacity(ctx context.Context, ownerID, profileID, ex
 func heldRuntimes(ctx context.Context, tx pgx.Tx, where, arg, except string) (quota.Held, error) {
 	var held quota.Held
 	err := tx.QueryRow(ctx, `
-		SELECT count(*), COALESCE(sum(p.cpu_millis),0), COALESCE(sum(p.memory_mb),0)
+		SELECT count(*), COALESCE(sum(p.cpu_millis),0), COALESCE(sum(p.memory_mb),0), COALESCE(sum(p.gpu_count),0)
 		FROM agent_runtimes r
 		JOIN agent_definitions a ON a.id = r.agent_id
 		LEFT JOIN runtime_profiles p ON p.id = a.runtime_profile_id
 		LEFT JOIN users u ON u.id = r.owner_id
 		WHERE `+where+` AND r.desired_state = 'running' AND ($2 = '' OR r.id <> $2)`, arg, except).
-		Scan(&held.Runtimes, &held.CPUMillis, &held.MemoryMB)
+		Scan(&held.Runtimes, &held.CPUMillis, &held.MemoryMB, &held.GPUs)
 	return held, err
 }

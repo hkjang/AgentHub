@@ -100,7 +100,7 @@ func (s *Store) Departments(ctx context.Context) ([]Department, error) {
 func (s *Store) departmentsHeld(ctx context.Context) (map[string]quota.Held, error) {
 	out := map[string]quota.Held{}
 	rows, err := s.pool.Query(ctx, `
-		SELECT u.department_id, count(*), COALESCE(sum(p.cpu_millis),0), COALESCE(sum(p.memory_mb),0)
+		SELECT u.department_id, count(*), COALESCE(sum(p.cpu_millis),0), COALESCE(sum(p.memory_mb),0), COALESCE(sum(p.gpu_count),0)
 		FROM agent_runtimes r
 		JOIN agent_definitions a ON a.id = r.agent_id
 		JOIN users u ON u.id = r.owner_id
@@ -114,7 +114,7 @@ func (s *Store) departmentsHeld(ctx context.Context) (map[string]quota.Held, err
 	for rows.Next() {
 		var id string
 		var held quota.Held
-		if err := rows.Scan(&id, &held.Runtimes, &held.CPUMillis, &held.MemoryMB); err != nil {
+		if err := rows.Scan(&id, &held.Runtimes, &held.CPUMillis, &held.MemoryMB, &held.GPUs); err != nil {
 			return nil, err
 		}
 		out[id] = held
@@ -275,6 +275,7 @@ func (s *Store) ResolveQuotaExcept(ctx context.Context, userID, exceptRuntimeID 
 	out.Platform = quota.Limits{
 		MaxRuntimes: governance.MaxRuntimesPerUser, MaxCPUMillis: governance.MaxCPUMillisPerUser,
 		MaxMemoryMB: governance.MaxMemoryMBPerUser, MaxStorageGB: governance.MaxStorageGBPerUser,
+		MaxGPUs:         governance.MaxGPUsPerUser,
 		MaxRunningTasks: execution.MaxRunningTasksPerUser, TokenBudget: execution.TokenBudgetPerUser,
 		CostBudget: execution.CostBudgetPerUser,
 	}
@@ -346,12 +347,12 @@ func (s *Store) departmentHeldExcept(ctx context.Context, departmentID, exceptRu
 func (s *Store) heldWhere(ctx context.Context, runtimeWhere, workspaceWhere, arg, except string) (quota.Held, error) {
 	var held quota.Held
 	err := s.pool.QueryRow(ctx, fmt.Sprintf(`
-		SELECT count(*), COALESCE(sum(p.cpu_millis),0), COALESCE(sum(p.memory_mb),0)
+		SELECT count(*), COALESCE(sum(p.cpu_millis),0), COALESCE(sum(p.memory_mb),0), COALESCE(sum(p.gpu_count),0)
 		FROM agent_runtimes r
 		JOIN agent_definitions a ON a.id = r.agent_id
 		LEFT JOIN runtime_profiles p ON p.id = a.runtime_profile_id
 		WHERE %s AND r.desired_state = 'running'`, runtimeWhere), arg, except).
-		Scan(&held.Runtimes, &held.CPUMillis, &held.MemoryMB)
+		Scan(&held.Runtimes, &held.CPUMillis, &held.MemoryMB, &held.GPUs)
 	if err != nil {
 		return held, err
 	}
@@ -418,6 +419,7 @@ func (s *Store) DepartmentsUnderPressure(ctx context.Context) ([]DepartmentPress
 			{"CPU", department.Held.CPUMillis, department.Quota.Total.MaxCPUMillis},
 			{"Memory", department.Held.MemoryMB, department.Quota.Total.MaxMemoryMB},
 			{"Storage", department.Held.StorageGB, department.Quota.Total.MaxStorageGB},
+			{"GPU", department.Held.GPUs, department.Quota.Total.MaxGPUs},
 		} {
 			if dimension.allowed <= 0 {
 				continue
