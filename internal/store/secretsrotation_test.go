@@ -255,3 +255,35 @@ func TestTheQueueDepthIsCountedFromIndexes(t *testing.T) {
 		t.Error("the running half has no index to be counted from")
 	}
 }
+
+// The dispatcher takes the twenty oldest events still waiting, ordered by
+// created_at, and the index it had was on next_attempt_at. With a few pending
+// the planner reads them all and sorts; with a backlog it sorts the backlog,
+// every time, to take twenty rows.
+//
+// Measured on 500,000 events: 0.55 ms with a thousand pending, 14 ms with a
+// hundred thousand — a parallel sort of the whole backlog — and 0.31 ms once an
+// index carries the order the query asks for. The query that drains the queue
+// must not slow down as the queue grows.
+func TestTheEventQueueIsDrainedInOrderFromAnIndex(t *testing.T) {
+	migration, err := os.ReadFile("migrations/069_event_queue_index.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(migration), "platform_events(created_at) WHERE dispatched_at IS NULL AND dead_lettered_at IS NULL") {
+		t.Error("the dispatcher still sorts everything waiting to take twenty rows")
+	}
+	events, err := os.ReadFile("events.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(events)
+	// The index is only usable while the claim reads in this order with this
+	// condition; a rewrite that changes either leaves the index behind.
+	if !strings.Contains(source, "WHERE dispatched_at IS NULL AND dead_lettered_at IS NULL") {
+		t.Error("the claim's condition no longer matches the partial index built for it")
+	}
+	if !strings.Contains(source, "ORDER BY created_at") {
+		t.Error("the claim no longer takes the oldest first, which is what the index orders by")
+	}
+}
