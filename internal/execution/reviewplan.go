@@ -39,10 +39,8 @@ type ReviewPlanFile struct {
 	Status     string `json:"status"`
 	Insertions int    `json:"insertions"`
 	Deletions  int    `json:"deletions"`
-	// Reason says why an excluded file was left out. The engine calls it
-	// exclude_reason; reading it as "reason" silently dropped the answer to the
-	// question this list exists for, which a captured fixture caught.
-	Reason string `json:"exclude_reason,omitempty"`
+	// Reason says why an excluded file was left out.
+	Reason string `json:"excludeReason,omitempty"`
 }
 
 // ReviewPlanGroup is a set of files that share one standard.
@@ -58,13 +56,38 @@ type ReviewPlanGroup struct {
 
 // planPreview and planRules are the two documents the engine emits.
 type planPreview struct {
-	SchemaVersion   string           `json:"schema_version"`
-	Mode            string           `json:"mode"`
-	Repository      string           `json:"repository"`
-	ReviewableFiles []ReviewPlanFile `json:"reviewable_files"`
-	ExcludedFiles   []ReviewPlanFile `json:"excluded_files"`
-	TotalInsertions int              `json:"total_insertions"`
-	TotalDeletions  int              `json:"total_deletions"`
+	SchemaVersion   string     `json:"schema_version"`
+	Mode            string     `json:"mode"`
+	Repository      string     `json:"repository"`
+	ReviewableFiles []planFile `json:"reviewable_files"`
+	ExcludedFiles   []planFile `json:"excluded_files"`
+	TotalInsertions int        `json:"total_insertions"`
+	TotalDeletions  int        `json:"total_deletions"`
+}
+
+// planFile is the engine's spelling, which is not this API's spelling.
+//
+// One struct carrying both would have to choose, and the choice is invisible
+// until somebody reads the wrong end: the engine says exclude_reason and every
+// other field this platform serves is camelCase. The first version of this file
+// tried to do both jobs at once and dropped the reason on the floor.
+type planFile struct {
+	Path       string `json:"path"`
+	Status     string `json:"status"`
+	Insertions int    `json:"insertions"`
+	Deletions  int    `json:"deletions"`
+	Reason     string `json:"exclude_reason"`
+}
+
+func asPlanFiles(files []planFile) []ReviewPlanFile {
+	out := make([]ReviewPlanFile, 0, len(files))
+	for _, file := range files {
+		out = append(out, ReviewPlanFile{
+			Path: file.Path, Status: file.Status,
+			Insertions: file.Insertions, Deletions: file.Deletions, Reason: file.Reason,
+		})
+	}
+	return out
 }
 
 type planRules struct {
@@ -93,7 +116,7 @@ func parseReviewPlan(previewOut, rulesOut string) (ReviewPlan, error) {
 	}
 	plan := ReviewPlan{
 		Mode: preview.Mode, Repository: preview.Repository,
-		Reviewable: preview.ReviewableFiles, Excluded: preview.ExcludedFiles,
+		Reviewable: asPlanFiles(preview.ReviewableFiles), Excluded: asPlanFiles(preview.ExcludedFiles),
 		Insertions: preview.TotalInsertions, Deletions: preview.TotalDeletions,
 		Groups: []ReviewPlanGroup{},
 	}

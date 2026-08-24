@@ -166,3 +166,13 @@ export type TriggerHealth = {
   triggerId:string; tasks:number; failed:number
   lastStatus?:string; lastError?:string; lastAt?:string
 }
+
+/** What a review would look at, asked before it costs anything. The engine
+ *  decides both halves — the files and the standard — without a model. */
+export type ReviewPlanFile = { path:string; status:string; insertions:number; deletions:number; excludeReason?:string }
+export type ReviewPlanGroup = { id:number; source:string; pattern:string; files:string[]; rule:string }
+export type ReviewPlan = {
+  mode:string; repository:string
+  reviewable:ReviewPlanFile[]; excluded:ReviewPlanFile[]
+  insertions:number; deletions:number; groups:ReviewPlanGroup[]
+}

@@ -6,7 +6,7 @@ import { api } from '../api'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, GuidePanel, Loading, PageHeader, StatusBadge } from '../components/UI'
 import { useTerms } from '../viewmode'
 import { RUNNER_VERDICT_LABELS, RUNTIME_TYPES, descriptor, relativeTime, runnerExperienceOf, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
-import type { Agent, AgentGoal, AgentMemory, AgentRelease, AgentTrigger, AgentVersion, ExecutionMode, ExternalApp, MCPBundle, MCPServerRef, MCPToolPolicy, ModelEndpoint, RuntimeFlow, RuntimeProfile, TriggerHealth, UsableAgentServer, Workspace } from '../types'
+import type { Agent, AgentGoal, AgentMemory, AgentRelease, AgentTrigger, AgentVersion, ExecutionMode, ExternalApp, MCPBundle, MCPServerRef, MCPToolPolicy, ModelEndpoint, RuntimeFlow, ReviewPlan, RuntimeProfile, TriggerHealth, UsableAgentServer, Workspace } from '../types'
 
 /** What the chosen way of running has done on this deployment.
  *
@@ -63,6 +63,57 @@ function TriggerReach({ trigger, reach, days }: { trigger: AgentTrigger; reach?:
     이 이벤트 {reach.published}건이 있었지만 필터에 맞은 건 없습니다 — 필터 값을 확인해 주세요
   </small>
   return <small className="trigger-record ok">최근 {days}일 이벤트 {reach.published}건 중 {reach.matched}건이 이 트리거로 왔습니다</small>
+}
+
+/** What a review would look at, before it costs anything.
+ *
+ *  The engine decides the files and the standard without a model, so this is
+ *  free to ask — and it answers the question a settings screen otherwise cannot:
+ *  will this configuration actually review the thing I mean, and why is that file
+ *  not in the list. */
+function ReviewPlanPreview({ agentId }: { agentId: string }) {
+  const [plan, setPlan] = useState<ReviewPlan>()
+  const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState('')
+  const [openGroup, setOpenGroup] = useState<number | null>(null)
+  const ask = async () => {
+    setBusy(true); setFailed(''); setPlan(undefined)
+    try { setPlan(await api.get<ReviewPlan>(`/api/v1/agents/${agentId}/review-plan`)) }
+    catch (e) { setFailed(e instanceof Error ? e.message : '리뷰 계획을 읽지 못했습니다.') }
+    finally { setBusy(false) }
+  }
+  return <div className="review-plan">
+    <div className="review-plan-head">
+      <div>
+        <strong>이 설정으로 무엇을 리뷰할지 먼저 봅니다</strong>
+        <small>모델을 부르지 않으므로 토큰이 들지 않습니다. 대상 파일, 제외된 파일과 그 사유, 파일마다 적용될 기준을 그대로 보여 줍니다.</small>
+      </div>
+      <button type="button" className="button ghost" disabled={busy} onClick={() => void ask()}>
+        {busy ? '확인 중…' : '리뷰 계획 보기'}
+      </button>
+    </div>
+    {failed && <p className="review-plan-empty">{failed}</p>}
+    {plan && (plan.reviewable.length === 0 && plan.excluded.length === 0
+      ? <p className="review-plan-empty">이 설정으로 리뷰할 변경분이 없습니다.</p>
+      : <>
+        <p className="review-plan-summary">
+          {plan.mode} · 대상 {plan.reviewable.length}개 · 제외 {plan.excluded.length}개
+          {plan.insertions || plan.deletions ? ` · +${plan.insertions}/-${plan.deletions}` : ''}
+        </p>
+        <ul className="review-plan-files">
+          {plan.reviewable.map((file) => <li key={file.path}><code>{file.path}</code> <span>{file.status} +{file.insertions}/-{file.deletions}</span></li>)}
+          {plan.excluded.map((file) => <li key={file.path} className="excluded">
+            <code>{file.path}</code> <span>제외 — {file.excludeReason ?? '사유 없음'}</span>
+          </li>)}
+        </ul>
+        {plan.groups.map((group) => <div key={group.id} className="review-plan-group">
+          <button type="button" className="text-link" onClick={() => setOpenGroup(openGroup === group.id ? null : group.id)}>
+            {group.pattern} · {group.files.length}개 파일 · 기준 출처 {group.source} {openGroup === group.id ? '▴' : '▾'}
+          </button>
+          {openGroup === group.id && <pre className="review-plan-rule">{group.rule}</pre>}
+        </div>)}
+      </>)}
+  </div>
 }
 
 function RunnerVerdict({ runner }: { runner: string }) {
@@ -605,6 +656,7 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
             </select>
             <small>여기서 고른 것이 품질 게이트입니다. 비워 두면 리뷰는 보고만 하고 아무것도 막지 않습니다.</small>
           </label>
+          <ReviewPlanPreview agentId={agent.id}/>
         </>}
         {goal.runner==='investigate'&&<>
           <label><span>셸 실행 허용</span>

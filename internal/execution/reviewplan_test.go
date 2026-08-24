@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -98,5 +99,34 @@ func TestThePlanAsksAboutTheReviewThatWouldRun(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(withFiles, " "), "--format json") {
 		t.Error("the plan asks for text rather than something a program can read")
+	}
+}
+
+// TestThePlanIsServedInThisPlatformsSpelling is the other half of the naming
+// mistake this file already made once.
+//
+// The engine writes exclude_reason; everything this platform serves is
+// camelCase. One struct doing both jobs has to choose, and the choice is
+// invisible until somebody reads the wrong end — which is how the reason came to
+// be dropped the first time.
+func TestThePlanIsServedInThisPlatformsSpelling(t *testing.T) {
+	preview, err := os.ReadFile("testdata/reviewplan_preview.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := parseReviewPlan(string(preview), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	served, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(served)
+	if !strings.Contains(text, `"excludeReason":"unsupported_ext"`) {
+		t.Errorf("the plan is served without the reason in this platform's spelling: %s", text)
+	}
+	if strings.Contains(text, "exclude_reason") {
+		t.Errorf("the engine's spelling leaks into what this platform serves: %s", text)
 	}
 }
