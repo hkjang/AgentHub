@@ -201,7 +201,7 @@ func auditFilter(r *http.Request) (store.AuditFilter, error) {
 		}
 		parsed, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
-			return store.AuditFilter{}, fmt.Errorf("%s는 RFC3339 시각이어야 합니다", bound.name)
+			return store.AuditFilter{}, fmt.Errorf("%s: RFC3339 시각이어야 합니다", bound.name)
 		}
 		value := parsed.UTC()
 		*bound.target = &value

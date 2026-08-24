@@ -156,7 +156,7 @@ func ValidatePath(target string) error {
 	}
 	for _, mount := range reservedMountPaths {
 		if path.Clean(trimmed) == mount {
-			return fmt.Errorf("%s는 Runtime이 마운트하는 디렉터리이므로 그 아래 파일 경로를 지정해 주세요", trimmed)
+			return fmt.Errorf("경로 %s: Runtime이 마운트하는 디렉터리이므로 그 아래 파일 경로를 지정해 주세요", trimmed)
 		}
 	}
 	return nil
@@ -175,7 +175,7 @@ func ValidateVariableName(name string) error {
 		}
 	}
 	if ReservedVariable(trimmed) {
-		return fmt.Errorf("환경변수 %s는 플랫폼이 사용하므로 지정할 수 없습니다", trimmed)
+		return fmt.Errorf("환경변수 %s: 플랫폼이 사용하므로 지정할 수 없습니다", trimmed)
 	}
 	return nil
 }
@@ -223,7 +223,7 @@ func (s Settings) Validate() error {
 		}
 		name := strings.TrimSpace(variable.Name)
 		if names[name] {
-			return fmt.Errorf("환경변수 %s가 중복되었습니다", name)
+			return fmt.Errorf("환경변수 %s: 두 번 지정되었습니다", name)
 		}
 		names[name] = true
 		if len(variable.Value) > MaxValueLength {

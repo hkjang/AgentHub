@@ -179,7 +179,7 @@ func PostReviewComment(ctx context.Context, client *http.Client, connection stor
 		// The forge's own words, capped: a 401 says the token is revoked and a
 		// 404 says it cannot see the repository, and those are different repairs.
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, 400))
-		return fmt.Errorf("%s가 %d로 거절했습니다: %s", connection.Host, response.StatusCode,
+		return fmt.Errorf("%s에서 %d로 거절했습니다: %s", connection.Host, response.StatusCode,
 			strings.TrimSpace(string(detail)))
 	}
 	return nil
@@ -355,7 +355,7 @@ func CheckSCMConnection(ctx context.Context, client *http.Client, connection sto
 	defer response.Body.Close()
 	if response.StatusCode >= 400 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, 300))
-		return "", fmt.Errorf("%s가 %d로 답했습니다: %s", connection.Host, response.StatusCode,
+		return "", fmt.Errorf("%s에서 %d로 답했습니다: %s", connection.Host, response.StatusCode,
 			strings.TrimSpace(string(detail)))
 	}
 	var who struct {

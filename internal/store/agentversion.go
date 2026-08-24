@@ -1,10 +1,13 @@
 package store
 
 import (
+	"strconv"
+
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/hkjang/AgentHub/internal/korean"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -270,8 +273,11 @@ func promotionBlock(state AgentRelease) string {
 		return fmt.Sprintf("이 Agent는 운영 승격이 필요합니다. 아직 승격된 버전이 없습니다(현재 정의 v%d). 사전검증을 통과시킨 뒤 승격해 주세요.", state.Current)
 	}
 	if *state.PromotedVersion != state.Current {
-		return fmt.Sprintf("이 Agent는 운영 승격이 필요합니다. 현재 정의 v%d는 승격되지 않았습니다(운영 승격: v%d). v%d를 승격하거나 v%d를 복원해 주세요.",
-			state.Current, *state.PromotedVersion, state.Current, *state.PromotedVersion)
+		current, promoted := strconv.Itoa(state.Current), strconv.Itoa(*state.PromotedVersion)
+		// v3은, not v3는: a digit's particle follows how the digit is said.
+		return fmt.Sprintf("이 Agent는 운영 승격이 필요합니다. 현재 정의 v%s%s 승격되지 않았습니다(운영 승격: v%s). v%s%s 승격하거나 v%s%s 복원해 주세요.",
+			current, korean.Topic(current), promoted,
+			current, korean.Object(current), promoted, korean.Object(promoted))
 	}
 	return ""
 }
