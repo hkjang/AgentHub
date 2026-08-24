@@ -101,13 +101,22 @@ func (s *Store) DecisionForTask(ctx context.Context, taskID string) (DecisionRec
 	if err != nil {
 		return DecisionRecord{}, err
 	}
-	record.DecisionID = "task:" + record.TaskID
+
 	record.Category = record.Agent
 	if approval != nil {
 		record.ApprovalID = *approval
 	}
 	if runID != nil {
 		record.RunID = *runID
+	}
+	// One attempt, one decision. A task that failed once and succeeded on the
+	// retry publishes both endings, and naming the record after the task made
+	// them one decision arriving twice with different outcomes — with no order
+	// guaranteed between them. The run is the thing that happened; the task is
+	// the edge that gathers the attempts.
+	record.DecisionID = "task:" + record.TaskID
+	if record.RunID != "" {
+		record.DecisionID = "run:" + record.RunID
 	}
 	if model != nil {
 		record.Model = *model

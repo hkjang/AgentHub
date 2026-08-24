@@ -26,7 +26,13 @@ const provenanceTimeout = 10 * time.Second
 // it with somebody told. A record this platform decided to export and then lost
 // quietly would be worse than one that arrives late.
 func (d *Dispatcher) exportDecision(ctx context.Context, event store.PlatformEvent) error {
-	if event.Type != store.EventTaskCompleted && event.Type != store.EventTaskFailed {
+	// The three endings the platform decides. Giving up is one of them: a task
+	// that ran out of retries is the outcome an auditor asks about most, and it
+	// publishes task.dead_lettered rather than task.failed — so leaving it out
+	// exported everything except the endings somebody wants explained.
+	switch event.Type {
+	case store.EventTaskCompleted, store.EventTaskFailed, store.EventTaskDeadLettered:
+	default:
 		return nil
 	}
 	settings, err := d.store.ProvenanceEndpoint(ctx)

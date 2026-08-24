@@ -22,9 +22,14 @@ func TestNoSinkMeansNoExport(t *testing.T) {
 	if request >= 0 && settings > request {
 		t.Error("a request is built before anybody asks whether there is anywhere to send it")
 	}
-	// Only the two endings that mean a decision was reached.
-	if !strings.Contains(source, "event.Type != store.EventTaskCompleted && event.Type != store.EventTaskFailed") {
-		t.Error("events that are not a decision are exported too, or the two that are have been dropped")
+	// The three endings the platform decides, including the one where it gives up.
+	// Measured: a dead-lettered task publishes task.dead_lettered and nothing
+	// else, so leaving it out exported everything except the ending somebody most
+	// wants explained — thirty of them in the deployment this was found on.
+	for _, ending := range []string{"store.EventTaskCompleted", "store.EventTaskFailed", "store.EventTaskDeadLettered"} {
+		if !strings.Contains(source, ending) {
+			t.Errorf("%s is not exported, so that ending leaves no record", ending)
+		}
 	}
 }
 
@@ -105,5 +110,31 @@ func TestTheRecordReportsWhatRanNotWhatIsConfiguredNow(t *testing.T) {
 		if !strings.Contains(source, want.sql) {
 			t.Error(want.why)
 		}
+	}
+}
+
+// One attempt, one decision.
+//
+// A task that fails and then succeeds on the retry publishes both endings.
+// Naming the record after the task made those one decision arriving twice with
+// different outcomes, in no guaranteed order — measured on a deployment where
+// completed tasks had published task.failed as well.
+func TestEachAttemptIsItsOwnDecision(t *testing.T) {
+	body, err := os.ReadFile("../store/provenance.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	if !strings.Contains(source, `record.DecisionID = "run:" + record.RunID`) {
+		t.Error("two attempts at the same task collide on one decision id")
+	}
+	// A task with no run recorded still has an identity rather than an empty one.
+	if !strings.Contains(source, `record.DecisionID = "task:" + record.TaskID`) {
+		t.Error("a decision with no run has no identity at all")
+	}
+	fallback := strings.Index(source, `"task:" + record.TaskID`)
+	perRun := strings.Index(source, `"run:" + record.RunID`)
+	if fallback < 0 || perRun < 0 || fallback > perRun {
+		t.Error("the fallback overwrites the per-attempt identity")
 	}
 }
