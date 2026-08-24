@@ -115,6 +115,8 @@ export type PlatformEvent = {
 export type AgentTask = {
   id: string; agentId: string; agentName?: string; title: string; input: string; priority: string
   status: string; source: string; triggerId?: string; attempts: number; scheduledAt: string
+  // The page the request came from — the pull request a webhook announced.
+  sourceUrl?: string
   parentTaskId?: string; delegationDepth: number; approvalId?: string
   currentRunId?: string; lastError: string
   // Why the task is queued rather than running — a quota it is waiting behind.

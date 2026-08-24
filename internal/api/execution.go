@@ -1100,6 +1100,9 @@ func (s *Server) triggerWebhook(w http.ResponseWriter, r *http.Request) {
 	task, err := s.store.CreateAgentTask(r.Context(), store.CreateTaskInput{
 		AgentID: trigger.AgentID, OwnerID: trigger.OwnerID, Title: title, Input: taskInput,
 		Priority: trigger.Priority, Source: "webhook", TriggerID: &trigger.ID, CreatedBy: trigger.OwnerID,
+		// The pull request this is about, when the body names one, so the finished
+		// review leads back to the change rather than only naming a branch.
+		SourceURL: execution.SourceURLFromPayload(string(body)),
 	})
 	if err != nil {
 		writeStoreError(w, err)

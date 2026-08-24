@@ -102,3 +102,58 @@ func TestANestedBodyIsNotSilentlySkipped(t *testing.T) {
 		t.Fatal("a GitHub pull request body was read as naming nothing to review")
 	}
 }
+
+// A finished review that names a branch and nothing else leaves the reader
+// searching for the change by hand. Every forge sends the address; it was
+// dropped.
+func TestTheReviewKnowsWhichPullRequestItCameFrom(t *testing.T) {
+	for name, want := range map[string]string{
+		githubPullRequest:     "https://github.com/acme/store/pull/42",
+		gitlabMergeRequestURL: "https://gitlab.com/acme/store/-/merge_requests/7",
+		bitbucketWithLink:     "https://bitbucket.org/acme/store/pull-requests/3",
+	} {
+		if got := SourceURLFromPayload("리뷰해줘\n" + name); got != want {
+			t.Errorf("the source page was read as %q, want %q", got, want)
+		}
+	}
+}
+
+const gitlabMergeRequestURL = `{
+  "object_kind": "merge_request",
+  "object_attributes": {
+    "url": "https://gitlab.com/acme/store/-/merge_requests/7",
+    "source_branch": "feature/login",
+    "target_branch": "main"
+  }
+}`
+
+const bitbucketWithLink = `{
+  "pullrequest": {
+    "links": {"html": {"href": "https://bitbucket.org/acme/store/pull-requests/3"}},
+    "source": {"branch": {"name": "feature/login"}},
+    "destination": {"branch": {"name": "main"}}
+  }
+}`
+
+// The body is signed, not trusted. The address is rendered as a link, so a
+// javascript: href in a payload would be a script running in the console of
+// whoever opens the task.
+func TestAnAddressThatIsNotAWebPageIsNotCarried(t *testing.T) {
+	for _, hostile := range []string{
+		`{"pull_request":{"html_url":"javascript:alert(1)"}}`,
+		`{"pull_request":{"html_url":"data:text/html,<script>alert(1)</script>"}}`,
+		`{"pull_request":{"html_url":"file:///etc/passwd"}}`,
+		`{"pull_request":{"html_url":"https://"}}`,
+	} {
+		if got := SourceURLFromPayload(hostile); got != "" {
+			t.Errorf("%s was carried as %q", hostile, got)
+		}
+	}
+}
+
+// A task the platform started itself has no source page, and must not borrow one.
+func TestATaskWithNoPayloadHasNoSourcePage(t *testing.T) {
+	if got := SourceURLFromPayload("리뷰해줘"); got != "" {
+		t.Fatalf("a plain instruction produced a source page: %q", got)
+	}
+}

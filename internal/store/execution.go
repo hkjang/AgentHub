@@ -338,15 +338,18 @@ type AgentTrigger struct {
 }
 
 type AgentTask struct {
-	ID           string     `json:"id"`
-	AgentID      string     `json:"agentId"`
-	AgentName    string     `json:"agentName,omitempty"`
-	OwnerID      string     `json:"ownerId"`
-	Title        string     `json:"title"`
-	Input        string     `json:"input"`
-	Priority     string     `json:"priority"`
-	Status       string     `json:"status"`
-	Source       string     `json:"source"`
+	ID        string `json:"id"`
+	AgentID   string `json:"agentId"`
+	AgentName string `json:"agentName,omitempty"`
+	OwnerID   string `json:"ownerId"`
+	Title     string `json:"title"`
+	Input     string `json:"input"`
+	Priority  string `json:"priority"`
+	Status    string `json:"status"`
+	Source    string `json:"source"`
+	// SourceURL is the page the request came from — the pull request a webhook
+	// announced. Empty for anything the platform started itself.
+	SourceURL    string     `json:"sourceUrl,omitempty"`
 	TriggerID    *string    `json:"triggerId,omitempty"`
 	Attempts     int        `json:"attempts"`
 	ScheduledAt  time.Time  `json:"scheduledAt"`
@@ -564,6 +567,7 @@ type CreateTaskInput struct {
 	Input        string
 	Priority     string
 	Source       string
+	SourceURL    string
 	TriggerID    *string
 	CreatedBy    string
 	ScheduledAt  *time.Time
@@ -584,10 +588,10 @@ func (s *Store) CreateAgentTask(ctx context.Context, input CreateTaskInput) (Age
 		scheduled = *input.ScheduledAt
 	}
 	var item AgentTask
-	err := s.pool.QueryRow(ctx, `INSERT INTO agent_tasks(id,agent_id,owner_id,title,input,priority,source,trigger_id,created_by,scheduled_at,deadline_at,parent_task_id,delegation_depth)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+	err := s.pool.QueryRow(ctx, `INSERT INTO agent_tasks(id,agent_id,owner_id,title,input,priority,source,source_url,trigger_id,created_by,scheduled_at,deadline_at,parent_task_id,delegation_depth)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		RETURNING `+taskOwnColumns,
-		uuid.NewString(), input.AgentID, input.OwnerID, input.Title, input.Input, input.Priority, input.Source, input.TriggerID, nullText(input.CreatedBy), scheduled, input.DeadlineAt, input.ParentTaskID, input.Delegation).
+		uuid.NewString(), input.AgentID, input.OwnerID, input.Title, input.Input, input.Priority, input.Source, input.SourceURL, input.TriggerID, nullText(input.CreatedBy), scheduled, input.DeadlineAt, input.ParentTaskID, input.Delegation).
 		Scan(item.scanTargets()...)
 	return item, err
 }
@@ -595,7 +599,7 @@ func (s *Store) CreateAgentTask(ctx context.Context, input CreateTaskInput) (Age
 // taskOwnColumns are the task's own fields, unprefixed, as the insert returns
 // them; taskCoreColumns is the same list qualified for the queries that join the
 // agent. scanTask additionally expects the agent name.
-const taskOwnColumns = `id,agent_id,owner_id,title,input,priority,status,source,trigger_id,attempts,scheduled_at,deadline_at,current_run_id,parent_task_id,delegation_depth,approval_id,last_error,waiting_reason,created_at,updated_at`
+const taskOwnColumns = `id,agent_id,owner_id,title,input,priority,status,source,source_url,trigger_id,attempts,scheduled_at,deadline_at,current_run_id,parent_task_id,delegation_depth,approval_id,last_error,waiting_reason,created_at,updated_at`
 
 var taskCoreColumns = prefixColumns("t", taskOwnColumns)
 
@@ -606,7 +610,7 @@ var taskColumns = taskCoreColumns + `, a.name`
 // column list in this package to have been spelled out twice, and the second to
 // have broken something when one copy was updated and the other was not.
 func (t *AgentTask) scanTargets() []any {
-	return []any{&t.ID, &t.AgentID, &t.OwnerID, &t.Title, &t.Input, &t.Priority, &t.Status, &t.Source,
+	return []any{&t.ID, &t.AgentID, &t.OwnerID, &t.Title, &t.Input, &t.Priority, &t.Status, &t.Source, &t.SourceURL,
 		&t.TriggerID, &t.Attempts, &t.ScheduledAt, &t.DeadlineAt, &t.CurrentRunID, &t.ParentTaskID,
 		&t.Delegation, &t.ApprovalID, &t.LastError, &t.WaitingReason, &t.CreatedAt, &t.UpdatedAt}
 }

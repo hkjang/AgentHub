@@ -1,6 +1,9 @@
 package execution
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"net/url"
+)
 
 // What the forges actually send.
 //
@@ -97,4 +100,60 @@ func isCommitish(value string) bool {
 		}
 	}
 	return false
+}
+
+// scmSourceURL finds the page a delivery is about.
+//
+// Every forge puts it in the body, and the platform dropped it: a finished
+// review named a branch and nothing that led back to the change it reviewed.
+//
+// The address is rendered as a link, so only http and https are accepted. The
+// body is authenticated, not trusted — a `javascript:` href in a payload is a
+// script running in the console of whoever opens the task.
+func scmSourceURL(candidate string) string {
+	var body struct {
+		PullRequest struct {
+			HTMLURL string `json:"html_url"` // GitHub, Gitea, Forgejo
+		} `json:"pull_request"`
+		ObjectAttributes struct {
+			URL string `json:"url"` // GitLab
+		} `json:"object_attributes"`
+		Pullrequest struct {
+			Links struct {
+				HTML struct {
+					Href string `json:"href"` // Bitbucket
+				} `json:"html"`
+			} `json:"links"`
+		} `json:"pullrequest"`
+		Compare string `json:"compare"` // a GitHub push, which links its own diff
+	}
+	if err := json.Unmarshal([]byte(candidate), &body); err != nil {
+		return ""
+	}
+	for _, address := range []string{
+		body.PullRequest.HTMLURL,
+		body.ObjectAttributes.URL,
+		body.Pullrequest.Links.HTML.Href,
+		body.Compare,
+	} {
+		if address == "" {
+			continue
+		}
+		parsed, err := url.Parse(address)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			continue
+		}
+		return address
+	}
+	return ""
+}
+
+// SourceURLFromPayload reads the page a webhook body is about, if it names one.
+func SourceURLFromPayload(input string) string {
+	for _, candidate := range jsonObjects(input) {
+		if address := scmSourceURL(candidate); address != "" {
+			return address
+		}
+	}
+	return ""
 }

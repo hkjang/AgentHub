@@ -224,6 +224,11 @@ export function Tasks() {
                       lifted. Painting the reason in the failure colour said the
                       opposite of what the platform will do next. */}
                   {task.lastError && <span className={task.status === 'blocked' ? 'task-waiting' : 'task-error'} title={task.lastError}>{task.lastError}</span>}
+                  {/* A review started by a forge named a branch and nothing that
+                      led back to the change. The payload always carried the
+                      address; only http(s) is accepted, so a link here cannot be
+                      a script the payload chose. */}
+                  {task.sourceUrl && <a className="task-source-link" href={task.sourceUrl} target="_blank" rel="noreferrer noopener">{sourceLabel(task.sourceUrl)}</a>}
                 </div>
               </td>
               <td><div className="task-agent">
@@ -317,6 +322,20 @@ export function RetryDialog({ task, close, retry }: { task: AgentTask; close: ()
  *  Autonomous agents run unattended, which is exactly when a runaway loop costs
  *  money quietly, so the bill belongs next to the queue rather than buried in an
  *  admin screen. */
+// sourceLabel names the page a task came from the way a person would: the forge
+// and the number, not a hundred characters of address.
+function sourceLabel(address: string): string {
+  try {
+    const parsed = new URL(address)
+    const parts = parsed.pathname.split('/').filter(Boolean)
+    const number = [...parts].reverse().find((part) => /^\d+$/.test(part))
+    const repository = parts.slice(0, 2).join('/')
+    return number ? `${parsed.hostname} ${repository} #${number}` : `${parsed.hostname} ${repository}`
+  } catch {
+    return address
+  }
+}
+
 function UsagePanel() {
   const [report, setReport] = useState<UsageReport>()
   const [budget, setBudget] = useState<UsageBudget | null>(null)

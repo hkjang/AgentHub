@@ -468,6 +468,9 @@ Agent에 **목표(Goal)** 를 설정하면 사람이 지켜보지 않아도 스�
     - GitHub·Gitea `pull_request.base.ref` → `head.ref`, GitLab `object_attributes.target_branch` → `source_branch`, Bitbucket `destination` → `source` 를 각각 읽습니다. **방향** 이 핵심입니다: 반대로 읽으면 반대 diff를 리뷰하고도 멀쩡한 리뷰처럼 보입니다.
     - Push 본문은 `after` 커밋 하나를 봅니다. `before` 는 기준으로 쓰지 않습니다 — 강제 푸시나 첫 푸시에서는 없는 커밋이거나 0으로 가득 찬 값이라, 리뷰가 고장 난 것처럼 실패하기 때문입니다.
     - 손으로 쓰던 본문은 그대로 동작합니다.
+  - **리뷰가 어디서 온 것인지 화면에서 되짚을 수 있습니다.** 웹훅이 만든 작업은 브랜치 이름만 남기고 정작 *어떤 Pull Request 때문에 도는지* 는 버렸습니다 — 끝난 리뷰를 보는 사람은 그 변경을 손으로 찾아야 했습니다. 이제 본문이 주소를 담고 있으면 작업 목록에 `github.com acme/store #42` 처럼 원래 페이지로 가는 링크가 함께 보입니다.
+    - GitHub·Gitea `pull_request.html_url`, GitLab `object_attributes.url`, Bitbucket `links.html.href`, GitHub push의 `compare` 를 읽습니다.
+    - **`http`·`https` 만 받습니다.** 본문은 서명으로 확인된 것이지 신뢰하는 것이 아닙니다 — 주소는 링크로 그려지므로, `javascript:` 주소가 담겨 있으면 작업을 열어 본 사람의 브라우저에서 스크립트가 도는 셈이 됩니다.
 - **이벤트 Trigger**: 플랫폼에서 일어난 일에 반응해 작업을 시작할 수 있습니다. 구독 가능한 이벤트는 작업 완료·작업 실패·재시도 소진·**작업 인계**·승인 처리·런타임 장애·산출물 생성입니다. 이벤트 필터에 `{"agentId":"…"}` 같은 JSON 객체를 넣으면 해당 값이 일치하는 이벤트에만 반응하므로, 특정 에이전트나 런타임만 감시할 수 있습니다. 어떤 이벤트가 실제로 발행되고 있는지는 `작업` 화면의 *최근 플랫폼 이벤트* 에서 확인할 수 있습니다.
   - 산출물 생성 이벤트는 에이전트가 남긴 산출물과 ACP 에이전트가 찍은 화면 캡처 모두에서 발생합니다.
   - 승인 처리 이벤트에는 어떤 승인이었는지(`approvalId`·`resourceType`·`resourceId`)와 대상 에이전트·작업·실행(`agentId`·`taskId`·`runId`)이 함께 담기므로, `{"agentId":"…"}` 필터로 특정 에이전트의 승인만 감시할 수 있습니다.
