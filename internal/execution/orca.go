@@ -435,9 +435,16 @@ type orcaWorkerListing struct {
 // guessing it means "still going" costs at most the wait, which the Goal's time
 // limit already bounds and which reports the worker as unfinished rather than
 // failed.
+// The fabric settles a worker in one of four states, and its own constant names
+// them: WORKER_SETTLED_STATES = ["succeeded", "failed", "stopped",
+// "abandoned"]. This platform had three of the four. A worker the fabric had
+// given up on read as one still working, so the run waited out the Goal's whole
+// time limit and reported that it had taken too long — measured on a cluster,
+// with `abandoned` sitting in the listing the entire time.
 var orcaEnded = map[string]bool{
 	"completed": true, "succeeded": true, "success": true, "done": true, "finished": true,
-	"failed": true, "error": true, "errored": true,
+	"abandoned": true,
+	"failed":    true, "error": true, "errored": true,
 	"cancelled": true, "canceled": true, "stopped": true, "aborted": true,
 	"timeout": true, "timed_out": true, "expired": true,
 }

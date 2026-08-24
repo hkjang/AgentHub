@@ -235,3 +235,24 @@ func TestAFailedWorkerIsStillRecognised(t *testing.T) {
 		t.Error("the worker is skipped before the record is asked")
 	}
 }
+
+// The fabric decides when a worker is over, and it says so in a constant of its
+// own: WORKER_SETTLED_STATES = ["succeeded", "failed", "stopped", "abandoned"],
+// read out of the fabric this platform ships. A settled state this platform
+// does not recognise is worse than an unfamiliar one — the worker is finished
+// and the run waits for it anyway, until the Goal's time limit turns a settled
+// worker into "the run took too long".
+//
+// Measured on a cluster: a worker sat `abandoned` in the listing while its run
+// waited out the limit.
+func TestEveryStateTheFabricSettlesIsAnEnding(t *testing.T) {
+	for _, settled := range []string{"succeeded", "failed", "stopped", "abandoned"} {
+		if !orcaEnded[settled] {
+			t.Errorf("the fabric settles a worker as %q and this platform goes on waiting for it", settled)
+		}
+	}
+	// And the other half of the same judgement: being over is not being right.
+	if orcaSuccess["abandoned"] || orcaSuccess["stopped"] || orcaSuccess["failed"] {
+		t.Error("a worker the fabric gave up on is counted as one that did the work")
+	}
+}
