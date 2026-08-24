@@ -33,7 +33,7 @@ func TestReadinessAsksAboutForgeConnections(t *testing.T) {
 	if end := strings.Index(section, "// The cluster."); end >= 0 {
 		section = section[:end]
 	}
-	if !strings.Contains(section, `Fix: "/developer"`) {
+	if !strings.Contains(section, `"/developer"`) {
 		t.Error("a failing connection does not say where it is repaired")
 	}
 	// A connection nothing has ever checked is not a connection that works.

@@ -49,6 +49,12 @@ func TestEveryPublishedEventCanBeFilteredByAgent(t *testing.T) {
 			sites++
 			// Both sides of the call: a payload is as often built just above it as
 			// written inside it.
+			//
+			// This is a heuristic and worth knowing as one: a neighbour's agent id
+			// inside the window would satisfy a publish that has none of its own.
+			// Reading the payload literal instead would mean parsing Go, which is
+			// more machinery than the question is worth — but a guard nobody knows
+			// is approximate is a guard somebody will trust too far.
 			window := source[max(0, at[0]-700):min(len(source), at[1]+700)]
 			if !strings.Contains(window, "agentId") && !strings.Contains(window, "AgentID") &&
 				!strings.Contains(window, "approvalEventPayload") {

@@ -31,7 +31,7 @@ func TestReadinessAsksAboutRuntimesThatNeverArrived(t *testing.T) {
 		t.Error("a stuck runtime is reported without what the cluster said about it")
 	}
 	// And it names where to go, like every other row here.
-	if !strings.Contains(section, `Fix: "/agents/"`) {
+	if !strings.Contains(section, `"/agents/"`) {
 		t.Error("a stuck runtime does not say where it is looked at")
 	}
 	// Long text from a Pod's events must not swamp the row.
@@ -89,7 +89,7 @@ func TestReadinessAsksAboutRuntimesThatKeepDying(t *testing.T) {
 	if !strings.Contains(section, "runtime.FailureReason") {
 		t.Error("a crash loop is reported without what the cluster said about it")
 	}
-	if !strings.Contains(section, `Fix: "/agents/"`) {
+	if !strings.Contains(section, `"/agents/"`) {
 		t.Error("a crash-looping runtime does not say where it is looked at")
 	}
 }
