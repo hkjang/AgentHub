@@ -284,7 +284,40 @@ func (s *orcaSession) dispatch(ctx context.Context, task store.AgentTask, goal s
 	if waitErr != nil {
 		return report, waitErr
 	}
+	// Every worker having failed is not a finished task. The run said completed
+	// while its only worker read `failed — agent_prompt_stalled`, which is the
+	// dispatch reported as the work all over again, one layer further in.
+	if failed := orcaAllFailed(outcomes); failed {
+		return report, errors.New("워커가 모두 실패했습니다 — " + strings.Join(outcomes, " · "))
+	}
 	return report + ".", nil
+}
+
+// orcaSuccess are the states that mean a worker did the work. Anything else —
+// including a word this platform has not seen — is not success: a run that
+// passes on an unfamiliar state is a run that passes on anything.
+var orcaSuccess = map[string]bool{
+	"completed": true, "succeeded": true, "success": true, "done": true, "finished": true,
+}
+
+// orcaAllFailed reports whether not one worker got there.
+func orcaAllFailed(outcomes []string) bool {
+	if len(outcomes) == 0 {
+		return false
+	}
+	for _, line := range outcomes {
+		state := line
+		if at := strings.Index(state, ": "); at >= 0 {
+			state = state[at+2:]
+		}
+		if at := strings.Index(state, " —"); at >= 0 {
+			state = state[:at]
+		}
+		if orcaSuccess[strings.ToLower(strings.TrimSpace(state))] {
+			return false
+		}
+	}
+	return true
 }
 
 // orcaWorkerPoll is how often the fabric is asked what its workers are doing.
@@ -333,23 +366,18 @@ func (s *orcaSession) fanOut(ctx context.Context, goal store.AgentGoal) ([]orcaW
 			return started, orcaWorkerFailure(name, err)
 		}
 		// `ok` means the fabric accepted the dispatch, not that the worker is
-		// running. Measured: worker-start answered ok with a dispatch id, and the
-		// same dispatch was `failed` / `agent_prompt_stalled` eighteen seconds
-		// later — the agent was not on the host and the terminal died with a shell
-		// error. Reporting "started N workers" on the strength of that ok is
-		// exactly the claim this platform keeps removing, so the fabric is asked
-		// what actually became of it.
-		status, detail := s.workerStatus(ctx, worker.Dispatch.ID)
+		// running: a worker whose agent is not on the host dies in its own
+		// terminal seconds later. What became of it is read from the fabric's
+		// worker listing while the run waits, because the answer to worker-start
+		// does not carry a dispatch id this platform could find — it looked for
+		// `dispatch.id`, got nothing, and every worker read "dispatched" for ever.
 		s.record(ctx, store.OrcaDispatch{
 			RunID: s.run.ID, OrcaRunID: s.runID, OrcaTaskID: s.taskID,
-			Terminal: worker.Dispatch.ID, Worktree: worker.Worktree.Path, Branch: worker.Worktree.Branch,
-			Role: name, Status: status, Detail: detail,
+			Worktree: worker.Worktree.Path, Branch: worker.Worktree.Branch,
+			Role: name, Status: "dispatched",
 		})
-		if status == "failed" {
-			return started, fmt.Errorf("%s 워커가 시작 직후 실패했습니다(%s). 이 호스트에 %s 가 설치·로그인돼 있는지 확인해 주세요 — 패브릭은 디스패치를 받아들이고 나서 실패를 기록합니다.", name, detail, name)
-		}
 		started = append(started, orcaWorkerRef{
-			Agent: name, DispatchID: worker.Dispatch.ID,
+			Agent: name, WorkerName: s.workerName(name),
 			Worktree: worker.Worktree.Path, Branch: worker.Worktree.Branch,
 		})
 	}
@@ -359,10 +387,31 @@ func (s *orcaSession) fanOut(ctx context.Context, goal store.AgentGoal) ([]orcaW
 // orcaWorkerRef is one worker the fabric accepted, kept so the run can wait for
 // it rather than reporting the dispatch as the work.
 type orcaWorkerRef struct {
-	Agent      string
-	DispatchID string
+	Agent string
+	// WorkerName is the checkout this platform asked the fabric to make. The
+	// fabric's listing carries it inside the worktree id, which is how a state
+	// there is attributed to an agent named here — the two commands do not share
+	// a vocabulary, and this is the one field both of them agree on.
+	WorkerName string
 	Worktree   string
 	Branch     string
+}
+
+// orcaWorkerListing is the fabric's answer about every worker it holds.
+//
+// Its field names are not the ones worker-show uses — this one answers in
+// camelCase and that one in snake_case — which is worth writing down rather than
+// discovering twice.
+type orcaWorkerListing struct {
+	Workers []struct {
+		DispatchID     string `json:"dispatchId"`
+		TaskID         string `json:"taskId"`
+		WorkerState    string `json:"workerState"`
+		DispatchStatus string `json:"dispatchStatus"`
+		Resource       struct {
+			WorktreeID string `json:"worktreeId"`
+		} `json:"resource"`
+	} `json:"workers"`
 }
 
 // orcaInFlight are the states that mean a worker is still going. Anything else
@@ -395,19 +444,29 @@ func (s *orcaSession) waitForWorkers(ctx context.Context, workers []orcaWorkerRe
 	settled := make(map[string]string, len(workers))
 	details := make(map[string]string, len(workers))
 	for {
+		states := s.workerStates(ctx)
 		for _, worker := range workers {
-			if _, done := settled[worker.DispatchID]; done {
+			if _, done := settled[worker.Agent]; done {
 				continue
 			}
-			status, detail := s.workerStatus(ctx, worker.DispatchID)
-			if orcaInFlight[strings.ToLower(strings.TrimSpace(status))] {
+			state, found := states[worker.WorkerName]
+			if !found || orcaInFlight[strings.ToLower(strings.TrimSpace(state.status))] {
 				continue
 			}
-			settled[worker.DispatchID], details[worker.DispatchID] = status, detail
+			// The listing says which workers are done and not why. The reason is
+			// on the record for one worker, which can now be asked for by an id
+			// that exists — the listing is where this platform first got one.
+			detail := state.detail
+			if state.dispatchID != "" {
+				if _, shown := s.workerStatus(ctx, state.dispatchID); shown != "" {
+					detail = shown
+				}
+			}
+			settled[worker.Agent], details[worker.Agent] = state.status, detail
 			s.record(ctx, store.OrcaDispatch{
 				RunID: s.run.ID, OrcaRunID: s.runID, OrcaTaskID: s.taskID,
-				Terminal: worker.DispatchID, Worktree: worker.Worktree, Branch: worker.Branch,
-				Role: worker.Agent, Status: status, Detail: detail,
+				Terminal: state.dispatchID, Worktree: worker.Worktree, Branch: worker.Branch,
+				Role: worker.Agent, Status: state.status, Detail: state.detail,
 			})
 		}
 		if len(settled) == len(workers) {
@@ -432,13 +491,13 @@ func (s *orcaSession) waitForWorkers(ctx context.Context, workers []orcaWorkerRe
 func orcaWorkerSummary(workers []orcaWorkerRef, settled, details map[string]string) []string {
 	lines := make([]string, 0, len(workers))
 	for _, worker := range workers {
-		state, ok := settled[worker.DispatchID]
+		state, ok := settled[worker.Agent]
 		if !ok {
 			lines = append(lines, worker.Agent+": 아직 끝나지 않았습니다")
 			continue
 		}
 		line := worker.Agent + ": " + state
-		if detail := strings.TrimSpace(details[worker.DispatchID]); detail != "" {
+		if detail := strings.TrimSpace(details[worker.Agent]); detail != "" {
 			line += " — " + trimmed(detail, 200)
 		}
 		lines = append(lines, line)
@@ -462,13 +521,26 @@ func (s *orcaSession) workerStatus(ctx context.Context, dispatchID string) (stri
 			Status      string `json:"status"`
 			LastFailure string `json:"last_failure"`
 		} `json:"dispatch"`
+		// worker-show answers in snake_case where worker-list answers in camel.
+		// The worker's own record is where the reason lives: `agent_prompt_stalled`
+		// on a dispatch that says only "failed".
+		Worker struct {
+			State     string `json:"state"`
+			LastError string `json:"last_error"`
+		} `json:"worker"`
 	}
 	if err := s.call(ctx, &shown, "orchestration", "worker-show", "--dispatch", dispatchID, "--json"); err != nil {
 		// Not knowing is not the same as failing, and saying "failed" here would
 		// fail a task because one inspection call did not answer.
 		return "dispatched", "상태를 확인하지 못했습니다: " + trimmed(err.Error(), 200)
 	}
-	return orcaWorkerOutcome(shown.Dispatch.Status, shown.Dispatch.LastFailure)
+	status, detail := orcaWorkerOutcome(shown.Dispatch.Status, shown.Dispatch.LastFailure)
+	if strings.TrimSpace(detail) == "" {
+		// The dispatch says it failed; the worker record says what of. Both are
+		// in the same answer and only one of them is a sentence.
+		detail = strings.TrimSpace(shown.Worker.LastError)
+	}
+	return status, detail
 }
 
 // orcaWorkerOutcome reads one worker-show record.
@@ -567,4 +639,45 @@ func trimmedSuffix(text string) string {
 		return ": " + detail
 	}
 	return ""
+}
+
+// orcaWorkerState is one worker as the fabric's listing describes it.
+type orcaWorkerState struct {
+	dispatchID string
+	status     string
+	detail     string
+}
+
+// workerStates reads every worker the fabric holds, keyed by the checkout name
+// this platform asked for.
+//
+// One call rather than one per worker, and a listing rather than the answer to
+// the command that started them: worker-start's reply carries no dispatch id
+// this code could find, which is why every worker read "dispatched" until the
+// run's time ran out.
+func (s *orcaSession) workerStates(ctx context.Context) map[string]orcaWorkerState {
+	var listing orcaWorkerListing
+	if err := s.call(ctx, &listing, "orchestration", "worker-list", "--json"); err != nil {
+		// Not knowing is not a state. The wait tries again on its next turn.
+		return nil
+	}
+	states := map[string]orcaWorkerState{}
+	for _, worker := range listing.Workers {
+		if s.taskID != "" && worker.TaskID != "" && worker.TaskID != s.taskID {
+			continue
+		}
+		status := strings.TrimSpace(worker.WorkerState)
+		if status == "" {
+			status = strings.TrimSpace(worker.DispatchStatus)
+		}
+		name := worker.Resource.WorktreeID
+		if at := strings.LastIndex(name, "/"); at >= 0 {
+			name = name[at+1:]
+		}
+		if name == "" {
+			continue
+		}
+		states[name] = orcaWorkerState{dispatchID: worker.DispatchID, status: status}
+	}
+	return states
 }
