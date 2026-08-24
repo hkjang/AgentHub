@@ -267,6 +267,18 @@ func (s *Server) importAgent(w http.ResponseWriter, r *http.Request) {
 		missing = append(missing, label+" "+name)
 		return ""
 	}
+	// Named as the file names it. The lookup is keyed by runtime type and version
+	// together, and reporting that key told somebody their document referenced
+	// "런타임 이미지 orca/9.9.9" — a pairing this platform made up, which appears
+	// nowhere in the file they are looking at.
+	imageID := ""
+	if version := strings.TrimSpace(document.Spec.RuntimeImage); version != "" {
+		if id, found := lookup.imageIDs[strings.ToLower(imageKey(document.Spec.RuntimeType, version))]; found {
+			imageID = id
+		} else {
+			missing = append(missing, "런타임 이미지 "+version)
+		}
+	}
 	input := store.CreateAgentInput{
 		Name:              document.Metadata.Name,
 		Description:       document.Metadata.Description,
@@ -274,7 +286,7 @@ func (s *Server) importAgent(w http.ResponseWriter, r *http.Request) {
 		SystemPrompt:      document.Spec.SystemPrompt,
 		CustomCommand:     document.Spec.CustomCommand,
 		CustomPort:        document.Spec.CustomPort,
-		RuntimeImageID:    resolve(imageKey(document.Spec.RuntimeType, document.Spec.RuntimeImage), lookup.imageIDs, "런타임 이미지"),
+		RuntimeImageID:    imageID,
 		RuntimeProfileID:  resolve(document.Spec.RuntimeProfile, lookup.profileIDs, "런타임 프로파일"),
 		WorkspaceID:       resolve(document.Spec.Workspace, lookup.workspaceIDs, "작업공간"),
 		ModelEndpointID:   resolve(document.Spec.ModelEndpoint, lookup.modelIDs, "모델 엔드포인트"),

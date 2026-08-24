@@ -75,8 +75,14 @@ func TestTheDocumentCarriesTheRuntimeImage(t *testing.T) {
 	if !strings.Contains(source, "document.Spec.RuntimeImage = names.images[deref(agent.RuntimeImageID)]") {
 		t.Error("an agent's image is not written into the document it exports")
 	}
-	if !strings.Contains(source, `RuntimeImageID:    resolve(imageKey(document.Spec.RuntimeType, document.Spec.RuntimeImage), lookup.imageIDs, "런타임 이미지")`) {
+	if !strings.Contains(source, "RuntimeImageID:    imageID,") {
 		t.Error("an imported document's image is not resolved, so it arrives unpinned")
+	}
+	// And a document that names an image this cluster lacks is refused in the
+	// file's own words: the lookup key pairs runtime type and version, and
+	// reporting that pairing names something the file never said.
+	if !strings.Contains(source, `missing = append(missing, "런타임 이미지 "+version)`) {
+		t.Error("a missing image is reported as this platform's internal key rather than what the file says")
 	}
 	// A version is unique inside a runtime type and nowhere else. Keying by name
 	// would bind the wrong image the day two runtimes share one.
