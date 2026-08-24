@@ -108,7 +108,7 @@ func (o *Orchestrator) runCLI(ctx context.Context, run *store.AgentRun, task sto
 		o.event(ctx, *run, "cli.failed", execErr.Error(), map[string]any{"runtimeId": acquired.runtimeID})
 		// Reaching the container failed, which is infrastructure rather than the
 		// agent failing its task.
-		return nil, Outcome{Status: store.TaskFailed, Failure: "Runtime에서 에이전트를 실행하지 못했습니다: " + execErr.Error(), Retryable: true}
+		return nil, Outcome{Status: store.TaskFailed, Failure: runtimeExecFailure("에이전트", execErr, goal), Retryable: true}
 	}
 
 	parsed, parseErr := adapter.Parse(result.Stdout, result.Stderr, result.ExitCode)

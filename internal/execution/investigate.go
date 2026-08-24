@@ -91,7 +91,7 @@ func (o *Orchestrator) runInvestigate(ctx context.Context, run *store.AgentRun, 
 		}
 		o.event(ctx, *run, "investigate.failed", execErr.Error(), map[string]any{"runtimeId": acquired.runtimeID})
 		return nil, Outcome{Status: store.TaskFailed, Retryable: true,
-			Failure: "Runtime에서 조사를 실행하지 못했습니다: " + execErr.Error()}
+			Failure: runtimeExecFailure("조사", execErr, goal)}
 	}
 
 	report, parseErr := parseInvestigation(result.Stdout, result.Stderr, result.ExitCode)

@@ -346,7 +346,7 @@ func (o *Orchestrator) runReview(ctx context.Context, run *store.AgentRun, task 
 		}
 		o.event(ctx, *run, "review.failed", execErr.Error(), map[string]any{"runtimeId": acquired.runtimeID})
 		return nil, Outcome{Status: store.TaskFailed, Retryable: true,
-			Failure: "Runtime에서 리뷰 엔진을 실행하지 못했습니다: " + execErr.Error()}
+			Failure: runtimeExecFailure("리뷰", execErr, goal)}
 	}
 
 	parsed, parseErr := parseReview(result.Stdout, result.Stderr)
