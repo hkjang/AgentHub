@@ -112,8 +112,7 @@ which looks exactly like the agent being pointed somewhere else.
 
 ## What is not established yet
 
-The approval gate, forking and condensation were read from the contract rather
-than exercised. The server has its own approval gate and AgentHub already has
+Forking and condensation were read from the contract rather than exercised. The server has its own approval gate and AgentHub already has
 one; only one of them can be the authority and it has to be this platform's,
 which is why conversations are created with the confirmation policy left at
 never and the platform's own approval is what a task waits on. Forking and condensation are still unused.
@@ -154,3 +153,24 @@ An agent with its own runtime never consults the registry. The registry's
 capacity limits are about machines several agents share; a runtime's capacity is
 its own Pod, so claiming a shared slot for it would refuse work against a limit
 that is not about it.
+
+## The approval gate, exercised
+
+Run on a platform-spawned runtime, against a gateway inside the same cluster
+that answers the first tool-bearing request with a tool call:
+
+1. The agent asks to run `terminal`; the conversation stops at
+   `waiting_for_confirmation` rather than acting.
+2. AgentHub records a pending approval carrying the tool, the server and the
+   arguments — `{"command":"echo AGENTHUB-APPROVED"}` — so the person deciding
+   sees what would run rather than only that something would.
+3. Approving it through the API sends the answer back; the conversation resumes,
+   makes its next model call, and the task completes.
+
+The server's own gate stays at `NeverConfirm` throughout. Only one authority can
+decide, and it is this platform's.
+
+A note for whoever tests this next: the first model call a conversation makes
+carries no tools — the server is asking for a title. A stub that answers the
+*first* call with a tool call spends it there and the agent never tries to act.
+Answer the first request that actually offers tools.
