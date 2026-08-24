@@ -104,3 +104,45 @@ func TestTheRestartThresholdMeansSomething(t *testing.T) {
 		t.Errorf("a crash loop is only reported after %d restarts, by which time it has been failing for an hour", runtimeRestartAlarm)
 	}
 }
+
+// A dead-lettered task is work somebody asked for and the platform stopped
+// trying to do. It sits on the task list for whoever opens it, and the screen
+// that answers "what is broken now" said nothing — so a deployment could abandon
+// a task an hour all day and look healthy.
+func TestReadinessAsksAboutWorkThePlatformGaveUpOn(t *testing.T) {
+	body, err := os.ReadFile("readiness.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	if !strings.Contains(source, "TasksAbandoned(") {
+		t.Fatal("readiness never asks how much work was abandoned")
+	}
+	at := strings.Index(source, "TasksAbandoned(")
+	section := source[at:]
+	if end := strings.Index(section, "\n\t// Single sign-on"); end >= 0 {
+		section = section[:end]
+	}
+	// Nothing abandoned is not a row: a screen that says "0 today" every morning
+	// is one people stop reading.
+	if !strings.Contains(section, "abandoned.Count == 0") {
+		t.Error("a quiet day still produces a row")
+	}
+	// The count and the commonest reason are the finding.
+	for _, want := range []string{"abandoned.Count", "abandoned.Reason"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the report does not carry %s", want)
+		}
+	}
+}
+
+// A day, because a night of failures should be visible in the morning and last
+// month's outage should not.
+func TestTheAbandonedWindowIsADay(t *testing.T) {
+	if abandonedWindow < 6*time.Hour {
+		t.Errorf("work abandoned overnight would already be forgotten after %v", abandonedWindow)
+	}
+	if abandonedWindow > 7*24*time.Hour {
+		t.Errorf("%v of history would be reported as though it were happening now", abandonedWindow)
+	}
+}

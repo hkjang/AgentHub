@@ -1534,3 +1534,40 @@ func cleanPatterns(values []string) []string {
 	}
 	return cleaned
 }
+
+// AbandonedWork is how much the platform gave up on lately, and why.
+type AbandonedWork struct {
+	Count int
+	// Reason is the commonest last error among them, which is usually the one
+	// thing to fix. Empty when they failed for reasons nobody recorded.
+	Reason string
+	// Agent names the agent those tasks belong to when they all belong to one.
+	// Several agents failing is a different fact from one agent failing.
+	Agent string
+}
+
+// TasksAbandoned counts the tasks that ran out of retries inside the window.
+//
+// A dead-lettered task is work somebody asked for that the platform stopped
+// trying to do. It is on the task list for anybody who opens it, and the screen
+// that answers "what is broken now" said nothing — so a deployment could abandon
+// a task an hour, all day, and look healthy.
+//
+// Windowed rather than total: history is not trouble, and a screen that reports
+// last month's failure every morning is one people stop reading.
+func (s *Store) TasksAbandoned(ctx context.Context, window time.Duration) (AbandonedWork, error) {
+	var out AbandonedWork
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(*),
+		       COALESCE((SELECT left(t.last_error, 200) FROM agent_tasks t
+		                 WHERE t.status = 'dead_letter' AND t.updated_at > now() - $1::interval
+		                   AND coalesce(t.last_error,'') <> ''
+		                 GROUP BY left(t.last_error, 200) ORDER BY count(*) DESC LIMIT 1), ''),
+		       COALESCE((SELECT a.name FROM agent_tasks t JOIN agent_definitions a ON a.id = t.agent_id
+		                 WHERE t.status = 'dead_letter' AND t.updated_at > now() - $1::interval
+		                 GROUP BY a.name ORDER BY count(*) DESC LIMIT 1), '')
+		FROM agent_tasks
+		WHERE status = 'dead_letter' AND updated_at > now() - $1::interval`, window.String()).
+		Scan(&out.Count, &out.Reason, &out.Agent)
+	return out, err
+}

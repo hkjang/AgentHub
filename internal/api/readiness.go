@@ -179,6 +179,28 @@ func (s *Server) readiness(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 
+	// Work the platform gave up on.
+	//
+	// A dead-lettered task is something somebody asked for and the platform
+	// stopped trying to do. It sits on the task list for whoever opens it, and
+	// this screen — the one that answers "what is broken now" — said nothing, so
+	// a deployment could abandon a task an hour all day and look healthy.
+	run(func() {
+		abandoned, err := s.store.TasksAbandoned(r.Context(), abandonedWindow)
+		if err != nil || abandoned.Count == 0 {
+			return
+		}
+		detail := fmt.Sprintf("최근 24시간 동안 작업 %d건이 재시도를 다 쓰고 중단됐습니다", abandoned.Count)
+		if abandoned.Agent != "" {
+			detail += " (가장 많은 에이전트: " + abandoned.Agent + ")"
+		}
+		if reason := strings.TrimSpace(abandoned.Reason); reason != "" {
+			detail += " — 가장 흔한 사유: " + reason
+		}
+		add(readinessItem{Area: "실행", Name: "포기한 작업", Verdict: "failing",
+			Detail: detail, Fix: "/tasks"})
+	})
+
 	// Single sign-on, but only when somebody turned it on: a deployment using
 	// local login is not incomplete for having no identity provider.
 	run(func() {
@@ -450,6 +472,11 @@ const runtimeStuckAfter = 10 * time.Minute
 // of a container failing, and a runtime that restarted once while a node was
 // drained is not news.
 const runtimeRestartAlarm = 5
+
+// abandonedWindow is how far back this screen counts work the platform gave up
+// on. A day is long enough to catch a night of failures and short enough that
+// last month's outage is not reported every morning as though it were now.
+const abandonedWindow = 24 * time.Hour
 
 // humanSince is the age of something in the words somebody would use.
 func humanSince(when time.Time) string {
