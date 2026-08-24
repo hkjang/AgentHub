@@ -1,6 +1,10 @@
 package api
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
+)
 
 // The exported name becomes a download filename, and an agent may be named in
 // any language with any punctuation.
@@ -48,5 +52,41 @@ func TestSafeFileNameNeverEmptyOrPathLike(t *testing.T) {
 				t.Errorf("safeFileName(%q) = %q, which is path-like", name, got)
 			}
 		}
+	}
+}
+
+// The runtime image decides which container an agent actually runs, and it was
+// the one binding that did not travel.
+//
+// Measured on a running deployment: an agent pinned to a registered image
+// exported a document with no mention of it, so importing that file anywhere —
+// including back into the same cluster — produced an agent running whatever the
+// default for its runtime type happens to be. Every other reference in this
+// document already travels by name; this one travelled not at all.
+func TestTheDocumentCarriesTheRuntimeImage(t *testing.T) {
+	body, err := os.ReadFile("gitops.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	if !strings.Contains(source, "RuntimeImage    string   `json:\"runtimeImage,omitempty\"`") {
+		t.Error("the document has no field for the image, so an export cannot mention it")
+	}
+	if !strings.Contains(source, "document.Spec.RuntimeImage = names.images[deref(agent.RuntimeImageID)]") {
+		t.Error("an agent's image is not written into the document it exports")
+	}
+	if !strings.Contains(source, `RuntimeImageID:    resolve(imageKey(document.Spec.RuntimeType, document.Spec.RuntimeImage), lookup.imageIDs, "런타임 이미지")`) {
+		t.Error("an imported document's image is not resolved, so it arrives unpinned")
+	}
+	// A version is unique inside a runtime type and nowhere else. Keying by name
+	// would bind the wrong image the day two runtimes share one.
+	if !strings.Contains(source, "lookup.imageIDs[strings.ToLower(imageKey(item.RuntimeType, item.Version))] = item.ID") {
+		t.Error("images are not keyed the way this deployment keys them")
+	}
+	if key := imageKey("orca", ""); key != "" {
+		t.Errorf("an agent with no image produces the reference %q, which resolves to nothing and reports it missing", key)
+	}
+	if key := imageKey("orca", "0.3.1"); key != "orca/0.3.1" {
+		t.Errorf("an image is named %q", key)
 	}
 }

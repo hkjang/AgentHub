@@ -39,7 +39,11 @@ type agentDocument struct {
 		Description string `json:"description,omitempty"`
 	} `json:"metadata"`
 	Spec struct {
-		RuntimeType     string   `json:"runtimeType"`
+		RuntimeType string `json:"runtimeType"`
+		// RuntimeImage travels as the image's version, because that is what this
+		// platform itself treats as unique for a runtime type — names are not.
+		// Paired with runtimeType above, it names one registered image exactly.
+		RuntimeImage    string   `json:"runtimeImage,omitempty"`
 		RuntimeProfile  string   `json:"runtimeProfile,omitempty"`
 		Workspace       string   `json:"workspace,omitempty"`
 		ModelEndpoint   string   `json:"modelEndpoint,omitempty"`
@@ -117,6 +121,7 @@ func (s *Server) agentToDocument(r *http.Request, agent store.Agent) (agentDocum
 	// By name, like everything else. The seeded profiles have stable ids and
 	// travelled as those, but a profile an operator creates gets a uuid that means
 	// nothing in another cluster — which is the one place these documents are for.
+	document.Spec.RuntimeImage = names.images[deref(agent.RuntimeImageID)]
 	document.Spec.SecurityProfile = names.security[deref(agent.SecurityProfileID)]
 	document.Spec.NetworkProfile = names.network[deref(agent.NetworkProfileID)]
 	return document, nil
@@ -126,6 +131,13 @@ func (s *Server) agentToDocument(r *http.Request, agent store.Agent) (agentDocum
 type referenceLookup struct {
 	profiles, workspaces, models, bundles         map[string]string
 	profileIDs, workspaceIDs, modelIDs, bundleIDs map[string]string
+	// The runtime image decides which container an agent actually runs, and it
+	// did not travel at all: an agent pinned to one exported without it and was
+	// imported running whatever the default for its type happens to be — a
+	// binding that looked preserved and was not. Keyed by runtime type and
+	// version together, which is the pair this deployment keys them by.
+	images   map[string]string
+	imageIDs map[string]string
 	// Security and network profiles travelled as raw identifiers because the ones
 	// this platform seeds have stable ids. A profile an operator creates does not:
 	// it gets a fresh uuid, which exists in one cluster and nowhere else. Exporting
@@ -144,6 +156,7 @@ func (s *Server) referenceNames(r *http.Request) (referenceLookup, error) {
 		profileIDs: map[string]string{}, workspaceIDs: map[string]string{}, modelIDs: map[string]string{}, bundleIDs: map[string]string{},
 		security: map[string]string{}, network: map[string]string{},
 		securityIDs: map[string]string{}, networkIDs: map[string]string{},
+		images: map[string]string{}, imageIDs: map[string]string{},
 	}
 	u, _ := userFromContext(r.Context())
 	profiles, err := s.store.RuntimeProfiles(r.Context())
@@ -153,6 +166,14 @@ func (s *Server) referenceNames(r *http.Request) (referenceLookup, error) {
 	for _, item := range profiles {
 		lookup.profiles[item.ID] = item.Name
 		lookup.profileIDs[strings.ToLower(item.Name)] = item.ID
+	}
+	images, err := s.store.RuntimeImages(r.Context())
+	if err != nil {
+		return lookup, err
+	}
+	for _, item := range images {
+		lookup.images[item.ID] = item.Version
+		lookup.imageIDs[strings.ToLower(imageKey(item.RuntimeType, item.Version))] = item.ID
 	}
 	workspaces, err := s.store.Workspaces(r.Context(), u.ID, u.Role == "admin")
 	if err != nil {
@@ -253,6 +274,7 @@ func (s *Server) importAgent(w http.ResponseWriter, r *http.Request) {
 		SystemPrompt:      document.Spec.SystemPrompt,
 		CustomCommand:     document.Spec.CustomCommand,
 		CustomPort:        document.Spec.CustomPort,
+		RuntimeImageID:    resolve(imageKey(document.Spec.RuntimeType, document.Spec.RuntimeImage), lookup.imageIDs, "런타임 이미지"),
 		RuntimeProfileID:  resolve(document.Spec.RuntimeProfile, lookup.profileIDs, "런타임 프로파일"),
 		WorkspaceID:       resolve(document.Spec.Workspace, lookup.workspaceIDs, "작업공간"),
 		ModelEndpointID:   resolve(document.Spec.ModelEndpoint, lookup.modelIDs, "모델 엔드포인트"),
@@ -366,4 +388,13 @@ func asciiFileName(name string) string {
 		return "agent"
 	}
 	return trimmed
+}
+
+// imageKey names one registered image: a version is unique inside a runtime
+// type and nowhere else, which is how this deployment stores them.
+func imageKey(runtimeType, version string) string {
+	if strings.TrimSpace(version) == "" {
+		return ""
+	}
+	return runtimeType + "/" + version
 }
