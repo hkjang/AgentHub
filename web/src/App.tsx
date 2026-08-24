@@ -1,36 +1,43 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useState } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { api, UNAUTHORIZED_EVENT } from './api'
 import { setViewModeScope } from './viewmode'
 import { setRunnerExperience, setRuntimeDescriptors, type RunnerExperience, type RuntimeDescriptor } from './runtime'
 import type { User, Version } from './types'
 import { AppShell } from './components/AppShell'
+import { Loading } from './components/UI'
 import { Login } from './pages/Login'
 import { Dashboard } from './pages/Dashboard'
-import { Catalog } from './pages/Catalog'
-import { Agents } from './pages/Agents'
-import { Workspaces } from './pages/Workspaces'
-import { Developer } from './pages/Developer'
-import { AdminSettings } from './pages/AdminSettings'
-import { AdminDLP } from './pages/AdminDLP'
-import { AdminExecution } from './pages/AdminExecution'
-import { AdminInsights } from './pages/AdminInsights'
-import { AdminPolicy } from './pages/AdminPolicy'
-import { AdminRuntimeSettings } from './pages/AdminRuntimeSettings'
-import { AdminOperations } from './pages/AdminOperations'
-import { Reviews } from './pages/Reviews'
-import { AdminResources } from './pages/AdminResources'
-import { AdminUsers } from './pages/AdminUsers'
-import { AdminQuota } from './pages/AdminQuota'
-import { Snapshots } from './pages/Snapshots'
-import { Runs } from './pages/Runs'
-import { CodeReview } from './pages/CodeReview'
-import { MCPFabric } from './pages/MCPFabric'
-import { AdminSecurity } from './pages/AdminSecurity'
-import { Sessions } from './pages/Sessions'
-import { Tasks } from './pages/Tasks'
-import { Workflows } from './pages/Workflows'
-import { Evaluation } from './pages/Evaluation'
+
+// Every screen but the first is fetched when somebody opens it. The console
+// shipped as one file holding all of them: 629 kB, parsed before anything
+// rendered, on a platform that is often installed where the network is the
+// slow part. Login and the dashboard stay in the first file because they are
+// what a person sees before they have chosen anything.
+const AdminDLP = lazy(() => import('./pages/AdminDLP').then((m) => ({ default: m.AdminDLP })))
+const AdminExecution = lazy(() => import('./pages/AdminExecution').then((m) => ({ default: m.AdminExecution })))
+const AdminInsights = lazy(() => import('./pages/AdminInsights').then((m) => ({ default: m.AdminInsights })))
+const AdminOperations = lazy(() => import('./pages/AdminOperations').then((m) => ({ default: m.AdminOperations })))
+const AdminPolicy = lazy(() => import('./pages/AdminPolicy').then((m) => ({ default: m.AdminPolicy })))
+const AdminQuota = lazy(() => import('./pages/AdminQuota').then((m) => ({ default: m.AdminQuota })))
+const AdminResources = lazy(() => import('./pages/AdminResources').then((m) => ({ default: m.AdminResources })))
+const AdminRuntimeSettings = lazy(() => import('./pages/AdminRuntimeSettings').then((m) => ({ default: m.AdminRuntimeSettings })))
+const AdminSecurity = lazy(() => import('./pages/AdminSecurity').then((m) => ({ default: m.AdminSecurity })))
+const AdminSettings = lazy(() => import('./pages/AdminSettings').then((m) => ({ default: m.AdminSettings })))
+const AdminUsers = lazy(() => import('./pages/AdminUsers').then((m) => ({ default: m.AdminUsers })))
+const Agents = lazy(() => import('./pages/Agents').then((m) => ({ default: m.Agents })))
+const Catalog = lazy(() => import('./pages/Catalog').then((m) => ({ default: m.Catalog })))
+const CodeReview = lazy(() => import('./pages/CodeReview').then((m) => ({ default: m.CodeReview })))
+const Developer = lazy(() => import('./pages/Developer').then((m) => ({ default: m.Developer })))
+const Evaluation = lazy(() => import('./pages/Evaluation').then((m) => ({ default: m.Evaluation })))
+const MCPFabric = lazy(() => import('./pages/MCPFabric').then((m) => ({ default: m.MCPFabric })))
+const Reviews = lazy(() => import('./pages/Reviews').then((m) => ({ default: m.Reviews })))
+const Runs = lazy(() => import('./pages/Runs').then((m) => ({ default: m.Runs })))
+const Sessions = lazy(() => import('./pages/Sessions').then((m) => ({ default: m.Sessions })))
+const Snapshots = lazy(() => import('./pages/Snapshots').then((m) => ({ default: m.Snapshots })))
+const Tasks = lazy(() => import('./pages/Tasks').then((m) => ({ default: m.Tasks })))
+const Workflows = lazy(() => import('./pages/Workflows').then((m) => ({ default: m.Workflows })))
+const Workspaces = lazy(() => import('./pages/Workspaces').then((m) => ({ default: m.Workspaces })))
 
 export type Capabilities = { teamApprovalEnabled: boolean; highRiskToolApproval: boolean; kubernetesEnabled: boolean; mcpProtocolVersion: string; executionPaused?: boolean; executionPausedReason?: string }
 type AuthContextValue = { user: User; version: Version; capabilities: Capabilities; refresh: () => Promise<void>; logout: () => Promise<void> }
@@ -85,45 +92,47 @@ export function App() {
   if (!user) return <Login version={version} onLogin={refresh} />
 
   return <AuthContext.Provider value={{ user, version, capabilities, refresh, logout }}>
-    <Routes>
-      <Route element={<AppShell />}>
-        <Route index element={<Dashboard />} />
-        <Route path="catalog" element={<Catalog />} />
-        <Route path="agents" element={<Agents />} />
-        <Route path="agents/builder" element={<Catalog builder />} />
-        <Route path="workspaces" element={<Workspaces />} />
-        <Route path="workspaces/snapshots" element={<Snapshots />} />
-        <Route path="runs" element={<Runs />} />
-        <Route path="code-review" element={<CodeReview />} />
-        <Route path="mcp/catalog" element={<MCPFabric view="catalog" />} />
-        <Route path="mcp/bundles" element={<MCPFabric view="bundles" />} />
-        <Route path="runtime" element={<Agents runtimeOnly />} />
-        <Route path="sessions" element={<Sessions />} />
-        <Route path="tasks" element={<Tasks />} />
-        <Route path="workflows" element={<Workflows />} />
-        <Route path="evaluation" element={<Evaluation />} />
-        <Route path="reviews" element={<Reviews />} />
-        <Route path="developer" element={<Developer />} />
-        <Route path="admin/settings" element={<AdminSettings />} />
-        <Route path="admin/overview" element={<AdminInsights />} />
-        <Route path="admin/execution" element={<AdminExecution />} />
-        <Route path="admin/policy" element={<AdminPolicy />} />
-        <Route path="admin/dlp" element={<AdminDLP />} />
-        <Route path="admin/runtime-settings" element={<AdminRuntimeSettings />} />
-        <Route path="admin/operations" element={<AdminOperations />} />
-        <Route path="admin/runtime-profiles" element={<AdminResources kind="profiles" />} />
-        <Route path="admin/runtime-images" element={<AdminResources kind="images" />} />
-        <Route path="admin/models" element={<AdminResources kind="models" />} />
-        <Route path="admin/external-apps" element={<AdminResources kind="apps" />} />
-        <Route path="admin/agent-servers" element={<AdminResources kind="servers" />} />
-        <Route path="admin/mcp" element={<AdminResources kind="mcp" />} />
-        <Route path="admin/mcp-bundles" element={<AdminResources kind="bundles" />} />
-        <Route path="admin/users" element={<AdminUsers />} />
-        <Route path="admin/quotas" element={<AdminQuota />} />
-        <Route path="admin/security" element={<AdminSecurity />} />
-        <Route path="admin/*" element={<Navigate to="/admin/settings" replace />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Route>
-    </Routes>
+    <Suspense fallback={<Loading />}>
+      <Routes>
+        <Route element={<AppShell />}>
+          <Route index element={<Dashboard />} />
+          <Route path="catalog" element={<Catalog />} />
+          <Route path="agents" element={<Agents />} />
+          <Route path="agents/builder" element={<Catalog builder />} />
+          <Route path="workspaces" element={<Workspaces />} />
+          <Route path="workspaces/snapshots" element={<Snapshots />} />
+          <Route path="runs" element={<Runs />} />
+          <Route path="code-review" element={<CodeReview />} />
+          <Route path="mcp/catalog" element={<MCPFabric view="catalog" />} />
+          <Route path="mcp/bundles" element={<MCPFabric view="bundles" />} />
+          <Route path="runtime" element={<Agents runtimeOnly />} />
+          <Route path="sessions" element={<Sessions />} />
+          <Route path="tasks" element={<Tasks />} />
+          <Route path="workflows" element={<Workflows />} />
+          <Route path="evaluation" element={<Evaluation />} />
+          <Route path="reviews" element={<Reviews />} />
+          <Route path="developer" element={<Developer />} />
+          <Route path="admin/settings" element={<AdminSettings />} />
+          <Route path="admin/overview" element={<AdminInsights />} />
+          <Route path="admin/execution" element={<AdminExecution />} />
+          <Route path="admin/policy" element={<AdminPolicy />} />
+          <Route path="admin/dlp" element={<AdminDLP />} />
+          <Route path="admin/runtime-settings" element={<AdminRuntimeSettings />} />
+          <Route path="admin/operations" element={<AdminOperations />} />
+          <Route path="admin/runtime-profiles" element={<AdminResources kind="profiles" />} />
+          <Route path="admin/runtime-images" element={<AdminResources kind="images" />} />
+          <Route path="admin/models" element={<AdminResources kind="models" />} />
+          <Route path="admin/external-apps" element={<AdminResources kind="apps" />} />
+          <Route path="admin/agent-servers" element={<AdminResources kind="servers" />} />
+          <Route path="admin/mcp" element={<AdminResources kind="mcp" />} />
+          <Route path="admin/mcp-bundles" element={<AdminResources kind="bundles" />} />
+          <Route path="admin/users" element={<AdminUsers />} />
+          <Route path="admin/quotas" element={<AdminQuota />} />
+          <Route path="admin/security" element={<AdminSecurity />} />
+          <Route path="admin/*" element={<Navigate to="/admin/settings" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    </Suspense>
   </AuthContext.Provider>
 }

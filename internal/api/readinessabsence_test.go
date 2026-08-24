@@ -422,3 +422,35 @@ func TestTheAPIAnswersAnImpossibleRequestAsABadRequest(t *testing.T) {
 		t.Error("the answer does not carry the store's own sentence, or is not a bad request")
 	}
 }
+
+// The console shipped as one file holding every screen.
+//
+// 629 kB, parsed before anything rendered, on a platform that is often installed
+// where the network is the slow part — and most of it is screens a given person
+// never opens. Measured with a real browser against the running console: 706 kB
+// before the login form appeared, against 356 kB once each screen is fetched
+// when somebody opens it.
+func TestTheConsoleFetchesScreensWhenTheyAreOpened(t *testing.T) {
+	body, err := os.ReadFile("../../web/src/App.tsx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	// A static import of a page puts it back in the first file.
+	if strings.Contains(source, "from './pages/Agents'") && !strings.Contains(source, "lazy(() => import('./pages/Agents')") {
+		t.Error("a screen is imported into the first file again, so everybody downloads it whether they open it or not")
+	}
+	if strings.Count(source, "lazy(() => import('./pages/") < 20 {
+		t.Error("most screens are back in the first file")
+	}
+	// Lazy routes need a boundary, or the first navigation renders nothing.
+	if !strings.Contains(source, "<Suspense fallback={<Loading />}>") {
+		t.Error("screens are fetched on demand with nothing to show while they arrive")
+	}
+	// The two a person sees before choosing anything stay in the first file.
+	for _, eager := range []string{"import { Login } from './pages/Login'", "import { Dashboard } from './pages/Dashboard'"} {
+		if !strings.Contains(source, eager) {
+			t.Error("the first screen is fetched in a second round trip, which is the one place it costs")
+		}
+	}
+}
