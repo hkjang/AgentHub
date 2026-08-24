@@ -130,5 +130,12 @@ different gateway — a decision that never happened. Everything about what ran 
 now read from the run, and the image from that version's own snapshot; only what
 the run does not record falls back to the definition.
 
+It also shipped with no way to switch on: the address lived in a settings row
+and the only way to put it there was SQL, which is not something an operator of
+this platform does. `GET`/`PUT /admin/provenance` configure it now, refuse an
+address the dispatcher could not post to at the moment somebody types it rather
+than an hour later when the event dead-letters, and never hand the credential
+back — the rule the personal vault keeps.
+
 Still open: the agent-side tools (A) need a streamable-http shim, and nothing has
 been built for the graph screen (D) or policy reasoning (C).

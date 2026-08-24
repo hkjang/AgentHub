@@ -454,3 +454,53 @@ func TestTheConsoleFetchesScreensWhenTheyAreOpened(t *testing.T) {
 		}
 	}
 }
+
+// A setting only a database client can write is a feature nobody has.
+//
+// The decision export shipped with its address in a settings row and no way to
+// put it there: it was configured for its own verification with SQL, which is
+// not a thing an operator of this platform does.
+func TestTheDecisionExportCanBeConfigured(t *testing.T) {
+	catalog, err := os.ReadFile("catalog.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := string(catalog)
+	if !strings.Contains(routes, `admin(http.MethodGet, "/admin/provenance"`) {
+		t.Error("nobody can read where their decisions are being sent")
+	}
+	if !strings.Contains(routes, `admin(http.MethodPut, "/admin/provenance"`) {
+		t.Error("the export can only be configured by writing to the database")
+	}
+	body, err := os.ReadFile("provenance.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := string(body)
+	// The credential is never read back, for the reason the vault gives: a secret
+	// that can be read back is a secret in every log that printed a response.
+	if strings.Contains(handler, `"token": settings.Token`) {
+		t.Error("the credential is handed back to whoever asks for the settings")
+	}
+	if !strings.Contains(handler, `"tokenConfigured": settings.Token != ""`) {
+		t.Error("nothing says whether a credential is configured, so it cannot be managed at all")
+	}
+	// An address the dispatcher cannot post to must be refused when it is typed,
+	// not discovered an hour later when the event dead-letters.
+	if !strings.Contains(handler, "invalid_provenance_endpoint") {
+		t.Error("an address that cannot be posted to is accepted and retried until it dead-letters")
+	}
+	// Saving without re-sending the credential must not silently clear it.
+	inherit := strings.Index(handler, "settings.Token = existing.Token")
+	pairing := strings.Index(handler, `writeError(w, http.StatusBadRequest, "invalid_provenance_credential"`)
+	if inherit < 0 {
+		t.Error("saving the settings from a screen that never saw the token wipes it")
+	}
+	// And it must inherit before the pairing is checked. The other order refuses
+	// the ordinary save: measured, saving an unchanged endpoint answered
+	// invalid_provenance_credential and the branch that keeps the token could
+	// never run.
+	if pairing >= 0 && inherit > pairing {
+		t.Error("a header with no token is refused before the stored token can be inherited, so the setting cannot be re-saved")
+	}
+}

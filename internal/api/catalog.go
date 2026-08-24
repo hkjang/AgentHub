@@ -266,6 +266,8 @@ func (s *Server) apiRoutes() []Route {
 		admin(http.MethodGet, "/admin/runtime-settings", "Administration", "Read the per-runtime settings overlays", s.runtimeSettings),
 		admin(http.MethodPut, "/admin/runtime-settings", "Administration", "Replace the per-runtime settings overlays", s.putRuntimeSettings),
 		admin(http.MethodGet, "/admin/runtime-settings/status", "Administration", "Which runtimes are running the current settings", s.runtimeConfigStatus),
+		admin(http.MethodGet, "/admin/provenance", "Administration", "Where this deployment sends its account of each decision", s.adminProvenance),
+		admin(http.MethodPut, "/admin/provenance", "Administration", "Configure or turn off the decision export", s.putProvenance),
 		admin(http.MethodGet, "/admin/dlp", "Administration", "Read the content scanner settings", s.adminDLP),
 		admin(http.MethodPut, "/admin/dlp", "Administration", "Configure what is scanned and what happens when it is found", s.putDLP),
 		admin(http.MethodPost, "/admin/dlp/scan", "Administration", "Scan a pasted sample without storing it", s.scanSample),
