@@ -170,3 +170,44 @@ func TestTheRuntimeLookupsOnTheHotPathHaveIndexes(t *testing.T) {
 		t.Error("the token lookup no longer matches the index built for it")
 	}
 }
+
+// Two more tables carried only a primary key, and both are read on a timer.
+//
+// Measured on 200,000 rows each: a reviewer's queue and the pending count that
+// the dashboard shows everyone cost 11 ms of sequential scan; so did the
+// presence refresh an open terminal performs every two minutes and the check
+// made before the idle sweeper stops a runtime.
+func TestTheApprovalAndSessionLookupsHaveIndexes(t *testing.T) {
+	body, err := os.ReadFile("migrations/067_approval_session_index.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(body)
+	for _, want := range []struct{ index, why string }{
+		{"approvals(reviewer_id, created_at DESC)", "a reviewer's queue still reads every approval ever recorded"},
+		{"approvals(created_at DESC) WHERE status = 'pending'", "the count the dashboard shows still reads decided approvals too"},
+		{"runtime_sessions(owner_id, updated_at DESC)", "the sessions screen still reads every session ever opened"},
+		{"runtime_sessions(runtime_id) WHERE status = 'active'", "the presence refresh and the busy check still scan closed sessions"},
+	} {
+		if !strings.Contains(sql, want.index) {
+			t.Error(want.why)
+		}
+	}
+	// The partial indexes must match the queries' own conditions, or the planner
+	// cannot use them: pending is what the count asks for, active is what
+	// presence means.
+	approval, err := os.ReadFile("approval.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(approval), `WHERE a.status='pending'`) {
+		t.Error("the pending query no longer matches the partial index built for it")
+	}
+	runtime, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(runtime), `WHERE runtime_id=$1 AND status='active'`) {
+		t.Error("the presence refresh no longer matches the partial index built for it")
+	}
+}
