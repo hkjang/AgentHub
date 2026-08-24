@@ -273,10 +273,31 @@ func (s *orcaSession) dispatch(ctx context.Context, task store.AgentTask, goal s
 	if workerErr != nil {
 		return head, workerErr
 	}
-	if workers == 0 {
+	if len(workers) == 0 {
 		return head + ". 워커는 아직 없습니다 — Goal에 에이전트를 지정하거나 런타임 터미널에서 직접 붙이세요.", nil
 	}
-	return fmt.Sprintf("%s. 워커 %d개를 각자의 작업 사본에 붙였습니다.", head, workers), nil
+	outcomes, waitErr := s.waitForWorkers(ctx, workers, goal)
+	report := fmt.Sprintf("%s. 워커 %d개를 각자의 작업 사본에 붙였습니다", head, len(workers))
+	if len(outcomes) > 0 {
+		report += " — " + strings.Join(outcomes, " · ")
+	}
+	if waitErr != nil {
+		return report, waitErr
+	}
+	return report + ".", nil
+}
+
+// orcaWorkerPoll is how often the fabric is asked what its workers are doing.
+const orcaWorkerPoll = 5 * time.Second
+
+// orcaWorkerLimit is how long the run waits for them. The Goal's own time limit
+// when it has one — the work belongs to the task, not to this backend — and an
+// hour when it does not, because waiting for ever is how a worker slot is lost.
+func orcaWorkerLimit(goal store.AgentGoal) time.Duration {
+	if goal.MaxDurationSeconds > 0 {
+		return time.Duration(goal.MaxDurationSeconds) * time.Second
+	}
+	return time.Hour
 }
 
 // fanOut starts one worker per agent the Goal names, each in its own checkout.
@@ -286,8 +307,8 @@ func (s *orcaSession) dispatch(ctx context.Context, task store.AgentTask, goal s
 // the checkout are still recorded and a person can attach workers from the
 // runtime's own terminal — because an agent needs an account on the host that
 // this platform cannot create.
-func (s *orcaSession) fanOut(ctx context.Context, goal store.AgentGoal) (int, error) {
-	started := 0
+func (s *orcaSession) fanOut(ctx context.Context, goal store.AgentGoal) ([]orcaWorkerRef, error) {
+	started := []orcaWorkerRef{}
 	for _, name := range OrcaAgentNames(goal.OrcaAgents) {
 		var worker struct {
 			Dispatch struct {
@@ -327,9 +348,102 @@ func (s *orcaSession) fanOut(ctx context.Context, goal store.AgentGoal) (int, er
 		if status == "failed" {
 			return started, fmt.Errorf("%s 워커가 시작 직후 실패했습니다(%s). 이 호스트에 %s 가 설치·로그인돼 있는지 확인해 주세요 — 패브릭은 디스패치를 받아들이고 나서 실패를 기록합니다.", name, detail, name)
 		}
-		started++
+		started = append(started, orcaWorkerRef{
+			Agent: name, DispatchID: worker.Dispatch.ID,
+			Worktree: worker.Worktree.Path, Branch: worker.Worktree.Branch,
+		})
 	}
 	return started, nil
+}
+
+// orcaWorkerRef is one worker the fabric accepted, kept so the run can wait for
+// it rather than reporting the dispatch as the work.
+type orcaWorkerRef struct {
+	Agent      string
+	DispatchID string
+	Worktree   string
+	Branch     string
+}
+
+// orcaInFlight are the states that mean a worker is still going. Anything else
+// ends the wait, including a word this platform has never seen: an unknown state
+// is a reason to stop waiting and say what it was, not to wait for ever.
+var orcaInFlight = map[string]bool{
+	"dispatched": true, "running": true, "starting": true,
+	"pending": true, "queued": true, "in_progress": true, "working": true,
+}
+
+// waitForWorkers waits until every worker has settled, and says what each did.
+//
+// Handing a task to the fabric and calling that done reported the dispatch as
+// the work: the run said "워커 N개를 붙였습니다" and completed while the agents
+// were still typing — so a worker that failed two minutes later did so behind a
+// task marked successful. Waiting is what makes the run's verdict about the
+// work.
+//
+// The wait ends when the Goal's time runs out or the task is cancelled, and both
+// are reported as themselves rather than as a worker failure.
+func (s *orcaSession) waitForWorkers(ctx context.Context, workers []orcaWorkerRef, goal store.AgentGoal) ([]string, error) {
+	if len(workers) == 0 {
+		return nil, nil
+	}
+	deadline := time.NewTimer(orcaWorkerLimit(goal))
+	defer deadline.Stop()
+	ticker := time.NewTicker(orcaWorkerPoll)
+	defer ticker.Stop()
+
+	settled := make(map[string]string, len(workers))
+	details := make(map[string]string, len(workers))
+	for {
+		for _, worker := range workers {
+			if _, done := settled[worker.DispatchID]; done {
+				continue
+			}
+			status, detail := s.workerStatus(ctx, worker.DispatchID)
+			if orcaInFlight[strings.ToLower(strings.TrimSpace(status))] {
+				continue
+			}
+			settled[worker.DispatchID], details[worker.DispatchID] = status, detail
+			s.record(ctx, store.OrcaDispatch{
+				RunID: s.run.ID, OrcaRunID: s.runID, OrcaTaskID: s.taskID,
+				Terminal: worker.DispatchID, Worktree: worker.Worktree, Branch: worker.Branch,
+				Role: worker.Agent, Status: status, Detail: detail,
+			})
+		}
+		if len(settled) == len(workers) {
+			return orcaWorkerSummary(workers, settled, details), nil
+		}
+		select {
+		case <-ctx.Done():
+			// The same sentence every other in-Pod backend gives, rather than
+			// "context deadline exceeded" — which is what this said until a live
+			// run produced exactly that.
+			return orcaWorkerSummary(workers, settled, details),
+				errors.New(runtimeExecFailure("워커 실행", ctx.Err(), goal))
+		case <-deadline.C:
+			return orcaWorkerSummary(workers, settled, details),
+				errors.New("워커가 최대 실행 시간 안에 끝나지 않았습니다. 런타임 터미널에서 `orca status --json` 으로 이어서 확인할 수 있습니다")
+		case <-ticker.C:
+		}
+	}
+}
+
+// orcaWorkerSummary is one line per worker, in the fabric's own words.
+func orcaWorkerSummary(workers []orcaWorkerRef, settled, details map[string]string) []string {
+	lines := make([]string, 0, len(workers))
+	for _, worker := range workers {
+		state, ok := settled[worker.DispatchID]
+		if !ok {
+			lines = append(lines, worker.Agent+": 아직 끝나지 않았습니다")
+			continue
+		}
+		line := worker.Agent + ": " + state
+		if detail := strings.TrimSpace(details[worker.DispatchID]); detail != "" {
+			line += " — " + trimmed(detail, 200)
+		}
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 // workerStatus asks the fabric what became of a dispatch it just accepted.
