@@ -159,7 +159,13 @@ func (o *Orchestrator) waitForRuntime(ctx context.Context, run store.AgentRun, s
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			// The wait can end on either clock, and only one of them used to
+			// answer. When the task's own deadline ran out first, this branch
+			// returned ctx.Err() — so a Pod whose image tag did not exist was
+			// reported as "Runtime을 확보하지 못했습니다: context deadline
+			// exceeded", with the cluster's own sentence about the tag collected
+			// three seconds earlier and thrown away. Measured live.
+			return errors.New(runtimeWaitEnded(ctx.Err(), reason))
 		case <-ticker.C:
 		}
 	}
@@ -317,7 +323,20 @@ func runtimeStartRefusal(ctx context.Context, db *store.Store, logger *slog.Logg
 // wait ended sends somebody to look for a slow cluster when the answer, already
 // recorded on the runtime, is a tag that does not exist.
 func runtimeWaitTimeout(reason string) string {
-	message := "Runtime이 준비되기를 기다리다 시간이 초과되었습니다"
+	return runtimeWaitMessage("Runtime이 준비되기를 기다리다 시간이 초과되었습니다", reason)
+}
+
+// runtimeWaitEnded is the same explanation for a wait the task's own clock
+// ended, rather than the wait's. Which clock ran out changes the sentence; what
+// the cluster said about the Pod belongs in both.
+func runtimeWaitEnded(err error, reason string) string {
+	if errors.Is(err, context.Canceled) {
+		return runtimeWaitMessage("작업이 취소되어 Runtime을 더 기다리지 않습니다", reason)
+	}
+	return runtimeWaitMessage("Runtime이 준비되기 전에 작업의 제한 시간에 도달했습니다", reason)
+}
+
+func runtimeWaitMessage(message, reason string) string {
 	if trimmed := strings.TrimSpace(reason); trimmed != "" {
 		if len(trimmed) > 300 {
 			trimmed = trimmed[:300] + "…"

@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -65,5 +66,50 @@ func TestTheWaitKeepsWhatItWasTold(t *testing.T) {
 	}
 	if !strings.Contains(wait, "runtimeWaitTimeout(reason)") {
 		t.Error("the timeout does not carry the reason")
+	}
+}
+
+// A wait ends on whichever clock runs out first, and for a long time only one
+// of them answered. When the task's own limit was shorter than the three
+// minutes this wait allows, the branch below returned Go's own ctx.Err() and
+// the reason collected three seconds earlier went nowhere.
+//
+// Measured on a cluster: an orca runtime whose sidecar tag did not exist sat in
+// ImagePullBackOff, the cluster said "pull access denied … repository does not
+// exist", and the task reported "Runtime을 확보하지 못했습니다: context deadline
+// exceeded".
+func TestBothClocksSayWhatTheClusterSaw(t *testing.T) {
+	message := runtimeWaitEnded(context.DeadlineExceeded, "런타임 이미지를 가져오지 못했습니다 (ErrImagePull)")
+	if !strings.Contains(message, "ErrImagePull") {
+		t.Error("a wait the task's clock ended does not carry what the cluster said")
+	}
+	if strings.Contains(message, "context deadline exceeded") {
+		t.Error("the person is shown Go's own words for the clock that ran out")
+	}
+	cancelled := runtimeWaitEnded(context.Canceled, "런타임 이미지를 가져오지 못했습니다")
+	if !strings.Contains(cancelled, "취소") {
+		t.Error("a cancelled wait is reported as a timeout")
+	}
+	if strings.Contains(cancelled, "context canceled") {
+		t.Error("the person is shown Go's own words for a cancellation")
+	}
+	body, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	at := strings.Index(source, "func (o *Orchestrator) waitForRuntime(")
+	if at < 0 {
+		t.Fatal("the wait is gone; this guard is reading nothing")
+	}
+	wait := source[at:]
+	if end := strings.Index(wait, "\n// releaseRuntime"); end >= 0 {
+		wait = wait[:end]
+	}
+	if strings.Contains(wait, "return ctx.Err()") {
+		t.Error("the wait still hands back Go's context error, so the cluster's reason is lost")
+	}
+	if !strings.Contains(wait, "runtimeWaitEnded(ctx.Err(), reason)") {
+		t.Error("the task's own clock does not report the reason the cluster gave")
 	}
 }
