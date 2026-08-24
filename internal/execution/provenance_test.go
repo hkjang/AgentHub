@@ -82,3 +82,28 @@ func TestTheRecordCarriesThePlatformsAccount(t *testing.T) {
 		t.Error("the decision has no stable identity, so the same decision arrives twice as two")
 	}
 }
+
+// A definition is edited. The agent that ran version 3 against one model is
+// version 7 against another by the time an auditor asks, so a record that
+// reports the agent's current configuration is a record of something that never
+// happened.
+func TestTheRecordReportsWhatRanNotWhatIsConfiguredNow(t *testing.T) {
+	body, err := os.ReadFile("../store/provenance.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	// The version, the model and the image all come from the run, or from that
+	// version's own snapshot, before any fallback to the definition.
+	for _, want := range []struct{ sql, why string }{
+		{"COALESCE(r.agent_version, a.version)", "the version reported is the definition's current one, not the one that ran"},
+		{"COALESCE(NULLIF(r.model_name,''), m.name)", "the model reported is whatever the agent points at now"},
+		{"COALESCE(vi.version, i.version)", "the image reported is the agent's current pin rather than the one that version ran"},
+		{"v.agent_id = a.id AND v.version = r.agent_version", "the image is not read from the version that actually ran"},
+		{"COALESCE(r.model_endpoint_id, a.model_endpoint_id)", "the endpoint is resolved from the definition even when the run recorded one"},
+	} {
+		if !strings.Contains(source, want.sql) {
+			t.Error(want.why)
+		}
+	}
+}

@@ -71,15 +71,27 @@ func (s *Store) DecisionForTask(ctx context.Context, taskID string) (DecisionRec
 	var record DecisionRecord
 	var completion []byte
 	var approval, runID, model, image *string
+	// Everything about what ran is read from the run, and only what the run does
+	// not record falls back to the definition. A definition is edited: the agent
+	// that ran version 3 against one model is version 7 against another by the
+	// time an auditor asks, and a record that reports today's configuration is a
+	// record of something that never happened.
+	//
+	// The image comes from that version's own snapshot rather than the agent's
+	// current pin, for the same reason.
 	err := s.pool.QueryRow(ctx, `
 		SELECT t.id, t.owner_id, t.title, t.status, COALESCE(t.last_error,''), t.source,
 		       COALESCE(t.source_url,''), t.approval_id, t.updated_at,
-		       a.id, a.name, a.version,
-		       r.id, r.completion, m.name, i.version
+		       a.id, a.name, COALESCE(r.agent_version, a.version),
+		       r.id, r.completion,
+		       COALESCE(NULLIF(r.model_name,''), m.name),
+		       COALESCE(vi.version, i.version)
 		FROM agent_tasks t
 		JOIN agent_definitions a ON a.id = t.agent_id
 		LEFT JOIN agent_runs r ON r.id = t.current_run_id
-		LEFT JOIN model_endpoints m ON m.id = a.model_endpoint_id
+		LEFT JOIN model_endpoints m ON m.id = COALESCE(r.model_endpoint_id, a.model_endpoint_id)
+		LEFT JOIN agent_versions v ON v.agent_id = a.id AND v.version = r.agent_version
+		LEFT JOIN runtime_images vi ON vi.id = v.runtime_image_id
 		LEFT JOIN runtime_images i ON i.id = a.runtime_image_id
 		WHERE t.id = $1`, taskID).
 		Scan(&record.TaskID, &record.OwnerID, &record.Scenario, &record.Outcome, &record.Reasoning,

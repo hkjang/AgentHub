@@ -122,5 +122,13 @@ at three attempts with "결정 기록을 보내지 못했습니다: no such host
 receiver back it was delivered on the next attempt. A deployment with no endpoint
 configured sends nothing and does no work.
 
+The first version of it read the agent's *current* definition for the version,
+the model and the image, while claiming to report what ran. A definition is
+edited: measured by running a task as version 1 against one gateway and then
+editing the agent, the released build would have exported version 2 against a
+different gateway — a decision that never happened. Everything about what ran is
+now read from the run, and the image from that version's own snapshot; only what
+the run does not record falls back to the definition.
+
 Still open: the agent-side tools (A) need a streamable-http shim, and nothing has
 been built for the graph screen (D) or policy reasoning (C).
