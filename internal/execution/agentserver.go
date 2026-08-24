@@ -582,6 +582,13 @@ func (c *agentServerClient) hold(ctx context.Context, notes agentServerNotes, go
 			return result, nil
 		case "error":
 			result.Actions = c.recordEvents(ctx, notes, created.ID)
+			// The server writes why into the conversation. Reporting only that it
+			// failed threw that away and left somebody comparing a working
+			// deployment with a broken one to find out what a single line already
+			// said.
+			if detail := c.conversationError(ctx, created.ID); detail != "" {
+				return result, errors.New("에이전트 서버에서 실행이 실패했습니다: " + detail)
+			}
 			return result, errors.New("에이전트 서버에서 실행이 실패했습니다")
 		case "idle":
 			if refused {
@@ -753,6 +760,25 @@ const (
 // starts, on a machine somebody else configured — so the run would go wherever
 // that machine was pointed. Naming it per conversation is what makes this
 // deployment's gateway the only endpoint the work can reach.
+// agentServerModel names the model the way the server's client insists on.
+//
+// OpenHands routes through LiteLLM, which refuses a model with no provider in
+// front of it — "LLM Provider NOT provided. You passed model=qwen" — and this
+// platform's endpoints are named the way the deployment names them: `qwen`,
+// `stub`, `gpt-4o-mini`. So a perfectly good endpoint failed every conversation
+// with an error that arrived as "실행이 실패했습니다" and nothing else.
+//
+// openai, because the base URL travelling with it is this platform's gateway,
+// which speaks the OpenAI API. A name that already carries a provider is left
+// exactly as written: somebody who typed anthropic/claude-sonnet-4 meant it.
+func agentServerModel(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.Contains(name, "/") {
+		return name
+	}
+	return "openai/" + name
+}
+
 func agentServerStart(goal store.AgentGoal, prompt string, model resolvedModel) map[string]any {
 	workingDir := strings.TrimSpace(goal.AgentServerDir)
 	if workingDir == "" {
@@ -772,7 +798,7 @@ func agentServerStart(goal store.AgentGoal, prompt string, model resolvedModel) 
 			"content": []map[string]any{{"type": "text", "text": prompt}}},
 		"max_iterations": agentServerIterations(goal),
 		"agent": map[string]any{"kind": "Agent", "tools": agentServerTools(), "llm": map[string]any{
-			"model": model.ModelName, "api_key": model.APIKey, "base_url": model.BaseURL,
+			"model": agentServerModel(model.ModelName), "api_key": model.APIKey, "base_url": model.BaseURL,
 			"usage_id": "agent",
 		}},
 	}
@@ -889,3 +915,40 @@ func (o *Orchestrator) askAboutServerAction(ctx context.Context, run *store.Agen
 // answers does not sit watching a spinner, rarely enough that a run waiting
 // overnight is not a query every second.
 const agentServerApprovalPoll = 3 * time.Second
+
+// conversationError is what the server said went wrong, in its own words.
+//
+// Empty when there is nothing to find or the timeline cannot be read: a guess
+// about why something failed is worse than the plain statement that it did.
+func (c *agentServerClient) conversationError(ctx context.Context, conversationID string) string {
+	var page struct {
+		Items []struct {
+			Kind   string `json:"kind"`
+			Code   string `json:"code"`
+			Detail string `json:"detail"`
+		} `json:"items"`
+	}
+	if err := c.call(ctx, http.MethodGet,
+		"/api/conversations/"+conversationID+"/events/search?limit=100", nil, &page); err != nil {
+		return ""
+	}
+	// The last one: an error late in a conversation is the one that stopped it.
+	detail := ""
+	for _, item := range page.Items {
+		if !strings.Contains(item.Kind, "Error") {
+			continue
+		}
+		text := strings.TrimSpace(item.Detail)
+		if text == "" {
+			text = strings.TrimSpace(item.Code)
+		}
+		if text != "" {
+			detail = text
+		}
+	}
+	// Long enough to name the cause, short enough to read on a run's line.
+	if len(detail) > 300 {
+		detail = detail[:300] + "…"
+	}
+	return strings.TrimSpace(strings.ReplaceAll(detail, "\n", " "))
+}
