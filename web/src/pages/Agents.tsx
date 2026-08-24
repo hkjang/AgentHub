@@ -5,7 +5,7 @@ import { useAuth } from '../App'
 import { api } from '../api'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, GuidePanel, Loading, PageHeader, StatusBadge } from '../components/UI'
 import { useTerms } from '../viewmode'
-import { RUNNER_VERDICT_LABELS, RUNTIME_TYPES, descriptor, relativeTime, runnerExperienceOf, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
+import { RUNNER_VERDICT_LABELS, runtimeTypeList, descriptor, relativeTime, runnerExperienceOf, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
 import type { Agent, AgentGoal, AgentMemory, AgentRelease, AgentTrigger, AgentVersion, ExecutionMode, ExternalApp, MCPBundle, MCPServerRef, MCPToolPolicy, ModelEndpoint, RuntimeFlow, ReviewPlan, RuntimeProfile, TriggerHealth, UsableAgentServer, Workspace } from '../types'
 
 /** What the chosen way of running has done on this deployment.
@@ -248,7 +248,7 @@ export function Agents({runtimeOnly=false}:{runtimeOnly?:boolean}) {
     return `${agent.name} ${agent.description} ${runtimeLabel(agent.runtimeType)} ${agent.runtimeType} ${agent.runtime?.podName ?? ''}`.toLowerCase().includes(needle)
   })
   const selected = list.find(a => a?.id === selectedId) || null
-  const present = RUNTIME_TYPES.filter((type) => scoped.some((agent) => agent.runtimeType === type))
+  const present = runtimeTypeList().filter((type) => scoped.some((agent) => agent.runtimeType === type))
   return <div className="page">
     <PageHeader eyebrow={runtimeOnly?'런타임 제어':t('agentsEyebrow')} title={runtimeOnly?t('runtimeTitle'):t('agents')} description={runtimeOnly?'사용자 전용 Kubernetes 런타임의 수명주기와 상태를 관리합니다.':t('agentsHint')} actions={<><label className="button ghost import-agent"><Upload size={16}/>정의 가져오기<input type="file" accept=".yaml,.yml,application/yaml,text/yaml" onChange={(e)=>{const file=e.target.files?.[0]; e.target.value=''; if(file) void importAgent(file)}}/></label><Link className="button primary" to="/catalog"><Plus size={17}/>새 {t('agentSingular')}</Link></>}/>
     {error&&<ErrorBanner message={error} onClose={()=>setError('')}/>}

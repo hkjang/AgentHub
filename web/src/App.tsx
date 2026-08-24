@@ -44,6 +44,10 @@ export function App() {
   const [version, setVersion] = useState<Version>(emptyVersion)
   const [capabilities, setCapabilities] = useState<Capabilities>({teamApprovalEnabled:false,highRiskToolApproval:true,kubernetesEnabled:false,mcpProtocolVersion:'2026-07-28'})
 
+  // Bumped when the platform's runtime descriptions arrive. Nothing reads the
+  // number: it exists to re-render what was drawn from the seed.
+  const [, setDescribed] = useState(0)
+
   const refresh = useCallback(async () => {
     try {
       const result = await api.get<{ user: User; version: Version }>('/api/v1/me')
@@ -55,7 +59,11 @@ export function App() {
       // What each runtime is and is good at comes from the platform, so the
       // console cannot describe an adapter this build does not have.
       api.get<{items: RuntimeDescriptor[]; runners?: Record<string, RunnerExperience>}>('/api/v1/runtime-types')
-        .then((value) => { setRuntimeDescriptors(value.items); setRunnerExperience(value.runners) }).catch(() => undefined)
+        // The descriptions live outside React, so a screen already on the page
+        // would keep showing the seeded list until something else re-rendered
+        // it. The counter is what carries the platform's answer to it.
+        .then((value) => { setRuntimeDescriptors(value.items); setRunnerExperience(value.runners); setDescribed((n) => n + 1) })
+        .catch(() => undefined)
     } catch { setUser(null); setViewModeScope('') }
   }, [])
 

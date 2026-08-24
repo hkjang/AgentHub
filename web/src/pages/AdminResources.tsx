@@ -10,7 +10,7 @@ import {
   PageHeader,
   StatusBadge,
 } from "../components/UI";
-import { RUNTIME_TYPES, runtimeLabel } from "../runtime";
+import { runtimeTypeList, runtimeLabel } from "../runtime";
 
 type Kind = "profiles" | "images" | "models" | "apps" | "mcp" | "bundles" | "servers";
 type Item = Record<string, unknown> & {
@@ -623,7 +623,7 @@ function ResourceDrawer({
                 value={field("runtimeType")}
                 onChange={(e) => update("runtimeType", e.target.value)}
               >
-                {RUNTIME_TYPES.map((value) => (
+                {runtimeTypeList().map((value) => (
                   <option key={value} value={value}>
                     {runtimeLabel(value)}
                   </option>

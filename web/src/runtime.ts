@@ -5,7 +5,7 @@
 // are facts about the adapter the operator runs, not about this console. They
 // were duplicated here and had already started to drift. The palette stays local:
 // which colour a tile is is genuinely a console decision.
-export type RuntimeType = 'opencode' | 'hermes' | 'qwenpaw' | 'qwencode' | 'goose' | 'holmes' | 'browsercode' | 'jupyter' | 'langflow' | 'nodered' | 'n8n' | 'custom'
+export type RuntimeType = 'opencode' | 'hermes' | 'qwenpaw' | 'qwencode' | 'goose' | 'holmes' | 'browsercode' | 'jupyter' | 'langflow' | 'nodered' | 'n8n' | 'opencodereview' | 'orca' | 'pi' | 'custom'
 
 export type RuntimeDescriptor = {
   type: string; code: string; label: string; summary: string
@@ -45,6 +45,9 @@ const SEED: Record<RuntimeType, RuntimeDescriptor> = {
   langflow: {type: 'langflow', code: 'LF', label: 'Langflow', summary: '흐름을 그려서 만드는 시각적 에이전트 빌더'},
   nodered: {type: 'nodered', code: 'NR', label: 'Node-RED', summary: '노드를 이어 만드는 배선 자동화'},
   n8n: {type: 'n8n', code: 'N8', label: 'n8n', summary: '연동이 많은 업무 자동화'},
+  opencodereview: {type: 'opencodereview', code: 'CR', label: 'Open Code Review', summary: '코드리뷰 전용 엔진'},
+  orca: {type: 'orca', code: 'OR', label: 'Orca', summary: '여러 코딩 에이전트를 한 작업에 동시에 붙이는 실행 패브릭'},
+  pi: {type: 'pi', code: 'PI', label: 'Pi', summary: '일하는 도중에 말을 걸 수 있는 코딩 에이전트'},
   custom: {type: 'custom', code: 'A', label: 'Custom', summary: '직접 정의한 컨테이너 실행 명령'},
 }
 
@@ -64,7 +67,16 @@ export function setRuntimeDescriptors(items: RuntimeDescriptor[]) {
   loaded = next
 }
 
-export const RUNTIME_TYPES = Object.keys(SEED) as RuntimeType[]
+/**
+ * Every runtime type this deployment has, for the screens that offer a choice.
+ *
+ * A function rather than a constant, and read from what the platform answered
+ * rather than from the seed: as a constant over the seed it was fixed at build
+ * time, and it had gone stale — three runtimes the platform supports could not
+ * be given an image, filtered for, or named as an evaluation condition, because
+ * this console did not know they existed.
+ */
+export const runtimeTypeList = (): string[] => Object.keys(loaded)
 
 /** Every runtime the platform reported, in its order. */
 export const runtimeDescriptors = () => Object.values(loaded)
