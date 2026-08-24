@@ -95,7 +95,7 @@ func TestExtractArtifactsPullsFencedDocuments(t *testing.T) {
 +++ b/main.go
 >>>
 TASK_COMPLETE`
-	artifacts := extractArtifacts(output)
+	artifacts := extractArtifacts(output, "")
 	if len(artifacts) != 2 {
 		t.Fatalf("expected two artifacts, got %d", len(artifacts))
 	}
@@ -112,7 +112,7 @@ TASK_COMPLETE`
 
 func TestExtractArtifactsIgnoresAnUnclosedFence(t *testing.T) {
 	// Truncated output must not produce a half-written artifact.
-	if got := extractArtifacts("<<<ARTIFACT report.md\n내용이 잘렸습니다"); len(got) != 0 {
+	if got := extractArtifacts("<<<ARTIFACT report.md\n내용이 잘렸습니다", ""); len(got) != 0 {
 		t.Fatalf("an unterminated fence must yield nothing, got %#v", got)
 	}
 }

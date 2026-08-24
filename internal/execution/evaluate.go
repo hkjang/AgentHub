@@ -300,7 +300,7 @@ func (o *Orchestrator) recordVerdict(ctx context.Context, run *store.AgentRun, v
 // store one is reported but never fails the run: the work itself was still done.
 func (o *Orchestrator) saveArtifacts(ctx context.Context, run *store.AgentRun, task store.AgentTask, agent store.Agent, transcript []string) {
 	for _, entry := range transcript {
-		for _, artifact := range extractArtifacts(entry) {
+		for _, artifact := range extractArtifacts(entry, taskGiven(task)) {
 			artifact.RunID, artifact.TaskID, artifact.AgentID, artifact.OwnerID = run.ID, task.ID, agent.ID, task.OwnerID
 			saved, err := o.store.CreateArtifact(ctx, artifact)
 			if err != nil {

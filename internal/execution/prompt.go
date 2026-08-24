@@ -184,9 +184,10 @@ func declaresCompletion(output string) bool {
 }
 
 // extractArtifacts turns ARTIFACT directives into storable records.
-func extractArtifacts(output string) []store.AgentArtifact {
+func extractArtifacts(output, given string) []store.AgentArtifact {
 	artifacts := []store.AgentArtifact{}
-	for _, directive := range directivesOfKind(output, directiveArtifact) {
+	kept, _ := agentDirectives(output, given, directiveArtifact)
+	for _, directive := range kept {
 		if directive.Arg == "" || directive.Body == "" {
 			continue
 		}

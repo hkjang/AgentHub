@@ -108,7 +108,12 @@ func (o *Orchestrator) loadMemory(ctx context.Context, agentID string) string {
 // saveMemory persists MEMORY directives. Entries are scoped to the agent so they
 // outlive both the run and the Runtime Pod.
 func (o *Orchestrator) saveMemory(ctx context.Context, run store.AgentRun, task store.AgentTask, output string) {
-	for _, directive := range directivesOfKind(output, directiveMemory) {
+	remembered, echoed := agentDirectives(output, taskGiven(task), directiveMemory)
+	if echoed > 0 {
+		o.logger.Warn("a directive was repeated back from the task's own input and was not acted on",
+			"run", run.ID, "task", task.ID, "kind", directiveMemory, "count", echoed)
+	}
+	for _, directive := range remembered {
 		if directive.Arg == "" {
 			continue
 		}

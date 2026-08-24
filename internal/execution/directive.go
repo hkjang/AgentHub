@@ -2,6 +2,8 @@ package execution
 
 import (
 	"strings"
+
+	"github.com/hkjang/AgentHub/internal/store"
 )
 
 // Directives an agent can emit in its output. They are fenced rather than
@@ -88,6 +90,48 @@ func splitHeader(header string) (string, string, bool) {
 	return kind, strings.TrimSpace(arg), true
 }
 
+// agentDirectives keeps the directives the agent composed and drops the ones it
+// only repeated back.
+//
+// A directive is how an agent asks this platform to act — park the task for a
+// person, delegate work, remember something. The text an agent is given is not
+// always written by whoever owns it: a webhook appends its payload verbatim, and
+// a payload carries titles and bodies written by anybody who can open a pull
+// request. An agent that quotes its input, which is what summarising looks like,
+// hands those words back as its own.
+//
+// Measured on a cluster: a MEMORY directive in an answer wrote a memory row and
+// announced it on the run's timeline — on the ACP backend, which is never told
+// this vocabulary at all. Nothing separated a decision the agent made from a
+// sentence somebody sent it.
+//
+// The given text is compared against rather than stripped from: the agent reads
+// exactly what it was sent, and a directive it composed itself is never mistaken
+// for an echo.
+func agentDirectives(output, given, kind string) (kept []Directive, echoed int) {
+	matched := directivesOfKind(output, kind)
+	if len(matched) == 0 || strings.TrimSpace(given) == "" {
+		return matched, 0
+	}
+	repeated := map[string]bool{}
+	for _, directive := range parseDirectives(given) {
+		repeated[directiveKey(directive)] = true
+	}
+	kept = make([]Directive, 0, len(matched))
+	for _, directive := range matched {
+		if repeated[directiveKey(directive)] {
+			echoed++
+			continue
+		}
+		kept = append(kept, directive)
+	}
+	return kept, echoed
+}
+
+func directiveKey(directive Directive) string {
+	return directive.Kind + "\x00" + strings.TrimSpace(directive.Arg) + "\x00" + strings.TrimSpace(directive.Body)
+}
+
 // directivesOfKind filters a transcript entry to one directive type.
 func directivesOfKind(output, kind string) []Directive {
 	matched := []Directive{}
@@ -97,4 +141,11 @@ func directivesOfKind(output, kind string) []Directive {
 		}
 	}
 	return matched
+}
+
+// taskGiven is the text a task handed the agent: its title and its input. The
+// webhook payload arrives inside the input, appended to whatever the trigger
+// itself says.
+func taskGiven(task store.AgentTask) string {
+	return task.Title + "\n" + task.Input
 }

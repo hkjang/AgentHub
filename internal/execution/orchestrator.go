@@ -461,7 +461,7 @@ func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task stor
 		// A request for approval stops the run here. The task is parked rather
 		// than failed, so it resumes on the reviewer's decision with its
 		// transcript intact.
-		if approvals := directivesOfKind(output, directiveApproval); goal.ApprovalRequired && len(approvals) > 0 {
+		if approvals, _ := o.agentAsked(*run, task, output, directiveApproval); goal.ApprovalRequired && len(approvals) > 0 {
 			if err := o.requestApproval(ctx, *run, task, approvals[0]); err != nil {
 				return transcript, Outcome{Status: store.TaskFailed, Failure: "승인 요청을 생성하지 못했습니다: " + err.Error(), Retryable: true}
 			}
@@ -472,7 +472,7 @@ func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task stor
 		// reason: the work is not finished and not failed, it is waiting for a
 		// person. The difference is where they pick it up — the runtime's own
 		// workspace rather than a review queue.
-		if handoffs := directivesOfKind(output, directiveHandoff); env.HandoffAllowed && len(handoffs) > 0 {
+		if handoffs, _ := o.agentAsked(*run, task, output, directiveHandoff); env.HandoffAllowed && len(handoffs) > 0 {
 			note := handoffNote(handoffs[0])
 			if err := o.store.HandOffTask(ctx, task.ID, note); err != nil {
 				return transcript, Outcome{Status: store.TaskFailed, Failure: "런타임 인계를 기록하지 못했습니다: " + err.Error(), Retryable: true}
@@ -491,7 +491,7 @@ func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task stor
 
 		// Delegation results are fed back so the agent can carry on knowing what
 		// was handed off and what was refused.
-		if delegations := directivesOfKind(output, directiveDelegate); len(delegations) > 0 {
+		if delegations, _ := o.agentAsked(*run, task, output, directiveDelegate); len(delegations) > 0 {
 			notes := make([]string, 0, len(delegations))
 			for _, directive := range delegations {
 				notes = append(notes, o.delegate(ctx, *run, task, goal, directive))
@@ -558,6 +558,18 @@ func recordStepContext(ctx context.Context) context.Context {
 	detached, cancel := recordContext(ctx)
 	time.AfterFunc(10*time.Second, cancel)
 	return detached
+}
+
+// agentAsked is agentDirectives with the run's own logging: a directive that
+// came back from the task's input is dropped, and said out loud, because
+// somebody sent that text on purpose.
+func (o *Orchestrator) agentAsked(run store.AgentRun, task store.AgentTask, output, kind string) ([]Directive, int) {
+	kept, echoed := agentDirectives(output, taskGiven(task), kind)
+	if echoed > 0 {
+		o.logger.Warn("a directive was repeated back from the task's own input and was not acted on",
+			"run", run.ID, "task", task.ID, "kind", kind, "count", echoed)
+	}
+	return kept, echoed
 }
 
 func (o *Orchestrator) event(ctx context.Context, run store.AgentRun, eventType, message string, details any) {
