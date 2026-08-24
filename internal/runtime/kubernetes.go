@@ -40,6 +40,12 @@ import (
 var runtimeGVR = schema.GroupVersionResource{Group: "agenthub.io", Version: "v1alpha1", Resource: "agentruntimes"}
 var volumeSnapshotGVR = schema.GroupVersionResource{Group: "snapshot.storage.k8s.io", Version: "v1", Resource: "volumesnapshots"}
 
+// definitionGVR is the definition itself, not the runtimes made from it. It is
+// read to find out which runtime types this cluster will accept — which is not
+// the same list as the one this build supports, and the difference is only
+// discovered when somebody tries to start one.
+var definitionGVR = schema.GroupVersionResource{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"}
+
 type kubernetesSettings struct {
 	Enabled    bool   `json:"enabled"`
 	Namespace  string `json:"namespace"`

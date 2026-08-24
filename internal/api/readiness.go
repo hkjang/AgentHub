@@ -12,6 +12,7 @@ import (
 	"github.com/hkjang/AgentHub/internal/dlp"
 	"github.com/hkjang/AgentHub/internal/modelprobe"
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
+	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -110,6 +111,16 @@ func (s *Server) readiness(w http.ResponseWriter, r *http.Request) {
 		case result.CRDExpected && !result.CRDInstalled:
 			add(readinessItem{Area: "Kubernetes", Name: "클러스터", Verdict: "incomplete",
 				Detail: "AgentRuntime CRD가 설치되어 있지 않습니다.", Fix: "/admin/settings"})
+		case len(refusedRuntimeTypes(result)) > 0:
+			// Upgrading the control plane does not upgrade the definition in the
+			// cluster. A runtime type this build knows and the definition does not
+			// is accepted everywhere — the console offers it, the database stores
+			// it, an image can be approved for it — and refused by Kubernetes at
+			// spawn, hours later, in a validation error nobody was watching for.
+			add(readinessItem{Area: "Kubernetes", Name: "AgentRuntime 정의", Verdict: "outdated",
+				Detail: "이 클러스터의 정의가 이 빌드보다 오래됐습니다. " +
+					joinNames(refusedRuntimeTypes(result)) + " 런타임은 만들 때 거절됩니다 — deploy/kubernetes/crd.yaml 을 다시 적용하세요.",
+				Fix: "/admin/settings"})
 		default:
 			detail := "Kubernetes " + result.ServerVersion + " · 네임스페이스 " + result.Namespace
 			if !result.SnapshotsInstalled {
@@ -355,4 +366,27 @@ func joinNames(values []string) string {
 		out += value
 	}
 	return out
+}
+
+// refusedRuntimeTypes names the runtime types this build supports that the
+// cluster's installed definition would turn away.
+//
+// Empty when the definition could not be read: not being allowed to look at a
+// cluster-scoped object is common, and reporting that as an outdated definition
+// would send somebody to fix something that is not broken.
+func refusedRuntimeTypes(result appRuntime.ClusterCheck) []string {
+	if len(result.CRDRuntimeTypes) == 0 {
+		return nil
+	}
+	accepted := map[string]bool{}
+	for _, name := range result.CRDRuntimeTypes {
+		accepted[name] = true
+	}
+	refused := []string{}
+	for _, name := range runtimetype.Supported {
+		if !accepted[name] {
+			refused = append(refused, name)
+		}
+	}
+	return refused
 }

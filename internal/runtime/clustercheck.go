@@ -8,6 +8,8 @@ import (
 	authorizationv1 "k8s.io/api/authorization/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/dynamic"
 )
 
 // Whether this deployment can actually do the things it is about to promise.
@@ -45,8 +47,15 @@ type ClusterCheck struct {
 	// Without it workspace snapshots cannot work, and the platform offers the
 	// button either way — so it is worth saying here rather than at the moment
 	// somebody tries.
-	SnapshotsInstalled bool         `json:"snapshotsInstalled"`
-	Permissions        []Permission `json:"permissions"`
+	SnapshotsInstalled bool `json:"snapshotsInstalled"`
+	// CRDRuntimeTypes is what the installed definition will accept. Upgrading the
+	// control plane does not upgrade the definition, so a build that knows about
+	// a runtime type the cluster has never heard of accepts the agent, accepts
+	// the image, and fails at spawn with a Kubernetes validation error — the one
+	// place nobody was looking. Empty when the definition could not be read,
+	// which is not the same as a definition that accepts nothing.
+	CRDRuntimeTypes []string     `json:"crdRuntimeTypes,omitempty"`
+	Permissions     []Permission `json:"permissions"`
 	// Scope names whose permissions these are. The operator runs under its own
 	// account and writes the Pods, volumes and network policies; the cluster will
 	// only answer about the caller, so saying nothing here would let somebody read
@@ -130,6 +139,7 @@ func (k *KubernetesSpawner) CheckCluster(ctx context.Context) (ClusterCheck, err
 	if settings.CRDEnabled {
 		_, listErr := dynamicClient.Resource(runtimeGVR).Namespace(namespace).List(ctx, metav1.ListOptions{Limit: 1})
 		out.CRDInstalled = listErr == nil || apierrors.IsForbidden(listErr)
+		out.CRDRuntimeTypes = definitionRuntimeTypes(ctx, dynamicClient)
 	}
 	// A cluster without the snapshot API refuses the list with NotFound, which is
 	// a different answer from being refused permission to read it.
@@ -163,4 +173,35 @@ func (k *KubernetesSpawner) CheckCluster(ctx context.Context) (ClusterCheck, err
 		out.Permissions = append(out.Permissions, permission)
 	}
 	return out, nil
+}
+
+// definitionRuntimeTypes reads the runtime types the installed definition
+// accepts.
+//
+// Silent about every failure on purpose: reading a cluster-scoped definition is
+// a permission many deployments will not have granted, and a readiness report
+// that turns "I may not look" into "your cluster is wrong" is worse than one
+// that says nothing about it.
+func definitionRuntimeTypes(ctx context.Context, client dynamic.Interface) []string {
+	definition, err := client.Resource(definitionGVR).Get(ctx, "agentruntimes.agenthub.io", metav1.GetOptions{})
+	if err != nil {
+		return nil
+	}
+	versions, found, err := unstructured.NestedSlice(definition.Object, "spec", "versions")
+	if err != nil || !found {
+		return nil
+	}
+	for _, version := range versions {
+		entry, ok := version.(map[string]any)
+		if !ok {
+			continue
+		}
+		values, found, err := unstructured.NestedStringSlice(entry,
+			"schema", "openAPIV3Schema", "properties", "spec", "properties",
+			"runtime", "properties", "type", "enum")
+		if err == nil && found && len(values) > 0 {
+			return values
+		}
+	}
+	return nil
 }
