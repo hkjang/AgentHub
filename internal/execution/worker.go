@@ -241,6 +241,7 @@ func (w *Worker) execute(ctx context.Context, task store.AgentTask) {
 		}
 		w.notify(finish, task, "작업을 완료했습니다", task.Title)
 		w.publish(finish, task, store.EventTaskCompleted, map[string]any{"title": task.Title, "agentId": task.AgentID})
+		w.recheckFixedFindings(finish, task)
 		logger.Info("task completed")
 		return
 	}
@@ -568,4 +569,63 @@ func sleep(ctx context.Context, duration time.Duration) bool {
 	case <-timer.C:
 		return true
 	}
+}
+
+// recheckFixedFindings asks the review to look again at what a finished fix was
+// meant to repair.
+//
+// Asking for a fix is not having one, so a finding stays open until a later
+// review stops reporting it — and nothing ever started that later review. A fix
+// that worked and a fix that changed nothing therefore looked identical for
+// ever, which leaves the last step of the loop to a person remembering.
+//
+// The re-review is an ordinary task on the agent that found the problem, so it
+// obeys the same policy, quota and audit as any other. Its own findings do not
+// start another: only a task that was itself a fix leads here.
+func (w *Worker) recheckFixedFindings(ctx context.Context, task store.AgentTask) {
+	if task.Source != "review" {
+		return
+	}
+	fixed, err := w.store.FindingsFixedBy(ctx, task.ID)
+	if err != nil {
+		w.logger.Warn("findings for a finished fix could not be read", "task", task.ID, "error", err)
+		return
+	}
+	if len(fixed) == 0 {
+		return
+	}
+	for _, finding := range oncePerReviewer(fixed) {
+		created, err := w.store.CreateAgentTask(ctx, store.CreateTaskInput{
+			AgentID: finding.ReviewAgentID, OwnerID: finding.OwnerID,
+			Title:    "수정 후 재리뷰: " + finding.FilePath,
+			Input:    "직전 수정 작업(" + task.Title + ")이 끝났습니다. 같은 대상을 다시 리뷰해 주세요.",
+			Priority: task.Priority, Source: "review-recheck", CreatedBy: finding.OwnerID,
+		})
+		if err != nil {
+			w.logger.Warn("a re-review could not be queued", "task", task.ID,
+				"reviewAgent", finding.ReviewAgentID, "error", err)
+			continue
+		}
+		w.logger.Info("re-review queued after a fix", "fixTask", task.ID, "reviewTask", created.ID,
+			"reviewAgent", finding.ReviewAgentID, "file", finding.FilePath)
+	}
+}
+
+// oncePerReviewer keeps one finding per review agent.
+//
+// A fix that covered four findings from the same review needs one re-review, not
+// four: the review looks at the whole change either way, and four would run the
+// same work four times and produce four sets of the same answer. Two different
+// review agents are two different opinions and both are asked.
+func oncePerReviewer(fixed []store.FindingFixed) []store.FindingFixed {
+	seen := map[string]bool{}
+	once := []store.FindingFixed{}
+	for _, finding := range fixed {
+		if seen[finding.ReviewAgentID] {
+			continue
+		}
+		seen[finding.ReviewAgentID] = true
+		once = append(once, finding)
+	}
+	return once
 }

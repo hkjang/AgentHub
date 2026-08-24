@@ -442,3 +442,45 @@ func contains(list []string, value string) bool {
 	}
 	return false
 }
+
+// FindingFixed is one finding whose fix task has just finished, and what would
+// have to be reviewed again to know whether it worked.
+type FindingFixed struct {
+	FindingID     string
+	ReviewAgentID string
+	OwnerID       string
+	FilePath      string
+	StartLine     int
+	Severity      string
+}
+
+// FindingsFixedBy names the findings a finished task was meant to fix.
+//
+// Asking for a fix is not having one: the finding stays open until a later
+// review stops reporting it. Nothing ever started that later review, so a fix
+// that worked and a fix that did nothing looked the same for ever — the loop
+// this platform's own documentation describes was open at the last step.
+//
+// Only findings still open are returned. One somebody has already dismissed or
+// accepted has had its answer from a person, and re-reviewing it would argue
+// with them.
+func (s *Store) FindingsFixedBy(ctx context.Context, taskID string) ([]FindingFixed, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, agent_id, owner_id, file_path, start_line, severity
+		FROM review_findings
+		WHERE fix_task_id = $1 AND status = 'open' AND resolved_at IS NULL`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FindingFixed{}
+	for rows.Next() {
+		var item FindingFixed
+		if err := rows.Scan(&item.FindingID, &item.ReviewAgentID, &item.OwnerID,
+			&item.FilePath, &item.StartLine, &item.Severity); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
