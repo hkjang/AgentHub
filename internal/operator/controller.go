@@ -1766,6 +1766,12 @@ func (c *Controller) scaleDedicatedMCPs(ctx context.Context, ns, runtimeName str
 	return nil
 }
 
+// gpuResource is the name NVIDIA's device plugin advertises, which is what a
+// cluster with GPUs almost always runs. A cluster whose plugin advertises
+// another name — AMD's, or a MIG profile — needs that name instead, and this is
+// the line to change; the platform does not guess between them.
+const gpuResource = corev1.ResourceName("nvidia.com/gpu")
+
 func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName string, value spec, owner *unstructured.Unstructured) error {
 	port := specPort(value)
 	replicas := int32(1)
@@ -1789,6 +1795,16 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 	}
 	requests := corev1.ResourceList{corev1.ResourceCPU: *apiresource.NewMilliQuantity(reqCPU, apiresource.DecimalSI), corev1.ResourceMemory: *apiresource.NewQuantity(reqMemory*1024*1024, apiresource.BinarySI)}
 	limits := corev1.ResourceList{corev1.ResourceCPU: *apiresource.NewMilliQuantity(cpu, apiresource.DecimalSI), corev1.ResourceMemory: *apiresource.NewQuantity(memory*1024*1024, apiresource.BinarySI)}
+	// A profile could ask for GPUs, and asking was all it did: the number was
+	// stored, put in the CRD and parsed here, and the Pod was scheduled without
+	// one. An agent that needs a GPU then ran on the CPU, slowly, and looked
+	// like it was working.
+	//
+	// An extended resource goes in limits; Kubernetes copies it to requests, and
+	// they must match, so writing both would be the same number said twice.
+	if value.Profile.GPUCount > 0 {
+		limits[gpuResource] = *apiresource.NewQuantity(value.Profile.GPUCount, apiresource.DecimalSI)
+	}
 	env := []corev1.EnvVar{{Name: "AGENTHUB_RUNTIME_TYPE", Value: value.Runtime.Type}, {Name: "AGENTHUB_MODEL_BASE_URL", Value: value.Model.BaseURL}, {Name: "AGENTHUB_RUNTIME_CONFIG", Value: "/etc/agenthub/runtime.json"}, {Name: "OPENCODE_CONFIG", Value: "/etc/agenthub/opencode.json"}, {Name: "HERMES_CONFIG", Value: "/etc/agenthub/hermes-config.yaml"}, {Name: "HOME", Value: "/home/agent"}, {Name: "QWENPAW_HOME", Value: "/home/agent/.qwenpaw"}, {Name: "AGENTHUB_RUNTIME_TOKEN", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "runtime-token"}}}}
 	env = append(env, corev1.EnvVar{Name: "AGENTHUB_MODEL_NAME", Value: value.Model.Name}, corev1.EnvVar{Name: "OPENAI_BASE_URL", Value: value.Model.BaseURL}, corev1.EnvVar{Name: "OPENAI_API_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: "model-api-key"}}})
 	// The administrator's overlay for this runtime type. It goes in before the
