@@ -201,6 +201,31 @@ func (s *Server) readiness(w http.ResponseWriter, r *http.Request) {
 			Detail: detail, Fix: "/tasks"})
 	})
 
+	// Images an administrator retired that agents are still started from.
+	//
+	// An agent keeps the image it was created with, which is what makes a runtime
+	// reproducible — and it means un-approving an image stops nothing. Somebody
+	// who retires an image because it is broken has done something decisive that
+	// changes nothing about the agents pointing at it, and nothing said so: an
+	// agent here went on starting a retired image until it was repointed by hand.
+	run(func() {
+		retired, err := s.store.AgentsOnRetiredImages(r.Context(), 10)
+		if err != nil {
+			return
+		}
+		for _, image := range retired {
+			what := "승인이 해제된"
+			if image.Deprecated {
+				what = "사용 중지된"
+			}
+			detail := fmt.Sprintf("%s 이미지인데 에이전트 %d개가 아직 이 이미지로 시작합니다 (예: %s)",
+				what, image.Agents, image.Agent)
+			add(readinessItem{Area: "런타임 이미지", Name: image.Image, Verdict: "retired",
+				Detail: detail + " — 다시 승인하거나 에이전트를 다른 이미지로 옮겨 주세요.",
+				Fix:    "/admin/resources"})
+		}
+	})
+
 	// Single sign-on, but only when somebody turned it on: a deployment using
 	// local login is not incomplete for having no identity provider.
 	run(func() {

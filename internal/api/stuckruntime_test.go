@@ -146,3 +146,39 @@ func TestTheAbandonedWindowIsADay(t *testing.T) {
 		t.Errorf("%v of history would be reported as though it were happening now", abandonedWindow)
 	}
 }
+
+// An agent keeps the image it was created with, which is what makes a runtime
+// reproducible — and it means un-approving an image stops nothing. Somebody who
+// retires a broken image has done something decisive that changes nothing about
+// the agents pointing at it. An agent here went on starting a retired image
+// until it was repointed by hand, and no screen mentioned it.
+func TestReadinessAsksAboutRetiredImagesStillInUse(t *testing.T) {
+	body, err := os.ReadFile("readiness.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	if !strings.Contains(source, "AgentsOnRetiredImages(") {
+		t.Fatal("readiness never asks whether a retired image is still being started")
+	}
+	at := strings.Index(source, "AgentsOnRetiredImages(")
+	section := source[at:]
+	if end := strings.Index(section, "\n\t// Single sign-on"); end >= 0 {
+		section = section[:end]
+	}
+	// How many, and one of them: a count alone does not point anywhere.
+	for _, want := range []string{"image.Agents", "image.Agent"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the report does not carry %s", want)
+		}
+	}
+	// Retired and deprecated are different words for a person to act on.
+	if !strings.Contains(section, "image.Deprecated") {
+		t.Error("an image taken out of service reads the same as one merely un-approved")
+	}
+	// The path, not the spelling of the field: gofmt aligns struct keys and a
+	// guard that matches one space finds nothing.
+	if !strings.Contains(section, `"/admin/resources"`) {
+		t.Error("the row does not say where images are managed")
+	}
+}

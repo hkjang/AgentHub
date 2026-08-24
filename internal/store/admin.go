@@ -451,3 +451,48 @@ func (s *Store) RecordModelEndpointHealth(ctx context.Context, id, health, detai
 	}
 	return was, err == nil, err
 }
+
+// PinnedRetiredImage is an image an administrator has taken out of service that
+// agents are still being started from.
+type PinnedRetiredImage struct {
+	Image      string
+	Version    string
+	Deprecated bool
+	Agents     int
+	// Agent names one of them, so the row points somewhere rather than counting.
+	Agent string
+}
+
+// AgentsOnRetiredImages lists the images agents still use after approval was
+// taken away.
+//
+// An agent keeps the image it was created with, which is what makes a runtime
+// reproducible — and it means retiring an image stops nothing. An administrator
+// who un-approves an image because it is broken or has a vulnerability has done
+// something that looks decisive and changes nothing about the agents already
+// pointing at it, and no screen said so.
+//
+// Grouped by image: ten agents on one retired image is one repair.
+func (s *Store) AgentsOnRetiredImages(ctx context.Context, limit int) ([]PinnedRetiredImage, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT i.image, i.version, i.deprecated, count(*), min(a.name)
+		FROM agent_definitions a
+		JOIN runtime_images i ON i.id = a.runtime_image_id
+		WHERE NOT i.approved OR i.deprecated
+		GROUP BY i.image, i.version, i.deprecated
+		ORDER BY count(*) DESC
+		LIMIT $1`, clampLimit(limit, 10, 50))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PinnedRetiredImage{}
+	for rows.Next() {
+		var item PinnedRetiredImage
+		if err := rows.Scan(&item.Image, &item.Version, &item.Deprecated, &item.Agents, &item.Agent); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
