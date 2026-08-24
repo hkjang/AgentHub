@@ -30,9 +30,21 @@ import (
 // scmComment is where a comment goes and how the request is signed.
 type scmComment struct {
 	endpoint string
-	header   http.Header
-	body     []byte
+	// editBase is that same collection with a comment id appended, which is how
+	// each forge addresses one comment it already holds.
+	editBase string
+	// editMethod is the verb that forge edits with: GitHub and Gitea PATCH, the
+	// others PUT. Sending the wrong one is a 405 that reads like a broken token.
+	editMethod string
+	header     http.Header
+	body       []byte
 }
+
+// reviewMarker is how the platform recognises its own comment on a page it does
+// not own. Matching on the author would need the platform to know who the token
+// belongs to; matching on a marker in the text needs nothing, and a comment
+// without it is somebody else's and is never touched.
+const reviewMarker = "<!-- agenthub-review -->"
 
 var errForeignHost = errors.New("the pull request is not on the host this connection belongs to")
 
@@ -89,8 +101,10 @@ func commentRequest(connection store.SCMConnection, sourceURL, text string) (scm
 		body, _ := json.Marshal(map[string]string{"body": text})
 		// Both forges comment on a pull request through the issue it also is.
 		return scmComment{
-			endpoint: fmt.Sprintf("%s/repos/%s/%s/issues/%s/comments", root, owner, repo, number),
-			header:   header, body: body,
+			endpoint:   fmt.Sprintf("%s/repos/%s/%s/issues/%s/comments", root, owner, repo, number),
+			editBase:   fmt.Sprintf("%s/repos/%s/%s/issues/comments/", root, owner, repo),
+			editMethod: http.MethodPatch,
+			header:     header, body: body,
 		}, nil
 
 	case "gitlab":
@@ -103,9 +117,10 @@ func commentRequest(connection store.SCMConnection, sourceURL, text string) (scm
 		project := strings.Trim(page.Path[:marker], "/")
 		iid := strings.Trim(page.Path[marker+len("/-/merge_requests/"):], "/")
 		body, _ := json.Marshal(map[string]string{"body": text})
+		notes := fmt.Sprintf("%s/projects/%s/merge_requests/%s/notes", root, url.PathEscape(project), iid)
 		return scmComment{
-			endpoint: fmt.Sprintf("%s/projects/%s/merge_requests/%s/notes", root, url.PathEscape(project), iid),
-			header:   header, body: body,
+			endpoint: notes, editBase: notes + "/", editMethod: http.MethodPut,
+			header: header, body: body,
 		}, nil
 
 	default: // bitbucket
@@ -114,9 +129,10 @@ func commentRequest(connection store.SCMConnection, sourceURL, text string) (scm
 		}
 		workspace, repo, number := parts[0], parts[1], parts[len(parts)-1]
 		body, _ := json.Marshal(map[string]any{"content": map[string]string{"raw": text}})
+		comments := fmt.Sprintf("%s/repositories/%s/%s/pullrequests/%s/comments", root, workspace, repo, number)
 		return scmComment{
-			endpoint: fmt.Sprintf("%s/repositories/%s/%s/pullrequests/%s/comments", root, workspace, repo, number),
-			header:   header, body: body,
+			endpoint: comments, editBase: comments + "/", editMethod: http.MethodPut,
+			header: header, body: body,
 		}, nil
 	}
 }
@@ -134,13 +150,22 @@ func authorize(header http.Header, kind, token string) {
 }
 
 // PostReviewComment says what the review found, on the page it came from.
+//
+// One comment per pull request, rewritten. A review runs again every time
+// somebody pushes a fix, and a comment per run turns a page people read into a
+// page people mute — while the newest verdict sinks under the older ones.
 func PostReviewComment(ctx context.Context, client *http.Client, connection store.SCMConnection, token, sourceURL, text string) error {
 	request, err := commentRequest(connection, sourceURL, text)
 	if err != nil {
 		return err
 	}
 	authorize(request.header, connection.Kind, token)
-	call, err := http.NewRequestWithContext(ctx, http.MethodPost, request.endpoint, bytes.NewReader(request.body))
+
+	endpoint, method := request.endpoint, http.MethodPost
+	if existing := existingComment(ctx, client, request, connection.Kind); existing != "" {
+		endpoint, method = request.editBase+existing, request.editMethod
+	}
+	call, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(request.body))
 	if err != nil {
 		return err
 	}
@@ -168,7 +193,9 @@ func PostReviewComment(ctx context.Context, client *http.Client, connection stor
 // than silently applied.
 func ReviewComment(summary string, findings []store.ReviewFinding, limit int) string {
 	var text strings.Builder
-	text.WriteString("**AgentHub 코드 리뷰**\n\n")
+	// The marker first, so the next review can find this comment and replace it
+	// rather than adding another. Forges render it as nothing.
+	text.WriteString(reviewMarker + "\n**AgentHub 코드 리뷰**\n\n")
 	text.WriteString(summary)
 	if len(findings) == 0 {
 		return text.String()
@@ -238,3 +265,65 @@ func (o *Orchestrator) announceReview(ctx context.Context, run store.AgentRun, t
 // scmHTTPClient is deliberately short-tempered: a forge that will not answer must
 // not hold a worker slot open behind it.
 var scmHTTPClient = &http.Client{Timeout: 20 * time.Second}
+
+// existingComment finds the review comment this platform left last time.
+//
+// Empty when there is none, when the page cannot be read, or when anything is
+// unclear: a failure to look must produce a new comment, never an edit to
+// somebody else's. Only a comment carrying the marker is ever touched.
+func existingComment(ctx context.Context, client *http.Client, request scmComment, kind string) string {
+	if request.editBase == "" {
+		return ""
+	}
+	// One page, the largest each forge allows. A review comment that has fallen
+	// past a hundred comments is better replaced than hunted for.
+	listing := request.endpoint + "?per_page=100"
+	if kind == "bitbucket" {
+		listing = request.endpoint + "?pagelen=100"
+	}
+	call, err := http.NewRequestWithContext(ctx, http.MethodGet, listing, nil)
+	if err != nil {
+		return ""
+	}
+	call.Header = request.header.Clone()
+	call.Header.Del("Content-Type")
+	response, err := client.Do(call)
+	if err != nil {
+		return ""
+	}
+	defer response.Body.Close()
+	if response.StatusCode >= 400 {
+		return ""
+	}
+	payload, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+	if err != nil {
+		return ""
+	}
+	type comment struct {
+		ID   json.Number `json:"id"`
+		Body string      `json:"body"`
+		// Bitbucket keeps the text one level down.
+		Content struct {
+			Raw string `json:"raw"`
+		} `json:"content"`
+	}
+	items := []comment{}
+	if err := json.Unmarshal(payload, &items); err != nil {
+		// Bitbucket answers with a page object rather than a list.
+		var page struct {
+			Values []comment `json:"values"`
+		}
+		if err := json.Unmarshal(payload, &page); err != nil {
+			return ""
+		}
+		items = page.Values
+	}
+	// The last one, so a page that somehow carries two is left with one.
+	found := ""
+	for _, item := range items {
+		if strings.Contains(item.Body, reviewMarker) || strings.Contains(item.Content.Raw, reviewMarker) {
+			found = item.ID.String()
+		}
+	}
+	return found
+}

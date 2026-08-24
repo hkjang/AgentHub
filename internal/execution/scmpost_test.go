@@ -138,3 +138,170 @@ func TestARefusalIsReportedInTheForgesOwnWords(t *testing.T) {
 		t.Fatalf("the refusal does not say what the forge said: %v", err)
 	}
 }
+
+// A review runs again on every push. A comment per run buries the newest verdict
+// under the older ones and teaches people to ignore the page.
+func TestASecondReviewReplacesTheFirstComment(t *testing.T) {
+	var method, path, query string
+	forge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			query = r.URL.RawQuery
+			_, _ = w.Write([]byte(`[{"id":11,"body":"사람이 쓴 댓글"},{"id":12,"body":"` + reviewMarker + `\n지난 리뷰"}]`))
+			return
+		}
+		method, path = r.Method, r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer forge.Close()
+	connection := store.SCMConnection{Host: strings.TrimPrefix(forge.URL, "http://"), Kind: "gitea", APIBase: forge.URL + "/api/v1"}
+	if err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret",
+		forge.URL+"/acme/store/pulls/9", ReviewComment("지적 없음", nil, 10)); err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPatch {
+		t.Errorf("the second review was posted with %s, not an edit", method)
+	}
+	if path != "/api/v1/repos/acme/store/issues/comments/12" {
+		t.Errorf("the edit went to %s", path)
+	}
+	// Asking for a default page means a comment past the thirtieth is invisible
+	// and the platform adds another one beside it, for ever.
+	if !strings.Contains(query, "per_page=100") {
+		t.Errorf("the listing asked for %q", query)
+	}
+}
+
+// The marker is the whole basis for touching a comment on a page the platform
+// does not own. Without one, a new comment — never an edit to somebody else's.
+func TestSomebodyElsesCommentIsNeverRewritten(t *testing.T) {
+	var method string
+	forge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`[{"id":11,"body":"AgentHub 코드 리뷰가 이렇게 말했었죠"},{"id":12,"body":"LGTM"}]`))
+			return
+		}
+		method = r.Method
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer forge.Close()
+	connection := store.SCMConnection{Host: strings.TrimPrefix(forge.URL, "http://"), Kind: "gitea", APIBase: forge.URL + "/api/v1"}
+	if err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret",
+		forge.URL+"/acme/store/pulls/9", ReviewComment("지적 1건", nil, 10)); err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPost {
+		t.Fatalf("a comment nobody marked was rewritten with %s", method)
+	}
+}
+
+// A page that cannot be read is not a page whose comments are known. Guessing
+// there is nothing there and posting is right; guessing an id is not.
+func TestAnUnreadablePageStillGetsTheReview(t *testing.T) {
+	var method string
+	forge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			// Refused, and still carrying a body — a proxy's cached page, an
+			// error envelope. What decides is the status, not what parses.
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`[{"id":99,"body":"` + reviewMarker + `\n오래된 캐시"}]`))
+			return
+		}
+		method = r.Method
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer forge.Close()
+	connection := store.SCMConnection{Host: strings.TrimPrefix(forge.URL, "http://"), Kind: "gitea", APIBase: forge.URL + "/api/v1"}
+	if err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret",
+		forge.URL+"/acme/store/pulls/9", ReviewComment("지적 1건", nil, 10)); err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPost {
+		t.Fatalf("a listing that failed produced %s", method)
+	}
+}
+
+// Bitbucket answers with a page object and keeps the text one level down, and
+// edits with PUT rather than PATCH — a wrong verb is a 405 that reads like a
+// broken token.
+func TestBitbucketsOwnShapeIsUnderstood(t *testing.T) {
+	var method, path string
+	forge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			// Bitbucket spells the page size its own way.
+			if !strings.Contains(r.URL.RawQuery, "pagelen=100") {
+				t.Errorf("Bitbucket was asked with %q", r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`{"values":[{"id":31,"content":{"raw":"` + reviewMarker + `\n지난 리뷰"}}]}`))
+			return
+		}
+		method, path = r.Method, r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer forge.Close()
+	connection := store.SCMConnection{Host: strings.TrimPrefix(forge.URL, "http://"), Kind: "bitbucket", APIBase: forge.URL + "/2.0"}
+	if err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret",
+		forge.URL+"/acme/store/pull-requests/3", ReviewComment("지적 없음", nil, 10)); err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPut {
+		t.Errorf("Bitbucket was sent %s", method)
+	}
+	if path != "/2.0/repositories/acme/store/pullrequests/3/comments/31" {
+		t.Errorf("the edit went to %s", path)
+	}
+}
+
+// GitLab edits a note with PUT. PATCH is a 405 that reads like a broken token.
+func TestGitLabEditsItsNoteTheWayGitLabDoes(t *testing.T) {
+	var method, path string
+	forge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`[{"id":21,"body":"` + reviewMarker + `\n지난 리뷰"}]`))
+			return
+		}
+		// EscapedPath, because a GitLab project id is a path with its slashes
+		// escaped — decoded, it stops being one id.
+		method, path = r.Method, r.URL.EscapedPath()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer forge.Close()
+	connection := store.SCMConnection{Host: strings.TrimPrefix(forge.URL, "http://"), Kind: "gitlab", APIBase: forge.URL + "/api/v4"}
+	if err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret",
+		forge.URL+"/acme/store/-/merge_requests/7", ReviewComment("지적 없음", nil, 10)); err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPut {
+		t.Errorf("GitLab was sent %s", method)
+	}
+	if path != "/api/v4/projects/acme%2Fstore/merge_requests/7/notes/21" {
+		t.Errorf("the edit went to %s", path)
+	}
+}
+
+// The comment the platform writes has to be the comment the platform can find.
+// Written and read by the same code, so a marker dropped from one side takes the
+// other with it — and the only symptom is a comment per run, weeks later.
+func TestTheCommentThePlatformWritesIsOneItCanFindAgain(t *testing.T) {
+	first := ReviewComment("지적 1건", []store.ReviewFinding{
+		{FilePath: "internal/api/review.go", StartLine: 42, Severity: "high", Message: "빠뜨린 오류 처리"},
+	}, 10)
+	var method string
+	forge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			listing, _ := json.Marshal([]map[string]any{{"id": 7, "body": first}})
+			_, _ = w.Write(listing)
+			return
+		}
+		method = r.Method
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer forge.Close()
+	connection := store.SCMConnection{Host: strings.TrimPrefix(forge.URL, "http://"), Kind: "gitea", APIBase: forge.URL + "/api/v1"}
+	if err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret",
+		forge.URL+"/acme/store/pulls/9", ReviewComment("지적 없음", nil, 10)); err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPatch {
+		t.Fatalf("the platform could not recognise its own comment: %s", method)
+	}
+}
