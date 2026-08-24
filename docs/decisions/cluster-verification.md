@@ -130,7 +130,13 @@ and each of them cost a run that proved nothing:
    read it, so its workers sat in `workerState: ready` for ever and every run
    ended at its time limit. The stub now serves `/v1/responses`, both streamed
    and not; `codex exec` completes a turn against it.
-3. **The Goal's time limit has to be longer than a worker takes.** The limit is
+3. **The agent must not be waiting on a keypress.** The fabric refuses to start
+   an agent whose terminal is blocked, and codex offers an update the moment a
+   newer one is published — so an image that ran workers the day it was built
+   stops running them days later with `Agent startup blocked:
+   codex-update-prompt`. The runtime now answers that offer at start, in
+   `deploy/runtime/orca-agents-configure.sh`.
+4. **The Goal's time limit has to be longer than a worker takes.** The limit is
    the fabric's deadline for the whole fan-out, and a run that hits it reports a
    timeout rather than anything about the answer.
 
