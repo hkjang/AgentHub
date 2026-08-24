@@ -96,3 +96,38 @@ func TestARefusalTheCallerCanFixIsNotAServerFault(t *testing.T) {
 		t.Error("the sentinel's own word would be printed in front of the sentence")
 	}
 }
+
+// The notification bell reads two things on every poll and the table had nothing
+// but a primary key.
+//
+// Measured on a running deployment: both queries were sequential scans over
+// every notice ever written, and notifications_pkey had four index scans against
+// agent_tasks_agent_idx's eleven thousand. Notices are swept only once read, so
+// a person who stops clicking the bell keeps the table growing under both.
+func TestTheNotificationBellHasAnIndexToReadFrom(t *testing.T) {
+	body, err := os.ReadFile("migrations/065_notification_index.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(body)
+	// The listing: one person's newest notices.
+	// Shaped like the bell's own ordering, so the fifty rows come off the index
+	// with no sort — measured at 300,000 notices: 11 ms to 0.34 ms, where an
+	// index on (user_id, created_at) alone still cost 4.5 ms sorting.
+	if !strings.Contains(sql, "notifications(user_id, (CASE WHEN read_at IS NULL THEN 0 ELSE 1 END), created_at DESC)") {
+		t.Error("the bell's listing still sorts every notice it is given, or scans them all")
+	}
+	// The count: only what is still waiting.
+	if !strings.Contains(sql, "notifications(user_id) WHERE read_at IS NULL") {
+		t.Error("the unread count has no index shaped like the question it asks")
+	}
+	// And the sweep, which deletes by when a notice was read.
+	if !strings.Contains(sql, "notifications(read_at) WHERE read_at IS NOT NULL") {
+		t.Error("retention deletes by a column nothing indexes")
+	}
+	// The duplicate index on the highest-volume table, which every step insert
+	// maintained for nothing.
+	if !strings.Contains(sql, "DROP INDEX IF EXISTS agent_run_steps_created_idx") {
+		t.Error("agent_run_steps still carries two identical indexes on created_at")
+	}
+}
