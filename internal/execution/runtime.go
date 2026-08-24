@@ -132,9 +132,17 @@ func (o *Orchestrator) waitForRuntime(ctx context.Context, run store.AgentRun, s
 	deadline := time.Now().Add(runtimeReadyTimeout)
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
+	// The last thing the cluster said about why this Pod is not up. A wrong image
+	// tag reads "런타임 이미지를 가져오지 못했습니다 … ErrImagePull" here every
+	// tick, and the task used to report only that it had waited three minutes —
+	// so the answer was written down and then thrown away.
+	reason := ""
 	for {
 		status, err := o.spawner.Status(ctx, spec)
 		if err == nil {
+			if trimmed := strings.TrimSpace(status.FailureReason); trimmed != "" {
+				reason = trimmed
+			}
 			_ = o.store.UpdateRuntimeObserved(ctx, runtimeID, status.Phase, status.PodName, status.NodeName, status.Endpoint, status.RestartCount, status.FailureReason)
 			if isReady(status.Phase) {
 				o.event(ctx, run, "runtime.ready", "Runtime이 준비되었습니다.", map[string]any{"runtimeId": runtimeID, "podName": status.PodName})
@@ -147,7 +155,7 @@ func (o *Orchestrator) waitForRuntime(ctx context.Context, run store.AgentRun, s
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return errors.New("Runtime이 준비되기를 기다리다 시간이 초과되었습니다")
+			return errors.New(runtimeWaitTimeout(reason))
 		}
 		select {
 		case <-ctx.Done():
@@ -300,4 +308,21 @@ func runtimeStartRefusal(ctx context.Context, db *store.Store, logger *slog.Logg
 		map[string]any{"effect": decision.Effect, "agent": agent.Name, "agentId": agent.ID})
 	// A policy refusal does not clear on its own: somebody has to change a rule.
 	return reason, false
+}
+
+// runtimeWaitTimeout says why the Pod never came up, when the cluster said.
+//
+// Waiting is the right behaviour even for an image that cannot be pulled — a
+// registry recovers, and Kubernetes keeps trying — but reporting only that the
+// wait ended sends somebody to look for a slow cluster when the answer, already
+// recorded on the runtime, is a tag that does not exist.
+func runtimeWaitTimeout(reason string) string {
+	message := "Runtime이 준비되기를 기다리다 시간이 초과되었습니다"
+	if trimmed := strings.TrimSpace(reason); trimmed != "" {
+		if len(trimmed) > 300 {
+			trimmed = trimmed[:300] + "…"
+		}
+		return message + ": " + trimmed
+	}
+	return message
 }
