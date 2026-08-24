@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hkjang/AgentHub/internal/agentserver"
+	"github.com/hkjang/AgentHub/internal/dlp"
 	"github.com/hkjang/AgentHub/internal/modelprobe"
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/store"
@@ -168,6 +169,26 @@ func (s *Server) readiness(w http.ResponseWriter, r *http.Request) {
 		add(readinessItem{Area: "실행", Name: "워커", Verdict: "ok", Detail: detail, Fix: "/admin/execution"})
 	})
 
+	// The content scanner, when somebody has turned it on. Enabled with no class
+	// chosen is the one state worse than off: every payload goes through
+	// untouched while the screen says the control is on.
+	run(func() {
+		var settings dlp.Settings
+		if err := s.store.Setting(r.Context(), dlp.SettingKey, &settings); err != nil || !settings.Enabled {
+			return
+		}
+		scanned := scannedClasses(settings)
+		if len(scanned) == 0 {
+			add(readinessItem{Area: "보안", Name: "내용 검사", Verdict: "inactive",
+				Detail: "켜져 있지만 검사할 데이터 종류가 하나도 선택되어 있지 않아 아무것도 검사하지 않습니다.",
+				Fix:    "/admin/dlp"})
+			return
+		}
+		add(readinessItem{Area: "보안", Name: "내용 검사", Verdict: "ok",
+			Detail: fmt.Sprintf("%d가지 데이터 종류를 검사합니다: %s", len(scanned), strings.Join(scanned, ", ")),
+			Fix:    "/admin/dlp"})
+	})
+
 	// The schedules. Every trigger overdue at once is the scheduler not running,
 	// which looks from every screen exactly like a quiet week — the console
 	// answers, the agents are there, and nothing happens. It is the same silence
@@ -263,10 +284,12 @@ func readinessRank(area string) int {
 		return 2
 	case "실행":
 		return 3
-	case "에이전트 서버":
+	case "보안":
 		return 4
+	case "에이전트 서버":
+		return 5
 	}
-	return 5
+	return 6
 }
 
 // agentServerVerdict translates the probe's word into this page's vocabulary, so

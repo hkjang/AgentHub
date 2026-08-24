@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"sort"
 
 	"github.com/hkjang/AgentHub/internal/dlp"
 	"github.com/hkjang/AgentHub/internal/store"
@@ -71,6 +72,15 @@ func (s *Server) putDLP(w http.ResponseWriter, r *http.Request) {
 func dlpSaved(settings dlp.Settings, applied syncResult) string {
 	if !settings.Enabled {
 		return "내용 검사를 껐습니다. 저장된 규칙은 유지되며, 다시 켜면 그대로 적용됩니다."
+	}
+	// On, and inspecting nothing. A class that is not listed is not scanned — that
+	// is the rule which keeps a new detector from blocking anybody's traffic
+	// unasked — and with no class listed at all it means the scanner reports
+	// itself as enabled while every payload goes through untouched. That is the
+	// one state where a security control is worse than being off, because the
+	// screen says it is on.
+	if len(scannedClasses(settings)) == 0 {
+		return "내용 검사를 켰지만 **검사할 데이터 종류를 하나도 고르지 않았습니다** — 지금 상태로는 아무것도 검사하지 않습니다. 아래에서 종류를 고르고 각각 어떻게 처리할지 정해 주세요."
 	}
 	switch {
 	case applied.pruned:
@@ -173,4 +183,19 @@ func (s *Server) reportDLPEvent(w http.ResponseWriter, r *http.Request) {
 	s.logger.Warn("sensitive data found on a tool call", "runtime", runtime.ID, "agent", runtime.AgentID,
 		"server", input.Event.Server, "tool", input.Event.Tool, "outcome", outcome, "findings", len(findings))
 	writeJSON(w, http.StatusAccepted, map[string]any{"recorded": true})
+}
+
+// scannedClasses is what this configuration actually inspects.
+//
+// A class mapped to "off" is listed and does nothing, which is the same silence
+// as not listing it — so it does not count here either.
+func scannedClasses(settings dlp.Settings) []string {
+	scanned := []string{}
+	for class, action := range settings.Classes {
+		if action != "" && action != dlp.Off {
+			scanned = append(scanned, class)
+		}
+	}
+	sort.Strings(scanned)
+	return scanned
 }
