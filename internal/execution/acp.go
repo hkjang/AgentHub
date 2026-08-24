@@ -149,6 +149,18 @@ func (o *Orchestrator) runACP(ctx context.Context, run *store.AgentRun, task sto
 
 	answer := turn.answer()
 	if strings.TrimSpace(answer) == "" {
+		// An agent that was refused its tools often ends with nothing to say, and
+		// the platform is the one that refused them. Reporting only the silence
+		// sends somebody to look at the agent for a decision this deployment
+		// made — measured: a rejected write ended the run as "답변이 비어
+		// 있습니다" with no mention of the refusal.
+		//
+		// Not retryable when a person refused: the same run would ask the same
+		// question and get the same answer.
+		if turn.denied > 0 {
+			return nil, Outcome{Status: store.TaskFailed, Retryable: false,
+				Failure: fmt.Sprintf("에이전트가 답을 남기지 않았습니다 — 이 실행에서 도구 요청 %d건이 거절됐습니다. 승인 모드나 도구 정책을 확인해 주세요.", turn.denied)}
+		}
 		return nil, Outcome{Status: store.TaskFailed,
 			Failure: "에이전트가 대화를 끝냈지만 답변이 비어 있습니다.", Retryable: true}
 	}
