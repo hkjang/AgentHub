@@ -68,9 +68,10 @@ func (s *Server) saveAgentMCPPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bound := false
+	var target store.MCPServer
 	for _, server := range servers {
 		if server.ID == input.ServerID {
-			bound = true
+			bound, target = true, server
 			break
 		}
 	}
@@ -104,6 +105,16 @@ func (s *Server) saveAgentMCPPolicy(w http.ResponseWriter, r *http.Request) {
 	response := map[string]any{"policy": saved}
 	if existing, runtimeErr := s.store.LatestRuntimeForAgent(r.Context(), agent.ID); runtimeErr == nil && existing.DesiredState == "running" {
 		response["warning"] = "실행 중인 Runtime에는 재시작 후 반영됩니다."
+	}
+	// What the policy names, against what the server offers. A deny rule for a
+	// tool that does not exist blocks nothing while looking like protection, and
+	// nothing here was checking the one field that decides that.
+	if unknown := s.checkPolicyTools(r.Context(), target, tools); len(unknown) > 0 {
+		response["toolNotice"] = policyToolNotice(saved.Mode, unknown, false)
+		response["unknownTools"] = unknown
+	} else if unknown := s.checkPolicyTools(r.Context(), target, approvalTools); len(unknown) > 0 {
+		response["toolNotice"] = policyToolNotice(saved.Mode, unknown, true)
+		response["unknownTools"] = unknown
 	}
 	writeJSON(w, http.StatusOK, response)
 }

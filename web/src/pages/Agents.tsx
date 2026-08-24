@@ -419,8 +419,11 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
   const savePolicy=async(serverId:string,mode:'allow'|'deny',tools:string[],approvalTools:string[])=>{
     setError(''); setNotice('')
     try{
-      const result=await api.put<{warning?:string}>(`/api/v1/agents/${agent.id}/mcp-policies`,{serverId,mode,tools,approvalTools})
-      setNotice(result.warning??'도구 정책을 저장했습니다.')
+      const result=await api.put<{warning?:string;toolNotice?:string}>(`/api/v1/agents/${agent.id}/mcp-policies`,{serverId,mode,tools,approvalTools})
+      // The tool notice comes first when there is one: a rule that names a tool
+      // the server does not offer does nothing at all, which matters more than
+      // when it takes effect.
+      setNotice(result.toolNotice ?? result.warning ?? '도구 정책을 저장했습니다.')
       await load()
     }catch(e){ setError(e instanceof Error?e.message:'도구 정책을 저장하지 못했습니다.') }
   }
