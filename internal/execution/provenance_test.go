@@ -1,0 +1,84 @@
+package execution
+
+import (
+	"os"
+	"strings"
+	"testing"
+)
+
+// The export must be free for a deployment that has not configured one, which is
+// almost every deployment: no request, no error, no log line.
+func TestNoSinkMeansNoExport(t *testing.T) {
+	body, err := os.ReadFile("provenance.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	settings := strings.Index(source, "settings.Configured()")
+	request := strings.Index(source, "http.NewRequestWithContext")
+	if settings < 0 {
+		t.Fatal("nothing checks whether a sink is configured")
+	}
+	if request >= 0 && settings > request {
+		t.Error("a request is built before anybody asks whether there is anywhere to send it")
+	}
+	// Only the two endings that mean a decision was reached.
+	if !strings.Contains(source, "event.Type != store.EventTaskCompleted && event.Type != store.EventTaskFailed") {
+		t.Error("events that are not a decision are exported too, or the two that are have been dropped")
+	}
+}
+
+// A record this platform decided to export and then lost quietly would be worse
+// than one that arrives late. The dispatcher already knows how to keep an event
+// pending, back off, and tell somebody when it gives up.
+func TestAnExportThatFailedKeepsTheEventPending(t *testing.T) {
+	body, err := os.ReadFile("dispatcher.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	at := strings.Index(source, "d.exportDecision(finish, event)")
+	if at < 0 {
+		t.Fatal("the decision is never exported; this guard is reading nothing")
+	}
+	retry := strings.Index(source, "d.retry(finish, event, failed)")
+	delivered := strings.Index(source, "d.store.MarkEventDelivered(finish, event.ID)")
+	if retry < 0 || at > retry {
+		t.Error("the export runs after the event is retried or not at all")
+	}
+	if delivered >= 0 && at > delivered {
+		t.Error("the event is marked delivered before the record is sent, so a failed export is lost")
+	}
+	// It must fail the delivery rather than only logging.
+	tail := source[at:]
+	if end := strings.Index(tail, "\n\tif failed"); end >= 0 {
+		tail = tail[:end]
+	}
+	if !strings.Contains(tail, "failed = err.Error()") {
+		t.Error("an export failure does not reach the retry, so the record is dropped silently")
+	}
+}
+
+// What is exported is what this platform observed. The agent's own claim of
+// success is not a field: the outcome is the task's recorded status and the
+// reasoning is the evaluator's verdict.
+func TestTheRecordCarriesThePlatformsAccount(t *testing.T) {
+	body, err := os.ReadFile("../store/provenance.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	for _, field := range []string{"AgentVersion", "RuntimeImage", "ApprovalID", "Source ", "Model "} {
+		if !strings.Contains(source, field) {
+			t.Errorf("the record does not say %s, which is part of what an auditor follows", strings.TrimSpace(field))
+		}
+	}
+	// The version and image are what ran, so they are read from the task's own
+	// row rather than from whatever the agent is configured with now.
+	if !strings.Contains(source, "record.Reasoning = verdict.Reason") {
+		t.Error("the reasoning is the agent's last sentence rather than the evaluator's verdict")
+	}
+	if !strings.Contains(source, `"task:" + record.TaskID`) {
+		t.Error("the decision has no stable identity, so the same decision arrives twice as two")
+	}
+}

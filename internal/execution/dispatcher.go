@@ -125,6 +125,13 @@ func (d *Dispatcher) deliver(ctx context.Context, event store.PlatformEvent) {
 			d.logger.Info("event task queued", "event", event.ID, "type", event.Type, "trigger", trigger.ID, "task", task.ID)
 		}
 	}
+	// This platform's own account of the decision, for a deployment that keeps
+	// one. It rides the same delivery as the subscribers: if the sink cannot be
+	// reached the event stays pending and is tried again, rather than the record
+	// being lost while the event is marked delivered.
+	if err := d.exportDecision(finish, event); err != nil {
+		failed = err.Error()
+	}
 	if failed != "" {
 		d.retry(finish, event, failed)
 		return

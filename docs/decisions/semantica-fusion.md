@@ -26,6 +26,10 @@ person reading rows.
   published 0.6.6 that class has **no decision methods at all** — the decision
   API exists on the MCP server, not the library. Integrate over MCP or the REST
   server, not by importing the package.
+- Its REST server, which the README says spans "extraction, graph queries,
+  decisions, reasoning, and export", serves four routes in 0.6.6: `/health`,
+  `/api/info`, `/build` and a catch-all. There is no decisions endpoint. Two of
+  the three interfaces the README describes are not in the package.
 - The MCP server is **stdio only** (`main()` calls `_run_stdio()`), while this
   platform's fabric speaks `streamable-http` and the operator runs MCP servers as
   HTTP containers. That is the one real integration gap, and it is small.
@@ -46,13 +50,18 @@ chose to say. It is the agent's account, subject to the same doubt as any other
 thing an agent claims — this platform already refuses to treat "완료했습니다" as
 proof.
 
-**B. Export the platform's own account (recommended first).** Everything above is
+**B. Export the platform's own account (built — see below).** Everything above is
 already known to the control plane, and known *authoritatively*: the task and who
 asked for it, the agent and its pinned version and image, the model endpoint, the
 approval and the reviewer, the policy verdict, what the scanner refused, what the
-evaluator decided and why. Push that after each run as a decision record with
-PROV-O lineage, over Semantica's REST server. No MCP, no shim, no Python in the
-control plane.
+evaluator decided and why. Push that after each run as a decision record.
+
+Not to Semantica's REST server, which does not serve decisions: to a plain HTTP
+endpoint a deployment configures, with an adapter binding it to whichever
+Semantica interface works that month. Two of the three interfaces its README
+describes are absent from the published package, and that version skew belongs
+outside this control plane. What this platform knows is the same whoever
+receives it — a graph, a warehouse, an archive an auditor reads.
 
 The shape already exists: this platform has an event bus with retries, dead
 lettering and a replay window. A provenance sink is another subscriber, and if
@@ -83,3 +92,35 @@ Two things to keep honest while building it. The record must say what the
 platform observed, not what the agent asserted — those are different, and this
 platform has spent a long time learning to separate them. And a deployment that
 never configures a sink must be unaffected: no sink, no cost, no error.
+
+## What was built
+
+The first increment of B, in v0.210.0. On `task.completed` and `task.failed` the
+dispatcher posts one decision record to the endpoint in the `provenance` setting:
+the task and where it came from, the agent with the version and image that
+actually ran, the model, the run, the approval if a person decided something, the
+outcome the platform recorded, and the evaluator's reasoning.
+
+Measured on a running deployment, with a receiver on the network:
+
+    decisionId    task:87701f90-…
+    category      큐원코드-클러스터
+    scenario      결정 기록 내보내기 검증
+    outcome       completed
+    reasoning     완료 조건이 정의되어 있지 않아 Agent 선언을 그대로 사용했습니다.
+    source        manual
+    agentVersion  1
+    model         클러스터-게이트웨이
+
+That reasoning is the point of the whole exercise. The platform is not repeating
+what the agent said; it is recording that it accepted the agent's declaration
+*because the Goal defined no success criteria* — which is the sentence an auditor
+needs and the agent would never write.
+
+With the receiver stopped, the task still completed and the event stayed pending
+at three attempts with "결정 기록을 보내지 못했습니다: no such host". With the
+receiver back it was delivered on the next attempt. A deployment with no endpoint
+configured sends nothing and does no work.
+
+Still open: the agent-side tools (A) need a streamable-http shim, and nothing has
+been built for the graph screen (D) or policy reasoning (C).
