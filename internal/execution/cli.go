@@ -280,7 +280,31 @@ func parseCLIRun(stdout, stderr string, exitCode int) (cliRun, error) {
 	if strings.TrimSpace(run.Result) == "" {
 		return run, errors.New("에이전트가 실행됐지만 결과 메시지가 비어 있습니다")
 	}
+	// An agent that could not reach the model writes the failure where its answer
+	// belongs and still reports success: exit 0, is_error false, and the whole
+	// answer is `[API Error: ...]`. The task was then recorded as completed, with
+	// the error as its result — which is a run that did nothing wearing the badge
+	// of one that worked.
+	//
+	// Observed against a real runtime: the agent answered "[API Error: Streaming
+	// request received a non-SSE response …]" and the task said completed.
+	if failure := cliAnswerIsFailure(run.Result); failure != "" {
+		return run, errors.New(failure)
+	}
 	return run, nil
+}
+
+// cliAnswerIsFailure reports the agent's own error when the answer is one.
+//
+// Only when the answer *is* the report, never when it mentions one: an agent
+// asked to explain a log may quote the same words, and refusing that run would
+// be the opposite mistake.
+func cliAnswerIsFailure(result string) string {
+	trimmed := strings.TrimSpace(result)
+	if !strings.HasPrefix(trimmed, "[API Error:") {
+		return ""
+	}
+	return "에이전트가 모델을 부르지 못했습니다: " + firstLine(trimmed)
 }
 
 // cliFailure explains what stopped the run, preferring the agent's own words.
