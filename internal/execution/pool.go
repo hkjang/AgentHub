@@ -98,7 +98,7 @@ func (p *Pool) warm(ctx context.Context) {
 		spec, err := p.specs.Build(ctx, instance, agent)
 		if err != nil {
 			p.logger.Warn("warm spec could not be built", "runtime", instance.ID, "error", err)
-			_ = p.store.ReleaseWarmRuntime(ctx, instance.ID)
+			p.giveBack(ctx, instance.ID)
 			continue
 		}
 		// Warming ahead of a schedule is still starting a runtime, and it was the
@@ -113,18 +113,18 @@ func (p *Pool) warm(ctx context.Context) {
 		// refusals are.
 		if refusal, waits := runtimeStartRefusal(ctx, p.store, p.logger, agent, spec.Profile.ID, instance.ID); refusal != "" {
 			p.logger.Info("runtime not warmed", "agent", agent.ID, "runtime", instance.ID, "reason", refusal, "waits", waits)
-			_ = p.store.ReleaseWarmRuntime(ctx, instance.ID)
+			p.giveBack(ctx, instance.ID)
 			continue
 		}
 		if err := p.spawner.Start(ctx, spec); err != nil {
 			if errors.Is(err, appRuntime.ErrNotConfigured) {
 				// Without Kubernetes there is nothing to warm, and saying so once
 				// per tick would drown the log.
-				_ = p.store.ReleaseWarmRuntime(ctx, instance.ID)
+				p.giveBack(ctx, instance.ID)
 				continue
 			}
 			p.logger.Warn("warm start failed", "runtime", instance.ID, "error", err)
-			_ = p.store.ReleaseWarmRuntime(ctx, instance.ID)
+			p.giveBack(ctx, instance.ID)
 			continue
 		}
 		// Under the owner's quota, like every other way of taking capacity. The
@@ -191,5 +191,25 @@ func (p *Pool) cool(ctx context.Context) {
 		}
 		p.store.Audit(ctx, nil, "runtime.cooled", "runtime", candidate.RuntimeID, "success", "", map[string]any{"agentId": agent.ID})
 		p.logger.Info("warm runtime stopped", "agent", agent.Name, "runtime", candidate.RuntimeID)
+	}
+}
+
+// giveBack releases a runtime the pool did not manage to start.
+//
+// Releasing the hold alone left the row counted as running with no Pod behind
+// it — and out of reach of the cooling sweep, which only looks at runtimes that
+// still hold a claim. So the state goes back too, but only for a runtime that
+// never came up: one that is actually running is somebody's work.
+func (p *Pool) giveBack(ctx context.Context, runtimeID string) {
+	stopped, err := p.store.AbandonUnstartedRuntime(ctx, runtimeID)
+	if err != nil {
+		p.logger.Warn("an unstarted runtime could not be given back", "runtime", runtimeID, "error", err)
+		return
+	}
+	if !stopped {
+		// It is running after all, so only the pool's own hold is dropped.
+		if err := p.store.ReleaseWarmRuntime(ctx, runtimeID); err != nil {
+			p.logger.Warn("warm claim not released", "runtime", runtimeID, "error", err)
+		}
 	}
 }

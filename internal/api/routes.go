@@ -240,6 +240,15 @@ func (s *Server) spawnNow(r *http.Request, agent store.Agent) (store.Runtime, er
 		return rt, err
 	}
 	if err := s.spawner.Spawn(r.Context(), spec); err != nil {
+		// The record was created already counted as running, so a spawn that fails
+		// would leave its owner's quota holding a runtime that does not exist. It
+		// is given back here for the same reason the warm pool gives one back.
+		if errors.Is(err, runtime.ErrNotConfigured) {
+			return rt, err
+		}
+		if _, abandonErr := s.store.AbandonUnstartedRuntime(r.Context(), rt.ID); abandonErr != nil {
+			s.logger.Warn("an unstarted runtime could not be given back", "runtime", rt.ID, "error", abandonErr)
+		}
 		return rt, err
 	}
 	return rt, nil

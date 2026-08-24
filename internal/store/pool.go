@@ -123,6 +123,29 @@ func (s *Store) ClaimWarmRuntime(ctx context.Context, runtimeID string, until ti
 
 // ReleaseWarmRuntime drops the pool's claim, which is what keeps it from
 // stopping a runtime a person has since taken over.
+// AbandonUnstartedRuntime gives back a runtime the pool created and then did not
+// start.
+//
+// A record is created before its profile is known, and it is created already
+// counted as running — so a warm-up that is refused, or whose start fails, left a
+// row holding its owner's quota with no Pod behind it. Releasing the hold made it
+// worse rather than better: the cooling sweep only looks at runtimes that still
+// have one, so clearing it put the row beyond the reach of the only thing that
+// would have stopped it.
+//
+// Only a runtime that never came up is touched. A running one is somebody's work
+// and is left alone, whatever the pool thinks of it.
+func (s *Store) AbandonUnstartedRuntime(ctx context.Context, runtimeID string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `UPDATE agent_runtimes
+		SET warm_until = NULL, desired_state = 'stopped', status = 'stopped', updated_at = now()
+		WHERE id = $1 AND desired_state = 'running'
+		  AND status IN ('pending', 'creating', 'spawn_failed', 'failed', 'crashed', 'unknown', '')`, runtimeID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 func (s *Store) ReleaseWarmRuntime(ctx context.Context, runtimeID string) error {
 	_, err := s.pool.Exec(ctx, `UPDATE agent_runtimes SET warm_until=NULL, updated_at=now() WHERE id=$1`, runtimeID)
 	return err
