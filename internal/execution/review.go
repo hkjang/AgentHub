@@ -406,6 +406,36 @@ func (o *Orchestrator) runReview(ctx context.Context, run *store.AgentRun, task 
 	for index := range findings {
 		findings[index].Fingerprint = store.ReviewFingerprint(findings[index])
 	}
+	// The step this text belongs to, for the scanner's own record: a blocked
+	// review has to be attributable to the agent whose review it was.
+	step := workflow.Step{ID: "review", AgentID: agent.ID, AgentName: agent.Name}
+	// Scanned before they are stored, and therefore before they are published.
+	//
+	// This backend has had a content scanner since the day it was written — its
+	// own helper, with a comment saying findings carry code and a model's words
+	// about it and both leave the platform when somebody publishes them — and
+	// nothing ever called it. Since the review now comments on the pull request
+	// it came from, that text leaves this deployment for a forge.
+	//
+	// Field by field rather than all at once: a redaction applied to one joined
+	// string cannot be split back into the fields it came from.
+	for index := range findings {
+		message, messageErr := o.reviewInspection(ctx, step, findings[index].Message)
+		if messageErr != nil {
+			return nil, Outcome{Status: store.TaskFailed, Failure: messageErr.Error(),
+				Retryable: !errors.Is(messageErr, workflow.ErrBlocked)}
+		}
+		findings[index].Message = message
+		if findings[index].Suggestion == "" {
+			continue
+		}
+		suggestion, suggestionErr := o.reviewInspection(ctx, step, findings[index].Suggestion)
+		if suggestionErr != nil {
+			return nil, Outcome{Status: store.TaskFailed, Failure: suggestionErr.Error(),
+				Retryable: !errors.Is(suggestionErr, workflow.ErrBlocked)}
+		}
+		findings[index].Suggestion = suggestion
+	}
 	if err := o.store.SaveReviewFindings(ctx, findings); err != nil {
 		record.Status, record.Error = "failed", err.Error()
 		if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
@@ -428,6 +458,13 @@ func (o *Orchestrator) runReview(ctx context.Context, run *store.AgentRun, task 
 	}
 
 	summary := reviewSummary(parsed, findings)
+	// The summary quotes the findings, so it goes past the scanner too.
+	if scanned, summaryErr := o.reviewInspection(ctx, step, summary); summaryErr != nil {
+		return nil, Outcome{Status: store.TaskFailed, Failure: summaryErr.Error(),
+			Retryable: !errors.Is(summaryErr, workflow.ErrBlocked)}
+	} else {
+		summary = scanned
+	}
 	if resolved > 0 {
 		summary += fmt.Sprintf(" — 이전 지적 %d건은 더 이상 보고되지 않아 해결로 표시했습니다", resolved)
 	}

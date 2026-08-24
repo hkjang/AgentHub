@@ -116,10 +116,16 @@ func (o *Orchestrator) runACP(ctx context.Context, run *store.AgentRun, task sto
 	elapsed := time.Since(startedAt).Milliseconds()
 	telemetry.Fail(span, runErr)
 
+	// Scanned before it is written down. What the scanner refuses must not reach
+	// this platform's own database on its way to being refused.
+	inspected, inspectErr := o.inspectAnswer(ctx, step, turn.answer())
 	record := store.AgentRunStep{
 		RunID: run.ID, Sequence: 1, Type: store.StepACP,
-		Title: "ACP 실행", Input: prompt, Output: turn.answer(), Status: "succeeded", DurationMs: elapsed,
+		Title: "ACP 실행", Input: prompt, Output: inspected, Status: "succeeded", DurationMs: elapsed,
 		PromptTokens: turn.inputTokens, CompletionTokens: turn.outputTokens,
+	}
+	if inspectErr != nil {
+		record.Status, record.Error, record.Output = "failed", inspectErr.Error(), ""
 	}
 	run.StepCount = 1
 	run.ToolCalls += turn.toolCalls
@@ -147,7 +153,14 @@ func (o *Orchestrator) runACP(ctx context.Context, run *store.AgentRun, task sto
 		return nil, Outcome{Status: store.TaskFailed, Failure: runErr.Error(), Retryable: turn.retryable}
 	}
 
-	answer := turn.answer()
+	// The refusal is checked before the silence it causes: a blocked answer is
+	// empty by construction, and reporting it as "the agent said nothing" hides
+	// the reason and retries a decision that cannot change.
+	if inspectErr != nil {
+		return nil, Outcome{Status: store.TaskFailed, Failure: inspectErr.Error(),
+			Retryable: !errors.Is(inspectErr, workflow.ErrBlocked)}
+	}
+	answer := inspected
 	if strings.TrimSpace(answer) == "" {
 		// An agent that was refused its tools often ends with nothing to say, and
 		// the platform is the one that refused them. Reporting only the silence
@@ -164,14 +177,6 @@ func (o *Orchestrator) runACP(ctx context.Context, run *store.AgentRun, task sto
 		return nil, Outcome{Status: store.TaskFailed,
 			Failure: "에이전트가 대화를 끝냈지만 답변이 비어 있습니다.", Retryable: true}
 	}
-	if o.flowInspector != nil {
-		scanned, scanErr := o.flowInspector.Inbound(ctx, step, answer)
-		if scanErr != nil {
-			return nil, Outcome{Status: store.TaskFailed, Failure: scanErr.Error(), Retryable: !errors.Is(scanErr, workflow.ErrBlocked)}
-		}
-		answer = scanned
-	}
-
 	o.event(ctx, *run, "acp.completed", "ACP 실행이 끝났습니다.", map[string]any{
 		"durationMs": elapsed, "stopReason": turn.stopReason,
 		"toolCalls": turn.toolCalls, "granted": turn.granted, "denied": turn.denied,

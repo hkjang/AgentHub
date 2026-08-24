@@ -19,7 +19,7 @@ func TestAnEmptyAnswerAfterRefusalsSaysWhy(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := string(body)
-	at := strings.Index(source, `answer := turn.answer()`)
+	at := strings.Index(source, `if strings.TrimSpace(answer) == ""`)
 	if at < 0 {
 		t.Fatal("the empty-answer path is gone; this guard is reading nothing")
 	}

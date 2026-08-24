@@ -89,15 +89,21 @@ func (o *Orchestrator) runAgentServer(ctx context.Context, run *store.AgentRun, 
 	result, convErr := client.hold(ctx, runNotes{orchestrator: o, run: run, agent: agent, goal: goal}, goal, prompt, model)
 	elapsed := time.Since(startedAt).Milliseconds()
 
+	// Scanned before it is written down: what the scanner refuses must not reach
+	// this platform's own database on its way to being refused.
+	inspected, inspectErr := o.inspectAnswer(ctx, step, result.Answer)
 	record := store.AgentRunStep{
 		RunID: run.ID, Sequence: 1, Type: store.StepAgentServer,
 		Title: "에이전트 서버 실행", Input: prompt, Status: "succeeded", DurationMs: elapsed,
-		Output: result.Answer,
+		Output: inspected,
 		// On the step, not only on the run: the usage report adds up steps, so a
 		// run whose tokens live only on the run itself is spend the report cannot
 		// see — and it says nothing about that, because the run claims to be
 		// metered.
 		PromptTokens: result.InputTokens, CompletionTokens: result.OutputTokens,
+	}
+	if inspectErr != nil {
+		record.Status, record.Error, record.Output = "failed", inspectErr.Error(), ""
 	}
 	run.StepCount = 1
 	// Real usage, as the server's own metrics report it. Left unmetered rather
@@ -133,11 +139,11 @@ func (o *Orchestrator) runAgentServer(ctx context.Context, run *store.AgentRun, 
 
 	answer := result.Answer
 	if o.flowInspector != nil {
-		scanned, scanErr := o.flowInspector.Inbound(ctx, step, answer)
-		if scanErr != nil {
-			return nil, Outcome{Status: store.TaskFailed, Failure: scanErr.Error(), Retryable: !errors.Is(scanErr, workflow.ErrBlocked)}
+		if inspectErr != nil {
+			return nil, Outcome{Status: store.TaskFailed, Failure: inspectErr.Error(),
+				Retryable: !errors.Is(inspectErr, workflow.ErrBlocked)}
 		}
-		answer = scanned
+		answer = inspected
 	}
 	o.event(ctx, *run, "agentserver.completed", "에이전트 서버 실행이 끝났습니다.", map[string]any{
 		"durationMs": elapsed, "server": server.Name, "conversationId": result.ConversationID,

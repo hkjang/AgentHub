@@ -112,7 +112,13 @@ func (o *Orchestrator) runCLI(ctx context.Context, run *store.AgentRun, task sto
 	}
 
 	parsed, parseErr := adapter.Parse(result.Stdout, result.Stderr, result.ExitCode)
-	record.Output = parsed.Result
+	// Scanned before it is written down: what the scanner refuses must not reach
+	// this platform's own database on its way to being refused.
+	inspected, inspectErr := o.inspectAnswer(ctx, step, parsed.Result)
+	record.Output = inspected
+	if inspectErr != nil {
+		record.Output = ""
+	}
 	// On the step, not only on the run: the usage report adds up steps, so tokens
 	// recorded only on the run are spend no report can see — on a run that says it
 	// was metered.
@@ -140,14 +146,11 @@ func (o *Orchestrator) runCLI(ctx context.Context, run *store.AgentRun, task sto
 		return nil, Outcome{Status: store.TaskFailed, Failure: parseErr.Error(), Retryable: adapter.Retryable(result.ExitCode)}
 	}
 
-	answer := parsed.Result
-	if o.flowInspector != nil {
-		scanned, scanErr := o.flowInspector.Inbound(ctx, step, answer)
-		if scanErr != nil {
-			return nil, Outcome{Status: store.TaskFailed, Failure: scanErr.Error(), Retryable: !errors.Is(scanErr, workflow.ErrBlocked)}
-		}
-		answer = scanned
+	if inspectErr != nil {
+		return nil, Outcome{Status: store.TaskFailed, Failure: inspectErr.Error(),
+			Retryable: !errors.Is(inspectErr, workflow.ErrBlocked)}
 	}
+	answer := inspected
 
 	o.event(ctx, *run, "cli.completed", "에이전트 실행이 끝났습니다.", map[string]any{
 		"durationMs": elapsed, "turns": parsed.Turns, "toolCalls": parsed.ToolCalls,

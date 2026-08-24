@@ -95,7 +95,13 @@ func (o *Orchestrator) runInvestigate(ctx context.Context, run *store.AgentRun, 
 	}
 
 	report, parseErr := parseInvestigation(result.Stdout, result.Stderr, result.ExitCode)
-	record.Output = report.Conclusion
+	// Scanned before it is written down: what the scanner refuses must not reach
+	// this platform's own database on its way to being refused.
+	inspected, inspectErr := o.inspectAnswer(ctx, step, report.Conclusion)
+	record.Output = inspected
+	if inspectErr != nil {
+		record.Status, record.Error, record.Output = "failed", inspectErr.Error(), ""
+	}
 	record.PromptTokens, record.CompletionTokens = report.PromptTokens, report.CompletionTokens
 	if parseErr != nil {
 		record.Status, record.Error = "failed", parseErr.Error()
@@ -123,11 +129,11 @@ func (o *Orchestrator) runInvestigate(ctx context.Context, run *store.AgentRun, 
 
 	answer := report.Conclusion
 	if o.flowInspector != nil {
-		scanned, scanErr := o.flowInspector.Inbound(ctx, step, answer)
-		if scanErr != nil {
-			return nil, Outcome{Status: store.TaskFailed, Failure: scanErr.Error(), Retryable: !errors.Is(scanErr, workflow.ErrBlocked)}
+		if inspectErr != nil {
+			return nil, Outcome{Status: store.TaskFailed, Failure: inspectErr.Error(),
+				Retryable: !errors.Is(inspectErr, workflow.ErrBlocked)}
 		}
-		answer = scanned
+		answer = inspected
 	}
 
 	o.event(ctx, *run, "investigate.completed", "조사가 끝났습니다.", map[string]any{

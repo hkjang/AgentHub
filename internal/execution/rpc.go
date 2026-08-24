@@ -144,11 +144,17 @@ func (o *Orchestrator) runRPC(ctx context.Context, run *store.AgentRun, task sto
 	result, convErr := o.speakRPC(ctx, run, session, prompt, goal)
 	elapsed := time.Since(startedAt).Milliseconds()
 
+	// Scanned before it is written down: what the scanner refuses must not reach
+	// this platform's own database on its way to being refused.
+	inspected, inspectErr := o.inspectAnswer(ctx, step, result.Answer)
 	record := store.AgentRunStep{
 		RunID: run.ID, Sequence: 1, Type: store.StepRPC,
 		Title: "에이전트 실행", Input: prompt, Status: "succeeded", DurationMs: elapsed,
-		Output:       result.Answer,
+		Output:       inspected,
 		PromptTokens: result.InputTokens, CompletionTokens: result.OutputTokens,
+	}
+	if inspectErr != nil {
+		record.Status, record.Error, record.Output = "failed", inspectErr.Error(), ""
 	}
 	run.StepCount = 1
 	// Real usage, reported per message by the agent itself, so this is metered
@@ -188,11 +194,11 @@ func (o *Orchestrator) runRPC(ctx context.Context, run *store.AgentRun, task sto
 
 	answer := result.Answer
 	if o.flowInspector != nil {
-		scanned, scanErr := o.flowInspector.Inbound(ctx, step, answer)
-		if scanErr != nil {
-			return nil, Outcome{Status: store.TaskFailed, Failure: scanErr.Error(), Retryable: !errors.Is(scanErr, workflow.ErrBlocked)}
+		if inspectErr != nil {
+			return nil, Outcome{Status: store.TaskFailed, Failure: inspectErr.Error(),
+				Retryable: !errors.Is(inspectErr, workflow.ErrBlocked)}
 		}
-		answer = scanned
+		answer = inspected
 	}
 	o.event(ctx, *run, "rpc.completed", "에이전트 실행이 끝났습니다.", map[string]any{
 		"durationMs": elapsed, "turns": result.Turns, "toolCalls": result.ToolCalls,
