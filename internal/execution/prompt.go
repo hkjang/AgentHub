@@ -173,14 +173,30 @@ func stepPrompt(task store.AgentTask, goal store.AgentGoal, transcript []string)
 }
 
 // declaresCompletion reports whether the agent claimed it is finished. The claim
-// alone never completes a task — the evaluator decides — but it ends the loop.
-func declaresCompletion(output string) bool {
+// alone never completes a task — the evaluator decides — but it ends the loop,
+// and a Goal with no success criteria has nothing for the evaluator to check, so
+// the declaration is the whole of it.
+//
+// Which is why the claim has to be the agent's. The marker is one word on a line
+// of its own; a webhook appends its payload to the task's input verbatim, and an
+// agent that quotes its input hands the word back. That ends the run at the
+// first step, with nothing done and the task recorded as completed — the same
+// echo the directives were taught to ignore, on the decision that matters most.
+func declaresCompletion(output, untrusted string) bool {
+	claimed := false
 	for _, line := range strings.Split(output, "\n") {
 		if strings.TrimSpace(line) == completionMarker {
-			return true
+			claimed = true
+			break
 		}
 	}
-	return false
+	if !claimed {
+		return false
+	}
+	// Anywhere in the untrusted half, not only on a line of its own: what arrives
+	// is a payload with the word inside a field, and what comes back is the word
+	// on a line by itself.
+	return !strings.Contains(untrusted, completionMarker)
 }
 
 // extractArtifacts turns ARTIFACT directives into storable records.

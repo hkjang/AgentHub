@@ -510,7 +510,7 @@ func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task stor
 			continue
 		}
 
-		if declaresCompletion(output) {
+		if declaresCompletion(output, untrustedGiven(task)) {
 			return transcript, Outcome{}
 		}
 	}

@@ -149,3 +149,23 @@ func directivesOfKind(output, kind string) []Directive {
 func taskGiven(task store.AgentTask) string {
 	return task.Title + "\n" + task.Input
 }
+
+// WebhookPayloadHeader is what this platform writes in front of a webhook's body
+// when it appends it to a task's input. It is the line between text somebody
+// with an account wrote and text that arrived from outside, and it is written
+// here so both sides of that boundary agree on where it is.
+const WebhookPayloadHeader = "# Webhook payload"
+
+// untrustedGiven is the part of a task's input that came from outside.
+//
+// A trigger's own template is written by whoever owns the agent; the payload
+// appended after it is whatever a stranger typed into a pull request. Only the
+// second half is treated as hostile, so an owner who mentions a marker or a
+// directive in their own instructions is not punished for it.
+func untrustedGiven(task store.AgentTask) string {
+	at := strings.Index(task.Input, WebhookPayloadHeader)
+	if at < 0 {
+		return ""
+	}
+	return task.Input[at+len(WebhookPayloadHeader):]
+}

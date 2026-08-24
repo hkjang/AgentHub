@@ -1095,7 +1095,7 @@ func (s *Server) triggerWebhook(w http.ResponseWriter, r *http.Request) {
 	if len(body) > 0 {
 		// The payload is appended rather than replacing the template, so the
 		// trigger's own instruction is not lost.
-		taskInput = strings.TrimSpace(taskInput + "\n\n# Webhook payload\n" + string(body))
+		taskInput = strings.TrimSpace(taskInput + "\n\n" + execution.WebhookPayloadHeader + "\n" + string(body))
 	}
 	task, err := s.store.CreateAgentTask(r.Context(), store.CreateTaskInput{
 		AgentID: trigger.AgentID, OwnerID: trigger.OwnerID, Title: title, Input: taskInput,
