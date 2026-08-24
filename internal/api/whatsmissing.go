@@ -51,6 +51,16 @@ type deploymentState struct {
 	agentServers     int
 	healthyServers   int
 	externalApps     int
+	// noEgressAnywhere is true when every enabled network profile denies by
+	// default and allows no destination at all. A runtime under such a profile
+	// cannot reach the model gateway, so every way of running that happens
+	// inside a Pod fails — and it fails as an agent that does not work rather
+	// than as a network rule somebody can change.
+	//
+	// Only when *no* profile allows anything: with a choice of profiles, which
+	// one an agent uses is the agent's business, and calling that missing would
+	// be a warning beside a working configuration.
+	noEgressAnywhere bool
 }
 
 func (s *Server) readDeploymentState(ctx context.Context) deploymentState {
@@ -80,6 +90,20 @@ func (s *Server) readDeploymentState(ctx context.Context) deploymentState {
 			state.agentServers++
 			if server.Health == "healthy" {
 				state.healthyServers++
+			}
+		}
+	}
+	if profiles, err := s.store.PolicyProfiles(ctx, "network"); err == nil {
+		state.noEgressAnywhere = len(profiles) > 0
+		for _, profile := range profiles {
+			if !profile.Enabled {
+				continue
+			}
+			denies, _ := profile.Spec["defaultDeny"].(bool)
+			allowed, _ := profile.Spec["allowedDestinations"].([]any)
+			if !denies || len(allowed) > 0 {
+				state.noEgressAnywhere = false
+				break
 			}
 		}
 	}
@@ -233,6 +257,10 @@ func runnerMissing(runner string, state deploymentState) []missingPiece {
 		}
 	case store.RunnerAgentServer:
 		switch {
+		// An OpenHands runtime is an agent server this deployment starts itself,
+		// so telling somebody who has one to go and register a machine is advice
+		// about a problem they do not have.
+		case state.approvedImages[runtimetype.OpenHands] > 0:
 		case state.agentServers == 0:
 			missing = append(missing, missingPiece{
 				What:  "작업을 맡길 에이전트 서버가 등록돼 있지 않습니다.",
@@ -247,6 +275,12 @@ func runnerMissing(runner string, state deploymentState) []missingPiece {
 	default:
 		// The rest happen inside a Pod, so they need a runtime type that offers
 		// this way of running and an approved image for it.
+		if state.noEgressAnywhere {
+			missing = append(missing, missingPiece{
+				What:  "네트워크 프로파일이 어느 목적지도 허용하지 않습니다. Pod 안에서 도는 실행 방식은 런타임이 직접 모델 게이트웨이를 부르므로, 이대로면 에이전트가 고장 난 것처럼 실패합니다.",
+				Where: "관리자 ▸ 정책 ▸ 네트워크 프로파일",
+			})
+		}
 		if !anyRuntimeOffers(runner, state) {
 			missing = append(missing, missingPiece{
 				What:  "이 실행 방식을 지원하는 런타임 이미지가 승인돼 있지 않습니다(" + runnerRuntimeNames(runner) + ").",
