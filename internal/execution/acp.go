@@ -427,7 +427,7 @@ func (o *Orchestrator) acpTurn(ctx context.Context, run *store.AgentRun, agent s
 	defer cancelHandshake()
 	capabilities, err := client.Initialize(handshake)
 	if err != nil {
-		return turn, fmt.Errorf("ACP 핸드셰이크가 실패했습니다: %s%s", err.Error(), acpStderrSuffix(session))
+		return turn, fmt.Errorf("ACP 핸드셰이크가 실패했습니다: %s%s", err.Error(), acpStderrSuffix(session.Stderr()))
 	}
 	if capabilities.ProtocolVersion > acp.ProtocolVersion {
 		// Not fatal: the protocol's rule is that the agent answers with a version it
@@ -437,7 +437,7 @@ func (o *Orchestrator) acpTurn(ctx context.Context, run *store.AgentRun, agent s
 
 	sessionID, err := acpOpenSession(ctx, client, capabilities, descriptor.Workspace)
 	if err != nil {
-		return turn, fmt.Errorf("ACP 세션을 열지 못했습니다: %s%s", acpAuthHint(capabilities, err), acpStderrSuffix(session))
+		return turn, fmt.Errorf("ACP 세션을 열지 못했습니다: %s%s", acpAuthHint(capabilities, err), acpStderrSuffix(session.Stderr()))
 	}
 
 	// The Goal's tool budget is enforced here rather than handed to the agent,
@@ -451,7 +451,7 @@ func (o *Orchestrator) acpTurn(ctx context.Context, run *store.AgentRun, agent s
 	stopReason, err := client.Prompt(ctx, sessionID, prompt)
 	turn.stopReason = stopReason
 	if err != nil {
-		return turn, fmt.Errorf("ACP 실행이 실패했습니다: %s%s", err.Error(), acpStderrSuffix(session))
+		return turn, fmt.Errorf("ACP 실행이 실패했습니다: %s%s", err.Error(), acpStderrSuffix(session.Stderr()))
 	}
 	if failure, retryable := acpStopFailure(stopReason, goal, turn); failure != nil {
 		turn.retryable = retryable
@@ -742,20 +742,39 @@ func acpAuthHint(capabilities acp.InitializeResult, err error) string {
 // acpStderrSuffix appends what the agent complained about. An agent that fails to
 // start says why on stderr and nothing at all on the protocol stream, so without
 // this the run would record a timeout and lose the reason.
-func acpStderrSuffix(session *appRuntime.Session) string {
-	text := strings.TrimSpace(session.Stderr())
+func acpStderrSuffix(stderr string) string {
+	text := strings.TrimSpace(stderr)
 	if text == "" {
 		return ""
 	}
-	lines := strings.Split(text, "\n")
-	last := strings.TrimSpace(lines[len(lines)-1])
-	if last == "" || len(lines) == 1 {
-		last = text
+	// The tail, not the last line.
+	//
+	// Agents print their failures as pretty JSON, and the last line of that is
+	// `}`. A run whose only explanation was "— }" is what sent somebody looking
+	// at the platform when their model credential had been refused: the sentence
+	// that said so was two lines further up and thrown away.
+	tail := text
+	if len(tail) > 400 {
+		tail = tail[len(tail)-400:]
+		// Start at a line boundary when there is one, so the tail does not begin
+		// mid-word.
+		if cut := strings.IndexByte(tail, '\n'); cut >= 0 && cut < 120 {
+			tail = tail[cut+1:]
+		}
+		tail = "…" + tail
 	}
-	if len(last) > 400 {
-		last = last[:400] + "…"
+	// One line, because this is appended to a run's failure message.
+	fields := strings.FieldsFunc(tail, func(r rune) bool { return r == '\n' || r == '\r' })
+	parts := make([]string, 0, len(fields))
+	for _, field := range fields {
+		if trimmed := strings.TrimSpace(field); trimmed != "" {
+			parts = append(parts, trimmed)
+		}
 	}
-	return " — " + last
+	if len(parts) == 0 {
+		return ""
+	}
+	return " — " + strings.Join(parts, " ")
 }
 
 // recordACPTools writes each tool call as its own step, after the turn's step, so

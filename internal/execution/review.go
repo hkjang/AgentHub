@@ -72,11 +72,30 @@ type reviewResult struct {
 			Failed   []reviewItem `json:"failed"`
 		} `json:"coverage"`
 	} `json:"manifest"`
+	RetryReport retryReport `json:"retry_report"`
 }
 
 type reviewItem struct {
 	Path           string `json:"path"`
 	Classification string `json:"classification"`
+	// Reason is the engine's own word for why this file was not reviewed. It is
+	// declared in the answer, which is a better place to read it from than the
+	// log the engine also prints.
+	Reason string `json:"reason"`
+}
+
+// retryReport is what the engine records about the model calls it made. When a
+// review reads nothing, this is where the reason lives: an authentication class
+// and a 401 is a revoked key, and saying so beats "1 of 1 selected item(s)
+// failed" by the distance between a fact and a count.
+type retryReport struct {
+	Requests []struct {
+		Attempts []struct {
+			ErrorClass   string `json:"error_class"`
+			FailurePhase string `json:"failure_phase"`
+			StatusCode   int    `json:"status_code"`
+		} `json:"attempts"`
+	} `json:"requests"`
 }
 
 type reviewComment struct {
@@ -437,9 +456,18 @@ func (o *Orchestrator) runReview(ctx context.Context, run *store.AgentRun, task 
 		}
 	}
 	// A review whose files all failed found nothing because it read nothing.
+	//
+	// The engine's own summary says how many failed and not one word about why,
+	// while the line above it on the same stream says exactly why — a refused
+	// model credential, a timeout, a file it could not read. Reporting the count
+	// alone sent somebody to look at the platform when their key had been
+	// revoked.
 	if parsed.Status != "complete" && len(findings) == 0 {
-		return nil, Outcome{Status: store.TaskFailed, Retryable: true,
-			Failure: "리뷰가 끝나지 못했습니다: " + strings.TrimSpace(parsed.Message)}
+		failure := "리뷰가 끝나지 못했습니다: " + strings.TrimSpace(parsed.Message)
+		if reason := reviewItemFailure(parsed); reason != "" {
+			failure += " — " + reason
+		}
+		return nil, Outcome{Status: store.TaskFailed, Retryable: true, Failure: failure}
 	}
 	return []string{summary}, Outcome{}
 }
@@ -600,4 +628,47 @@ func (o *Orchestrator) reviewInspection(ctx context.Context, step workflow.Step,
 		return text, nil
 	}
 	return o.flowInspector.Inbound(ctx, step, text)
+}
+
+// reviewItemFailure says why the files were not reviewed, in the engine's terms.
+//
+// The engine's summary counts what failed and explains nothing; the answer it
+// returns alongside carries both the reason it assigned each file and the class
+// of the model call that failed. A revoked key reads as "authentication (401)",
+// which is a different afternoon from "1 of 1 selected item(s) failed".
+func reviewItemFailure(parsed reviewResult) string {
+	reason := ""
+	for _, item := range parsed.Manifest.Coverage.Failed {
+		if trimmed := strings.TrimSpace(item.Reason); trimmed != "" {
+			reason = trimmed
+			break
+		}
+	}
+	call := ""
+	for _, request := range parsed.RetryReport.Requests {
+		for _, attempt := range request.Attempts {
+			class := strings.TrimSpace(attempt.ErrorClass)
+			if class == "" && attempt.StatusCode == 0 {
+				continue
+			}
+			switch {
+			case class != "" && attempt.StatusCode > 0:
+				call = fmt.Sprintf("%s (%d)", class, attempt.StatusCode)
+			case class != "":
+				call = class
+			default:
+				call = fmt.Sprintf("HTTP %d", attempt.StatusCode)
+			}
+		}
+		if call != "" {
+			break
+		}
+	}
+	switch {
+	case reason != "" && call != "":
+		return reason + " — 모델 호출: " + call
+	case reason != "":
+		return reason
+	}
+	return call
 }
