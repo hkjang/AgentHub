@@ -387,6 +387,19 @@ var homeAndConfigMounts = []corev1.VolumeMount{
 	{Name: "tmp", MountPath: "/tmp"},
 }
 
+// workspaceAndConfigMounts is for a sidecar that does the agent's actual work
+// rather than serving a page about it.
+//
+// The execution fabric runs beside the terminal, not inside it, and it had
+// everything except the repository: it refused every task with "Not a valid git
+// repository: /workspace" while the terminal container, one mount away, held the
+// repository the task was about. Nothing said the fabric could not see it — the
+// refusal was the fabric's own words, correctly reported, about a directory that
+// really was empty.
+var workspaceAndConfigMounts = append([]corev1.VolumeMount{
+	{Name: "workspace", MountPath: "/workspace"},
+}, homeAndConfigMounts...)
+
 // runtimeAdapters is the registry. The zero adapter (an unknown type) leaves the
 // agent container without a command, which surfaces as a clear image-entrypoint
 // failure rather than a silently misconfigured Pod.
@@ -571,7 +584,7 @@ var runtimeAdapters = map[string]runtimeAdapter{
 					Name: "orca-runtime", Image: build.image(), ImagePullPolicy: corev1.PullIfNotPresent,
 					Command: []string{"/usr/local/bin/agenthub-orca-serve"}, Env: build.Env,
 					SecurityContext: restrictedContainerSecurityContext(build.Value.Security.ReadOnlyRootFilesystem),
-					VolumeMounts:    homeAndConfigMounts,
+					VolumeMounts:    workspaceAndConfigMounts,
 				},
 				runtimeProxyContainer("orca-proxy", build.Name, build.sidecarImage(), "http://127.0.0.1:7681"),
 			}

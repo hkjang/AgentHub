@@ -172,7 +172,7 @@ func (s *orcaSession) call(ctx context.Context, into any, args ...string) error 
 		s.retryable = true
 		return fmt.Errorf("실행 패브릭에 명령을 보내지 못했습니다: %w", err)
 	}
-	return s.readEnvelope(result.Stdout, result.Stderr, into)
+	return s.readEnvelope(result.Stdout, result.Stderr, result.ExitCode, into)
 }
 
 // readEnvelope turns one CLI answer into a result or an error.
@@ -180,11 +180,18 @@ func (s *orcaSession) call(ctx context.Context, into any, args ...string) error 
 // Kept apart from the call so the shapes the real fabric produces can be checked
 // without a runtime: its refusals are the contract, and they are what the
 // runner's order of operations exists to avoid.
-func (s *orcaSession) readEnvelope(stdout, stderr string, into any) error {
+func (s *orcaSession) readEnvelope(stdout, stderr string, exitCode int, into any) error {
 	var envelope orcaEnvelope
 	document := strings.TrimSpace(stdout)
 	start := strings.Index(document, "{")
 	if start < 0 {
+		// A fabric that printed nothing because its container was stopped is not
+		// a fabric that answered badly. The other three in-Pod backends learned
+		// this two releases ago; this is the fourth.
+		if killed := killedContainer(exitCode); killed != "" {
+			s.retryable = true
+			return errors.New("실행 패브릭이 " + killed + trimmedSuffix(stderr+stdout))
+		}
 		return errors.New("실행 패브릭이 응답하지 않았습니다: " + trimmed(stderr+stdout, 300))
 	}
 	if decodeErr := json.NewDecoder(strings.NewReader(document[start:])).Decode(&envelope); decodeErr != nil {
@@ -438,4 +445,12 @@ func orcaWorkspaceName(task store.AgentTask) string {
 		id = id[:12]
 	}
 	return "agenthub-" + id
+}
+
+// trimmedSuffix adds the container's last words when it left any.
+func trimmedSuffix(text string) string {
+	if detail := trimmed(text, 200); strings.TrimSpace(detail) != "" {
+		return ": " + detail
+	}
+	return ""
 }

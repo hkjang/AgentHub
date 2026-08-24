@@ -35,7 +35,7 @@ func TestTheFabricsRefusalsAreReadAsRefusals(t *testing.T) {
 			"invalid_argument",
 		},
 	} {
-		err := session.readEnvelope(one.document, "", nil)
+		err := session.readEnvelope(one.document, "", 0, nil)
 		if err == nil {
 			t.Errorf("%s was read as success", one.name)
 			continue
@@ -51,7 +51,7 @@ func TestTheFabricsRefusalsAreReadAsRefusals(t *testing.T) {
 // fabric declined.
 func TestOutputThatIsNotAnEnvelopeIsNotARefusal(t *testing.T) {
 	session := &orcaSession{}
-	if err := session.readEnvelope("", "orca: command not found", nil); err == nil {
+	if err := session.readEnvelope("", "orca: command not found", 0, nil); err == nil {
 		t.Fatal("a runtime that answered nothing was read as success")
 	} else if strings.Contains(err.Error(), "거절") {
 		t.Errorf("a missing runtime is reported as the fabric refusing: %s", err)
@@ -65,7 +65,7 @@ func TestASuccessCarriesTheResult(t *testing.T) {
 	session := &orcaSession{}
 	var task orcaTask
 	document := `{"id":"local","ok":true,"result":{"task":{"id":"task_9bfdb0bfe27a","run_id":"run_aa0c4e5be95e","created_by_terminal_handle":"term_1a36c999","status":"ready"}}}`
-	if err := session.readEnvelope(document, "", &task); err != nil {
+	if err := session.readEnvelope(document, "", 0, &task); err != nil {
 		t.Fatal(err)
 	}
 	if task.Task.ID != "task_9bfdb0bfe27a" || task.Task.RunID != "run_aa0c4e5be95e" {
@@ -171,7 +171,7 @@ func TestAnAcceptedDispatchIsNotARunningWorker(t *testing.T) {
 			LastFailure string `json:"last_failure"`
 		} `json:"dispatch"`
 	}
-	if err := session.readEnvelope(document, "", &shown); err != nil {
+	if err := session.readEnvelope(document, "", 0, &shown); err != nil {
 		t.Fatal(err)
 	}
 	if shown.Dispatch.Status != "failed" {
