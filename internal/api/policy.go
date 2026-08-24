@@ -114,11 +114,19 @@ func (s *Server) putPolicy(w http.ResponseWriter, r *http.Request) {
 	// Tool rules are compiled into each runtime when it is provisioned, so a
 	// change reaches running Pods the same way the runtime environment does.
 	applied := s.syncRuntimeEnvironment(r.Context())
-	writeJSON(w, http.StatusOK, map[string]any{
+	response := map[string]any{
 		"saved": true, "rules": len(document.Rules),
 		"runtimes": map[string]any{"applied": applied.applied, "failed": applied.failed, "skipped": applied.skipped},
 		"message":  policySaved(len(document.Rules), applied),
-	})
+	}
+	// What the rules name, against what this deployment has. A deny rule for an
+	// agent whose name is spelled differently matches nothing and reads exactly
+	// like protection.
+	if unmatched := s.checkPolicyNames(r.Context(), document); len(unmatched) > 0 {
+		response["nameNotice"] = policyNameNotice(unmatched)
+		response["unmatchedNames"] = unmatched
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // policySaved says what the save actually did, including to runtimes that were
