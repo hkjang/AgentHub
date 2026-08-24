@@ -46,7 +46,7 @@ type scmComment struct {
 // without it is somebody else's and is never touched.
 const reviewMarker = "<!-- agenthub-review -->"
 
-var errForeignHost = errors.New("the pull request is not on the host this connection belongs to")
+var errForeignHost = errors.New("원래 페이지가 이 연결의 호스트에 있지 않습니다. 그 호스트의 연결을 먼저 추가해 주세요.")
 
 func apiRoot(connection store.SCMConnection) string {
 	if base := strings.TrimSuffix(strings.TrimSpace(connection.APIBase), "/"); base != "" {
@@ -75,7 +75,7 @@ func apiRoot(connection store.SCMConnection) string {
 func commentRequest(connection store.SCMConnection, sourceURL, text string) (scmComment, error) {
 	page, err := url.Parse(sourceURL)
 	if err != nil || page.Host == "" {
-		return scmComment{}, fmt.Errorf("the source page is not an address: %q", sourceURL)
+		return scmComment{}, fmt.Errorf("원래 페이지 주소를 읽지 못했습니다: %q", sourceURL)
 	}
 	// A self-hosted forge may live on a port, so the connection's host is allowed
 	// to carry one. Compared against the address with and without it — never
@@ -91,7 +91,7 @@ func commentRequest(connection store.SCMConnection, sourceURL, text string) (scm
 	case "github", "gitea":
 		// /{owner}/{repo}/pull/{number} on GitHub, /pulls/{number} on Gitea.
 		if len(parts) < 4 {
-			return scmComment{}, fmt.Errorf("no pull request in %q", page.Path)
+			return scmComment{}, fmt.Errorf("원래 페이지 주소에서 PR 번호를 찾지 못했습니다: %q", page.Path)
 		}
 		owner, repo, number := parts[0], parts[1], parts[len(parts)-1]
 		if connection.Kind == "github" {
@@ -112,7 +112,7 @@ func commentRequest(connection store.SCMConnection, sourceURL, text string) (scm
 		// everything before the `-`, so nested groups survive.
 		marker := strings.Index(page.Path, "/-/merge_requests/")
 		if marker < 0 {
-			return scmComment{}, fmt.Errorf("no merge request in %q", page.Path)
+			return scmComment{}, fmt.Errorf("원래 페이지 주소에서 MR 번호를 찾지 못했습니다: %q", page.Path)
 		}
 		project := strings.Trim(page.Path[:marker], "/")
 		iid := strings.Trim(page.Path[marker+len("/-/merge_requests/"):], "/")
@@ -125,7 +125,7 @@ func commentRequest(connection store.SCMConnection, sourceURL, text string) (scm
 
 	default: // bitbucket
 		if len(parts) < 4 {
-			return scmComment{}, fmt.Errorf("no pull request in %q", page.Path)
+			return scmComment{}, fmt.Errorf("원래 페이지 주소에서 PR 번호를 찾지 못했습니다: %q", page.Path)
 		}
 		workspace, repo, number := parts[0], parts[1], parts[len(parts)-1]
 		body, _ := json.Marshal(map[string]any{"content": map[string]string{"raw": text}})

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -357,5 +358,43 @@ func TestARefusedCredentialSaysWhatTheForgeSaid(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "401") || !strings.Contains(err.Error(), "Bad credentials") {
 		t.Fatalf("the refusal does not carry the forge's words: %v", err)
+	}
+}
+
+// What a failed post-back says is read on the run's timeline, under a sentence
+// this platform wrote: "리뷰를 <호스트>에 남기지 못했습니다: …". The HTTP half of
+// this file already answered in kind; the half that reads the page's address
+// answered in English, so the same line finished in a different language than
+// it started.
+func TestAPostBackFailureFinishesTheSentenceItStarted(t *testing.T) {
+	github := store.SCMConnection{Host: "github.com", Kind: "github"}
+	for _, item := range []struct {
+		name, url string
+		want      string
+	}{
+		{"another host", "https://gitlab.com/o/r/-/merge_requests/2", "원래 페이지가 이 연결의 호스트에 있지 않습니다"},
+		{"no number", "https://github.com/o/r", "PR 번호를 찾지 못했습니다"},
+	} {
+		_, err := commentRequest(github, item.url, "리뷰")
+		if err == nil {
+			t.Errorf("%s: a page this platform cannot comment on was accepted", item.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), item.want) {
+			t.Errorf("%s: the timeline would read %q", item.name, err.Error())
+		}
+	}
+	gitlab := store.SCMConnection{Host: "gitlab.com", Kind: "gitlab"}
+	if _, err := commentRequest(gitlab, "https://gitlab.com/o/r", "리뷰"); err == nil || !strings.Contains(err.Error(), "MR 번호를 찾지 못했습니다") {
+		t.Errorf("a GitLab page with no merge request reads %v", err)
+	}
+	body, err := os.ReadFile("scmpost.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, english := range []string{"no pull request in", "no merge request in", "is not an address", "is not on the host this connection belongs to"} {
+		if strings.Contains(string(body), english) {
+			t.Errorf("a person is still shown %q at the end of a Korean sentence", english)
+		}
 	}
 }
