@@ -58,7 +58,7 @@ a platform bug until it is understood:
 | Forge credential check | a stored token is checked at save time and the account name comes back |
 | `orca` backend | the fabric creates its run, task and worktree in the runtime's own repository — after the mount that made that possible |
 | `rpc` backend | task completes with the agent's answer and real token usage; the agent declares its own tools to the gateway |
-| Cancelling a running task | the stop button ends an in-Pod agent: the task reads cancelled and no agent process is left in the Pod |
+| Cancelling a running task | the stop button ends an in-Pod agent — checked on `rpc` and on `acp`, with the agent genuinely working first: the task and the run both read cancelled and no agent process is left in the Pod |
 
 Not established: forking and condensation on the agent server, which the
 platform does not use.
@@ -71,6 +71,17 @@ Two things this round is worth keeping:
   /workspace", the fabric's own words about a directory that really was empty.
   Nothing was wrong except the mount, and nothing but running it would have said
   so.
+- **A protocol backend has to hear more than its agent.** The rpc loop read with
+  a blocking scan, so an agent waiting on a model that never answered kept the
+  loop — and the run, and the process in the Pod — alive through a cancellation
+  and past its own time limit. The acp client was already built the other way,
+  waiting on cancellation, a closed connection and the answer at once. Checking
+  a protocol backend means cancelling it while its agent is silent, not while it
+  is talking.
+- **Check that the agent was actually running.** The first attempt at the acp
+  cancellation checked a Pod stuck in ImagePullBackOff: the task cancelled
+  cleanly because nothing had started. A cancellation test that does not first
+  see the agent working proves nothing.
 - **Cancelling needs no per-backend work in a Pod.** The claim-keeper notices a
   cancelled task and cancels the run's context, which ends the exec — verified
   by cancelling a Pi task mid-run and finding no agent process left. The agent
