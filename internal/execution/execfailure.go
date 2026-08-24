@@ -36,3 +36,30 @@ func runtimeExecFailure(what string, err error, goal store.AgentGoal) string {
 	}
 	return fmt.Sprintf("Runtime에서 %s%s 실행하지 못했습니다: %s", what, korean.Object(what), err.Error())
 }
+
+// Signals a container reports when something outside it decided it was over.
+//
+// 137 is 128 plus SIGKILL, which in a Pod is nearly always the memory limit; 143
+// is SIGTERM, the Pod being asked to go — an eviction, a node drain, somebody
+// stopping the runtime while its task was still running.
+//
+// Every backend that runs a command in a Pod met these as "결과를 읽지
+// 못했습니다(종료 코드 137)", a sentence that sends somebody to look at an output
+// format. They are different repairs and neither is a parsing problem, so they
+// are explained once, here, for all of them.
+const (
+	exitKilled     = 137
+	exitTerminated = 143
+)
+
+// killedContainer explains an exit code that means the container was stopped
+// from outside, or "" when it means something else.
+func killedContainer(exitCode int) string {
+	switch exitCode {
+	case exitKilled:
+		return "강제 종료됐습니다(137). Pod의 메모리 한도를 넘었거나(OOMKilled) 실행 중 Pod가 삭제된 경우입니다 — 런타임 프로파일의 Memory를 늘리거나 Runtime 상태를 확인해 주세요"
+	case exitTerminated:
+		return "종료 요청을 받고 중단됐습니다(143). 실행 중 Pod가 종료된 경우입니다 — 노드 정리나 Runtime 중지가 있었는지 확인해 주세요"
+	}
+	return ""
+}

@@ -95,7 +95,11 @@ func TestAFailedInvestigationExplainsItself(t *testing.T) {
 			stderr: "toolset prometheus failed to load", want: "toolset prometheus failed to load",
 		},
 		{
-			name: "no reason given", exitCode: 137, want: "종료 코드 137",
+			// 137 is the container having been killed, which is a repair — the
+			// Pod's memory limit, or somebody deleting it — rather than a number
+			// to look up. The case stays because a run that ends with nothing to
+			// say still has to say something.
+			name: "no reason given", exitCode: 137, want: "OOMKilled",
 		},
 		{
 			// The shape a real failure arrives in: this agent renders its traceback

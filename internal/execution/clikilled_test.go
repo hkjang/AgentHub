@@ -53,3 +53,28 @@ func TestTheKnownGuardrailsAreUnchanged(t *testing.T) {
 		t.Errorf("budget: %v", err)
 	}
 }
+
+// Every backend that runs a command in a Pod meets the same two endings, and one
+// of three explaining them is the shape this platform keeps removing.
+func TestEveryPodBackendExplainsAKilledContainer(t *testing.T) {
+	// The review engine printing nothing because it was stopped is not the same
+	// as printing something unreadable.
+	_, err := parseReview("", "", 137)
+	if err == nil || !strings.Contains(err.Error(), "137") || !strings.Contains(err.Error(), "OOMKilled") {
+		t.Errorf("review: %v", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "읽지 못했습니다") {
+		t.Errorf("review reads a killed container as unreadable output: %v", err)
+	}
+
+	investigateErr := investigationFailure(143, "")
+	if investigateErr == nil || !strings.Contains(investigateErr.Error(), "종료 요청") {
+		t.Errorf("investigate: %v", investigateErr)
+	}
+
+	// And an ordinary non-zero exit keeps the words it had.
+	_, ordinary := parseReview("", "boom", 1)
+	if ordinary == nil || !strings.Contains(ordinary.Error(), "읽지 못했습니다") {
+		t.Errorf("an ordinary failure changed meaning: %v", ordinary)
+	}
+}

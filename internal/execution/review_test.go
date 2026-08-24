@@ -36,7 +36,7 @@ func accepted(list []string, value string) bool {
 }
 
 func TestAReviewThatFoundSomethingBecomesFindings(t *testing.T) {
-	parsed, err := parseReview(fixture(t, "review-complete.json"), "")
+	parsed, err := parseReview(fixture(t, "review-complete.json"), "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestAReviewThatFoundSomethingBecomesFindings(t *testing.T) {
 // document that says so is the one the engine writes as it exits non-zero — with
 // its session id and an error line printed after the JSON.
 func TestAReviewThatReadNothingIsNotACleanReview(t *testing.T) {
-	parsed, err := parseReview(fixture(t, "review-all-failed.json"), fixture(t, "review-all-failed.txt"))
+	parsed, err := parseReview(fixture(t, "review-all-failed.json"), fixture(t, "review-all-failed.txt"), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestAReviewThatReadNothingIsNotACleanReview(t *testing.T) {
 func TestTrailingOutputAfterTheDocumentIsIgnored(t *testing.T) {
 	document := fixture(t, "review-complete.json") +
 		"\n[ocr] Session: 4169a013 (retry with: --resume 4169a013)\nError: review failed\n"
-	parsed, err := parseReview(document, "")
+	parsed, err := parseReview(document, "", 0)
 	if err != nil {
 		t.Fatalf("a document with the engine's own trailing lines was refused: %v", err)
 	}
@@ -113,10 +113,10 @@ func TestTrailingOutputAfterTheDocumentIsIgnored(t *testing.T) {
 // with this code", which is the most expensive thing this runner could say by
 // accident.
 func TestNoDocumentIsAnErrorRatherThanACleanReview(t *testing.T) {
-	if _, err := parseReview("", "ocr: command not found"); err == nil {
+	if _, err := parseReview("", "ocr: command not found", 0); err == nil {
 		t.Fatal("a run that produced no document was read as a review")
 	}
-	if _, err := parseReview("not json at all", ""); err == nil {
+	if _, err := parseReview("not json at all", "", 0); err == nil {
 		t.Fatal("output that is not a document was read as a review")
 	}
 }
@@ -125,7 +125,7 @@ func TestNoDocumentIsAnErrorRatherThanACleanReview(t *testing.T) {
 // failed on must not be in that list. If it were, a file nobody could review
 // would close every finding in it and look like a morning's good work.
 func TestAFileTheEngineFailedOnIsNotAFileItRead(t *testing.T) {
-	parsed, err := parseReview(fixture(t, "review-all-failed.json"), "")
+	parsed, err := parseReview(fixture(t, "review-all-failed.json"), "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

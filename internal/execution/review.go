@@ -349,7 +349,7 @@ func (o *Orchestrator) runReview(ctx context.Context, run *store.AgentRun, task 
 			Failure: runtimeExecFailure("리뷰", execErr, goal)}
 	}
 
-	parsed, parseErr := parseReview(result.Stdout, result.Stderr)
+	parsed, parseErr := parseReview(result.Stdout, result.Stderr, result.ExitCode)
 	if parseErr != nil {
 		record.Status, record.Error = "failed", parseErr.Error()
 		if _, storeErr := o.store.AppendRunStep(ctx, record); storeErr != nil {
@@ -498,7 +498,7 @@ func reviewedPaths(parsed reviewResult) []string {
 // falling back keeps working if that changes; failing to find a document at all
 // has to be an error rather than an empty review, because an empty review reads
 // as "nothing wrong with this code".
-func parseReview(stdout, stderr string) (reviewResult, error) {
+func parseReview(stdout, stderr string, exitCode int) (reviewResult, error) {
 	for _, candidate := range []string{stdout, stderr} {
 		document := strings.TrimSpace(candidate)
 		start := strings.Index(document, "{")
@@ -525,6 +525,14 @@ func parseReview(stdout, stderr string) (reviewResult, error) {
 	}
 	if len(detail) > 400 {
 		detail = detail[:400]
+	}
+	if killed := killedContainer(exitCode); killed != "" {
+		// The engine printed nothing because it was stopped, not because it
+		// printed something unreadable.
+		if detail != "" {
+			return reviewResult{}, errors.New("리뷰가 " + killed + ": " + detail)
+		}
+		return reviewResult{}, errors.New("리뷰가 " + killed)
 	}
 	return reviewResult{}, errors.New("리뷰 결과를 읽지 못했습니다: " + detail)
 }

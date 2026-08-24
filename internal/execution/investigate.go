@@ -256,6 +256,9 @@ func parseInvestigation(stdout, stderr string, exitCode int) (investigation, err
 		// The wrapper's whole job is to put the record on stdout by itself, so
 		// something other than the record arriving there is worth saying plainly
 		// rather than reporting as "no output".
+		if killed := killedContainer(exitCode); killed != "" {
+			return investigation{}, fmt.Errorf("조사가 %s%s", killed, investigateDetail(stderr))
+		}
 		return investigation{}, fmt.Errorf("조사 결과를 읽지 못했습니다(종료 코드 %d)%s", exitCode, investigateDetail(stderr))
 	}
 
@@ -307,6 +310,9 @@ func evidenceData(raw json.RawMessage) string {
 
 // investigationFailure explains an execution that produced no record at all.
 func investigationFailure(exitCode int, stderr string) error {
+	if killed := killedContainer(exitCode); killed != "" {
+		return fmt.Errorf("조사가 %s%s", killed, investigateDetail(stderr))
+	}
 	if detail := investigateDetail(stderr); detail != "" {
 		return fmt.Errorf("조사를 마치지 못했습니다(종료 코드 %d)%s", exitCode, detail)
 	}
