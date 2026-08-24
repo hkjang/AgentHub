@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/hkjang/AgentHub/internal/cryptox"
+	"github.com/hkjang/AgentHub/internal/korean"
 )
 
 type PersonalSecret struct {
@@ -242,7 +243,17 @@ func (s *Store) RevealPersonalSecret(ctx context.Context, userID, id string) (Pe
 	if activeVersion != version {
 		// The keyring was rotated without re-wrapping this row; rotation rewrites
 		// every secret, so this means the row predates a failed rotation.
-		return PersonalSecret{}, "", fmt.Errorf("secret %q was encrypted with key version %d but the active version is %d", item.Name, version, activeVersion)
+		//
+		// A Conflict rather than a plain error, and a sentence rather than
+		// arithmetic. Measured: attaching this secret to a workspace answered
+		// `500 요청을 처리하지 못했습니다: secret "probe-secret" was encrypted with
+		// key version 14 but the active version is 15` — an English report of this
+		// platform's own key bookkeeping, delivered as though the request had
+		// broken something. Nothing is broken and the person can fix it: saving
+		// the secret again wraps it with the key in use.
+		return PersonalSecret{}, "", Conflict{Message: fmt.Sprintf(
+			"개인 Secret %q%s 읽지 못했습니다 — 예전 키로 암호화되어 있습니다. 이 Secret을 다시 저장하면 현재 키로 다시 암호화됩니다.",
+			item.Name, korean.Object(item.Name))}
 	}
 	userCipher, err := cryptox.New(key)
 	if err != nil {
