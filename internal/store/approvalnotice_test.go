@@ -123,3 +123,46 @@ func TestCancellingWorkCancelsTheDecisionItWaitedFor(t *testing.T) {
 		t.Error("only the parent's approval is cancelled; a delegated child's is left pending")
 	}
 }
+
+// How long a runtime has been in the state it is in is read from updated_at, and
+// every screen that lists runtimes observes them.
+//
+// An observation that saw nothing new was still written, so a Pod stuck starting
+// was re-stamped every few seconds by whoever was watching it — and the row that
+// reports a runtime half-started for ten minutes could not fire while anybody was
+// looking. Measured against the platform's own query: a runtime forty minutes
+// into starting reported as nothing wrong when observed a moment earlier, and as
+// stuck when not.
+func TestAnObservationThatSawNothingDoesNotAgeTheRuntime(t *testing.T) {
+	body, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	at := strings.Index(source, "func (s *Store) UpdateRuntimeObserved(")
+	if at < 0 {
+		t.Fatal("the observation writer is gone; this guard is reading nothing")
+	}
+	writer := source[at:]
+	if end := strings.Index(writer, "\nfunc "); end >= 0 {
+		writer = writer[:end]
+	}
+	compare := strings.Index(writer, "SELECT status=$2 AND pod_name=$3")
+	write := strings.Index(writer, "UPDATE agent_runtimes r SET status=$1")
+	if compare < 0 {
+		t.Error("every observation writes, so a runtime nobody can start looks freshly changed to whoever is watching")
+	}
+	if write >= 0 && compare > write {
+		t.Error("the row is written before it is compared, which is the same as not comparing")
+	}
+	if !strings.Contains(writer, "return nil") {
+		t.Error("an unchanged observation still falls through to the write")
+	}
+	// Everything that decides whether a state is new has to be in the comparison,
+	// or a real change is swallowed as a no-op.
+	for _, field := range []string{"status=$2", "pod_name=$3", "node_name=$4", "endpoint=$5", "restart_count=$6", "failure_reason=$7"} {
+		if !strings.Contains(writer, field) {
+			t.Errorf("%s is not compared, so a change to it would be dropped", field)
+		}
+	}
+}

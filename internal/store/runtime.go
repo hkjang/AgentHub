@@ -859,6 +859,22 @@ var runtimeFailureStatuses = map[string]bool{"failed": true, "crashed": true, "s
 
 func (s *Store) UpdateRuntimeObserved(ctx context.Context, id, phase, podName, nodeName, endpoint string, restartCount int, failureReason string) error {
 	status := strings.ToLower(phase)
+	// An observation that saw nothing new is not a change, and writing one moves
+	// updated_at — which is how long this runtime has been in the state it is in.
+	// Every screen that lists runtimes observes them, so a Pod stuck starting was
+	// re-stamped every few seconds by somebody watching it, and the row that
+	// reports a runtime half-started for ten minutes could not fire while anybody
+	// was looking.
+	//
+	// Measured against the platform's own query: a runtime forty minutes into
+	// starting reported as nothing wrong when observed a moment earlier, and as
+	// stuck when not.
+	var same bool
+	if err := s.pool.QueryRow(ctx, `SELECT status=$2 AND pod_name=$3 AND node_name=$4 AND endpoint=$5
+		AND restart_count=$6 AND failure_reason=$7 FROM agent_runtimes WHERE id=$1`,
+		id, status, podName, nodeName, endpoint, restartCount, failureReason).Scan(&same); err == nil && same {
+		return nil
+	}
 	var previous, ownerID, agentID string
 	err := s.pool.QueryRow(ctx, `UPDATE agent_runtimes r SET status=$1,pod_name=$2,node_name=$3,endpoint=$4,restart_count=$5,failure_reason=$6,
 started_at=CASE WHEN $1 IN ('running','ready') THEN COALESCE(started_at,now()) ELSE started_at END,
