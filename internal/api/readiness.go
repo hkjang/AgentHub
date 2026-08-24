@@ -130,6 +130,31 @@ func (s *Server) readiness(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 
+	// Runtimes somebody asked for that never arrived.
+	//
+	// A Pod that cannot pull its image retries for ever, which is right, and the
+	// reason is written on the runtime's own row — but this is the screen that
+	// answers "what is broken now", and a runtime half-started for an hour is
+	// exactly that. Found by leaving one in ImagePullBackOff for sixty-five
+	// minutes and noticing only by hand.
+	run(func() {
+		stuck, err := s.store.RuntimesStuckStarting(r.Context(), runtimeStuckAfter, 10)
+		if err != nil {
+			return
+		}
+		for _, runtime := range stuck {
+			detail := "시작한 지 " + humanSince(runtime.Since) + " 지났고 아직 준비되지 않았습니다"
+			if reason := strings.TrimSpace(runtime.FailureReason); reason != "" {
+				if len(reason) > 200 {
+					reason = reason[:200] + "…"
+				}
+				detail += " — " + reason
+			}
+			add(readinessItem{Area: "런타임", Name: runtime.AgentName, Verdict: "stuck",
+				Detail: detail, Fix: "/agents/" + runtime.AgentID})
+		}
+	})
+
 	// Single sign-on, but only when somebody turned it on: a deployment using
 	// local login is not incomplete for having no identity provider.
 	run(func() {
@@ -389,4 +414,21 @@ func refusedRuntimeTypes(result appRuntime.ClusterCheck) []string {
 		}
 	}
 	return refused
+}
+
+// runtimeStuckAfter is how long a runtime may be starting before this screen
+// says so. Long enough that an image pull on a cold node is not reported as
+// trouble, short enough that somebody waiting for an agent finds out here.
+const runtimeStuckAfter = 10 * time.Minute
+
+// humanSince is the age of something in the words somebody would use.
+func humanSince(when time.Time) string {
+	elapsed := time.Since(when)
+	switch {
+	case elapsed < time.Hour:
+		return fmt.Sprintf("%d분", int(elapsed.Minutes()))
+	case elapsed < 24*time.Hour:
+		return fmt.Sprintf("%d시간", int(elapsed.Hours()))
+	}
+	return fmt.Sprintf("%d일", int(elapsed.Hours()/24))
 }

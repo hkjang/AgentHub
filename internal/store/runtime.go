@@ -1026,3 +1026,50 @@ func (s *Store) ProvisionedRuntimes(ctx context.Context) ([]Runtime, error) {
 	}
 	return items, rows.Err()
 }
+
+// StuckRuntime is a runtime somebody asked for that never arrived.
+type StuckRuntime struct {
+	ID            string
+	AgentID       string
+	AgentName     string
+	Status        string
+	FailureReason string
+	Since         time.Time
+}
+
+// RuntimesStuckStarting lists runtimes that were asked to run and have not
+// become ready for longer than the given window.
+//
+// A Pod that cannot pull its image retries for ever, which is right — a registry
+// comes back — but it means a runtime can sit half-started for an hour with the
+// reason written on its own row and nobody looking at that row. Every other
+// dependency this deployment has is asked about in one place; this is the one
+// that was missing from it.
+//
+// Runtimes nobody asked to run are not stuck, and neither are the ones that are
+// ready: the question is only about work somebody is waiting for.
+func (s *Store) RuntimesStuckStarting(ctx context.Context, window time.Duration, limit int) ([]StuckRuntime, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT r.id, r.agent_id, a.name, r.status, r.failure_reason,
+		       GREATEST(r.updated_at, r.created_at)
+		FROM agent_runtimes r
+		JOIN agent_definitions a ON a.id = r.agent_id
+		WHERE r.desired_state = 'running'
+		  AND r.status NOT IN ('running', 'ready')
+		  AND GREATEST(r.updated_at, r.created_at) < now() - $1::interval
+		ORDER BY GREATEST(r.updated_at, r.created_at)
+		LIMIT $2`, window.String(), clampLimit(limit, 10, 50))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StuckRuntime{}
+	for rows.Next() {
+		var item StuckRuntime
+		if err := rows.Scan(&item.ID, &item.AgentID, &item.AgentName, &item.Status, &item.FailureReason, &item.Since); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
