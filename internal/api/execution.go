@@ -2,10 +2,7 @@ package api
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1037,13 +1034,16 @@ func (s *Server) triggerWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "서명을 확인할 수 없습니다.")
 		return
 	}
-	signature := strings.TrimSpace(r.Header.Get("X-AgentHub-Signature"))
-	if !validSignature(secret, body, signature) {
+	// A forge's own header counts: a site pointing GitHub or GitLab straight at
+	// this address should not need a proxy that renames one header.
+	credential, ok := authorizeWebhook(secret, body, r.Header)
+	if !ok {
 		s.logger.Warn("webhook rejected", "trigger", id, "reason", "signature mismatch")
 		s.rejectedWebhook(r, id, store.RejectedSignature)
 		writeError(w, http.StatusUnauthorized, "unauthorized", "서명을 확인할 수 없습니다.")
 		return
 	}
+	signature := credential.deliveryKey
 	// A valid signature is not the same as a first delivery. The signature is a
 	// function of the body, so a captured request stays valid for ever and each
 	// replay queued another task; the delivery is claimed once, by its signature.
@@ -1053,6 +1053,18 @@ func (s *Server) triggerWebhook(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("webhook delivery could not be claimed", "trigger", id, "error", err)
 		writeError(w, http.StatusServiceUnavailable, "delivery_unverifiable", "요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.")
 		return
+	}
+	// Deliveries claimed before the key was canonicalised sit in the ledger under
+	// the header as it was sent. Claiming that spelling too is what keeps a
+	// request captured before this change from being replayed after it.
+	if first && credential.legacyKey != "" {
+		legacyFirst, err := s.store.ClaimWebhookDelivery(r.Context(), id, credential.legacyKey)
+		if err != nil {
+			s.logger.Error("webhook delivery could not be claimed", "trigger", id, "error", err)
+			writeError(w, http.StatusServiceUnavailable, "delivery_unverifiable", "요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+			return
+		}
+		first = legacyFirst
 	}
 	if !first {
 		s.logger.Warn("webhook rejected", "trigger", id, "reason", "replayed delivery")
@@ -1104,23 +1116,6 @@ func (s *Server) triggerWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logger.Info("webhook task queued", "trigger", trigger.ID, "task", task.ID, "agent", trigger.AgentID)
 	writeJSON(w, http.StatusAccepted, map[string]any{"taskId": task.ID})
-}
-
-// validSignature checks an `sha256=<hex>` HMAC over the raw body, the convention
-// GitHub and GitLab both use.
-func validSignature(secret string, body []byte, header string) bool {
-	header = strings.TrimSpace(header)
-	if header == "" {
-		return false
-	}
-	header = strings.TrimPrefix(header, "sha256=")
-	provided, err := hex.DecodeString(header)
-	if err != nil {
-		return false
-	}
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(body)
-	return hmac.Equal(provided, mac.Sum(nil))
 }
 
 // --- Memory ---

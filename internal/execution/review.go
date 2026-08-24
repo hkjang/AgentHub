@@ -140,6 +140,13 @@ func trimmed(value string, limit int) string {
 // payload is the part that changes per delivery.
 func reviewTargetsFromTask(input string) (from, to, commit string) {
 	for _, candidate := range jsonObjects(input) {
+		// A forge's own body first: every one of them already says which branches
+		// a pull request compares, and asking a site to translate that into two
+		// fields is asking them to run a job whose only purpose is renaming.
+		if forgeFrom, forgeTo, forgeCommit := scmTargets(candidate); forgeFrom != "" || forgeCommit != "" {
+			from, to, commit = forgeFrom, forgeTo, forgeCommit
+			continue
+		}
 		var payload struct {
 			From   string `json:"from"`
 			To     string `json:"to"`

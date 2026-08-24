@@ -40,7 +40,7 @@ func TestAWebhookDeliveryIsClaimedOnce(t *testing.T) {
 	}
 	// And the signature still has to be checked first: claiming an unsigned
 	// request would let anybody fill the ledger with signatures of their choosing.
-	if verify := strings.Index(handler, "validSignature("); verify < 0 || verify > claim {
+	if verify := strings.Index(handler, "authorizeWebhook("); verify < 0 || verify > claim {
 		t.Error("the delivery is claimed before the signature is verified")
 	}
 	// A ledger that cannot be read must refuse rather than wave the request past.

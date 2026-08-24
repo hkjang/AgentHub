@@ -6,11 +6,23 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/hkjang/AgentHub/internal/store"
 )
+
+// accepted asks the handler's own credential check, under a given header name,
+// so these cases stay attached to what the route actually does.
+func accepted(secret string, body []byte, name, value string) bool {
+	header := http.Header{}
+	if value != "" {
+		header.Set(name, value)
+	}
+	_, ok := authorizeWebhook(secret, body, header)
+	return ok
+}
 
 func sign(secret string, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
@@ -24,10 +36,10 @@ func TestWebhookSignatureVerification(t *testing.T) {
 	secret := "trigger-secret"
 	body := []byte(`{"issue":"INC-1023"}`)
 
-	if !validSignature(secret, body, sign(secret, body)) {
+	if !accepted(secret, body, "X-AgentHub-Signature", sign(secret, body)) {
 		t.Fatal("a correct signature must be accepted")
 	}
-	if !validSignature(secret, body, hex.EncodeToString(hmacSum(secret, body))) {
+	if !accepted(secret, body, "X-AgentHub-Signature", hex.EncodeToString(hmacSum(secret, body))) {
 		t.Fatal("the sha256= prefix must be optional")
 	}
 	for name, header := range map[string]string{
@@ -38,7 +50,7 @@ func TestWebhookSignatureVerification(t *testing.T) {
 		"different body":   sign(secret, []byte(`{"issue":"INC-9999"}`)),
 		"truncated digest": "sha256=" + hex.EncodeToString(hmacSum(secret, body))[:20],
 	} {
-		if validSignature(secret, body, header) {
+		if accepted(secret, body, "X-AgentHub-Signature", header) {
 			t.Errorf("%s must be rejected", name)
 		}
 	}
