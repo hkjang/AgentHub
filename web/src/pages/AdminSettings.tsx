@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { Activity, Boxes, ExternalLink, FileCog, KeyRound, Network, Plus, Save, Settings, ShieldCheck, Trash2 } from 'lucide-react'
+import { subject } from '../korean'
 import { api } from '../api'
 import { ErrorBanner, Loading, PageHeader, SuccessBanner } from '../components/UI'
 
@@ -164,7 +165,7 @@ function ClusterCheck() {
         </p>
         {missing.length > 0
           ? <p className="cluster-check-detail">권한이 없습니다: {missing.join(', ')} — {check.scope} 계정의 Role을 확인해 주세요.</p>
-          : <p className="cluster-check-detail">{check.scope}이 하는 일 {check.permissions.length}가지 모두 허용되어 있습니다.</p>}
+          : <p className="cluster-check-detail">{check.scope}{subject(String(check.scope))} 하는 일 {check.permissions.length}가지 모두 허용되어 있습니다.</p>}
         <p className="cluster-check-note">권한은 <b>{check.scope}</b> 계정 기준입니다. Pod·볼륨·네트워크 정책은 오퍼레이터가 자기 계정으로 만들며, 클러스터는 물어본 계정에 대해서만 답합니다.</p>
       </>}
     </div>

@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from 'react'
 import { Activity, Bot, CircleStop, Download, ExternalLink, FileText, History, ListChecks, MoreHorizontal, Pencil, Play, Plus, RefreshCw, RotateCcw, Search, ShieldAlert, ShieldCheck, Target, Trash2, Upload, Zap } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../App'
+import { object, topic } from '../korean'
 import { api } from '../api'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, GuidePanel, Loading, PageHeader, StatusBadge } from '../components/UI'
 import { useTerms } from '../viewmode'
@@ -694,7 +695,7 @@ function GoalDrawer({agent,close}:{agent:Agent;close:()=>void}) {
           </label>
           {goal.approvalRequired&&goal.approvalMode==='yolo'&&<div className="info-box"><ShieldAlert size={17}/><div><strong>같이 켤 수 없습니다</strong><p>사람 승인을 요구하는 목표에서는 yolo 를 쓸 수 없습니다. 승인 모드를 낮추거나 아래 자율성의 승인 요구를 끄세요.</p></div></div>}
           {goal.runner==='acp'&&goal.approvalRequired&&<div className="info-box"><ShieldAlert size={17}/><div><strong>사람이 답합니다</strong><p>이 목표는 승인을 요구하므로, 읽기가 아닌 도구 요청은 승인 모드와 상관없이 <b>사람에게 전달</b>됩니다. 에이전트는 답을 기다리고, 실행 시간 안에 답이 없으면 거절로 처리합니다.</p></div></div>}
-          {goal.runner==='acp'&&!goal.approvalRequired&&descriptor(agent.runtimeType).coarseToolKinds&&!['auto','yolo'].includes(goal.approvalMode??'default')&&<div className="info-box"><ShieldAlert size={17}/><div><strong>이 모드에서는 거의 아무것도 못 합니다</strong><p>{runtimeLabel(agent.runtimeType)}는 도구의 종류를 <code>other</code> 로 알려주기 때문에, 종류로 판단하는 이 모드에서는 대부분의 요청이 거절됩니다. 무인 실행에는 <b>auto</b> 를 고르세요 — 무엇을 승인했는지는 그대로 기록에 남습니다.</p></div></div>}
+          {goal.runner==='acp'&&!goal.approvalRequired&&descriptor(agent.runtimeType).coarseToolKinds&&!['auto','yolo'].includes(goal.approvalMode??'default')&&<div className="info-box"><ShieldAlert size={17}/><div><strong>이 모드에서는 거의 아무것도 못 합니다</strong><p>{runtimeLabel(agent.runtimeType)} — 이 런타임은 도구의 종류를 <code>other</code> 로 알려주기 때문에, 종류로 판단하는 이 모드에서는 대부분의 요청이 거절됩니다. 무인 실행에는 <b>auto</b> 를 고르세요 — 무엇을 승인했는지는 그대로 기록에 남습니다.</p></div></div>}
           {goal.runner==='acp'&&<>
             <label><span>항상 거절할 도구</span>
               <textarea rows={3} value={(goal.toolPolicy?.deny??[]).join('\n')} onChange={(e)=>update({toolPolicy:{...goal.toolPolicy,deny:e.target.value.split('\n')}})} placeholder={'rm -rf\ngit push\ncurl'}/>
@@ -1022,7 +1023,7 @@ function VersionsDrawer({agent,close,done}:{agent:Agent;close:()=>void;done:()=>
       <label className="toggle-row"><span>승격된 정의만 실행</span><input type="checkbox" checked={release.requirePromotion} disabled={busy} onChange={(e)=>void gate(e.target.checked)}/><i/></label>
       <p className="field-hint">{release.requirePromotion?'현재 정의가 승격본과 다르면 새 작업은 거절되고, 예약된 작업은 승격될 때까지 보류됩니다.':'끄면 저장한 최신 정의가 곧바로 실행됩니다.'}</p>
       <dl className="detail-list"><div><dt>운영 승격</dt><dd>{release.promotedVersion?`v${release.promotedVersion}`:'없음'}</dd></div><div><dt>승격 시각</dt><dd>{release.promotedAt?new Date(release.promotedAt).toLocaleString('ko-KR'):'—'}</dd></div><div><dt>사유</dt><dd>{release.promotionNote||'—'}</dd></div></dl>
-      {release.requirePromotion&&release.promotedVersion!==release.currentVersion&&<ErrorBanner message={`현재 정의 v${release.currentVersion}는 승격되지 않아 지금은 작업이 실행되지 않습니다.`}/>}
+      {release.requirePromotion&&release.promotedVersion!==release.currentVersion&&<ErrorBanner message={`현재 정의 v${release.currentVersion}${topic(String(release.currentVersion))} 승격되지 않아 지금은 작업이 실행되지 않습니다.`}/>}
     </section>}
     {!items?<Loading/>:items.length===0?<Empty icon={<History/>} title="저장된 버전이 없습니다" description="에이전트를 한 번 수정하면 그 시점의 정의가 버전으로 남습니다."/>:
     <section className="detail-section"><h4>버전 기록 {items.length}개</h4><ul className="version-list">{items.map((item)=>{
@@ -1037,7 +1038,7 @@ function VersionsDrawer({agent,close,done}:{agent:Agent;close:()=>void;done:()=>
         </div>
       </li>
     })}</ul></section>}
-    {forcing&&<ConfirmDialog title={`사전검증 없이 v${forcing.version}을 승격할까요?`}
+    {forcing&&<ConfirmDialog title={`사전검증 없이 v${forcing.version}${object(String(forcing.version))} 승격할까요?`}
       message={user.role==='admin'
         ?<><strong>v{forcing.version}</strong>에는 통과한 사전검증 결과가 없습니다. 사유를 적으면 승격되며, 사유는 감사 로그와 승격 기록에 남습니다.<label className="confirm-field"><span>승격 사유</span><input value={reason} onChange={(e)=>setReason(e.target.value)} placeholder="예: 긴급 문구 수정, 사전검증 환경 점검 중"/></label></>
         :<><strong>v{forcing.version}</strong>에는 통과한 사전검증 결과가 없습니다. 사전검증을 먼저 실행하거나, 관리자에게 승격을 요청하세요.</>}

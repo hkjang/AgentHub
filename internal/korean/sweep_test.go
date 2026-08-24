@@ -18,7 +18,10 @@ import (
 // answer as using the helpers here: what is not allowed is guessing.
 func TestNoSentenceGuessesAParticle(t *testing.T) {
 	root := filepath.Join("..", "..")
-	guessing := regexp.MustCompile(`%[sdv](이|가|을|를|은|는)[\s"]`)
+	// Go interpolates with %s and the console with ${…}; both end in a value
+	// followed, in these mistakes, by a particle that cannot know what came
+	// before it.
+	guessing := regexp.MustCompile(`(%[sdv]|\})(이|가|을|를|은|는)[\s"` + "`" + `.,)]`)
 	offenders := []string{}
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -26,12 +29,20 @@ func TestNoSentenceGuessesAParticle(t *testing.T) {
 		}
 		if info.IsDir() {
 			switch info.Name() {
-			case "node_modules", ".git", "web", "release":
+			case "node_modules", ".git", "release", "dist":
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		// Both tiers write these sentences, and the console shipped the same
+		// version-number mistake as the server: "현재 정의 v3는 승격되지 않아".
+		// One sweep covers both, because a rule enforced on one side only is how
+		// the two came to disagree.
+		switch {
+		case strings.HasSuffix(path, "_test.go"):
+			return nil
+		case strings.HasSuffix(path, ".go"), strings.HasSuffix(path, ".ts"), strings.HasSuffix(path, ".tsx"):
+		default:
 			return nil
 		}
 		body, readErr := os.ReadFile(path)
