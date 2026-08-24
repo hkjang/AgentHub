@@ -229,6 +229,30 @@ func (s *Server) readiness(w http.ResponseWriter, r *http.Request) {
 			Detail: detail, Fix: "/tasks"})
 	})
 
+	// Work the platform will not start yet.
+	//
+	// A task held back by a limit is put back on the queue without spending an
+	// attempt — correct, and invisible to everything that watches for trouble:
+	// nothing failed, nothing was abandoned, no runtime is stuck. Measured on a
+	// cluster: with the runtime quota full, a task sat queued with "사용자
+	// Runtime Quota(1개)를 초과합니다" written on it and this screen said the
+	// deployment was fine.
+	run(func() {
+		held, err := s.store.TasksHeldBack(r.Context(), heldBackGrace)
+		if err != nil || held.Count == 0 {
+			return
+		}
+		detail := fmt.Sprintf("작업 %d건이 %s 넘게 한도가 풀리기를 기다리고 있습니다", held.Count, humanDuration(heldBackGrace))
+		if held.Agent != "" {
+			detail += " (가장 많은 에이전트: " + held.Agent + ")"
+		}
+		if reason := strings.TrimSpace(held.Reason); reason != "" {
+			detail += " — " + reason
+		}
+		add(readinessItem{Area: "실행", Name: "대기 중인 작업", Verdict: "blocked",
+			Detail: detail, Fix: "/tasks"})
+	})
+
 	// Images an administrator retired that agents are still started from.
 	//
 	// An agent keeps the image it was created with, which is what makes a runtime
@@ -538,6 +562,20 @@ const runtimeStuckAfter = 10 * time.Minute
 // of a container failing, and a runtime that restarted once while a node was
 // drained is not news.
 const runtimeRestartAlarm = 5
+
+// heldBackGrace is how long work may wait on a limit before this screen says so.
+// Long enough that a runtime freeing up in a minute is the system working, short
+// enough that a queue which has stopped moving is not mistaken for a quiet
+// afternoon.
+const heldBackGrace = 10 * time.Minute
+
+// humanDuration says a grace period the way the sentence around it reads.
+func humanDuration(d time.Duration) string {
+	if d >= time.Hour {
+		return fmt.Sprintf("%d시간", int(d.Hours()))
+	}
+	return fmt.Sprintf("%d분", int(d.Minutes()))
+}
 
 // abandonedWindow is how far back this screen counts work the platform gave up
 // on. A day is long enough to catch a night of failures and short enough that

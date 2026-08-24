@@ -1566,6 +1566,41 @@ type AbandonedWork struct {
 	Agent string
 }
 
+// TasksHeldBack counts the work that is waiting on a limit rather than its turn.
+//
+// A task the platform will not start — a full runtime quota, a concurrency
+// policy — goes back on the queue without spending an attempt, which is the
+// right thing to do and is invisible from every angle that watches for trouble:
+// nothing failed, nothing was abandoned, no runtime is stuck. A deployment whose
+// queue has stopped moving because a limit is full reads as a quiet afternoon.
+//
+// Held rather than queued: a task waiting its turn has no reason written on it,
+// and one waiting on a limit does. Older than the grace, because a limit that
+// clears in a minute is the system working.
+//
+// Aged from when the work was asked for, not from when the row last changed: a
+// held task is put back on the queue every few seconds, so updated_at is always
+// a moment old. Measured — a task held for twelve minutes reported updated_at 26
+// seconds ago, and a grace period counted from there can never elapse.
+func (s *Store) TasksHeldBack(ctx context.Context, grace time.Duration) (AbandonedWork, error) {
+	var out AbandonedWork
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(*),
+		       COALESCE((SELECT left(t.waiting_reason, 200) FROM agent_tasks t
+		                 WHERE t.status = 'queued' AND coalesce(t.waiting_reason,'') <> ''
+		                   AND t.created_at < now() - $1::interval
+		                 GROUP BY left(t.waiting_reason, 200) ORDER BY count(*) DESC LIMIT 1), ''),
+		       COALESCE((SELECT a.name FROM agent_tasks t JOIN agent_definitions a ON a.id = t.agent_id
+		                 WHERE t.status = 'queued' AND coalesce(t.waiting_reason,'') <> ''
+		                   AND t.created_at < now() - $1::interval
+		                 GROUP BY a.name ORDER BY count(*) DESC LIMIT 1), '')
+		FROM agent_tasks
+		WHERE status = 'queued' AND coalesce(waiting_reason,'') <> ''
+		  AND created_at < now() - $1::interval`, grace.String()).
+		Scan(&out.Count, &out.Reason, &out.Agent)
+	return out, err
+}
+
 // TasksAbandoned counts the tasks that ran out of retries inside the window.
 //
 // A dead-lettered task is work somebody asked for that the platform stopped

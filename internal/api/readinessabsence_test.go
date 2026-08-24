@@ -345,3 +345,60 @@ func TestAnOpenConnectionKeepsSayingSomebodyIsThere(t *testing.T) {
 		t.Error("the interval is not comfortably inside the fifteen minutes that decide presence")
 	}
 }
+
+// Work that is waiting on a limit is not work that is waiting its turn.
+//
+// A task the platform will not start yet goes back on the queue without spending
+// an attempt — the right thing to do, and invisible to everything that watches
+// for trouble: nothing failed, nothing was abandoned, no runtime is stuck. A
+// deployment whose queue has stopped moving because a limit is full reads as a
+// quiet afternoon.
+//
+// Measured on a cluster: with the runtime quota full, a task sat queued with
+// "사용자 Runtime Quota(1개)를 초과합니다" written on it, and this screen said
+// the deployment was fine.
+func TestReadinessSaysWhenWorkIsWaitingOnALimit(t *testing.T) {
+	body, err := os.ReadFile("readiness.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	if !strings.Contains(source, "s.store.TasksHeldBack(") {
+		t.Error("work parked on a limit is never counted, so a stalled queue looks like a quiet one")
+	}
+	if !strings.Contains(source, `Name: "대기 중인 작업"`) {
+		t.Error("the row has no name a person can look for")
+	}
+	// The reason is the whole point: "queued" says nothing, "quota full" says
+	// what to do.
+	at := strings.Index(source, "s.store.TasksHeldBack(")
+	check := source[at:]
+	if end := strings.Index(check, "\n\t})"); end >= 0 {
+		check = check[:end]
+	}
+	if !strings.Contains(check, "held.Reason") {
+		t.Error("the row counts the work without saying what it is waiting for")
+	}
+	store, err := os.ReadFile("../store/execution.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := string(store)[strings.Index(string(store), "func (s *Store) TasksHeldBack("):]
+	if end := strings.Index(query, "\n// TasksAbandoned"); end >= 0 {
+		query = query[:end]
+	}
+	// A task with no reason on it is waiting its turn, which is not news.
+	if !strings.Contains(query, "coalesce(waiting_reason,'') <> ''") {
+		t.Error("every queued task is reported, including the ones simply waiting their turn")
+	}
+	// And a limit that clears in a minute is the system working.
+	if !strings.Contains(query, "created_at < now() - $1::interval") {
+		t.Error("work is reported the instant it is held, so a queue that is moving reads as blocked")
+	}
+	// Aged from when the work was asked for. A held task is put back on the queue
+	// every few seconds, so a grace period counted from updated_at never elapses
+	// — measured: twelve minutes held, updated_at 26 seconds old.
+	if strings.Contains(query, "updated_at < now()") {
+		t.Error("the grace is counted from a timestamp the retry keeps refreshing, so the row can never appear")
+	}
+}
