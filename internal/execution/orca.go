@@ -414,12 +414,21 @@ type orcaWorkerListing struct {
 	} `json:"workers"`
 }
 
-// orcaInFlight are the states that mean a worker is still going. Anything else
-// ends the wait, including a word this platform has never seen: an unknown state
-// is a reason to stop waiting and say what it was, not to wait for ever.
-var orcaInFlight = map[string]bool{
-	"dispatched": true, "running": true, "starting": true,
-	"pending": true, "queued": true, "in_progress": true, "working": true,
+// orcaEnded are the states that mean a worker is over. Anything else — a word
+// this platform has not seen — is treated as still going.
+//
+// It was the other way round for one release, and a live run showed why that is
+// wrong: the fabric reported `ready`, which this platform had never met, so the
+// wait called the worker settled and the run called it a failure. Guessing that
+// an unfamiliar word means "finished" produces a wrong verdict immediately;
+// guessing it means "still going" costs at most the wait, which the Goal's time
+// limit already bounds and which reports the worker as unfinished rather than
+// failed.
+var orcaEnded = map[string]bool{
+	"completed": true, "succeeded": true, "success": true, "done": true, "finished": true,
+	"failed": true, "error": true, "errored": true,
+	"cancelled": true, "canceled": true, "stopped": true, "aborted": true,
+	"timeout": true, "timed_out": true, "expired": true,
 }
 
 // waitForWorkers waits until every worker has settled, and says what each did.
@@ -450,7 +459,7 @@ func (s *orcaSession) waitForWorkers(ctx context.Context, workers []orcaWorkerRe
 				continue
 			}
 			state, found := states[worker.WorkerName]
-			if !found || orcaInFlight[strings.ToLower(strings.TrimSpace(state.status))] {
+			if !found || !orcaEnded[strings.ToLower(strings.TrimSpace(state.status))] {
 				continue
 			}
 			// The listing says which workers are done and not why. The reason is

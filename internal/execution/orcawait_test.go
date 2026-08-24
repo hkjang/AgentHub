@@ -13,20 +13,24 @@ import (
 // were still typing, so a worker that failed two minutes later did so behind a
 // task marked successful.
 func TestAWorkerStillGoingIsNotAFinishedWorker(t *testing.T) {
-	for _, state := range []string{"dispatched", "running", "starting", "pending", "queued", "in_progress", "WORKING"} {
-		if !orcaInFlight[strings.ToLower(state)] {
+	for _, state := range []string{"completed", "failed", "cancelled", "timed_out"} {
+		if !orcaEnded[strings.ToLower(state)] {
+			t.Errorf("%q would be waited on although the worker is over", state)
+		}
+	}
+	for _, state := range []string{"dispatched", "running", "starting", "pending", "queued", "in_progress"} {
+		if orcaEnded[state] {
 			t.Errorf("%q would end the wait while the worker is still going", state)
 		}
 	}
-	for _, state := range []string{"completed", "failed", "agent_prompt_stalled", "cancelled"} {
-		if orcaInFlight[state] {
-			t.Errorf("%q would be waited on for ever", state)
-		}
+	// `ready` is the state a live fabric reported for a worker that had not
+	// finished. Read as an ending it made the run call a working worker a
+	// failure, which is why an unfamiliar word now means "still going".
+	if orcaEnded["ready"] {
+		t.Error("`ready` is read as an ending")
 	}
-	// A word this platform has never seen ends the wait and is reported as
-	// itself. Waiting for ever on an unknown state is how a worker slot is lost.
-	if orcaInFlight["something_new"] {
-		t.Error("an unknown state is treated as still running")
+	if orcaEnded["something_new"] {
+		t.Error("a word this platform has not seen is read as an ending")
 	}
 }
 
