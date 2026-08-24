@@ -58,6 +58,7 @@ a platform bug until it is understood:
 | Forge credential check | a stored token is checked at save time and the account name comes back |
 | `orca` backend | the fabric creates its run, task and worktree in the runtime's own repository — after the mount that made that possible |
 | `rpc` backend | task completes with the agent's answer and real token usage; the agent declares its own tools to the gateway |
+| Tool approval on an in-Pod agent | with `사람 승인 요구` on, the agent's write is held: the run waits, AgentHub raises a pending approval naming the file, approving it lets the tool run — the file appears in the Pod — and the task completes |
 | Cancelling a running task | the stop button ends an in-Pod agent — checked on `rpc` and on `acp`, with the agent genuinely working first: the task and the run both read cancelled and no agent process is left in the Pod |
 
 Not established: forking and condensation on the agent server, which the
@@ -87,3 +88,24 @@ Two things this round is worth keeping:
   by cancelling a Pi task mid-run and finding no agent process left. The agent
   server backend needs its own check only because its work happens on a machine
   that context cannot reach.
+
+## What it takes to exercise an approval gate
+
+Three attempts proved nothing before one proved something, and each failure is
+worth knowing:
+
+1. **The agent never asked for a tool.** The stub gateway answers a tool call
+   only on the first request that carries tools, and its process had served many
+   by then. A run that completes without an `acp.permission` event has not
+   tested the gate.
+2. **The tool it asked for needed nobody's permission.** Answering with the
+   first declared tool picked `agent`, a sub-agent launcher. A gate is exercised
+   by a tool with a side effect — a write, a shell.
+3. **The agent streams, and the stub's streaming branch could not ask.** Its
+   tool-call path sat behind the non-streaming branch, unreachable for every
+   agent that sets `stream: true`, which is most of them.
+
+And one thing that looked like a platform bug and was not: `approvalMode` says
+what is allowed, while `approvalRequired` is what routes a request to a person.
+A Goal with a strict mode and no `approvalRequired` denies the tool itself and
+asks nobody, which is what it is for.
