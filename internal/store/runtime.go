@@ -887,6 +887,22 @@ WHERE r.id=old.id RETURNING old.status, r.owner_id, r.agent_id`, status, podName
 	return nil
 }
 
+// ForgetMissingRuntime records that a runtime's object is no longer in the
+// cluster.
+//
+// Observing a vanished runtime as stopped is not enough on its own: the row goes
+// on saying somebody wants it running, so every screen that asks "what was asked
+// for and never arrived" keeps answering with a runtime that does not exist and
+// that nothing will ever start. Deleting the object by hand is the usual answer
+// to a runtime that will not start, so this is a state the platform meets often.
+func (s *Store) ForgetMissingRuntime(ctx context.Context, id string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE agent_runtimes
+		SET status='stopped', desired_state='stopped', pod_name='', endpoint='',
+		    stopped_at=COALESCE(stopped_at, now()), updated_at=now()
+		WHERE id=$1`, id)
+	return err
+}
+
 func (s *Store) TouchRuntime(ctx context.Context, id string) {
 	_, _ = s.pool.Exec(ctx, `UPDATE agent_runtimes SET last_activity_at=now(),updated_at=now() WHERE id=$1`, id)
 }
@@ -1033,6 +1049,7 @@ type StuckRuntime struct {
 	ID            string
 	AgentID       string
 	AgentName     string
+	CRDName       string
 	Status        string
 	FailureReason string
 	Restarts      int
@@ -1052,7 +1069,7 @@ type StuckRuntime struct {
 // ready: the question is only about work somebody is waiting for.
 func (s *Store) RuntimesStuckStarting(ctx context.Context, window time.Duration, limit int) ([]StuckRuntime, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT r.id, r.agent_id, a.name, r.status, r.failure_reason, r.restart_count,
+		SELECT r.id, r.agent_id, a.name, r.crd_name, r.status, r.failure_reason, r.restart_count,
 		       GREATEST(r.updated_at, r.created_at)
 		FROM agent_runtimes r
 		JOIN agent_definitions a ON a.id = r.agent_id
@@ -1068,7 +1085,7 @@ func (s *Store) RuntimesStuckStarting(ctx context.Context, window time.Duration,
 	items := []StuckRuntime{}
 	for rows.Next() {
 		var item StuckRuntime
-		if err := rows.Scan(&item.ID, &item.AgentID, &item.AgentName, &item.Status, &item.FailureReason, &item.Restarts, &item.Since); err != nil {
+		if err := rows.Scan(&item.ID, &item.AgentID, &item.AgentName, &item.CRDName, &item.Status, &item.FailureReason, &item.Restarts, &item.Since); err != nil {
 			return nil, err
 		}
 		items = append(items, item)

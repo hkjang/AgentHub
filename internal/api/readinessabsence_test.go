@@ -60,3 +60,47 @@ func TestReadinessReportsWhatIsMissingAndNotOnlyWhatIsBroken(t *testing.T) {
 		t.Error("a paused execution plane is counted as fine; it is the answer to why nothing is running")
 	}
 }
+
+// And it cannot report something that is not there either.
+//
+// The stuck-runtime row is read from the platform's own record, and the record
+// is only corrected when somebody opens a page that observes runtimes. Deleting
+// a runtime that will not start is the ordinary answer to one, so the record
+// keeps saying "starting, wanted running" about an object the cluster no longer
+// has — and this screen, whose whole job is "what is broken now", reported it.
+//
+// Measured: an AgentRuntime deleted by hand was still reported here twelve
+// minutes later, quoting the image error it had died of, with a link that cured
+// the report by being visited.
+func TestReadinessDoesNotReportRuntimesTheClusterNoLongerHas(t *testing.T) {
+	body, err := os.ReadFile("readiness.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	at := strings.Index(source, "RuntimesStuckStarting(")
+	if at < 0 {
+		t.Fatal("the stuck-runtime check is gone; this guard is reading nothing")
+	}
+	check := source[at:]
+	if end := strings.Index(check, "\n\t})"); end >= 0 {
+		check = check[:end]
+	}
+	if !strings.Contains(check, "StatusAll(") {
+		t.Error("the stuck-runtime check reports the record without asking the cluster whether the runtime still exists")
+	}
+	forget := strings.Index(check, "ForgetMissingRuntime(")
+	report := strings.Index(check, `Verdict: "stuck"`)
+	if forget < 0 {
+		t.Error("a runtime the cluster no longer has is left asking to be run, so it is reported again ten minutes later")
+	}
+	if report < 0 {
+		t.Fatal("nothing is reported as stuck any more; this guard is reading nothing")
+	}
+	if forget > report {
+		t.Error("the phantom is reported before it is written off")
+	}
+	if !strings.Contains(check, "continue") {
+		t.Error("a runtime that is gone from the cluster is still added to the screen")
+	}
+}

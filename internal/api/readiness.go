@@ -142,7 +142,35 @@ func (s *Server) readiness(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
+		// What the platform wrote down is not always what the cluster has. Deleting
+		// a runtime that will not start is the usual answer to one, and its row
+		// goes on saying "starting, wanted running" until somebody opens a page
+		// that observes runtimes — so this screen reported a Pod that no longer
+		// exists as the thing that is broken, and the link it offered as the fix
+		// cured it by being visited. Measured: a runtime deleted by hand was
+		// reported here twelve minutes later, with the image error it died of.
+		//
+		// The runtimes screen learned this once. "What is broken now" is the
+		// screen where a phantom costs the most, so it asks the cluster first.
+		var live map[string]appRuntime.Status
+		if len(stuck) > 0 {
+			if reader, ok := s.spawner.(appRuntime.BatchStatus); ok {
+				if all, readErr := reader.StatusAll(r.Context()); readErr == nil {
+					live = all
+				}
+			}
+		}
 		for _, runtime := range stuck {
+			if live != nil && runtime.CRDName != "" {
+				if _, present := live[runtime.CRDName]; !present {
+					// Gone from the cluster: the record is the only thing still
+					// asking for it. Correct that rather than report it.
+					if forgetErr := s.store.ForgetMissingRuntime(r.Context(), runtime.ID); forgetErr != nil {
+						s.logger.Warn("a runtime the cluster no longer has could not be written off", "runtime", runtime.ID, "error", forgetErr)
+					}
+					continue
+				}
+			}
 			detail := "시작한 지 " + humanSince(runtime.Since) + " 지났고 아직 준비되지 않았습니다"
 			if reason := strings.TrimSpace(runtime.FailureReason); reason != "" {
 				if len(reason) > 200 {

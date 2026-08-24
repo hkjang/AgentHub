@@ -57,6 +57,7 @@ a platform bug until it is understood:
 | Posting back | the finding is commented on that pull request, and the next review edits the same comment rather than adding one |
 | Forge credential check | a stored token is checked at save time and the account name comes back |
 | `orca` backend | the fabric creates its run, task and worktree in the runtime's own repository — after the mount that made that possible |
+| readiness screen | a runtime deleted from the cluster is written off rather than reported as stuck — measured against a record twelve minutes stale |
 | `rpc` backend | task completes with the agent's answer and real token usage; the agent declares its own tools to the gateway |
 | Content inspection | a card number in a task's input is blocked before it reaches the agent, the run says which class was found, and the task is not retried |
 | Refusing a tool | rejecting the approval stops the tool: the file is not written, and the run says the refusal is why the agent had nothing to say |
@@ -111,3 +112,30 @@ And one thing that looked like a platform bug and was not: `approvalMode` says
 what is allowed, while `approvalRequired` is what routes a request to a person.
 A Goal with a strict mode and no `approvalRequired` denies the tool itself and
 asks nobody, which is what it is for.
+
+## What the orca fabric needs before it can be verified
+
+Three separate things had to be true before an orca run could be judged at all,
+and each of them cost a run that proved nothing:
+
+1. **Git has to work in the workspace.** A mounted volume's root belongs to
+   root, and the agent is uid 10000, so git called the repository the platform
+   had cloned for it somebody else's and refused every command. The fabric
+   reported this as "Could not resolve a default base ref for this repo". Fixed
+   in the Pod, not the rig — the runtime now names its own workspace and home as
+   directories git may trust.
+2. **The workers' model endpoint has to speak the Responses API.** The codex
+   configuration AgentHub writes sets `wire_api = "responses"`, and the stub
+   gateway answered every path with a `chat.completion` body. Codex could not
+   read it, so its workers sat in `workerState: ready` for ever and every run
+   ended at its time limit. The stub now serves `/v1/responses`, both streamed
+   and not; `codex exec` completes a turn against it.
+3. **The Goal's time limit has to be longer than a worker takes.** The limit is
+   the fabric's deadline for the whole fan-out, and a run that hits it reports a
+   timeout rather than anything about the answer.
+
+**Still unproven:** that a fabric answer carrying sensitive text is refused
+before it is stored. The ordering is guarded and mutation-proven in
+`inspectorder_test.go`, and the same inspector is proven live on the ACP
+backend, but no orca run has yet produced an answer to block — the workers reach
+a terminal state now, and not a successful one.
