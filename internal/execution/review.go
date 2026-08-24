@@ -422,6 +422,10 @@ func (o *Orchestrator) runReview(ctx context.Context, run *store.AgentRun, task 
 		"sessionId": parsed.SessionID, "totalTokens": parsed.Summary.TotalTokens, "resolved": resolved,
 	})
 
+	// And on the page the request came from, if its owner has stored a credential
+	// for that host. A review nobody reads is a review that did not happen.
+	o.announceReview(ctx, *run, task, agent.OwnerID, summary, findings)
+
 	// The gate. A review that finds something serious and reports success is a
 	// gate nobody can rely on, so the Goal's floor decides the task's verdict —
 	// and an empty floor means this deployment has not asked for a gate, which is

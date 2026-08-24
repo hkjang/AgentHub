@@ -37,6 +37,9 @@ var configuration = map[string]bool{
 	"agent_servers": true, "api_keys": true, "departments": true,
 	"evaluation_test_sets": true, "external_apps": true, "mcp_bundles": true,
 	"mcp_credentials": true, "mcp_servers": true, "mcp_tool_policies": true,
+	// A forge credential is setup, not history: it is written once and used for
+	// as long as it works. It goes when its owner does.
+	"scm_connections": true,
 	"model_endpoints": true, "network_profiles": true, "personal_secrets": true,
 	"runtime_images": true, "runtime_profiles": true, "security_profiles": true,
 	"schema_migrations": true, "system_settings": true, "user_keyrings": true,

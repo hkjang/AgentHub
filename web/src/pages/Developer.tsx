@@ -5,6 +5,7 @@ import {
   EyeOff,
   ExternalLink,
   KeyRound,
+  GitPullRequest,
   Plus,
   RefreshCw,
   ShieldCheck,
@@ -40,12 +41,13 @@ import {
   PageHeader,
   SuccessBanner,
 } from "../components/UI";
-import type { APIKey, PersonalSecret } from "../types";
+import type { APIKey, PersonalSecret, SCMConnection } from "../types";
 
 export function Developer() {
-  const [tab, setTab] = useState<"secrets" | "api">("secrets"),
+  const [tab, setTab] = useState<"secrets" | "api" | "forge">("secrets"),
     [secrets, setSecrets] = useState<PersonalSecret[]>([]),
     [keys, setKeys] = useState<APIKey[]>([]),
+    [forges, setForges] = useState<SCMConnection[]>([]),
     [drawer, setDrawer] = useState(false),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
@@ -58,6 +60,9 @@ export function Developer() {
       api
         .get<{ items: APIKey[] }>("/api/v1/api-keys")
         .then((v) => setKeys(v.items)),
+      api
+        .get<{ items: SCMConnection[] }>("/api/v1/scm-connections")
+        .then((v) => setForges(v.items)),
     ]);
   useEffect(() => {
     void load();
@@ -77,10 +82,14 @@ export function Developer() {
       setError(e instanceof Error ? e.message : "키 회전에 실패했습니다.");
     }
   };
-  const remove = async (kind: "secret" | "key", id: string) => {
+  const remove = async (kind: "secret" | "key" | "forge", id: string) => {
     try {
       await api.delete(
-        kind === "secret" ? `/api/v1/secrets/${id}` : `/api/v1/api-keys/${id}`,
+        kind === "secret"
+          ? `/api/v1/secrets/${id}`
+          : kind === "key"
+            ? `/api/v1/api-keys/${id}`
+            : `/api/v1/scm-connections/${id}`,
       );
       void load();
     } catch (e) {
@@ -101,7 +110,12 @@ export function Developer() {
             </button>
             <button className="button primary" onClick={() => setDrawer(true)}>
               <Plus size={16} />
-              {tab === "secrets" ? "Secret" : "API Key"} 추가
+              {tab === "secrets"
+                ? "Secret"
+                : tab === "api"
+                  ? "API Key"
+                  : "연결"}{" "}
+              추가
             </button>
           </>
         }
@@ -161,6 +175,12 @@ export function Developer() {
         >
           API Keys <span>{keys.length}</span>
         </button>
+        <button
+          className={tab === "forge" ? "active" : ""}
+          onClick={() => setTab("forge")}
+        >
+          코드 호스트 <span>{forges.length}</span>
+        </button>
       </div>
       <section className="panel">
         {tab === "secrets" ? (
@@ -189,6 +209,52 @@ export function Developer() {
                     </span>
                     <button
                       onClick={() => void remove("secret", item.id)}
+                      aria-label="삭제"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        ) : tab === "forge" ? (
+          forges.length === 0 ? (
+            <Empty
+              icon={<GitPullRequest />}
+              title="연결된 코드 호스트가 없습니다"
+              description="토큰을 저장하면, Pull Request가 시작한 리뷰의 결과를 그 Pull Request에 그대로 남깁니다."
+            />
+          ) : (
+            <div className="item-list">
+              {forges.map((item) => (
+                <div className="list-card" key={item.id}>
+                  <div className="list-icon">
+                    <GitPullRequest />
+                  </div>
+                  <div>
+                    <strong>{item.host}</strong>
+                    <span>
+                      {item.kind}
+                      {item.apiBase ? ` · ${item.apiBase}` : ""}
+                    </span>
+                    {/* A revoked token and a review with nothing to say both
+                        post nothing. Only this line tells them apart. */}
+                    {item.lastError && (
+                      <span className="task-error" title={item.lastError}>
+                        {item.lastError}
+                      </span>
+                    )}
+                  </div>
+                  <div className="list-meta">
+                    <span>
+                      {item.lastUsedAt
+                        ? "최근 사용 " +
+                          new Date(item.lastUsedAt).toLocaleDateString("ko-KR")
+                        : "사용 기록 없음"}
+                    </span>
+                    <button
+                      onClick={() => void remove("forge", item.id)}
                       aria-label="삭제"
                     >
                       <Trash2 size={16} />
@@ -258,7 +324,7 @@ function CredentialDrawer({
   done,
   setError,
 }: {
-  type: "secrets" | "api";
+  type: "secrets" | "api" | "forge";
   close: () => void;
   done: (token: string) => void;
   setError: (v: string) => void;
@@ -267,6 +333,9 @@ function CredentialDrawer({
     [kind, setKind] = useState("api_key"),
     [value, setValue] = useState(""),
     [scopes, setScopes] = useState<string[]>(["api:read"]),
+    [host, setHost] = useState(""),
+    [forgeKind, setForgeKind] = useState("github"),
+    [apiBase, setApiBase] = useState(""),
     [reach, setReach] = useState<ScopeReach[]>([]),
     [busy, setBusy] = useState(false);
   // What each scope reaches comes from the server's own route catalog, so the
@@ -292,7 +361,15 @@ function CredentialDrawer({
     }
     setBusy(true);
     try {
-      if (type === "secrets") {
+      if (type === "forge") {
+        await api.post("/api/v1/scm-connections", {
+          host,
+          kind: forgeKind,
+          apiBase,
+          token: value,
+        });
+        done("");
+      } else if (type === "secrets") {
         await api.post("/api/v1/secrets", { name, kind, value });
         done("");
       } else {
@@ -310,11 +387,19 @@ function CredentialDrawer({
   };
   return (
     <Drawer
-      title={type === "secrets" ? "개인 시크릿 추가" : "API 키 생성"}
+      title={
+        type === "secrets"
+          ? "개인 시크릿 추가"
+          : type === "api"
+            ? "API 키 생성"
+            : "코드 호스트 연결"
+      }
       subtitle={
         type === "secrets"
           ? "원문은 저장 후 다시 표시되지 않습니다."
-          : "필요한 최소 범위만 부여하세요."
+          : type === "api"
+            ? "필요한 최소 범위만 부여하세요."
+            : "이 호스트에서 시작된 리뷰의 결과를 같은 Pull Request에 남깁니다."
       }
       close={close}
       footer={
@@ -333,19 +418,74 @@ function CredentialDrawer({
       }
     >
       <form id="credential-form" className="drawer-form" onSubmit={submit}>
-        <label>
-          <span>
-            이름 <b>*</b>
-          </span>
-          <input
-            required
-            maxLength={80}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder={type === "secrets" ? "Bitbucket PAT" : "CI automation"}
-          />
-        </label>
-        {type === "secrets" ? (
+        {type !== "forge" && (
+          <label>
+            <span>
+              이름 <b>*</b>
+            </span>
+            <input
+              required
+              maxLength={80}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={
+                type === "secrets" ? "Bitbucket PAT" : "CI automation"
+              }
+            />
+          </label>
+        )}
+        {type === "forge" ? (
+          <>
+            <label>
+              <span>
+                호스트 <b>*</b>
+              </span>
+              <input
+                required
+                value={host}
+                onChange={(e) => setHost(e.target.value)}
+                placeholder="github.com"
+              />
+            </label>
+            <label>
+              <span>종류</span>
+              <select
+                value={forgeKind}
+                onChange={(e) => setForgeKind(e.target.value)}
+              >
+                <option value="github">GitHub</option>
+                <option value="gitlab">GitLab</option>
+                <option value="gitea">Gitea · Forgejo</option>
+                <option value="bitbucket">Bitbucket</option>
+              </select>
+            </label>
+            <label>
+              <span>API 주소</span>
+              <input
+                value={apiBase}
+                onChange={(e) => setApiBase(e.target.value)}
+                placeholder="비워 두면 호스트에서 정해집니다"
+              />
+            </label>
+            <label>
+              <span>
+                토큰 <b>*</b>
+              </span>
+              <input
+                required
+                type="password"
+                autoComplete="off"
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                placeholder="Pull Request에 댓글을 남길 수 있는 토큰"
+              />
+            </label>
+            <p className="field-hint">
+              토큰은 이 호스트로만 전송됩니다. 웹훅 본문이 다른 호스트의 주소를
+              담고 있으면 아무것도 보내지 않습니다.
+            </p>
+          </>
+        ) : type === "secrets" ? (
           <>
             <label>
               <span>종류</span>
