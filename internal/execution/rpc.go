@@ -234,16 +234,57 @@ func (o *Orchestrator) speakRPC(ctx context.Context, run *store.AgentRun, sessio
 	defer stopDirectives()
 	go o.deliverDirectives(directives, run, session)
 
-	deadline := time.Now().Add(rpcTimeout(goal))
 	lines := bufio.NewScanner(session.Stdout)
 	lines.Buffer(make([]byte, 0, 64*1024), rpcMaxLine)
+	// Read on its own goroutine so the loop below can hear something other than
+	// the agent.
+	//
+	// Scanning blocks until a line arrives, and an agent waiting on a model that
+	// never answers sends none — so a cancelled task went on running, its stop
+	// button doing nothing, and its own time limit was never reached either
+	// because the limit was only checked when a line came in. Both were true for
+	// as long as the agent stayed silent, which is exactly when somebody presses
+	// the button.
+	//
+	// Measured, not reasoned about: a task cancelled while its agent was waiting
+	// on a hung gateway left the process running in the Pod and the run saying
+	// running, minutes later.
+	spoken := make(chan []byte)
+	go func() {
+		defer close(spoken)
+		for lines.Scan() {
+			line := append([]byte(nil), lines.Bytes()...)
+			select {
+			case spoken <- line:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	limit := time.NewTimer(rpcTimeout(goal))
+	defer limit.Stop()
 	accepted := false
-	for lines.Scan() {
-		if time.Now().After(deadline) {
+	for {
+		var line []byte
+		select {
+		case <-ctx.Done():
+			// The task was cancelled or the worker is going away. Closing stdin
+			// tells the agent so rather than leaving it talking to nobody.
+			_ = session.Stdin.Close()
+			return result, ctx.Err()
+		case <-limit.C:
+			_ = session.Stdin.Close()
 			return result, errors.New("에이전트가 제한 시간 안에 끝내지 못했습니다")
+		case next, open := <-spoken:
+			if !open {
+				// The stream ended; fall through to the same reporting as before.
+				goto ended
+			}
+			line = next
 		}
 		var event rpcEvent
-		if err := json.Unmarshal(lines.Bytes(), &event); err != nil {
+		if err := json.Unmarshal(line, &event); err != nil {
 			// A line that is not an event is the agent's own noise, not a failure.
 			continue
 		}
@@ -297,6 +338,7 @@ func (o *Orchestrator) speakRPC(ctx context.Context, run *store.AgentRun, sessio
 			return result, nil
 		}
 	}
+ended:
 	if err := lines.Err(); err != nil {
 		return result, fmt.Errorf("에이전트의 출력을 읽지 못했습니다: %w", err)
 	}
