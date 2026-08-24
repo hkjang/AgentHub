@@ -137,3 +137,26 @@ func TestReadinessSaysWhichDirectionIsInspected(t *testing.T) {
 		t.Error("a deployment that inspects both is not told which")
 	}
 }
+
+// A failed step can still hold the account of what happened.
+//
+// The console showed step.error *instead of* step.output, so a step that
+// carried both showed only the failure. Measured on a cluster after the fabric
+// backend began recording each worker's own last words: steps with 233 bytes of
+// output and a 14-byte error, of which a person was shown the 14 bytes.
+func TestTheConsoleShowsAFailedStepsOutputToo(t *testing.T) {
+	body, err := os.ReadFile("../../web/src/pages/Tasks.tsx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	if strings.Contains(source, "{step.error ? <p className=\"run-error\">{step.error}</p> : <pre") {
+		t.Error("a step's output is shown only when it did not fail, so what a failed run recorded is hidden")
+	}
+	if !strings.Contains(source, "{step.error && <p className=\"run-error\">{step.error}</p>}") {
+		t.Error("the step's failure is no longer shown")
+	}
+	if !strings.Contains(source, "{step.output && <pre className=\"custom-scroll\">{step.output}</pre>}") {
+		t.Error("the step's output is no longer shown")
+	}
+}

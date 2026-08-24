@@ -588,7 +588,12 @@ export function RunDrawer({ runId, close }: { runId: string; close: () => void }
       <div className="run-trace">{steps.map((step) => <article key={step.id} className={step.status}>
         <header><strong>{step.title || step.type}</strong><StatusBadge status={step.status} />
           <small>{step.durationMs}ms · {step.promptTokens + step.completionTokens} 토큰</small></header>
-        {step.error ? <p className="run-error">{step.error}</p> : <pre className="custom-scroll">{step.output}</pre>}
+        {/* Both, when there are both. A step that failed can still hold the
+            account of what happened — the fabric backend records each worker's
+            own last words on the step it fails, and a run cancelled at 233 bytes
+            of that showed a person the 14-byte reason and nothing else. */}
+        {step.error && <p className="run-error">{step.error}</p>}
+        {step.output && <pre className="custom-scroll">{step.output}</pre>}
       </article>)}</div>
     </section>
   </Drawer>
