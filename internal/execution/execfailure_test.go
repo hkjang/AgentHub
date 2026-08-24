@@ -79,23 +79,9 @@ func TestEveryPodBackendExplainsItTheSameWay(t *testing.T) {
 // version of this message said "리뷰이 최대 실행 시간에 도달해" — a sentence no
 // Korean speaker would write, in the place somebody reads when something has
 // gone wrong.
+// The particle itself is checked where the rule lives — internal/korean. What
+// belongs here is that this message asks for one rather than writing it in.
 func TestTheSentenceIsKorean(t *testing.T) {
-	for word, subject := range map[string]string{
-		"리뷰":   "가", // no final consonant
-		"에이전트": "가",
-		"조사":   "가",
-		"실행":   "이", // ㅇ 받침
-		"작업":   "이", // ㅂ 받침
-	} {
-		if got := subjectParticle(word); got != subject {
-			t.Errorf("%s%s — wrong subject particle, want %s", word, got, subject)
-		}
-	}
-	for word, object := range map[string]string{"리뷰": "를", "에이전트": "를", "실행": "을", "작업": "을"} {
-		if got := objectParticle(word); got != object {
-			t.Errorf("%s%s — wrong object particle, want %s", word, got, object)
-		}
-	}
 	message := runtimeExecFailure("리뷰", context.DeadlineExceeded, store.AgentGoal{MaxDurationSeconds: 60})
 	if strings.HasPrefix(message, "리뷰이") {
 		t.Errorf("the message reads as broken Korean: %q", message)
