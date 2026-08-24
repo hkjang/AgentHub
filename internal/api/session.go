@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -323,8 +324,48 @@ func (s *Server) serveRuntimeProxy(w http.ResponseWriter, r *http.Request, runti
 		s.logger.Warn("runtime session proxy failed", "runtime", runtimeID, "error", proxyErr)
 		writeError(writer, http.StatusBadGateway, "runtime_proxy_failed", "Runtime에 연결하지 못했습니다.")
 	}
+	// A terminal is one request. The upgrade is proxied, the connection is
+	// hijacked, and the person then works for an hour without this platform
+	// serving another HTTP request for them — so refreshing the session where the
+	// request arrives marks it live once and lets it go stale underneath somebody
+	// who never stopped typing. While the connection is open, the session is in
+	// use; that is the whole of what the rule wants to know.
+	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		done := make(chan struct{})
+		defer close(done)
+		go s.holdRuntimePresence(r.Context(), runtimeID, done)
+	}
 	proxy.ServeHTTP(w, r)
 }
+
+// holdRuntimePresence keeps saying somebody is here for as long as their
+// connection is.
+//
+// It stops when the proxied request returns, which for a hijacked websocket is
+// when the connection closes — a closed tab stops refreshing, and the session
+// goes stale on its own within the window that reads it.
+func (s *Server) holdRuntimePresence(ctx context.Context, runtimeID string, done <-chan struct{}) {
+	ticker := time.NewTicker(runtimePresenceInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			touch, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			s.store.TouchRuntime(touch, runtimeID)
+			s.store.TouchRuntimeSessions(touch, runtimeID)
+			cancel()
+		}
+	}
+}
+
+// runtimePresenceInterval is how often an open connection says so. Well inside
+// the fifteen minutes that decide whether somebody is at a keyboard, and rare
+// enough that a room full of open terminals is a handful of writes a minute.
+const runtimePresenceInterval = 2 * time.Minute
 
 // keepRuntimeCookies lets a runtime keep its own session while denying it the two
 // things it must not have: this platform's cookie names, and a scope wider than

@@ -301,3 +301,47 @@ func TestAPersonWorkingKeepsLookingLikeOne(t *testing.T) {
 		t.Error("a task's own traffic marks a session attended, so an abandoned one never expires")
 	}
 }
+
+// A terminal is one request, and then an hour of somebody working.
+//
+// The proxy upgrades the connection and hands it over; no further HTTP request
+// arrives for that person until they close the tab. Refreshing the session where
+// the request lands therefore marks it live exactly once — so the fix that made
+// a person keep looking like one worked for every kind of traffic except the
+// kind people actually use.
+func TestAnOpenConnectionKeepsSayingSomebodyIsThere(t *testing.T) {
+	body, err := os.ReadFile("session.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	at := strings.Index(source, "func (s *Server) serveRuntimeProxy(")
+	if at < 0 {
+		t.Fatal("the proxy is gone; this guard is reading nothing")
+	}
+	proxy := source[at:]
+	if end := strings.Index(proxy, "\n// holdRuntimePresence"); end >= 0 {
+		proxy = proxy[:end]
+	}
+	if !strings.Contains(proxy, "holdRuntimePresence(") {
+		t.Error("an upgraded connection is marked live once and then goes stale under somebody who never stopped")
+	}
+	if !strings.Contains(proxy, `strings.EqualFold(r.Header.Get("Upgrade"), "websocket")`) {
+		t.Error("every request holds presence, including the ones that end immediately")
+	}
+	hold := source[strings.Index(source, "func (s *Server) holdRuntimePresence("):]
+	if end := strings.Index(hold, "\n// runtimePresenceInterval"); end >= 0 {
+		hold = hold[:end]
+	}
+	// It must stop. A goroutine that outlives the connection would report a
+	// closed tab as a person for ever, which is the same lie the other way.
+	if !strings.Contains(hold, "case <-done:") || !strings.Contains(hold, "case <-ctx.Done():") {
+		t.Error("presence outlives the connection that justified it")
+	}
+	if !strings.Contains(hold, "TouchRuntimeSessions(") {
+		t.Error("the connection refreshes the runtime but not the session that is read for presence")
+	}
+	if !strings.Contains(source, "runtimePresenceInterval = 2 * time.Minute") {
+		t.Error("the interval is not comfortably inside the fifteen minutes that decide presence")
+	}
+}
