@@ -131,3 +131,42 @@ func TestTheNotificationBellHasAnIndexToReadFrom(t *testing.T) {
 		t.Error("agent_run_steps still carries two identical indexes on created_at")
 	}
 }
+
+// Two lookups on agent_runtimes ran without an index, on paths that run
+// constantly rather than when somebody opens a screen.
+//
+// Measured on 200,000 runtime rows: proving which runtime a token belongs to —
+// which every call from a Pod does — cost 13 ms of sequential scan, and asking
+// for an agent's current runtime, which every task that needs one asks first,
+// cost 14 ms of parallel scan. Both are answered from an index now, at 0.2 ms.
+func TestTheRuntimeLookupsOnTheHotPathHaveIndexes(t *testing.T) {
+	body, err := os.ReadFile("migrations/066_runtime_lookup_index.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(body)
+	if !strings.Contains(sql, "agent_runtimes(gateway_token_hash) WHERE gateway_token_hash IS NOT NULL") {
+		t.Error("a runtime proving who it is still scans every runtime ever created")
+	}
+	// Filtered and ordered as the query is, so the newest row is the first entry
+	// rather than the result of sorting everything the agent has run.
+	if !strings.Contains(sql, "agent_runtimes(agent_id, created_at DESC) WHERE desired_state <> 'deleted'") {
+		t.Error("finding an agent's current runtime still scans the table, or still sorts it")
+	}
+	// The queries these are for, so a rewrite that changes their shape fails here
+	// rather than quietly losing the index.
+	runtime, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(runtime), "WHERE agent_id=$1 AND desired_state<>'deleted' ORDER BY created_at DESC LIMIT 1") {
+		t.Error("the agent's-current-runtime query no longer matches the index built for it")
+	}
+	tool, err := os.ReadFile("toolapproval.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(tool), "WHERE gateway_token_hash=$1 AND desired_state<>'deleted'") {
+		t.Error("the token lookup no longer matches the index built for it")
+	}
+}
