@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/hkjang/AgentHub/internal/execution"
 	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
 )
@@ -220,4 +221,48 @@ func (s *Server) decideReviewFinding(w http.ResponseWriter, r *http.Request) {
 	s.store.Audit(r.Context(), &u, "review.finding."+input.Decision, "review_finding", item.ID, "success", clientIP(r),
 		map[string]any{"runId": item.RunID, "filePath": item.FilePath, "severity": item.Severity})
 	writeJSON(w, http.StatusOK, item)
+}
+
+// reviewPlan says what a review would look at, before anybody pays for one.
+//
+// The engine decides both halves deterministically — which files a review covers
+// and which standard each is held to — so asking costs nothing. Until now the
+// only way to find out was to run the review and read the result, by which point
+// the tokens are spent and "why was my file skipped" is still unanswered.
+func (s *Server) reviewPlan(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	admin := u.Role == "admin"
+	agent, err := s.store.AgentByID(r.Context(), chi.URLParam(r, "id"), u.ID, admin)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	goal, err := s.store.AgentGoalByID(r.Context(), agent.ID)
+	if err != nil {
+		goal = store.DefaultAgentGoal(agent.ID)
+	}
+	if !runtimetype.SupportsRunner(agent.RuntimeType, runtimetype.RunnerReview) {
+		writeError(w, http.StatusBadRequest, "agent_cannot_review",
+			runtimetype.Describe(agent.RuntimeType).Label+" 런타임은 코드 리뷰를 하지 않습니다.")
+		return
+	}
+	instance, err := s.store.LatestRuntimeForAgent(r.Context(), agent.ID)
+	if err != nil || instance.DesiredState != "running" {
+		// The plan is read inside the runtime, where the repository is. Saying so
+		// beats a failure that reads like the engine refusing.
+		writeError(w, http.StatusConflict, "runtime_not_running",
+			"리뷰 대상은 Runtime 안에서 확인합니다. Runtime을 먼저 시작해 주세요.")
+		return
+	}
+	spec, err := s.runtimeSpec(r, instance, agent)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	plan, err := execution.ReviewPlanFor(r.Context(), s.spawner, spec, goal)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "review_plan_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, plan)
 }

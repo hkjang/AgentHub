@@ -1,0 +1,23 @@
+{
+  "schema_version": "1",
+  "groups": [
+    {
+      "group_id": 1,
+      "source": "system",
+      "pattern": "**/*.go",
+      "files": [
+        "a.go"
+      ],
+      "rule": "#### Go Review Principles\n> Favor precision over recall: report only defects that are likely real in the changed code and its reachable context. A false positive costs reviewer trust. Treat correctnes…"
+    },
+    {
+      "group_id": 2,
+      "source": "system",
+      "pattern": "**/*.{py,ipynb}",
+      "files": [
+        "b.py"
+      ],
+      "rule": "> Favor precision over recall: only raise an issue when you are confident it is a real defect, and stay silent when the surrounding context is unclear — a false alarm costs more reviewer trust than a …"
+    }
+  ]
+}
