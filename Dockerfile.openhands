@@ -1,0 +1,74 @@
+# syntax=docker/dockerfile:1.7
+#
+# The OpenHands Agent Server runtime image.
+#
+# OpenHands separates its canvas from its server, and what a control plane wants
+# is the server: "a REST API for running multiple agents on a single machine".
+# AgentHub already had a backend that drives one — but only a server somebody
+# else installed and registered by URL. This image is the same server as a
+# runtime the platform can start, which is what makes it testable the way every
+# other runtime here is.
+#
+# Three facts about installing it, each met by trying rather than by reading:
+#
+#  1. pip cannot resolve it. `openhands-sdk` depends on `lmnr`, which pins
+#     opentelemetry-semantic-conventions against what opentelemetry-instrumentation
+#     wants. uv resolves it, which is what the vendor's own instructions use.
+#  2. `libtmux` is imported at module scope by the server's api.py and is not
+#     declared as a dependency. Without it the process exits before it binds.
+#     tmux itself is needed too.
+#  3. `openhands-tools` is a separate distribution; the server imports
+#     openhands.tools and the agent-server package does not bring it.
+#
+# The three packages are pinned to the same version. pip once installed sdk 1.17
+# beside server 1.43, and the server failed on a module the older sdk does not
+# have — a mismatch that looks like a broken image rather than a version skew.
+ARG PYTHON_IMAGE=3.12-slim-bookworm
+FROM python:${PYTHON_IMAGE}
+
+ARG OPENHANDS_VERSION=1.43.1
+
+USER root
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates curl git openssh-client tini jq ripgrep less procps tmux \
+ && rm -rf /var/lib/apt/lists/*
+
+# uv, because pip cannot resolve this dependency set at all.
+COPY --from=ghcr.io/astral-sh/uv:0.9.7 /uv /usr/local/bin/uv
+
+RUN uv pip install --system --no-cache \
+      "openhands-agent-server==${OPENHANDS_VERSION}" \
+      "openhands-sdk==${OPENHANDS_VERSION}" \
+      "openhands-tools==${OPENHANDS_VERSION}" \
+      libtmux \
+ && python -c "import openhands.agent_server.api" \
+ && mkdir -p /workspace /home/agent/.openhands \
+ && chown -R 10000:10000 /workspace /home/agent
+
+# A coding agent that cannot install a package is half an agent, and the default
+# security profile mounts the root filesystem read-only — so the environment the
+# agent installs into lives on the home volume, which is writable and survives.
+ARG AGENT_TOOLCHAIN="pip setuptools wheel ruff pytest httpx requests pyyaml"
+RUN python -m venv /opt/agenthub/venv \
+ && /opt/agenthub/venv/bin/pip install --no-cache-dir --upgrade ${AGENT_TOOLCHAIN} \
+ && chown -R 10000:10000 /opt/agenthub /home/agent
+
+COPY deploy/runtime/agenthub-report-config.sh /usr/local/bin/agenthub-report-config
+COPY deploy/runtime/openhands-serve.sh /usr/local/bin/agenthub-openhands-serve
+COPY deploy/runtime/openhands-shell.sh /usr/local/bin/agenthub-openhands-shell
+COPY deploy/runtime/openhands-toolchain.sh /etc/profile.d/agenthub-toolchain.sh
+RUN chmod 0755 /usr/local/bin/agenthub-report-config /usr/local/bin/agenthub-openhands-serve \
+      /usr/local/bin/agenthub-openhands-shell \
+ && chmod 0644 /etc/profile.d/agenthub-toolchain.sh
+
+USER 10000:10000
+ENV HOME=/home/agent \
+    AGENTHUB_RUNTIME_TYPE=openhands \
+    AGENTHUB_WORKSPACE=/workspace \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+WORKDIR /workspace
+EXPOSE 8000
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/usr/local/bin/agenthub-openhands-serve"]

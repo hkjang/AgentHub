@@ -1,4 +1,4 @@
-.PHONY: test build image image-base image-langflow image-qwencode image-jupyter image-goose image-holmes image-browsercode image-nodered image-n8n validate release-archives
+.PHONY: test build image image-base image-langflow image-qwencode image-jupyter image-goose image-holmes image-browsercode image-openhands image-nodered image-n8n validate release-archives
 
 VERSION ?= $(shell cat VERSION)
 TAG := v$(VERSION)
@@ -23,6 +23,8 @@ HOLMES_VERSION ?= $(shell cat HOLMES_VERSION)
 HOLMES_TAG := v$(HOLMES_VERSION)
 BROWSERCODE_VERSION ?= $(shell cat BROWSERCODE_VERSION)
 BROWSERCODE_TAG := v$(BROWSERCODE_VERSION)
+OPENHANDS_VERSION ?= $(shell cat OPENHANDS_VERSION)
+OPENHANDS_TAG := v$(OPENHANDS_VERSION)
 
 test:
 	go test -race ./cmd/... ./internal/...
@@ -57,6 +59,9 @@ image-holmes:
 
 image-browsercode:
 	docker build -f Dockerfile.browsercode -t agenthub-browsercode:$(BROWSERCODE_TAG) .
+
+image-openhands:
+	docker build -f Dockerfile.openhands -t agenthub-openhands:$(OPENHANDS_TAG) .
 
 image-nodered:
 	docker build -f Dockerfile.nodered -t agenthub-nodered:$(NODERED_TAG) .

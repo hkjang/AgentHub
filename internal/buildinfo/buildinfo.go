@@ -36,6 +36,11 @@ var (
 	OrcaVersion = "0.3.0-dev"
 	// PiVersion is the image carrying the RPC-driven coding agent.
 	PiVersion = "0.1.0-dev"
+	// OpenHandsVersion is the agent server image. It is the vendor's own version
+	// rather than a number of ours: the three packages in it are pinned to each
+	// other, and a server that does not match its SDK fails on a module the older
+	// one does not have.
+	OpenHandsVersion = "1.43.1-dev"
 )
 
 type Info struct {

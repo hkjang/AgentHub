@@ -25,14 +25,19 @@ const (
 	Pi = "pi"
 	// Orca runs several coding agents at once, each in its own git worktree, and
 	// keeps the task and dispatch state that says which did what.
-	Orca   = "orca"
-	Custom = "custom"
+	Orca = "orca"
+	// OpenHands is an agent server: a REST API this platform drives rather than a
+	// command it runs. It existed here first as a machine somebody else installed
+	// and registered by URL; as a runtime type the platform can start one itself,
+	// which is what makes it testable the way the others are.
+	OpenHands = "openhands"
+	Custom    = "custom"
 )
 
 // Supported lists every runtime type accepted by the API, the database check
 // constraints and the AgentRuntime CRD enum. Keep this in sync with
 // deploy/kubernetes/crd.yaml and the runtime_type CHECK constraints.
-var Supported = []string{OpenCode, Hermes, QwenPaw, QwenCode, Goose, Holmes, BrowserCode, Jupyter, Langflow, NodeRED, N8N, OpenCodeReview, Orca, Pi, Custom}
+var Supported = []string{OpenCode, Hermes, QwenPaw, QwenCode, Goose, Holmes, BrowserCode, Jupyter, Langflow, NodeRED, N8N, OpenCodeReview, Orca, Pi, OpenHands, Custom}
 
 // IsSupported reports whether value names a runtime adapter AgentHub can spawn.
 func IsSupported(value string) bool {
@@ -60,6 +65,10 @@ func Port(value string) int32 {
 		return 5678
 	case Jupyter:
 		return 8888
+	case OpenHands:
+		// The agent server's own REST API. It is the runtime's whole surface:
+		// the platform drives it there, and a person reaches it through the proxy.
+		return 8000
 	}
 	return 4096
 }
@@ -76,7 +85,7 @@ const GatewayPort int32 = 9119
 // who reached the port.
 func UsesGatewayProxy(value string) bool {
 	switch value {
-	case Hermes, QwenPaw, Langflow, QwenCode, Goose, Holmes, BrowserCode, NodeRED, N8N, Jupyter, OpenCodeReview, Orca, Pi:
+	case Hermes, QwenPaw, Langflow, QwenCode, Goose, Holmes, BrowserCode, NodeRED, N8N, Jupyter, OpenCodeReview, Orca, Pi, OpenHands:
 		return true
 	}
 	return false

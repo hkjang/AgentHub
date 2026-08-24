@@ -56,6 +56,7 @@ docker load < agenthub-holmes-v0.2.0.tar.gz
 docker load < agenthub-browsercode-v0.2.0.tar.gz
 docker load < agenthub-opencodereview-v0.1.0.tar.gz
 docker load < agenthub-orca-v0.3.0.tar.gz
+docker load < agenthub-openhands-v1.43.1.tar.gz
 docker load < agenthub-pi-v0.1.0.tar.gz
 docker load < agenthub-nodered-v0.1.0.tar.gz
 docker load < agenthub-n8n-v0.1.0.tar.gz

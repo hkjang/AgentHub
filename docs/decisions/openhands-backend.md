@@ -135,3 +135,22 @@ its bugs were. Both were found by running it, not by reading it:
 
 Where a run executed is kept on the run. A pool changes shape, and "where did
 this actually run" is asked about one run long afterwards.
+
+## It is a runtime type as well, since 0.146.0
+
+The backend could only be pointed at a machine somebody else had installed and
+registered by URL, which made it the one execution path nobody could try without
+first standing up a server. It is now also a runtime type: `agenthub-openhands`
+carries the 1.43.1 server, and an agent whose runtime type is OpenHands works on
+its own Pod.
+
+The image is built from the three facts above rather than from the metadata —
+uv rather than pip, `libtmux` and `tmux` installed, `openhands-tools` alongside
+the server, all three packages pinned to one version — and the built image was
+checked by this platform's own client: registered as a server, asked to check
+itself, and answered healthy.
+
+An agent with its own runtime never consults the registry. The registry's
+capacity limits are about machines several agents share; a runtime's capacity is
+its own Pod, so claiming a shared slot for it would refuse work against a limit
+that is not about it.

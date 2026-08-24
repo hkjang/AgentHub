@@ -59,7 +59,7 @@ spec:
                   required: [type, image]
                   properties:
                     # Keep in sync with internal/runtimetype.Supported.
-                    type: {type: string, enum: [opencode, hermes, qwenpaw, qwencode, goose, holmes, browsercode, jupyter, langflow, nodered, n8n, opencodereview, orca, pi, custom]}
+                    type: {type: string, enum: [opencode, hermes, qwenpaw, qwencode, goose, holmes, browsercode, jupyter, langflow, nodered, n8n, opencodereview, orca, pi, openhands, custom]}
                     image: {type: string, minLength: 1}
                     # AgentHub's own sidecars run this image rather than the
                     # runtime image, so pinning an agent to an older runtime

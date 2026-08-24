@@ -121,6 +121,10 @@ var orcaCommands = map[string][]string{
 	RunnerOrca: {"/usr/local/bin/agenthub-orca-run"},
 }
 
+// OpenHands is driven over HTTP, so there is no command for its runner. The
+// terminal is what a person opens to look at what the agent did.
+var openHandsCommands = map[string][]string{}
+
 var openCodeReviewCommands = map[string][]string{
 	RunnerReview: {"/usr/local/bin/agenthub-ocr-run"},
 }
@@ -313,6 +317,26 @@ var descriptors = map[string]Descriptor{
 		BrowserUI: true, Terminal: true, ToolLoop: true, MCPConfigured: false, ProxiedUI: true,
 		Runners: []string{RunnerOrca}, Commands: orcaCommands,
 	},
+	OpenHands: {
+		Type: OpenHands, Code: "OH", Label: "OpenHands",
+		Summary: "REST API로 대화를 열어 일을 시키는 에이전트 서버. 명령을 실행하고 기다리는 대신, 진행 중인 대화를 지켜보고 멈출 수 있습니다.",
+		BestFor: "여러 작업을 한 서버에서 나란히 돌리고, 각 대화의 사건 기록을 그대로 남겨야 할 때",
+		Strengths: []string{
+			"모델·게이트웨이·자격증명이 대화를 여는 요청에 실려 갑니다 — 이미지에 아무것도 써 넣지 않습니다",
+			"대화마다 사건 기록이 남아 에이전트가 무엇을 했는지 그대로 되짚을 수 있습니다",
+			"서버가 알려 주는 실제 사용량으로 계량되므로 공짜로 기록되지 않습니다",
+			"한 서버가 여러 대화를 동시에 들고 갑니다",
+		},
+		Watchouts: []string{
+			"자체 승인 장치가 있지만 쓰지 않습니다 — 승인의 권한은 AgentHub 한 곳이어야 하므로, 대화는 확인 정책을 끈 채로 열립니다",
+			"자체 인증이 없는 API라 플랫폼 프록시로만 공개됩니다",
+			"브라우저에서 쓰는 화면이 아니라 API입니다 — 사람이 여는 것은 작업공간을 확인하는 터미널입니다",
+			"포크와 컨텍스트 압축은 서버가 제공하지만 아직 쓰지 않습니다",
+		},
+		Workspace: "/workspace", Port: 8000,
+		BrowserUI: false, Terminal: false, ToolLoop: true, MCPConfigured: false, ProxiedUI: true,
+		Runners: []string{RunnerAgentServer}, Commands: openHandsCommands,
+	},
 	OpenCodeReview: {
 		Type: OpenCodeReview, Code: "CR", Label: "Open Code Review",
 		Summary: "코드리뷰 전용 엔진. 무엇을 읽을지·어떤 규칙을 적용할지는 규칙이 정하고, 판단이 필요한 부분만 모델에게 묻습니다.",
@@ -374,6 +398,14 @@ const (
 	// spoken to while it happens: redirected, asked a follow-up, interrupted,
 	// asked what it is doing.
 	RunnerRPC = "rpc"
+	// RunnerAgentServer hands a task to an OpenHands Agent Server over its REST
+	// API: a conversation is started, watched and paused rather than a command
+	// being run and waited for.
+	//
+	// The server may be one somebody installed and registered by URL, or one this
+	// platform started as a runtime. The backend is the same either way; where it
+	// runs is placement's business, not the protocol's.
+	RunnerAgentServer = "agentserver"
 	// RunnerOrca hands a task to an execution fabric that runs several coding
 	// agents at once, each in its own git worktree, and reports which did what.
 	//

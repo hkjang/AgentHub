@@ -168,6 +168,14 @@ func nodeREDHealthCommand(build adapterBuild) []string {
 	return []string{"/bin/sh", "-c", "curl -fsS -m 3 http://127.0.0.1:1880/" + build.runtimeID() + "/settings >/dev/null"}
 }
 
+// openHandsHealthCommand asks the agent server's own health endpoint. It is a
+// real answer rather than a port check: the server binds before it has finished
+// starting its services, and a runtime reported ready that early takes work it
+// cannot yet do.
+func openHandsHealthCommand(adapterBuild) []string {
+	return []string{"/bin/sh", "-c", "curl -fsS -m 3 http://127.0.0.1:8000/health >/dev/null"}
+}
+
 func n8nHealthCommand(adapterBuild) []string {
 	// The hardened n8n image has no curl; wget is what it does have. No base path
 	// here: n8n is served from the root of its own origin.
@@ -570,6 +578,30 @@ var runtimeAdapters = map[string]runtimeAdapter{
 		},
 		Probes: func(build adapterBuild) (*corev1.Probe, *corev1.Probe) {
 			command := qwenCodeHealthCommand(build)
+			return &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 10, PeriodSeconds: 5, TimeoutSeconds: 3, FailureThreshold: 36,
+				}, &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 90, PeriodSeconds: 30, TimeoutSeconds: 3, FailureThreshold: 4,
+				}
+		},
+	},
+	runtimetype.OpenHands: {
+		Type: runtimetype.OpenHands,
+		// The server is the runtime. There is no wrapper writing a model or a
+		// credential first, because this server takes both as fields on the
+		// request that starts a conversation — so a runtime started before an
+		// administrator changed the gateway does not go on using the old one.
+		Command: []string{"/usr/local/bin/agenthub-openhands-serve"},
+		Sidecars: func(build adapterBuild) []corev1.Container {
+			// The API has no authenticator of its own here: anyone who reached the
+			// port could start a conversation on somebody else's workspace, so only
+			// the proxy publishes it.
+			return []corev1.Container{runtimeProxyContainer("openhands-proxy", build.Name, build.sidecarImage(), "http://127.0.0.1:8000")}
+		},
+		Probes: func(build adapterBuild) (*corev1.Probe, *corev1.Probe) {
+			command := openHandsHealthCommand(build)
 			return &corev1.Probe{
 					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
 					InitialDelaySeconds: 10, PeriodSeconds: 5, TimeoutSeconds: 3, FailureThreshold: 36,

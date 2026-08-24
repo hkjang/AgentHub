@@ -133,6 +133,7 @@ jobs:
             "browsercode:BROWSERCODE_VERSION:Dockerfile.browsercode deploy/runtime/agenthub-report-config.sh deploy/runtime/browsercode-configure.sh deploy/runtime/browsercode-shell.sh deploy/runtime/browsercode-run.sh deploy/runtime/browsercode-start.sh deploy/runtime/browsercode-toolchain.sh deploy/runtime/browsercode-browser.md"
             "pi:PI_VERSION:Dockerfile.pi deploy/runtime/agenthub-report-config.sh deploy/runtime/pi-configure.sh deploy/runtime/pi-run.sh deploy/runtime/pi-shell.sh deploy/runtime/pi-toolchain.sh"
             "orca:ORCA_VERSION:Dockerfile.orca deploy/runtime/agenthub-report-config.sh deploy/runtime/orca-serve.sh deploy/runtime/orca-run.sh deploy/runtime/orca-shell.sh deploy/runtime/orca-toolchain.sh"
+            "openhands:OPENHANDS_VERSION:Dockerfile.openhands deploy/runtime/agenthub-report-config.sh deploy/runtime/openhands-serve.sh deploy/runtime/openhands-shell.sh deploy/runtime/openhands-toolchain.sh"
             "opencodereview:OPENCODEREVIEW_VERSION:Dockerfile.opencodereview deploy/runtime/agenthub-report-config.sh deploy/runtime/opencodereview-configure.sh deploy/runtime/opencodereview-shell.sh deploy/runtime/opencodereview-run.sh deploy/runtime/opencodereview-toolchain.sh"
             "nodered:NODERED_VERSION:Dockerfile.nodered deploy/runtime/agenthub-report-config.sh"
             "n8n:N8N_VERSION:Dockerfile.n8n deploy/runtime/agenthub-report-config.sh"
@@ -210,9 +211,11 @@ jobs:
           BROWSERCODE_CHANGED: ${{ steps.runtimes.outputs.browsercode_changed }}
           OPENCODEREVIEW_TAG: ${{ steps.runtimes.outputs.opencodereview_tag }}
           ORCA_TAG: ${{ steps.runtimes.outputs.orca_tag }}
+          OPENHANDS_TAG: ${{ steps.runtimes.outputs.openhands_tag }}
           PI_TAG: ${{ steps.runtimes.outputs.pi_tag }}
           OPENCODEREVIEW_CHANGED: ${{ steps.runtimes.outputs.opencodereview_changed }}
           ORCA_CHANGED: ${{ steps.runtimes.outputs.orca_changed }}
+          OPENHANDS_CHANGED: ${{ steps.runtimes.outputs.openhands_changed }}
           PI_CHANGED: ${{ steps.runtimes.outputs.pi_changed }}
           NODERED_VERSION: ${{ steps.runtimes.outputs.nodered_version }}
           NODERED_TAG: ${{ steps.runtimes.outputs.nodered_tag }}
@@ -268,6 +271,11 @@ jobs:
           else
             echo "skipping orca; ${ORCA_TAG} from ${PREVIOUS} still applies"
           fi
+          if [ "${OPENHANDS_CHANGED}" = "true" ]; then
+            docker build -f Dockerfile.openhands -t "agenthub-openhands:${OPENHANDS_TAG}" .
+          else
+            echo "skipping openhands; ${OPENHANDS_TAG} from ${PREVIOUS} still applies"
+          fi
           if [ "${NODERED_CHANGED}" = "true" ]; then
             docker build -f Dockerfile.nodered -t "agenthub-nodered:${NODERED_TAG}" .
           else
@@ -311,9 +319,11 @@ jobs:
           BROWSERCODE_CHANGED: ${{ steps.runtimes.outputs.browsercode_changed }}
           OPENCODEREVIEW_TAG: ${{ steps.runtimes.outputs.opencodereview_tag }}
           ORCA_TAG: ${{ steps.runtimes.outputs.orca_tag }}
+          OPENHANDS_TAG: ${{ steps.runtimes.outputs.openhands_tag }}
           PI_TAG: ${{ steps.runtimes.outputs.pi_tag }}
           OPENCODEREVIEW_CHANGED: ${{ steps.runtimes.outputs.opencodereview_changed }}
           ORCA_CHANGED: ${{ steps.runtimes.outputs.orca_changed }}
+          OPENHANDS_CHANGED: ${{ steps.runtimes.outputs.openhands_changed }}
           PI_CHANGED: ${{ steps.runtimes.outputs.pi_changed }}
           NODERED_TAG: ${{ steps.runtimes.outputs.nodered_tag }}
           NODERED_CHANGED: ${{ steps.runtimes.outputs.nodered_changed }}
@@ -366,6 +376,7 @@ jobs:
           fi
           if [ "${ORCA_CHANGED}" = "true" ]; then
             package "agenthub-orca:${ORCA_TAG}" "agenthub-orca-${ORCA_TAG}.tar.gz"
+            package "agenthub-openhands:${OPENHANDS_TAG}" "agenthub-openhands-${OPENHANDS_TAG}.tar.gz"
           fi
           if [ "${PI_CHANGED}" = "true" ]; then
             package "agenthub-pi:${PI_TAG}" "agenthub-pi-${PI_TAG}.tar.gz"
@@ -394,6 +405,7 @@ jobs:
           BROWSERCODE_TAG: ${{ steps.runtimes.outputs.browsercode_tag }}
           OPENCODEREVIEW_TAG: ${{ steps.runtimes.outputs.opencodereview_tag }}
           ORCA_TAG: ${{ steps.runtimes.outputs.orca_tag }}
+          OPENHANDS_TAG: ${{ steps.runtimes.outputs.openhands_tag }}
           PI_TAG: ${{ steps.runtimes.outputs.pi_tag }}
           NODERED_TAG: ${{ steps.runtimes.outputs.nodered_tag }}
           N8N_TAG: ${{ steps.runtimes.outputs.n8n_tag }}
@@ -407,6 +419,7 @@ jobs:
                        "agenthub-holmes-${HOLMES_TAG}.tar.gz" "agenthub-browsercode-${BROWSERCODE_TAG}.tar.gz" \
                        "agenthub-opencodereview-${OPENCODEREVIEW_TAG}.tar.gz" \
                        "agenthub-orca-${ORCA_TAG}.tar.gz" \
+                       "agenthub-openhands-${OPENHANDS_TAG}.tar.gz" \
                        "agenthub-pi-${PI_TAG}.tar.gz" \
                        "agenthub-nodered-${NODERED_TAG}.tar.gz" "agenthub-n8n-${N8N_TAG}.tar.gz"; do
             if [ -z "$(ls -d release/"${name}"* 2>/dev/null)" ]; then
@@ -450,9 +463,11 @@ jobs:
           BROWSERCODE_CHANGED: ${{ steps.runtimes.outputs.browsercode_changed }}
           OPENCODEREVIEW_TAG: ${{ steps.runtimes.outputs.opencodereview_tag }}
           ORCA_TAG: ${{ steps.runtimes.outputs.orca_tag }}
+          OPENHANDS_TAG: ${{ steps.runtimes.outputs.openhands_tag }}
           PI_TAG: ${{ steps.runtimes.outputs.pi_tag }}
           OPENCODEREVIEW_CHANGED: ${{ steps.runtimes.outputs.opencodereview_changed }}
           ORCA_CHANGED: ${{ steps.runtimes.outputs.orca_changed }}
+          OPENHANDS_CHANGED: ${{ steps.runtimes.outputs.openhands_changed }}
           PI_CHANGED: ${{ steps.runtimes.outputs.pi_changed }}
           NODERED_TAG: ${{ steps.runtimes.outputs.nodered_tag }}
           NODERED_CHANGED: ${{ steps.runtimes.outputs.nodered_changed }}

@@ -14,6 +14,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
 	"github.com/hkjang/AgentHub/internal/telemetry"
 	"github.com/hkjang/AgentHub/internal/workflow"
@@ -48,7 +49,18 @@ type agentServerRun struct {
 
 // runAgentServer hands the task to a registered server and keeps what it said.
 func (o *Orchestrator) runAgentServer(ctx context.Context, run *store.AgentRun, task store.AgentTask, agent store.Agent, goal store.AgentGoal, model resolvedModel) ([]string, Outcome) {
-	server, outcome := o.placeOnAgentServer(ctx, run, goal)
+	// An agent whose runtime is an agent server works on its own runtime. The
+	// registry exists for servers somebody else installed; when the platform can
+	// start one, sending the work to a stranger's machine instead would be a
+	// runtime a person chose and the platform ignored.
+	var acquired *acquiredRuntime
+	server, outcome := o.ownRuntimeAsAgentServer(ctx, run, agent, &acquired)
+	if outcome.Status == "" && server.BaseURL == "" {
+		server, outcome = o.placeOnAgentServer(ctx, run, goal)
+	}
+	if acquired != nil {
+		defer o.releaseRuntime(ctx, *run, agent, goal, acquired)
+	}
 	if outcome.Status != "" {
 		return nil, outcome
 	}
@@ -142,6 +154,44 @@ func (o *Orchestrator) runAgentServer(ctx context.Context, run *store.AgentRun, 
 // for a reason somebody could not express in a field. Otherwise the choice is
 // made among the servers that are enabled, healthy and in the zone the goal
 // asked for.
+// ownRuntimeAsAgentServer starts the agent's own server and describes it the way
+// placement describes a registered one, so everything downstream is unchanged.
+//
+// It returns an empty server for every other runtime type, which is what sends
+// the work to the registry.
+func (o *Orchestrator) ownRuntimeAsAgentServer(ctx context.Context, run *store.AgentRun, agent store.Agent, out **acquiredRuntime) (store.AgentServer, Outcome) {
+	if agent.RuntimeType != runtimetype.OpenHands {
+		return store.AgentServer{}, Outcome{}
+	}
+	acquired, err := o.acquireRuntime(ctx, *run, agent)
+	if err != nil {
+		refusal, waits := o.runtimeRefusal(ctx, agent, "", "")
+		if refusal != "" {
+			return store.AgentServer{}, Outcome{Status: store.TaskFailed, Retryable: waits, Failure: refusal}
+		}
+		return store.AgentServer{}, Outcome{Status: store.TaskFailed, Retryable: true,
+			Failure: "에이전트 서버 Runtime을 준비하지 못했습니다: " + err.Error()}
+	}
+	*out = acquired
+	instance, err := o.store.LatestRuntimeForAgent(ctx, agent.ID)
+	if err != nil {
+		return store.AgentServer{}, Outcome{Status: store.TaskFailed, Retryable: true,
+			Failure: "Runtime 주소를 읽지 못했습니다: " + err.Error()}
+	}
+	if strings.TrimSpace(instance.Endpoint) == "" {
+		// A Pod that is ready and has no address is not a server. Saying so beats
+		// a request to the empty string, which fails as something else entirely.
+		return store.AgentServer{}, Outcome{Status: store.TaskFailed, Retryable: true,
+			Failure: "Runtime이 아직 주소를 알리지 않았습니다. 잠시 후 다시 시도합니다."}
+	}
+	// No claim: the capacity of a runtime is its own Pod, and the registry's
+	// limits are about machines several agents share.
+	return store.AgentServer{
+		ID: "", Name: agent.Name + " Runtime", BaseURL: instance.Endpoint,
+		Kind: runtimetype.OpenHands, Enabled: true,
+	}, Outcome{}
+}
+
 func (o *Orchestrator) placeOnAgentServer(ctx context.Context, run *store.AgentRun, goal store.AgentGoal) (store.AgentServer, Outcome) {
 	if goal.AgentServerID != "" {
 		server, err := o.store.AgentServerByID(ctx, goal.AgentServerID)
