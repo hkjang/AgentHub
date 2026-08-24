@@ -104,3 +104,36 @@ func TestReadinessDoesNotReportRuntimesTheClusterNoLongerHas(t *testing.T) {
 		t.Error("a runtime that is gone from the cluster is still added to the screen")
 	}
 }
+
+// And it does not claim the half it is not doing.
+//
+// Inspecting requests and leaving model answers alone is a real choice — it is
+// the expensive half, and the settings keep it separate for that reason. But
+// the row said "8가지 데이터 종류를 검사합니다" either way, so a deployment whose
+// answers were never looked at read as one where they were. The answer is the
+// direction that carries data into this platform's own store and out through
+// whatever reads a run afterwards.
+func TestReadinessSaysWhichDirectionIsInspected(t *testing.T) {
+	body, err := os.ReadFile("readiness.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	at := strings.Index(source, "scannedClasses(settings)")
+	if at < 0 {
+		t.Fatal("the content-scanner check is gone; this guard is reading nothing")
+	}
+	check := source[at:]
+	if end := strings.Index(check, "\n\t})"); end >= 0 {
+		check = check[:end]
+	}
+	if !strings.Contains(check, "settings.ScanResponses") {
+		t.Error("the row reads the same whether or not model answers are inspected")
+	}
+	if !strings.Contains(check, "답변은 검사하지 않습니다") {
+		t.Error("a deployment that never inspects an answer is not told so")
+	}
+	if !strings.Contains(check, "요청과 응답에서 검사합니다") {
+		t.Error("a deployment that inspects both is not told which")
+	}
+}

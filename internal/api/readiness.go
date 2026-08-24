@@ -343,8 +343,21 @@ func (s *Server) readiness(w http.ResponseWriter, r *http.Request) {
 				Fix:    "/admin/dlp"})
 			return
 		}
+		// Which way the text is going, because the row used to say only how many
+		// classes were chosen. Scanning requests and leaving answers alone is a
+		// real choice — it is the expensive half — but a row that says "8가지
+		// 데이터 종류를 검사합니다" to a deployment whose model answers are never
+		// looked at claims the half it does not do. The answer is the direction
+		// that carries data into this platform's own store and onward.
+		if !settings.ScanResponses {
+			add(readinessItem{Area: "보안", Name: "내용 검사", Verdict: "ok",
+				Detail: fmt.Sprintf("%d가지 데이터 종류를 요청에서만 검사합니다. 모델이 돌려준 답변은 검사하지 않습니다: %s",
+					len(scanned), strings.Join(scanned, ", ")),
+				Fix: "/admin/dlp"})
+			return
+		}
 		add(readinessItem{Area: "보안", Name: "내용 검사", Verdict: "ok",
-			Detail: fmt.Sprintf("%d가지 데이터 종류를 검사합니다: %s", len(scanned), strings.Join(scanned, ", ")),
+			Detail: fmt.Sprintf("%d가지 데이터 종류를 요청과 응답에서 검사합니다: %s", len(scanned), strings.Join(scanned, ", ")),
 			Fix:    "/admin/dlp"})
 	})
 
