@@ -2,6 +2,7 @@ package execution
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -190,5 +191,47 @@ func TestAnAcceptedDispatchIsNotARunningWorker(t *testing.T) {
 	// Anything else keeps the fabric's own word rather than being flattened.
 	if status, _ := orcaWorkerOutcome("running", ""); status != "running" {
 		t.Errorf("a running worker was read as %q", status)
+	}
+}
+
+// A worker is attributed to the agent this platform named through the checkout
+// it was given, and the fabric's listing drops that the moment the worker's
+// resource is released — which is exactly when it has failed.
+//
+// Measured on a cluster: three failed workers, every one of them with
+// `resource: null` and no worktree id in the listing, while `worker-show` still
+// answered `worker.worktree_id` for each. Nothing matched them, so the run
+// waited out the Goal's whole time limit and reported "워커가 최대 실행 시간
+// 안에 끝나지 않았습니다" — for workers the fabric had marked failed seconds in,
+// with the reason on the record: "Agent startup blocked: codex-update-prompt".
+func TestAFailedWorkerIsStillRecognised(t *testing.T) {
+	if name := orcaWorktreeName("56f039d6-2f5e::/home/agent/orca/workspaces/workspace/agenthub-220ea1b63722-codex"); name != "agenthub-220ea1b63722-codex" {
+		t.Errorf("the checkout's name is read as %q", name)
+	}
+	if name := orcaWorktreeName(""); name != "" {
+		t.Errorf("an absent worktree id reads as %q", name)
+	}
+	body, err := os.ReadFile("orca.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	at := strings.Index(source, "func (s *orcaSession) workerStates(")
+	if at < 0 {
+		t.Fatal("the listing reader is gone; this guard is reading nothing")
+	}
+	reader := source[at:]
+	if end := strings.Index(reader, "\n}\n"); end >= 0 {
+		reader = reader[:end]
+	}
+	if !strings.Contains(reader, "s.workerWorktreeName(ctx, worker.DispatchID)") {
+		t.Error("a worker whose resource the listing has dropped is skipped, so a failure is waited out instead of reported")
+	}
+	fallback := strings.Index(reader, "s.workerWorktreeName(")
+	skip := strings.Index(reader, `if name == "" {
+			continue
+		}`)
+	if skip >= 0 && fallback > skip {
+		t.Error("the worker is skipped before the record is asked")
 	}
 }

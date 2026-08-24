@@ -525,6 +525,37 @@ func orcaWorkerSummary(workers []orcaWorkerRef, settled, details map[string]stri
 	return lines
 }
 
+// orcaWorktreeName is the checkout's name inside a fabric worktree id, which
+// carries a uuid and a path around it.
+func orcaWorktreeName(worktreeID string) string {
+	name := strings.TrimSpace(worktreeID)
+	if at := strings.LastIndex(name, "/"); at >= 0 {
+		name = name[at+1:]
+	}
+	return name
+}
+
+// workerWorktreeName asks which checkout a dispatch was given.
+//
+// The listing is the only place a fabric state can be attributed to an agent
+// this platform named, and it does that through the worktree id — which the
+// listing drops when the worker's resource is released. The record for one
+// dispatch keeps it, so a worker that has ended can still be recognised.
+func (s *orcaSession) workerWorktreeName(ctx context.Context, dispatchID string) string {
+	if dispatchID == "" {
+		return ""
+	}
+	var shown struct {
+		Worker struct {
+			WorktreeID string `json:"worktree_id"`
+		} `json:"worker"`
+	}
+	if err := s.call(ctx, &shown, "orchestration", "worker-show", "--dispatch", dispatchID, "--json"); err != nil {
+		return ""
+	}
+	return orcaWorktreeName(shown.Worker.WorktreeID)
+}
+
 // workerStatus asks the fabric what became of a dispatch it just accepted.
 //
 // Accepting a dispatch and running a worker are different events, and the second
@@ -690,9 +721,17 @@ func (s *orcaSession) workerStates(ctx context.Context) map[string]orcaWorkerSta
 		if status == "" {
 			status = strings.TrimSpace(worker.DispatchStatus)
 		}
-		name := worker.Resource.WorktreeID
-		if at := strings.LastIndex(name, "/"); at >= 0 {
-			name = name[at+1:]
+		name := orcaWorktreeName(worker.Resource.WorktreeID)
+		if name == "" {
+			// The listing drops a worker's resource the moment it is released,
+			// and that is exactly when the worker has failed: measured live,
+			// every failed worker in a listing had `resource: null` while
+			// worker-show still knew its checkout. Attributing only from the
+			// listing meant a failed worker was never matched to the agent this
+			// platform had named, never settled, and waited out the Goal's time
+			// limit — so "Agent startup blocked" was reported as a run that took
+			// too long.
+			name = s.workerWorktreeName(ctx, worker.DispatchID)
 		}
 		if name == "" {
 			continue
