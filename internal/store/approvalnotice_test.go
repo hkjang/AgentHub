@@ -89,3 +89,37 @@ func TestTheApprovalFallbackGoesToWhoeverCanDecide(t *testing.T) {
 		t.Error("the fallback notifies deactivated accounts; a notification nobody can read is the state this exists to prevent")
 	}
 }
+
+// Cancelling work cancels the decision it was waiting for.
+//
+// A task parked on an approval left that approval pending for ever. The
+// reviewer went on being asked about work somebody had called off, and
+// answering did nothing: the query that resumes a task matches only rows still
+// waiting, and a cancelled one never matches again. Three pending approvals
+// were sitting in one deployment when this was written.
+func TestCancellingWorkCancelsTheDecisionItWaitedFor(t *testing.T) {
+	body, err := os.ReadFile("execution.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	at := strings.Index(source, "func (s *Store) CancelAgentTask(")
+	if at < 0 {
+		t.Fatal("cancellation is gone; this guard is reading nothing")
+	}
+	cancel := source[at:]
+	if end := strings.Index(cancel, "\n// TaskWasCancelled"); end >= 0 {
+		cancel = cancel[:end]
+	}
+	if !strings.Contains(cancel, "UPDATE approvals") {
+		t.Error("a cancelled task leaves its approval pending, so a reviewer is asked about work that is over")
+	}
+	if !strings.Contains(cancel, "a.status='pending'") {
+		t.Error("cancellation rewrites approvals somebody already decided")
+	}
+	// The descendants are cancelled too, so their approvals must be as well —
+	// the whole point of the tree query one statement above.
+	if !strings.Contains(cancel[strings.Index(cancel, "UPDATE approvals"):], "tree") {
+		t.Error("only the parent's approval is cancelled; a delegated child's is left pending")
+	}
+}

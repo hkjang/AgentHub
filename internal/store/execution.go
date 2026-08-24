@@ -925,6 +925,26 @@ func (s *Store) CancelAgentTask(ctx context.Context, taskID, ownerID string) (in
 	if err != nil {
 		return 0, err
 	}
+	// The decision the work was waiting for dies with the work. A task parked on
+	// an approval left that approval pending for ever: the reviewer went on being
+	// asked about a task somebody had called off, and answering did nothing at
+	// all — the query that resumes a task matches only rows still waiting, and
+	// this one is cancelled. The same shape as the delegated children above, one
+	// field over.
+	if _, err := s.pool.Exec(ctx, `
+		WITH RECURSIVE tree AS (
+			SELECT id, 0 AS depth FROM agent_tasks WHERE id=$1
+			UNION ALL
+			SELECT t.id, tree.depth+1 FROM agent_tasks t JOIN tree ON t.parent_task_id = tree.id
+			WHERE tree.depth < 20
+		)
+		UPDATE approvals a SET status='cancelled', decided_at=now()
+		FROM agent_tasks t
+		WHERE t.approval_id = a.id AND a.status='pending'
+		  AND t.status='cancelled' AND t.owner_id=$2
+		  AND t.id IN (SELECT id FROM tree)`, taskID, ownerID); err != nil {
+		return 0, err
+	}
 	return int(descendants.RowsAffected()), nil
 }
 
