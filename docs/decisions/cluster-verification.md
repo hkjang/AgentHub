@@ -56,6 +56,23 @@ a platform bug until it is understood:
 | Forge webhook | a Gitea-signed payload creates a task carrying the pull request's address |
 | Posting back | the finding is commented on that pull request, and the next review edits the same comment rather than adding one |
 | Forge credential check | a stored token is checked at save time and the account name comes back |
+| `orca` backend | the fabric creates its run, task and worktree in the runtime's own repository — after the mount that made that possible |
+| `rpc` backend | task completes with the agent's answer and real token usage; the agent declares its own tools to the gateway |
+| Cancelling a running task | the stop button ends an in-Pod agent: the task reads cancelled and no agent process is left in the Pod |
 
-Not established: `rpc` and `orca` (their images were not in the cluster), and
-forking and condensation on the agent server, which the platform does not use.
+Not established: forking and condensation on the agent server, which the
+platform does not use.
+
+Two things this round is worth keeping:
+
+- **The fabric could not see the workspace.** Orca runs as a sidecar so a closed
+  shell does not take the workers with it, and it had every mount except the
+  repository — so every task was refused with "Not a valid git repository:
+  /workspace", the fabric's own words about a directory that really was empty.
+  Nothing was wrong except the mount, and nothing but running it would have said
+  so.
+- **Cancelling needs no per-backend work in a Pod.** The claim-keeper notices a
+  cancelled task and cancels the run's context, which ends the exec — verified
+  by cancelling a Pi task mid-run and finding no agent process left. The agent
+  server backend needs its own check only because its work happens on a machine
+  that context cannot reach.
