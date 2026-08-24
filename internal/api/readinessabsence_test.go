@@ -160,3 +160,63 @@ func TestTheConsoleShowsAFailedStepsOutputToo(t *testing.T) {
 		t.Error("the step's output is no longer shown")
 	}
 }
+
+// Taking a runtime away from work is a decision, not a click.
+//
+// The platform has always known why a runtime must not be stopped — the idle
+// sweeper, the warm pool and the release path all ask RuntimeBusy — and the one
+// place a person presses the button never did.
+//
+// Measured on a cluster: a task was running, the console's stop returned 202
+// with no warning, and the task died as "ACP 실행이 실패했습니다: 에이전트가
+// 응답을 끝내지 않고 종료했습니다" — blaming the agent for a decision a person
+// had just made.
+func TestStoppingABusyRuntimeAsksFirst(t *testing.T) {
+	body, err := os.ReadFile("routes.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	action := source[strings.Index(source, "func (s *Server) runtimeAction("):]
+	if end := strings.Index(action, "\n// forceRequested"); end >= 0 {
+		action = action[:end]
+	}
+	if !strings.Contains(action, "s.store.RuntimeBusy(") {
+		t.Error("a person can stop a runtime out from under running work without being told")
+	}
+	if !strings.Contains(action, `"runtime_busy"`) {
+		t.Error("the refusal has no code, so a screen cannot offer to confirm it")
+	}
+	if !strings.Contains(action, "forceRequested(r)") {
+		t.Error("there is no way to say it was meant — stopping a stuck runtime is what the button is for")
+	}
+	restart := source[strings.Index(source, "func (s *Server) restartRuntime("):]
+	if end := strings.Index(restart, "\nfunc "); end >= 0 {
+		restart = restart[:end]
+	}
+	if !strings.Contains(restart, "s.store.RuntimeBusy(") {
+		t.Error("a restart takes the Pod away exactly as a stop does, and asks nobody")
+	}
+}
+
+// And the answer has to survive the trip to the screen.
+func TestTheConsoleCanTellOneRefusalFromAnother(t *testing.T) {
+	body, err := os.ReadFile("../../web/src/api.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	if !strings.Contains(source, "export class ApiError") {
+		t.Error("the API's error code is dropped in the client, so no screen can act on which refusal it was")
+	}
+	if strings.Contains(source, "throw new Error(payload.error") {
+		t.Error("a refusal is still thrown as a bare message somewhere")
+	}
+	page, err := os.ReadFile("../../web/src/pages/Agents.tsx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(page), "err.code==='runtime_busy'") {
+		t.Error("the console shows the refusal as an error banner with no way to answer it")
+	}
+}

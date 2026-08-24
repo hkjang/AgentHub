@@ -3,7 +3,7 @@ import { Activity, Bot, CircleStop, Download, ExternalLink, FileText, History, L
 import { Link } from 'react-router-dom'
 import { useAuth } from '../App'
 import { object, topic } from '../korean'
-import { api } from '../api'
+import { ApiError, api } from '../api'
 import { ConfirmDialog, Drawer, Empty, ErrorBanner, GuidePanel, Loading, PageHeader, StatusBadge } from '../components/UI'
 import { useTerms } from '../viewmode'
 import { RUNNER_VERDICT_LABELS, runtimeTypeList, descriptor, relativeTime, runnerExperienceOf, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
@@ -209,16 +209,23 @@ export function Agents({runtimeOnly=false}:{runtimeOnly?:boolean}) {
       setError(err instanceof Error?err.message:'정의를 가져오지 못했습니다.')
     }
   }
-  const act=async(agent:Agent,verb:'spawn'|'start'|'stop'|'restart')=>{
+  const act=async(agent:Agent,verb:'spawn'|'start'|'stop'|'restart',force=false)=>{
     setError('')
     setBusy(agent.id)
     try {
       if(verb==='spawn') await api.post(`/api/v1/agents/${agent.id}/spawn`)
       else if(verb==='start') await api.post(`/api/v1/runtimes/${agent.runtime!.id}/start`)
-      else if(verb==='stop') await api.post(`/api/v1/runtimes/${agent.runtime!.id}/stop`)
-      else if(verb==='restart') await api.post(`/api/v1/runtimes/${agent.runtime!.id}/restart`)
+      else if(verb==='stop') await api.post(`/api/v1/runtimes/${agent.runtime!.id}/stop`,{force})
+      else if(verb==='restart') await api.post(`/api/v1/runtimes/${agent.runtime!.id}/restart`,{force})
       await refresh()
     } catch(err) {
+      // The platform will not take a runtime away from work without being asked
+      // twice. It says what is on it; the person decides.
+      if(err instanceof ApiError&&err.code==='runtime_busy'&&!force){
+        setBusy(null)
+        if(window.confirm(err.message)) return act(agent,verb,true)
+        return
+      }
       setError(err instanceof Error?err.message:`작업(${verb})을 수행하지 못했습니다.`)
     } finally {
       setBusy(null)

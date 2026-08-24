@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -356,6 +357,23 @@ func (s *Server) runtimeAction(state string) http.HandlerFunc {
 		// user's agent must not spend their own allowance nor let the owner exceed
 		// theirs. Holding it while the state is written is what stops two starts
 		// arriving together from both taking the last one.
+		// Stopping a runtime somebody is using kills the work on it. The platform
+		// has always known why a runtime must not be stopped — the idle sweeper,
+		// the warm pool and the release path all ask — and the one place a person
+		// presses the button never did. Measured on a cluster: a task running on a
+		// runtime that was stopped from the console died as "ACP 실행이
+		// 실패했습니다: 에이전트가 응답을 끝내지 않고 종료했습니다", blaming the
+		// agent for a decision a person had just made.
+		//
+		// It is a confirmation rather than a refusal. Stopping a runtime that is
+		// misbehaving is exactly what this button is for, so the answer says what
+		// will break and takes force to mean the person meant it.
+		if state == "stopped" && !forceRequested(r) {
+			if reason, busyErr := s.store.RuntimeBusy(r.Context(), current.ID, current.AgentID, ""); busyErr == nil && reason != "" {
+				writeError(w, http.StatusConflict, "runtime_busy", reason+". 그래도 정지하려면 다시 확인해 주세요.")
+				return
+			}
+		}
 		var rt store.Runtime
 		if state == "running" && current.DesiredState != "running" {
 			rt, err = s.store.StartRuntimeWithinQuota(r.Context(), chi.URLParam(r, "id"), u.ID, spec.Profile.ID, u.Role == "admin")
@@ -386,6 +404,24 @@ func (s *Server) runtimeAction(state string) http.HandlerFunc {
 		writeJSON(w, 202, rt)
 	}
 }
+
+// forceRequested reads the caller's "I meant it" — as a query parameter or in
+// the body, because the console sends one and a script tends to send the other.
+func forceRequested(r *http.Request) bool {
+	if strings.EqualFold(r.URL.Query().Get("force"), "true") {
+		return true
+	}
+	var input struct {
+		Force bool `json:"force"`
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 4096))
+	if err != nil || len(body) == 0 {
+		return false
+	}
+	_ = json.Unmarshal(body, &input)
+	return input.Force
+}
+
 func (s *Server) restartRuntime(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	current, err := s.store.RuntimeByID(r.Context(), chi.URLParam(r, "id"), u.ID, u.Role == "admin")
@@ -397,6 +433,14 @@ func (s *Server) restartRuntime(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeStoreError(w, err)
 		return
+	}
+	// A restart takes the Pod away exactly as a stop does, and takes the work on
+	// it with it.
+	if !forceRequested(r) {
+		if reason, busyErr := s.store.RuntimeBusy(r.Context(), current.ID, current.AgentID, ""); busyErr == nil && reason != "" {
+			writeError(w, http.StatusConflict, "runtime_busy", reason+". 그래도 다시 시작하려면 확인해 주세요.")
+			return
+		}
 	}
 	spec, err := s.runtimeSpec(r, current, agent)
 	if err != nil {

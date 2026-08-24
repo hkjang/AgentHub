@@ -8,6 +8,22 @@ type ErrorResponse = { error?: { code?: string; message?: string } }
  */
 export const UNAUTHORIZED_EVENT = 'agenthub:unauthorized'
 
+/**
+ * An error the API named. The message is what a person reads; the code is what
+ * a screen can act on — "this runtime is busy" needs an answer, not a banner,
+ * and the code was thrown away one line before anybody could see it.
+ */
+export class ApiError extends Error {
+  code: string
+  status: number
+  constructor(message: string, code: string, status: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.code = code
+    this.status = status
+  }
+}
+
 function reportUnauthorized(url: string) {
   // A rejected sign-in is a wrong password, not an expired session, and a 401
   // relayed from a runtime's own API belongs to that runtime.
@@ -29,7 +45,7 @@ export async function request<T>(url: string, options: RequestInit = {}): Promis
     if (response.status === 401) reportUnauthorized(url)
     let payload: ErrorResponse = {}
     try { payload = await response.json() } catch { /* response is not JSON */ }
-    throw new Error(payload.error?.message ?? `요청을 처리하지 못했습니다. (${response.status})`)
+    throw new ApiError(payload.error?.message ?? `요청을 처리하지 못했습니다. (${response.status})`, payload.error?.code ?? '', response.status)
   }
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
@@ -45,7 +61,7 @@ async function requestText(url: string, options: RequestInit = {}): Promise<stri
     if (response.status === 401) reportUnauthorized(url)
     let payload: ErrorResponse = {}
     try { payload = await response.json() } catch { /* response is not JSON */ }
-    throw new Error(payload.error?.message ?? `요청을 처리하지 못했습니다. (${response.status})`)
+    throw new ApiError(payload.error?.message ?? `요청을 처리하지 못했습니다. (${response.status})`, payload.error?.code ?? '', response.status)
   }
   return response.text()
 }
