@@ -270,7 +270,7 @@ function Readiness() {
   }
   return <section className="panel readiness">
     <div className="panel-header">
-      <div><h2>배포 점검</h2><p>클러스터, SSO, 모델 엔드포인트, 에이전트 서버, MCP 서버, 그리고 이 배포의 워커에게 지금 동작하는지 직접 물어봅니다.</p></div>
+      <div><h2>배포 점검</h2><p>클러스터, SSO, 모델 엔드포인트, 에이전트 서버, MCP 서버, 코드 호스트, 워커에게 지금 동작하는지 직접 물어보고, 시작하지 못한 Runtime·계속 죽는 Runtime·플랫폼이 포기한 작업을 함께 모아 보여 줍니다.</p></div>
       <button className="button ghost" disabled={busy} onClick={() => void ask()}>
         <Stethoscope size={16} />{busy ? '점검 중…' : '지금 점검'}
       </button>
@@ -280,8 +280,12 @@ function Readiness() {
       ? <p className="readiness-empty">점검할 의존성이 아직 없습니다. Kubernetes 연결과 모델 엔드포인트를 먼저 등록하세요.</p>
       : <>
         <p className="readiness-summary">{problems === 0 ? `${items.length}가지 모두 정상입니다.` : `${items.length}가지 중 ${problems}가지에 문제가 있습니다.`}</p>
-        <ul className="readiness-list">{items.map((item) => (
-          <li key={`${item.area}-${item.name}`} className={READY.has(item.verdict) ? 'ok' : 'bad'}>
+        {/* The verdict is part of the key because one thing can be wrong in two
+            ways at once: a runtime that keeps dying is also a runtime that never
+            became ready, and it says both. Keyed on area and name alone, those
+            two rows collide. */}
+        <ul className="readiness-list">{items.map((item, index) => (
+          <li key={`${item.area}-${item.name}-${item.verdict}-${index}`} className={READY.has(item.verdict) ? 'ok' : 'bad'}>
             <Link to={item.fix}><b>{item.area}</b> {item.name}</Link>
             <span>{item.detail}</span>
           </li>
