@@ -135,7 +135,7 @@ func (o *Orchestrator) runACP(ctx context.Context, run *store.AgentRun, task sto
 	run.TotalTokens += turn.totalTokens
 	run.Metering = acpMetering(turn)
 	if runErr != nil {
-		record.Status, record.Error = "failed", runErr.Error()
+		record.Status, record.Error = "failed", failureWith(runErr, inspectErr)
 	}
 	if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 		o.logger.Error("acp step could not be recorded", "run", run.ID, "error", storeErr)

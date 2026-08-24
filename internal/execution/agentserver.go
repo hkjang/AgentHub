@@ -116,7 +116,7 @@ func (o *Orchestrator) runAgentServer(ctx context.Context, run *store.AgentRun, 
 		run.Metering = store.MeteringUnmetered
 	}
 	if convErr != nil {
-		record.Status, record.Error = "failed", convErr.Error()
+		record.Status, record.Error = "failed", failureWith(convErr, inspectErr)
 		if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 			o.logger.Error("agent server step could not be recorded", "run", run.ID, "error", storeErr)
 		}

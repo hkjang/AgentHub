@@ -167,7 +167,7 @@ func (o *Orchestrator) runRPC(ctx context.Context, run *store.AgentRun, task sto
 		run.Metering = store.MeteringUnmetered
 	}
 	if convErr != nil {
-		record.Status, record.Error = "failed", convErr.Error()
+		record.Status, record.Error = "failed", failureWith(convErr, inspectErr)
 		if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 			o.logger.Error("rpc step could not be recorded", "run", run.ID, "error", storeErr)
 		}

@@ -26,3 +26,26 @@ func (o *Orchestrator) inspectAnswer(ctx context.Context, step workflow.Step, an
 	}
 	return o.flowInspector.Inbound(ctx, step, answer)
 }
+
+// failureWith says both things that went wrong.
+//
+// A run can fail for its own reason and have its text refused by the scanner in
+// the same moment. The step recorded whichever was assigned last, and the answer
+// was gone either way — so an empty output explained by a timeout read as a run
+// that produced nothing, when what happened is that the platform would not keep
+// what it produced.
+//
+// Measured live on the fabric backend: a run cancelled while a card number sat
+// in its workers' words stored an empty step whose only explanation was
+// "워커 실행이 취소됐습니다".
+func failureWith(primary, refusal error) string {
+	switch {
+	case primary == nil && refusal == nil:
+		return ""
+	case primary == nil:
+		return refusal.Error()
+	case refusal == nil:
+		return primary.Error()
+	}
+	return primary.Error() + " — " + refusal.Error()
+}

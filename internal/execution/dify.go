@@ -85,10 +85,11 @@ func (o *Orchestrator) runExternalApp(ctx context.Context, run *store.AgentRun, 
 		Title: "외부 앱 실행: " + app.Name, Input: input, Output: inspected, Status: "succeeded", DurationMs: elapsed,
 	}
 	run.StepCount = 1
-	if callErr != nil {
-		record.Status, record.Error = "failed", callErr.Error()
-	} else if inspectErr != nil {
-		record.Status, record.Error, record.Output = "failed", inspectErr.Error(), ""
+	if callErr != nil || inspectErr != nil {
+		record.Status, record.Error = "failed", failureWith(callErr, inspectErr)
+	}
+	if inspectErr != nil {
+		record.Output = ""
 	}
 	if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 		o.logger.Error("external app step could not be recorded", "run", run.ID, "error", storeErr)

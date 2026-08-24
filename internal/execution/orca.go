@@ -125,15 +125,9 @@ func (o *Orchestrator) runOrca(ctx context.Context, run *store.AgentRun, task st
 	inspected, inspectErr := o.inspectAnswer(ctx, step, summary)
 	record.Output = inspected
 	if fabricErr != nil {
-		record.Status, record.Error = "failed", fabricErr.Error()
-		if inspectErr != nil {
-			// Two things went wrong and only one of them was being said. A run
-			// cancelled while its workers' words were refused stored an empty
-			// step and "워커 실행이 취소됐습니다" — measured live — so the empty
-			// step read as a run that produced nothing, when what happened is
-			// that the platform would not keep what it produced.
-			record.Error += " — " + inspectErr.Error()
-		}
+		// Both, when both happened: a run cancelled while its workers' words were
+		// refused stored an empty step and "워커 실행이 취소됐습니다" alone.
+		record.Status, record.Error = "failed", failureWith(fabricErr, inspectErr)
 		if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 			o.logger.Error("orca step could not be recorded", "run", run.ID, "error", storeErr)
 		}

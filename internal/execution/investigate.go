@@ -104,7 +104,7 @@ func (o *Orchestrator) runInvestigate(ctx context.Context, run *store.AgentRun, 
 	}
 	record.PromptTokens, record.CompletionTokens = report.PromptTokens, report.CompletionTokens
 	if parseErr != nil {
-		record.Status, record.Error = "failed", parseErr.Error()
+		record.Status, record.Error = "failed", failureWith(parseErr, inspectErr)
 	}
 	if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 		o.logger.Error("investigate step could not be recorded", "run", run.ID, "error", storeErr)

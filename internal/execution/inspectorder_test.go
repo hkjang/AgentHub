@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -98,5 +99,69 @@ func TestABlockedAnswerIsNotReportedAsSilence(t *testing.T) {
 	}
 	if refusal > silence {
 		t.Error("an answer the scanner refused is reported as an agent that said nothing")
+	}
+}
+
+// A refusal survives a failure that happened at the same moment.
+//
+// Every backend that scans can also fail for its own reason — a timeout, a
+// cancellation, an answer it could not parse — and the step recorded whichever
+// error was assigned last. The output was gone either way, so an empty step
+// explained by a timeout read as a run that produced nothing rather than one
+// whose product the platform refused to keep.
+//
+// Measured live on the fabric backend before this was shared: a run cancelled
+// while a card number sat in its workers' words stored an empty step and
+// "워커 실행이 취소됐습니다", with no mention of the refusal.
+func TestBothReasonsSurviveWhenBothHappened(t *testing.T) {
+	if got := failureWith(errors.New("취소됐습니다"), errors.New("차단되었습니다")); got != "취소됐습니다 — 차단되었습니다" {
+		t.Errorf("both reasons read as %q", got)
+	}
+	if got := failureWith(nil, errors.New("차단되었습니다")); got != "차단되었습니다" {
+		t.Errorf("a refusal alone reads as %q", got)
+	}
+	if got := failureWith(errors.New("취소됐습니다"), nil); got != "취소됐습니다" {
+		t.Errorf("a failure alone reads as %q", got)
+	}
+	if got := failureWith(nil, nil); got != "" {
+		t.Errorf("nothing wrong reads as %q", got)
+	}
+	for _, file := range []string{"acp.go", "cli.go", "rpc.go", "agentserver.go", "investigate.go", "flow.go", "dify.go", "orca.go"} {
+		body, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source := string(body)
+		if !strings.Contains(source, "o.inspectAnswer(ctx, step,") {
+			continue
+		}
+		if !strings.Contains(source, "failureWith(") {
+			t.Errorf("%s can lose a refusal to whichever error is assigned after it", file)
+		}
+	}
+}
+
+// A step whose answer the scanner refused is not a step that succeeded.
+//
+// The cli backend cleared the refused answer and left the status alone, so a
+// blocked run showed a step marked succeeded with nothing in it — the shape
+// this platform keeps removing, a failure wearing a healthy word.
+func TestARefusedStepIsNotASucceededStep(t *testing.T) {
+	for _, file := range []string{"acp.go", "cli.go", "rpc.go", "agentserver.go", "investigate.go", "flow.go", "dify.go", "orca.go"} {
+		body, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source := string(body)
+		if !strings.Contains(source, "o.inspectAnswer(ctx, step,") {
+			continue
+		}
+		// That the scanned answer is what gets recorded is held by the guard
+		// above; what this one holds is the status that goes with it.
+		// Every backend must mark the step failed somewhere that inspectErr can
+		// reach — either on its own or together with another reason.
+		if !strings.Contains(source, "failureWith(") && !strings.Contains(source, `record.Status, record.Error, record.Output = "failed", inspectErr.Error(), ""`) {
+			t.Errorf("%s can leave a refused step marked succeeded", file)
+		}
 	}
 }

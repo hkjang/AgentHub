@@ -104,10 +104,11 @@ func (o *Orchestrator) runFlow(ctx context.Context, run *store.AgentRun, task st
 		RunID: run.ID, Sequence: sequence, Type: store.StepFlow,
 		Title: "흐름 실행", Input: input, Output: inspected, Status: "succeeded", DurationMs: elapsed,
 	}
-	if err != nil {
-		record.Status, record.Error = "failed", err.Error()
-	} else if inspectErr != nil {
-		record.Status, record.Error, record.Output = "failed", inspectErr.Error(), ""
+	if err != nil || inspectErr != nil {
+		record.Status, record.Error = "failed", failureWith(err, inspectErr)
+	}
+	if inspectErr != nil {
+		record.Output = ""
 	}
 	if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 		o.logger.Error("flow step could not be recorded", "run", run.ID, "error", storeErr)

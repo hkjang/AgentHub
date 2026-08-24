@@ -123,8 +123,12 @@ func (o *Orchestrator) runCLI(ctx context.Context, run *store.AgentRun, task sto
 	// recorded only on the run are spend no report can see — on a run that says it
 	// was metered.
 	record.PromptTokens, record.CompletionTokens = parsed.InputTokens, parsed.OutputTokens
-	if parseErr != nil {
-		record.Status, record.Error = "failed", parseErr.Error()
+	// A step whose output the scanner refused is not a step that succeeded. This
+	// one cleared the answer and left the status alone, so a blocked run showed a
+	// succeeded step with nothing in it — and where the agent also failed to
+	// parse, the refusal was replaced by that instead of joining it.
+	if parseErr != nil || inspectErr != nil {
+		record.Status, record.Error = "failed", failureWith(parseErr, inspectErr)
 	}
 	if _, storeErr := o.store.AppendRunStep(recordStepContext(ctx), record); storeErr != nil {
 		o.logger.Error("cli step could not be recorded", "run", run.ID, "error", storeErr)
