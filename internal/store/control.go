@@ -66,7 +66,7 @@ const maxMemoryValueBytes = 4000
 // rewrite replaces rather than accumulating duplicates of the same key.
 func (s *Store) PutMemory(ctx context.Context, item AgentMemory, runID string) error {
 	if len(item.Value) > maxMemoryValueBytes {
-		return fmt.Errorf("기억 %q의 값이 %d바이트로 상한(%d)을 넘습니다", item.Key, len(item.Value), maxMemoryValueBytes)
+		return Invalid{Message: fmt.Sprintf("기억 %q의 값이 %d바이트로 상한(%d)을 넘습니다", item.Key, len(item.Value), maxMemoryValueBytes)}
 	}
 	var conflict string
 	switch item.Scope {
@@ -77,7 +77,7 @@ func (s *Store) PutMemory(ctx context.Context, item AgentMemory, runID string) e
 	case "workspace":
 		conflict = "(workspace_id, key) WHERE scope = 'workspace'"
 	default:
-		return fmt.Errorf("알 수 없는 기억 범위 %q", item.Scope)
+		return Invalid{Message: fmt.Sprintf("알 수 없는 기억 범위 %q", item.Scope)}
 	}
 	_, err := s.pool.Exec(ctx, `INSERT INTO agent_memories(id,owner_id,scope,agent_id,task_id,workspace_id,key,value,written_by_run_id)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)

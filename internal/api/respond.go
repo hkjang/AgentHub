@@ -41,6 +41,15 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not_found", "요청한 리소스를 찾을 수 없습니다.")
 		return
 	}
+	// A request that names something this platform does not have is the caller's
+	// mistake, answered as one. It arrived here as a 500 carrying its own
+	// sentence — measured: an unknown agent-server kind answered "요청을 처리하지
+	// 못했습니다: 알 수 없는 서버 종류입니다: nonsense", which tells somebody who
+	// mistyped a field that they broke the platform.
+	if errors.Is(err, store.ErrInvalid) {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
 	if errors.Is(err, store.ErrConflict) {
 		writeError(w, http.StatusConflict, "conflict", err.Error())
 		return

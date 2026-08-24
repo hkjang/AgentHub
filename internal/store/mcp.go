@@ -31,7 +31,7 @@ type MCPToolPolicy struct {
 // PutMCPToolPolicy stores one agent's policy for one server.
 func (s *Store) PutMCPToolPolicy(ctx context.Context, policy MCPToolPolicy) (MCPToolPolicy, error) {
 	if policy.Mode != "allow" && policy.Mode != "deny" {
-		return MCPToolPolicy{}, fmt.Errorf("알 수 없는 도구 정책 모드 %q", policy.Mode)
+		return MCPToolPolicy{}, Invalid{Message: fmt.Sprintf("알 수 없는 도구 정책 모드 %q", policy.Mode)}
 	}
 	if policy.Tools == nil {
 		policy.Tools = []string{}

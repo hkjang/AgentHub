@@ -55,13 +55,13 @@ func scanAgentServer(row pgx.Row) (AgentServer, error) {
 // SaveAgentServer registers a server or updates one.
 func (s *Store) SaveAgentServer(ctx context.Context, item AgentServer, actorID string) (AgentServer, error) {
 	if strings.TrimSpace(item.Name) == "" || strings.TrimSpace(item.BaseURL) == "" {
-		return AgentServer{}, errors.New("이름과 주소가 필요합니다")
+		return AgentServer{}, Invalid{Message: "이름과 주소가 필요합니다"}
 	}
 	if item.Kind == "" {
 		item.Kind = "openhands"
 	}
 	if !contains(AgentServerKinds, item.Kind) {
-		return AgentServer{}, errors.New("알 수 없는 서버 종류입니다: " + item.Kind)
+		return AgentServer{}, Invalid{Message: "알 수 없는 서버 종류입니다: " + item.Kind}
 	}
 	if item.ID == "" {
 		item.ID = uuid.NewString()

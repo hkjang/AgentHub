@@ -402,3 +402,23 @@ func TestReadinessSaysWhenWorkIsWaitingOnALimit(t *testing.T) {
 		t.Error("the grace is counted from a timestamp the retry keeps refreshing, so the row can never appear")
 	}
 }
+
+// And the API has to answer it as one.
+func TestTheAPIAnswersAnImpossibleRequestAsABadRequest(t *testing.T) {
+	body, err := os.ReadFile("respond.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	invalid := strings.Index(source, "store.ErrInvalid")
+	fallback := strings.Index(source, `"internal_error"`)
+	if invalid < 0 {
+		t.Error("a request naming something this platform does not have still lands on the fault path")
+	}
+	if fallback >= 0 && invalid > fallback {
+		t.Error("the fault path is reached first, so nothing else is ever consulted")
+	}
+	if !strings.Contains(source, `writeError(w, http.StatusBadRequest, "invalid_request", err.Error())`) {
+		t.Error("the answer does not carry the store's own sentence, or is not a bad request")
+	}
+}

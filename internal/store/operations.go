@@ -401,10 +401,10 @@ func (policy RetentionPolicy) Validate() error {
 			continue
 		}
 		if limit.days < limit.floor {
-			return fmt.Errorf("%s 보관 기간은 최소 %d일이어야 합니다", limit.name, limit.floor)
+			return Invalid{Message: fmt.Sprintf("%s 보관 기간은 최소 %d일이어야 합니다", limit.name, limit.floor)}
 		}
 		if limit.days > 3650 {
-			return errors.New("보관 기간은 최대 3650일입니다")
+			return Invalid{Message: "보관 기간은 최대 3650일입니다"}
 		}
 	}
 	return nil

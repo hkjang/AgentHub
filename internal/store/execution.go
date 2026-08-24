@@ -793,7 +793,7 @@ func (s *Store) HandOffTask(ctx context.Context, taskID, note string) error {
 // would leave every handover open forever.
 func (s *Store) ResolveHandoffTask(ctx context.Context, taskID, ownerID, status, note string, admin bool) (AgentTask, error) {
 	if status != TaskCompleted && status != TaskCancelled {
-		return AgentTask{}, errors.New("인계된 작업은 완료 또는 취소로만 마무리할 수 있습니다")
+		return AgentTask{}, Conflict{Message: "인계된 작업은 완료 또는 취소로만 마무리할 수 있습니다"}
 	}
 	// Aliased as t because the shared column list is written for the claim query,
 	// which needs the alias.

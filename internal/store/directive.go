@@ -41,7 +41,7 @@ var RunDirectiveKinds = []string{"steer", "follow_up"}
 // which reads as the platform ignoring them.
 func (s *Store) AddRunDirective(ctx context.Context, runID, ownerID, kind, message string, admin bool) (RunDirective, error) {
 	if !contains(RunDirectiveKinds, kind) {
-		return RunDirective{}, errors.New("알 수 없는 지시 종류입니다: " + kind)
+		return RunDirective{}, Invalid{Message: "알 수 없는 지시 종류입니다: " + kind}
 	}
 	item := RunDirective{ID: uuid.NewString(), RunID: runID, Kind: kind, Message: message}
 	query := `INSERT INTO run_directives (id, run_id, kind, message, created_by)

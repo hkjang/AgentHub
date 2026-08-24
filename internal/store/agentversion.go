@@ -180,7 +180,7 @@ func (s *Store) PromoteAgentVersion(ctx context.Context, agentID string, version
 			return AgentRelease{}, err
 		}
 		if !passed {
-			return AgentRelease{}, fmt.Errorf("v%d에 통과한 사전검증 결과가 없어 승격할 수 없습니다", version)
+			return AgentRelease{}, Conflict{Message: fmt.Sprintf("v%d에 통과한 사전검증 결과가 없어 승격할 수 없습니다", version)}
 		}
 	}
 	_, err := s.pool.Exec(ctx, `UPDATE agent_definitions

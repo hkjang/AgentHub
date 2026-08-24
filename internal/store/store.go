@@ -37,6 +37,22 @@ func (c Conflict) Error() string { return c.Message }
 
 func (c Conflict) Is(target error) bool { return target == ErrConflict }
 
+// ErrInvalid is a request that names something impossible — a kind, a mode, a
+// scope this platform does not have, or a number outside the range it accepts.
+// It is the caller's to fix, like a Conflict, and separated from it because
+// nothing about the stored state has to change: the same request will be refused
+// tomorrow.
+var ErrInvalid = errors.New("invalid")
+
+// Invalid carries the sentence a person should read, on the same reasoning as
+// Conflict: err.Error() is printed by more places than the one that classifies
+// it, so the sentinel's own word must not end up in front of the message.
+type Invalid struct{ Message string }
+
+func (i Invalid) Error() string { return i.Message }
+
+func (i Invalid) Is(target error) bool { return target == ErrInvalid }
+
 // conflictIfTaken turns a unique-constraint violation into a Conflict with a
 // message somebody can act on.
 //
