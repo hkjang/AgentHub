@@ -106,6 +106,7 @@ func proxiedRuntimePath(runtimeType, runtimeID, rest string) string {
 func (s *Server) serveRuntimeAccess(w http.ResponseWriter, r *http.Request, access runtimeAccess, proxiedPath string) {
 	if shouldTouchRuntime(proxiedPath) {
 		s.store.TouchRuntime(r.Context(), access.RuntimeID)
+		s.store.TouchRuntimeSessions(r.Context(), access.RuntimeID)
 	}
 	connection := appRuntime.Connection{Endpoint: access.Endpoint, Token: access.Token, RuntimeType: access.RuntimeType}
 	s.serveRuntimeProxy(w, r, access.RuntimeID, access.UserID, connection, proxiedPath, "/"+access.RuntimeID)

@@ -258,3 +258,46 @@ func TestForcingAStopRecordsWhatItEnded(t *testing.T) {
 		}
 	}
 }
+
+// Whether a person is at a keyboard has to keep being true.
+//
+// RuntimeBusy reads it from runtime_sessions.updated_at — "one touched in the
+// last few minutes is a person at a keyboard" — and nothing ever touched that
+// row after the session opened. Fifteen minutes in, somebody working looked
+// exactly like somebody who had walked away: the idle sweeper culls the runtime
+// they are using, and the confirmation before stopping one never appears.
+func TestAPersonWorkingKeepsLookingLikeOne(t *testing.T) {
+	store, err := os.ReadFile("../store/runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(store), "func (s *Store) TouchRuntimeSessions(") {
+		t.Fatal("nothing can refresh a session; the evidence expires and this guard is reading nothing")
+	}
+	if !strings.Contains(string(store), "UPDATE runtime_sessions SET updated_at=now() WHERE runtime_id=$1 AND status='active'") {
+		t.Error("a closed session is refreshed, or an open one is not")
+	}
+	// Every place person traffic refreshes the runtime must refresh the session
+	// too. A task's traffic must not: it would make an abandoned session look
+	// attended, which is the same lie in the other direction.
+	for _, file := range []string{"session.go", "runtimepath.go"} {
+		body, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source := string(body)
+		runtimeTouches := strings.Count(source, "s.store.TouchRuntime(r.Context()")
+		sessionTouches := strings.Count(source, "s.store.TouchRuntimeSessions(r.Context()")
+		if runtimeTouches != sessionTouches {
+			t.Errorf("%s refreshes the runtime %d times and the session %d — a person's traffic stops counting after the window",
+				file, runtimeTouches, sessionTouches)
+		}
+	}
+	worker, err := os.ReadFile("../execution/orchestrator.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(worker), "TouchRuntimeSessions(") {
+		t.Error("a task's own traffic marks a session attended, so an abandoned one never expires")
+	}
+}

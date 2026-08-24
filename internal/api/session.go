@@ -130,6 +130,7 @@ func (s *Server) launchRuntime(w http.ResponseWriter, r *http.Request) {
 		launch = (&url.URL{Scheme: settings.Scheme, Host: host, Path: launchPath, RawQuery: query}).String()
 	}
 	s.store.TouchRuntime(r.Context(), runtimeID)
+	s.store.TouchRuntimeSessions(r.Context(), runtimeID)
 	// Opening the workspace is a takeover: the warm pool must not stop a runtime
 	// somebody has just started working in.
 	s.releaseWarmClaim(r.Context(), instance)
@@ -186,6 +187,7 @@ func (s *Server) runtimeHostGateway(next http.Handler) http.Handler {
 			connection := appRuntime.Connection{Endpoint: access.Endpoint, Token: access.Token, RuntimeType: access.RuntimeType}
 			if shouldTouchRuntime(r.URL.Path) {
 				s.store.TouchRuntime(r.Context(), runtimeID)
+				s.store.TouchRuntimeSessions(r.Context(), runtimeID)
 			}
 			s.serveRuntimeProxy(w, r, runtimeID, access.UserID, connection, r.URL.Path, "")
 			return

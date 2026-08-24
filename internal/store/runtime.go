@@ -903,6 +903,22 @@ func (s *Store) ForgetMissingRuntime(ctx context.Context, id string) error {
 	return err
 }
 
+// TouchRuntimeSessions marks a runtime's open sessions as still in use.
+//
+// Whether somebody is at a keyboard is read from runtime_sessions.updated_at —
+// "an open one on its own means little; one touched in the last few minutes is a
+// person at a keyboard" — and that row was stamped when the session opened and
+// never again. The evidence expired fifteen minutes into every session, so after
+// that the platform could not tell somebody working from somebody who had walked
+// away: the idle sweeper culls a runtime being used, and the confirmation before
+// stopping one never appears.
+//
+// Only person traffic calls this. A task running in the runtime refreshes the
+// runtime's own activity, and must not make an abandoned session look attended.
+func (s *Store) TouchRuntimeSessions(ctx context.Context, runtimeID string) {
+	_, _ = s.pool.Exec(ctx, `UPDATE runtime_sessions SET updated_at=now() WHERE runtime_id=$1 AND status='active'`, runtimeID)
+}
+
 func (s *Store) TouchRuntime(ctx context.Context, id string) {
 	_, _ = s.pool.Exec(ctx, `UPDATE agent_runtimes SET last_activity_at=now(),updated_at=now() WHERE id=$1`, id)
 }
