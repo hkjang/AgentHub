@@ -46,6 +46,16 @@ const (
 	cliExitTurnLimit = 53
 	cliExitBudget    = 55
 	cliExitInterrupt = 130
+	// A container that was killed reports 128 plus the signal. 137 is SIGKILL,
+	// which in a Pod is nearly always the memory limit; 143 is SIGTERM, which is
+	// the Pod being asked to go — an eviction, a node drain, somebody stopping
+	// the runtime while its task was still running.
+	//
+	// Both arrived here as "에이전트 출력을 읽지 못했습니다(종료 코드 137)", which
+	// sends somebody to look at the agent's output format. Observed by deleting a
+	// runtime's Pod mid-run on a real cluster.
+	cliExitKilled     = 137
+	cliExitTerminated = 143
 )
 
 // runCLI executes the task as the runtime's own agent and returns its answer as
@@ -317,6 +327,10 @@ func cliFailure(exitCode int, result *cliJSON, stderr string, decodeErr error) e
 		return fmt.Errorf("에이전트가 실행 예산(시간 또는 도구 호출)을 초과해 중단했습니다%s", cliDetailSuffix(detail))
 	case cliExitInterrupt:
 		return errors.New("에이전트 실행이 중단되었습니다")
+	case cliExitKilled:
+		return fmt.Errorf("에이전트가 강제 종료됐습니다(137). Pod의 메모리 한도를 넘었거나(OOMKilled) 실행 중 Pod가 삭제된 경우입니다 — 런타임 프로파일의 Memory를 늘리거나 Runtime 상태를 확인해 주세요%s", cliDetailSuffix(detail))
+	case cliExitTerminated:
+		return fmt.Errorf("에이전트가 종료 요청을 받고 중단됐습니다(143). 실행 중 Pod가 종료된 경우입니다 — 노드 정리나 Runtime 중지가 있었는지 확인해 주세요%s", cliDetailSuffix(detail))
 	}
 	if result != nil && result.IsError {
 		return fmt.Errorf("에이전트가 오류로 끝났습니다: %s", firstLine(result.Result))
