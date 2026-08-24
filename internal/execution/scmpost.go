@@ -327,3 +327,50 @@ func existingComment(ctx context.Context, client *http.Client, request scmCommen
 	}
 	return found
 }
+
+// CheckSCMConnection asks the forge who the credential belongs to.
+//
+// A token is pasted once and used weeks later, by a review, at night. Without
+// this the first news of a wrong or expired token is a review that quietly said
+// nothing where somebody was waiting to read it — the shape of failure this
+// platform keeps removing: a control that looks configured and does nothing.
+//
+// Every one of these forges answers the same question at the same place.
+func CheckSCMConnection(ctx context.Context, client *http.Client, connection store.SCMConnection, token string) (string, error) {
+	header := http.Header{}
+	if connection.Kind == "github" {
+		header.Set("Accept", "application/vnd.github+json")
+		header.Set("X-GitHub-Api-Version", "2022-11-28")
+	}
+	authorize(header, connection.Kind, token)
+	call, err := http.NewRequestWithContext(ctx, http.MethodGet, apiRoot(connection)+"/user", nil)
+	if err != nil {
+		return "", err
+	}
+	call.Header = header
+	response, err := client.Do(call)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode >= 400 {
+		detail, _ := io.ReadAll(io.LimitReader(response.Body, 300))
+		return "", fmt.Errorf("%s가 %d로 답했습니다: %s", connection.Host, response.StatusCode,
+			strings.TrimSpace(string(detail)))
+	}
+	var who struct {
+		Login    string `json:"login"`    // GitHub, Gitea
+		Username string `json:"username"` // GitLab, Bitbucket
+	}
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<16))
+	_ = json.Unmarshal(body, &who)
+	name := who.Login
+	if name == "" {
+		name = who.Username
+	}
+	return name, nil
+}
+
+// SCMCheckClient is the client the connection check uses. Short, because a
+// person is waiting on the answer with the form still open.
+var SCMCheckClient = &http.Client{Timeout: 10 * time.Second}

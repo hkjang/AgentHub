@@ -305,3 +305,57 @@ func TestTheCommentThePlatformWritesIsOneItCanFindAgain(t *testing.T) {
 		t.Fatalf("the platform could not recognise its own comment: %s", method)
 	}
 }
+
+// A token is pasted once and used weeks later by a review at night. Whether it
+// works has to be answerable now, while the person is still looking at the form.
+func TestAStoredCredentialIsAskedAboutImmediately(t *testing.T) {
+	forge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/user" {
+			t.Errorf("the check asked %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "token s3cret" {
+			t.Errorf("the check was made with %q", r.Header.Get("Authorization"))
+		}
+		_, _ = w.Write([]byte(`{"login":"ci-bot"}`))
+	}))
+	defer forge.Close()
+	connection := store.SCMConnection{Host: strings.TrimPrefix(forge.URL, "http://"), Kind: "gitea", APIBase: forge.URL + "/api/v1"}
+	account, err := CheckSCMConnection(context.Background(), forge.Client(), connection, "s3cret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if account != "ci-bot" {
+		t.Fatalf("the forge said the token belongs to %q", account)
+	}
+}
+
+// GitLab and Bitbucket name the account differently. Reading only GitHub's
+// spelling would answer "it works, and I have no idea who as" — which reads as
+// a check that did not happen.
+func TestTheAccountIsNamedHoweverTheForgeSpellsIt(t *testing.T) {
+	forge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"username":"ci-bot","id":9}`))
+	}))
+	defer forge.Close()
+	connection := store.SCMConnection{Host: strings.TrimPrefix(forge.URL, "http://"), Kind: "gitlab", APIBase: forge.URL + "/api/v4"}
+	account, err := CheckSCMConnection(context.Background(), forge.Client(), connection, "s3cret")
+	if err != nil || account != "ci-bot" {
+		t.Fatalf("account %q, error %v", account, err)
+	}
+}
+
+func TestARefusedCredentialSaysWhatTheForgeSaid(t *testing.T) {
+	forge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"message":"Bad credentials"}`))
+	}))
+	defer forge.Close()
+	connection := store.SCMConnection{Host: strings.TrimPrefix(forge.URL, "http://"), Kind: "gitea", APIBase: forge.URL + "/api/v1"}
+	_, err := CheckSCMConnection(context.Background(), forge.Client(), connection, "wrong")
+	if err == nil {
+		t.Fatal("a refused token was reported as working")
+	}
+	if !strings.Contains(err.Error(), "401") || !strings.Contains(err.Error(), "Bad credentials") {
+		t.Fatalf("the refusal does not carry the forge's words: %v", err)
+	}
+}

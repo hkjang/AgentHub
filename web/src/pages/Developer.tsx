@@ -362,12 +362,17 @@ function CredentialDrawer({
     setBusy(true);
     try {
       if (type === "forge") {
-        await api.post("/api/v1/scm-connections", {
-          host,
-          kind: forgeKind,
-          apiBase,
-          token: value,
-        });
+        // The answer to "does this token work" arrives with the save, so it is
+        // said here rather than found out weeks later by a silent review.
+        const saved = await api.post<{ account: string; checkFailed: string }>(
+          "/api/v1/scm-connections",
+          { host, kind: forgeKind, apiBase, token: value },
+        );
+        if (saved.checkFailed) {
+          setError(
+            `연결은 저장했지만 토큰을 확인하지 못했습니다 — ${saved.checkFailed}`,
+          );
+        }
         done("");
       } else if (type === "secrets") {
         await api.post("/api/v1/secrets", { name, kind, value });
