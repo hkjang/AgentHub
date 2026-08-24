@@ -1027,13 +1027,15 @@ func (s *Store) ProvisionedRuntimes(ctx context.Context) ([]Runtime, error) {
 	return items, rows.Err()
 }
 
-// StuckRuntime is a runtime somebody asked for that never arrived.
+// StuckRuntime is a runtime somebody asked for that never arrived, or that
+// keeps dying after it does.
 type StuckRuntime struct {
 	ID            string
 	AgentID       string
 	AgentName     string
 	Status        string
 	FailureReason string
+	Restarts      int
 	Since         time.Time
 }
 
@@ -1050,7 +1052,7 @@ type StuckRuntime struct {
 // ready: the question is only about work somebody is waiting for.
 func (s *Store) RuntimesStuckStarting(ctx context.Context, window time.Duration, limit int) ([]StuckRuntime, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT r.id, r.agent_id, a.name, r.status, r.failure_reason,
+		SELECT r.id, r.agent_id, a.name, r.status, r.failure_reason, r.restart_count,
 		       GREATEST(r.updated_at, r.created_at)
 		FROM agent_runtimes r
 		JOIN agent_definitions a ON a.id = r.agent_id
@@ -1066,7 +1068,38 @@ func (s *Store) RuntimesStuckStarting(ctx context.Context, window time.Duration,
 	items := []StuckRuntime{}
 	for rows.Next() {
 		var item StuckRuntime
-		if err := rows.Scan(&item.ID, &item.AgentID, &item.AgentName, &item.Status, &item.FailureReason, &item.Since); err != nil {
+		if err := rows.Scan(&item.ID, &item.AgentID, &item.AgentName, &item.Status, &item.FailureReason, &item.Restarts, &item.Since); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+// RuntimesRestarting lists runtimes whose container keeps dying.
+//
+// A crash loop hides behind a healthy word: the runtime's status is running,
+// because Kubernetes keeps starting it again, and the only sign is a number on
+// the agent's page that nobody is asked to judge. Forty restarts and one restart
+// look the same there.
+func (s *Store) RuntimesRestarting(ctx context.Context, atLeast, limit int) ([]StuckRuntime, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT r.id, r.agent_id, a.name, r.status, r.failure_reason, r.restart_count,
+		       GREATEST(r.updated_at, r.created_at)
+		FROM agent_runtimes r
+		JOIN agent_definitions a ON a.id = r.agent_id
+		WHERE r.desired_state = 'running' AND r.restart_count >= $1
+		ORDER BY r.restart_count DESC
+		LIMIT $2`, atLeast, clampLimit(limit, 10, 50))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StuckRuntime{}
+	for rows.Next() {
+		var item StuckRuntime
+		if err := rows.Scan(&item.ID, &item.AgentID, &item.AgentName, &item.Status, &item.FailureReason,
+			&item.Restarts, &item.Since); err != nil {
 			return nil, err
 		}
 		items = append(items, item)

@@ -155,6 +155,30 @@ func (s *Server) readiness(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 
+	// Runtimes that keep dying after they arrive.
+	//
+	// A crash loop wears a healthy word: the status says running, because
+	// Kubernetes keeps starting it again, and the only sign is a count on the
+	// agent's page that nobody is asked to judge. Forty restarts and one restart
+	// read the same there.
+	run(func() {
+		restarting, err := s.store.RuntimesRestarting(r.Context(), runtimeRestartAlarm, 10)
+		if err != nil {
+			return
+		}
+		for _, runtime := range restarting {
+			detail := fmt.Sprintf("컨테이너가 %d번 다시 시작했습니다 — 계속 죽고 있다는 뜻입니다", runtime.Restarts)
+			if reason := strings.TrimSpace(runtime.FailureReason); reason != "" {
+				if len(reason) > 200 {
+					reason = reason[:200] + "…"
+				}
+				detail += " — " + reason
+			}
+			add(readinessItem{Area: "런타임", Name: runtime.AgentName, Verdict: "restarting",
+				Detail: detail, Fix: "/agents/" + runtime.AgentID})
+		}
+	})
+
 	// Single sign-on, but only when somebody turned it on: a deployment using
 	// local login is not incomplete for having no identity provider.
 	run(func() {
@@ -420,6 +444,12 @@ func refusedRuntimeTypes(result appRuntime.ClusterCheck) []string {
 // says so. Long enough that an image pull on a cold node is not reported as
 // trouble, short enough that somebody waiting for an agent finds out here.
 const runtimeStuckAfter = 10 * time.Minute
+
+// runtimeRestartAlarm is how many restarts mean a crash loop rather than a bad
+// afternoon. Kubernetes backs off between attempts, so five is already minutes
+// of a container failing, and a runtime that restarted once while a node was
+// drained is not news.
+const runtimeRestartAlarm = 5
 
 // humanSince is the age of something in the words somebody would use.
 func humanSince(when time.Time) string {
