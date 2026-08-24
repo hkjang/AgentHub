@@ -211,3 +211,47 @@ func TestTheApprovalAndSessionLookupsHaveIndexes(t *testing.T) {
 		t.Error("the presence refresh no longer matches the partial index built for it")
 	}
 }
+
+// Every worker reads the queue depth on every scale tick, and reading it walked
+// every task the retention window keeps.
+//
+// The query counts what is ready and what is running. Asked as one pass with two
+// filters it has no condition to narrow, so the planner scans the table —
+// measured on 500,000 tasks holding about a thousand active: 33 ms with three
+// parallel workers, against 0.5 and 0.3 ms for the two counts on their indexes.
+func TestTheQueueDepthIsCountedFromIndexes(t *testing.T) {
+	body, err := os.ReadFile("execution.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	at := strings.Index(source, "func (s *Store) TaskQueueDepth(")
+	if at < 0 {
+		t.Fatal("the queue depth is gone; this guard is reading nothing")
+	}
+	depth := source[at:]
+	if end := strings.Index(depth, "\n// QueueSnapshot"); end >= 0 {
+		depth = depth[:end]
+	}
+	// One pass with two filters cannot use either partial index.
+	if strings.Contains(depth, "FILTER (WHERE") {
+		t.Error("the depth is counted in one pass again, which scans every task the retention window keeps")
+	}
+	if strings.Count(depth, "SELECT count(*) FROM agent_tasks") != 2 {
+		t.Error("the two halves are not counted separately, so at most one of them can use an index")
+	}
+	// Each half must keep the shape of the index built for it.
+	if !strings.Contains(depth, "WHERE status IN ('queued','retrying') AND scheduled_at <= now()") {
+		t.Error("the ready half no longer matches the claim index")
+	}
+	if !strings.Contains(depth, "WHERE status IN ('planning','ready','running','waiting_tool')") {
+		t.Error("the running half no longer matches the index built for it")
+	}
+	migration, err := os.ReadFile("migrations/068_queue_depth_index.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(migration), "agent_tasks(status) WHERE status IN ('planning', 'ready', 'running', 'waiting_tool')") {
+		t.Error("the running half has no index to be counted from")
+	}
+}

@@ -1483,12 +1483,27 @@ func (s *Store) ExecutionSchemaReady(ctx context.Context) (bool, error) {
 // It is the signal the workers scale on, and the one an operator reads to see
 // whether the plane is keeping up. Scheduled-for-later tasks are deliberately
 // not counted as depth: they are not waiting, they are not due.
+// Asked as two counts rather than one pass with two filters. Every worker reads
+// this on every scale tick, and one pass over agent_tasks means a full scan of
+// every task the retention window keeps — finished ones included, which are
+// almost all of them. Measured on 500,000 tasks holding about a thousand active:
+// 33 ms of three-worker parallel scan, against 0.5 ms and 0.3 ms for the two
+// counts, each answered from the partial index that matches it.
+//
+// The two counts are read a moment apart, which the autoscaler does not mind: it
+// samples this on a timer to decide whether to add or drop one slot, and a task
+// that moves between the two reads changes the answer by one either way.
 func (s *Store) TaskQueueDepth(ctx context.Context) (ready int, running int, err error) {
-	err = s.pool.QueryRow(ctx, `SELECT
-		count(*) FILTER (WHERE status IN ('queued','retrying') AND scheduled_at <= now() AND (claimed_until IS NULL OR claimed_until < now())),
-		count(*) FILTER (WHERE status IN ('planning','ready','running','waiting_tool'))
-		FROM agent_tasks`).Scan(&ready, &running)
-	return ready, running, err
+	if err = s.pool.QueryRow(ctx, `SELECT count(*) FROM agent_tasks
+		WHERE status IN ('queued','retrying') AND scheduled_at <= now()
+		  AND (claimed_until IS NULL OR claimed_until < now())`).Scan(&ready); err != nil {
+		return 0, 0, err
+	}
+	if err = s.pool.QueryRow(ctx, `SELECT count(*) FROM agent_tasks
+		WHERE status IN ('planning','ready','running','waiting_tool')`).Scan(&running); err != nil {
+		return 0, 0, err
+	}
+	return ready, running, nil
 }
 
 // QueueSnapshot is the queue as the console shows it.
