@@ -905,6 +905,8 @@ Runtime 이미지에는 `python`·`pip`(`/opt/agenthub/venv`)과 `conda`·`mamba
 
 *시스템 설정 ▸ Runtime Agents* 에서는 이 배포에서 새로 만들 수 있는 런타임 유형을 체크박스로 고릅니다. 체크를 해제하면 해당 유형의 템플릿이 사용자 카탈로그와 비교 화면에서 빠지고, 콘솔·REST API·YAML 가져오기를 통한 **신규 생성**이 함께 거절됩니다. 이미 만든 에이전트는 중단시키지 않으며 실행·중지·재시작할 수 있습니다. 설정 행이 아직 없는 업그레이드 설치는 기존 동작을 보존하기 위해 모든 유형을 사용합니다.
 
+카탈로그에는 Custom을 제외한 모든 기본 런타임 유형의 시작 템플릿이 제공됩니다. 업그레이드할 때 새 런타임의 템플릿은 slug별로 한 번만 보충되므로 관리자가 고친 기존 템플릿이나 직접 게시 해제한 템플릿은 덮어쓰지 않습니다. 카테고리 필터는 실제 게시 템플릿에서 만들어지므로 Analytics 같은 새 분류도 별도 화면 수정 없이 나타납니다.
+
 *시스템 설정 ▸ Kubernetes ▸ Runtime Pod에서 hostNetwork 사용* 은 Runtime Pod가 노드의 네트워크 네임스페이스를 공유할지를 정합니다(기본값: 켜짐). 켜면 PodSpec에 `hostNetwork: true`와 `dnsPolicy: ClusterFirstWithHostNet`을 함께 넣어 클러스터 서비스 이름도 계속 해석합니다. 끄면 일반 Pod 네트워크와 `ClusterFirst` DNS 정책을 사용합니다. 변경값은 새 Runtime 또는 다음 시작·재시작 때 적용됩니다.
 
 > `hostNetwork`를 켜면 같은 노드에서 같은 포트에 바인딩하는 Runtime끼리 충돌할 수 있으며, CNI 구현에 따라 NetworkPolicy가 host-network 트래픽을 격리하지 못할 수 있습니다. 또한 Kubernetes의 `baseline`·`restricted` Pod Security 정책은 host namespace를 거절하므로 Runtime Namespace의 `enforce` 레벨이 `privileged`여야 합니다. 기본 `agent-runtime-dev` 매니페스트는 `enforce: privileged`와 `audit/warn: restricted`를 사용하고 Operator가 컨테이너 보안 설정을 계속 제한합니다. 사용자 지정 Namespace를 쓴다면 정책 레이블도 직접 맞춘 뒤, 노드 배치와 실제 네트워크 차단 여부를 함께 확인하세요.

@@ -165,6 +165,14 @@ administrator can turn them back on, while the user template endpoint omits
 them and `Store.CreateAgent` enforces the same decision for console, API and
 GitOps callers. Existing definitions are intentionally unaffected.
 
+Every built-in runtime except `custom` has at least one starter template. The
+API seeds them independently by slug on every start, so an upgrade adds newly
+introduced runtime templates without overwriting an administrator's edits or
+republishing a template they deliberately unpublished. Seeding prefers an active
+administrator for attribution and falls back to a disabled administrator if that
+is the only account left; it never authenticates with the original bootstrap
+password, which administrators are expected to rotate after install.
+
 The Kubernetes setting also carries the Runtime Pod network-namespace choice.
 The control plane writes it as `spec.runtime.hostNetwork` on every AgentRuntime
 create, start, restart and settings sync; the CRD preserves it; and the Operator

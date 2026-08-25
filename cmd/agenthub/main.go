@@ -27,6 +27,22 @@ func main() {
 	}
 }
 
+type starterTemplateStore interface {
+	StarterTemplateOwnerID(context.Context) (string, error)
+	SeedTemplates(context.Context, string) error
+}
+
+func seedStarterTemplates(ctx context.Context, db starterTemplateStore) error {
+	ownerID, err := db.StarterTemplateOwnerID(ctx)
+	if err != nil {
+		return err
+	}
+	if ownerID == "" {
+		return errors.New("no administrator available for starter template attribution")
+	}
+	return db.SeedTemplates(ctx, ownerID)
+}
+
 func run() error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -53,14 +69,16 @@ func run() error {
 	if err := db.BootstrapAdmin(ctx, cfg.BootstrapAdmin, cfg.BootstrapPassword); err != nil {
 		return err
 	}
-	admin, err := db.AuthenticateLocal(ctx, cfg.BootstrapAdmin, cfg.BootstrapPassword)
-	if err == nil {
+	// Starter templates are system data, not a login. Authenticating with the
+	// bootstrap password here meant an administrator who followed the guide and
+	// rotated that password never received templates added by later releases.
+	// BootstrapAdmin guarantees an administrator exists; use one only as the
+	// created_by attribution and keep seeding idempotently by slug.
+	if seedErr := seedStarterTemplates(ctx, db); seedErr != nil {
 		// Not fatal — the platform runs without a catalog — but not silent either:
 		// a refused template is a runtime nobody can find, and this failure went
 		// unnoticed once because the error was discarded here.
-		if seedErr := db.SeedTemplates(ctx, admin.ID); seedErr != nil {
-			logger.Error("starter templates could not be published", "error", seedErr)
-		}
+		logger.Error("starter templates could not be published", "error", seedErr)
 	}
 	// Tracing, when an administrator configured a collector. With none configured
 	// this installs the no-op tracer and costs nothing.

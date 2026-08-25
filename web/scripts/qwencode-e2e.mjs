@@ -68,7 +68,7 @@ try {
   // Every runtime the platform supports and a person could choose has to be in
   // the catalog: that is where people start, and one that is missing there does
   // not exist for anybody who does not already know it is possible.
-  const choosable = runtimes.filter((item) => item.type !== 'custom').map((item) => item.type)
+  const choosable = runtimes.filter((item) => item.type !== 'custom' && item.enabled !== false).map((item) => item.type)
   for (const type of choosable) {
     check(`카탈로그에 ${type} 템플릿이 게시됨`, Boolean(byRuntime[type]),
       JSON.stringify(templates.map((item) => `${item.runtimeType}:${item.name}`)))

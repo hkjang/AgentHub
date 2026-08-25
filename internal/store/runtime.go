@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/hkjang/AgentHub/internal/quota"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/hkjang/AgentHub/internal/quota"
 	"github.com/hkjang/AgentHub/internal/runtimetype"
 )
 
@@ -199,6 +199,29 @@ func (s *Store) Templates(ctx context.Context) ([]Template, error) {
 	return items, rows.Err()
 }
 
+type starterTemplate struct {
+	name, slug, description, category, runtime, profile, prompt string
+}
+
+var starterTemplates = []starterTemplate{
+	{"OpenCode Developer", "opencode-developer", "Secure persistent coding workspace with Git and MCP tools.", "Development", runtimetype.OpenCode, "rp-developer", "You are a careful enterprise software engineer. Inspect, test, and explain every change."},
+	{"Hermes Research", "hermes-research", "Long-running research agent with persistent memory.", "Research", runtimetype.Hermes, "rp-advanced", "Research the request using approved tools and cite the evidence used."},
+	{"Qwen Paw Assistant", "qwen-paw", "Autonomous agentic AI assistant powered by Qwen Paw for complex workflows and reasoning.", "Automation", runtimetype.QwenPaw, "rp-basic", "You are an intelligent agentic assistant powered by Qwen Paw. Plan, orchestrate tools, and solve enterprise problems step-by-step."},
+	{"IT Operator", "it-operator", "Policy-controlled operations assistant with approval gates.", "Operations", runtimetype.Hermes, "rp-basic", "Assist with IT operations. Request approval before any state-changing action."},
+	{"Qwen Code Engineer", "qwen-code", "터미널 코딩 에이전트. 작업공간의 코드를 직접 고치고, 작업을 맡기면 무인으로도 같은 도구 루프를 사용합니다.", "Development", runtimetype.QwenCode, "rp-developer", "당신은 신중한 사내 소프트웨어 엔지니어입니다. 변경 전에 코드를 읽고, 테스트로 확인하고, 무엇을 왜 바꿨는지 남기세요."},
+	{"Goose Agent", "goose-agent", "프로토콜로 대화하는 오픈소스 에이전트. 도구를 쓰기 전마다 플랫폼에 물어보므로, 무인 실행이 무엇을 바꿨는지 기록으로 남습니다.", "Development", runtimetype.Goose, "rp-developer", "당신은 신중한 사내 엔지니어입니다. 무엇을 하려는지 먼저 말하고, 바꾼 것과 그 이유를 남기세요."},
+	{"HolmesGPT Investigator", "holmes-investigator", "장애를 조사하는 SRE 에이전트. 결론과 함께 그 근거로 조회한 내용을 실행 기록에 남깁니다.", "Operations", runtimetype.Holmes, "rp-advanced", "당신은 신중한 SRE입니다. 추측하지 말고 관측 데이터를 조회해 근거를 모으고, 근본 원인과 확인 방법을 함께 쓰세요."},
+	{"BrowserCode Operator", "browsercode-operator", "진짜 브라우저를 직접 몰아 일하는 에이전트. 로그인이 필요한 사이트 조회나 웹 UI 확인처럼 사람이 브라우저로 하던 일을 맡깁니다.", "Automation", runtimetype.BrowserCode, "rp-advanced", "당신은 브라우저로 일합니다. 무엇을 열어 무엇을 확인했는지 남기고, 확인하지 못한 것을 확인한 것처럼 쓰지 마세요."},
+	{"Jupyter Analyst", "jupyter-analyst", "노트북으로 데이터를 다루는 작업대. 같은 화면의 터미널에 Qwen Code 에이전트가 함께 있어, 지루한 부분은 맡길 수 있습니다.", "Analytics", runtimetype.Jupyter, "rp-advanced", "당신은 신중한 데이터 분석가입니다. 가정을 먼저 적고, 표와 그림으로 근거를 남기고, 결론과 한계를 함께 쓰세요."},
+	{"Langflow Builder", "langflow-builder", "흐름을 그려서 만드는 시각적 빌더. 저장한 흐름을 자동 실행 백엔드로 그대로 사용할 수 있습니다.", "Automation", runtimetype.Langflow, "rp-basic", "당신은 흐름으로 업무를 자동화합니다. 입력과 출력을 명확히 하고, 실패했을 때 무엇이 잘못됐는지 남기세요."},
+	{"Node-RED Wiring", "node-red-wiring", "노드를 선으로 이어 만드는 배선 도구. 이벤트를 받아 변환하고 다른 시스템을 호출하는 흐름을 계속 돌립니다.", "Automation", runtimetype.NodeRED, "rp-basic", "당신은 시스템과 시스템을 잇습니다. 입력과 출력의 형식을 분명히 하고, 오류 경로를 반드시 만드세요."},
+	{"n8n Automation", "n8n-automation", "수백 가지 연동을 가진 업무 자동화. 메일·메신저·DB·HTTP를 트리거와 노드로 잇습니다.", "Automation", runtimetype.N8N, "rp-basic", "당신은 사내 업무를 연결해 자동화합니다. 실패했을 때 어디서 멈췄는지 알 수 있게 만드세요."},
+	{"Open Code Review", "open-code-review", "코드 변경분을 파일·줄·심각도별로 검토하고 근거가 있는 finding을 남기는 전용 리뷰 엔진입니다.", "Development", runtimetype.OpenCodeReview, "rp-developer", "변경된 코드만 근거로 검토하고, 확실한 문제를 파일과 줄 번호와 함께 설명하세요. 코드를 직접 수정하지 마세요."},
+	{"Orca Multi-Agent", "orca-multi-agent", "여러 코딩 에이전트를 격리된 git worktree에서 동시에 실행하고 결과를 비교하는 멀티 에이전트 패브릭입니다.", "Development", runtimetype.Orca, "rp-advanced", "작업을 독립적인 역할로 나누고 병렬로 검증하세요. 각 결과의 근거와 차이를 비교한 뒤 최종 결론을 남기세요."},
+	{"Pi Coding Agent", "pi-coding-agent", "실행 중에도 방향 수정·후속 지시·중단이 가능한 대화형 코딩 에이전트입니다.", "Development", runtimetype.Pi, "rp-developer", "신중하게 코드를 읽고 작은 단위로 변경하세요. 진행 상황과 검증 결과를 계속 알려 주고, 새 지시가 오면 현재 계획을 조정하세요."},
+	{"OpenHands Agent Server", "openhands-agent-server", "REST API 대화를 통해 코드를 수정하고 진행 사건과 사용량을 남기는 에이전트 서버입니다.", "Development", runtimetype.OpenHands, "rp-advanced", "작업을 단계별로 수행하고 각 결정과 실행 결과를 기록하세요. 완료 전에 변경사항을 테스트하고 확인하지 못한 내용은 분명히 밝히세요."},
+}
+
 // SeedTemplates publishes the starter templates, one slug at a time.
 //
 // It used to do nothing at all once the table had a single row, which meant a
@@ -210,26 +233,12 @@ func (s *Store) Templates(ctx context.Context) ([]Template, error) {
 // administrator's edits to the existing ones survive, and a template somebody
 // deliberately unpublished stays unpublished.
 func (s *Store) SeedTemplates(ctx context.Context, adminID string) error {
-	data := []struct{ name, slug, description, category, runtime, profile, prompt string }{
-		{"OpenCode Developer", "opencode-developer", "Secure persistent coding workspace with Git and MCP tools.", "Development", "opencode", "rp-developer", "You are a careful enterprise software engineer. Inspect, test, and explain every change."},
-		{"Hermes Research", "hermes-research", "Long-running research agent with persistent memory.", "Research", "hermes", "rp-advanced", "Research the request using approved tools and cite the evidence used."},
-		{"Qwen Paw Assistant", "qwen-paw", "Autonomous agentic AI assistant powered by Qwen Paw for complex workflows and reasoning.", "Automation", "qwenpaw", "rp-basic", "You are an intelligent agentic assistant powered by Qwen Paw. Plan, orchestrate tools, and solve enterprise problems step-by-step."},
-		{"IT Operator", "it-operator", "Policy-controlled operations assistant with approval gates.", "Operations", "hermes", "rp-basic", "Assist with IT operations. Request approval before any state-changing action."},
-		{"Qwen Code Engineer", "qwen-code", "터미널 코딩 에이전트. 작업공간의 코드를 직접 고치고, 작업을 맡기면 무인으로도 같은 도구 루프를 사용합니다.", "Development", "qwencode", "rp-developer", "당신은 신중한 사내 소프트웨어 엔지니어입니다. 변경 전에 코드를 읽고, 테스트로 확인하고, 무엇을 왜 바꿨는지 남기세요."},
-		{"Goose Agent", "goose-agent", "프로토콜로 대화하는 오픈소스 에이전트. 도구를 쓰기 전마다 플랫폼에 물어보므로, 무인 실행이 무엇을 바꿨는지 기록으로 남습니다.", "Development", "goose", "rp-developer", "당신은 신중한 사내 엔지니어입니다. 무엇을 하려는지 먼저 말하고, 바꾼 것과 그 이유를 남기세요."},
-		{"HolmesGPT Investigator", "holmes-investigator", "장애를 조사하는 SRE 에이전트. 결론과 함께 그 근거로 조회한 내용을 실행 기록에 남깁니다.", "Operations", "holmes", "rp-advanced", "당신은 신중한 SRE입니다. 추측하지 말고 관측 데이터를 조회해 근거를 모으고, 근본 원인과 확인 방법을 함께 쓰세요."},
-		{"BrowserCode Operator", "browsercode-operator", "진짜 브라우저를 직접 몰아 일하는 에이전트. 로그인이 필요한 사이트 조회나 웹 UI 확인처럼 사람이 브라우저로 하던 일을 맡깁니다.", "Automation", "browsercode", "rp-advanced", "당신은 브라우저로 일합니다. 무엇을 열어 무엇을 확인했는지 남기고, 확인하지 못한 것을 확인한 것처럼 쓰지 마세요."},
-		{"Langflow Builder", "langflow-builder", "흐름을 그려서 만드는 시각적 빌더. 저장한 흐름을 자동 실행 백엔드로 그대로 사용할 수 있습니다.", "Automation", "langflow", "rp-basic", "당신은 흐름으로 업무를 자동화합니다. 입력과 출력을 명확히 하고, 실패했을 때 무엇이 잘못됐는지 남기세요."},
-		{"Jupyter Analyst", "jupyter-analyst", "노트북으로 데이터를 다루는 작업대. 같은 화면의 터미널에 Qwen Code 에이전트가 함께 있어, 지루한 부분은 맡길 수 있습니다.", "Analytics", "jupyter", "rp-advanced", "당신은 신중한 데이터 분석가입니다. 가정을 먼저 적고, 표와 그림으로 근거를 남기고, 결론과 한계를 함께 쓰세요."},
-		{"n8n Automation", "n8n-automation", "수백 가지 연동을 가진 업무 자동화. 메일·메신저·DB·HTTP를 트리거와 노드로 잇습니다.", "Automation", "n8n", "rp-basic", "당신은 사내 업무를 연결해 자동화합니다. 실패했을 때 어디서 멈췄는지 알 수 있게 만드세요."},
-		{"Node-RED Wiring", "node-red-wiring", "노드를 선으로 이어 만드는 배선 도구. 이벤트를 받아 변환하고 다른 시스템을 호출하는 흐름을 계속 돌립니다.", "Automation", "nodered", "rp-basic", "당신은 시스템과 시스템을 잇습니다. 입력과 출력의 형식을 분명히 하고, 오류 경로를 반드시 만드세요."},
-	}
 	// One template the database refuses must not take the others with it. That is
 	// how three runtimes went missing from the catalog at once: the first of them
 	// was rejected and the loop returned, so the two behind it were never even
 	// attempted. Every row is tried, and the failures are reported together.
 	var failures []string
-	for _, item := range data {
+	for _, item := range starterTemplates {
 		_, err := s.pool.Exec(ctx, `INSERT INTO agent_templates(id,name,slug,description,category,runtime_type,runtime_profile_id,security_profile_id,network_profile_id,system_prompt,published,created_by)
 			VALUES($1,$2,$3,$4,$5,$6,$7,'sp-restricted','np-restricted',$8,true,$9)
 			ON CONFLICT (slug) DO NOTHING`,

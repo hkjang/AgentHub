@@ -133,6 +133,21 @@ func (s *Store) BootstrapAdmin(ctx context.Context, username, password string) e
 	return s.EnsureUserKeyring(ctx, id)
 }
 
+// StarterTemplateOwnerID supplies the required created_by attribution for
+// system starter templates. An active administrator is preferable, but a site
+// whose only administrator is disabled still needs new catalog entries during
+// an upgrade; BootstrapAdmin deliberately does not create a second account in
+// that situation.
+func (s *Store) StarterTemplateOwnerID(ctx context.Context) (string, error) {
+	var id string
+	err := s.pool.QueryRow(ctx, `SELECT id FROM users WHERE role='admin'
+		ORDER BY CASE WHEN status='active' THEN 0 ELSE 1 END, created_at, id LIMIT 1`).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errors.New("no administrator available for starter template attribution")
+	}
+	return id, err
+}
+
 // userTargets is where userColumns lands, in that order. Two queries read the
 // user columns alongside something else and cannot use scanUser; they go through
 // here so that adding a column stays one edit. A column added to userColumns and
