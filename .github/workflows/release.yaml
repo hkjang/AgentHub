@@ -24,6 +24,18 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "baseVersion=${base}" >> "$GITHUB_OUTPUT"
           echo "baseTag=v${base}" >> "$GITHUB_OUTPUT"
+      - name: Index published offline image archives
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # A version file records what an image should be called; only the
+          # release assets prove an offline site can actually obtain it. Keep a
+          # local index so every image decision below uses the same snapshot.
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            --jq '.[] | select(.draft == false and .prerelease == false) | .assets[]?.name' \
+            > "${RUNNER_TEMP}/agenthub-release-assets.txt"
       - name: Decide whether the runtime base image must be rebuilt
         id: base
         shell: bash
@@ -32,9 +44,11 @@ jobs:
         run: |
           set -euo pipefail
           # The base image is several GB and dominates release time, so it is
-          # published only when BASE_VERSION says it changed. Changing what it
-          # is built from without bumping BASE_VERSION is a mistake: the control
-          # plane would keep pointing at a tag whose image no longer matches.
+          # normally published only when BASE_VERSION says it changed. A
+          # missing archive is repaired under the same image tag. Changing what
+          # it is built from without bumping BASE_VERSION is still a mistake:
+          # the control plane would keep pointing at a tag whose contents no
+          # longer match.
           #
           # The scripts are named one by one rather than watching deploy/runtime
           # as a directory. That directory holds the scripts of three different
@@ -103,9 +117,15 @@ jobs:
             exit 1
           fi
           if [ "${BASE_VERSION}" = "${previous_base}" ]; then
-            echo "base image v${BASE_VERSION} is unchanged since ${previous}"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "previous=${previous}" >> "$GITHUB_OUTPUT"
+            archive="agenthub-base-v${BASE_VERSION}.tar.gz"
+            if bash scripts/release-asset-exists.sh "${archive}" "${RUNNER_TEMP}/agenthub-release-assets.txt"; then
+              echo "base image v${BASE_VERSION} is unchanged since ${previous} and ${archive} is published"
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              echo "previous=${previous}" >> "$GITHUB_OUTPUT"
+            else
+              echo "::warning::${archive} has never been published; rebuilding the base image without changing its image tag"
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "base image moves from v${previous_base:-none} to v${BASE_VERSION}"
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -121,9 +141,10 @@ jobs:
           # is the same for all of them and repeating it five times is how the
           # five drift apart.
           #
-          # The rule: publish only when the version file says the image changed,
-          # and fail loudly when its sources changed and the version did not —
-          # the alternative is a released tag whose image no longer matches it.
+          # The rule: publish when the version file changes or when no release
+          # actually carries that version's offline archive. Fail loudly when
+          # sources changed and the version did not — the alternative is a
+          # released image tag whose contents no longer match its name.
           images=(
             "langflow:LANGFLOW_VERSION:Dockerfile.langflow deploy/runtime/agenthub-report-config.sh"
             "qwencode:QWENCODE_VERSION:Dockerfile.qwencode deploy/runtime/agenthub-report-config.sh deploy/runtime/qwencode-configure.sh deploy/runtime/qwencode-shell.sh deploy/runtime/qwencode-run.sh deploy/runtime/qwencode-toolchain.sh"
@@ -165,8 +186,14 @@ jobs:
               exit 1
             fi
             if [ "${version}" = "${previous_version}" ]; then
-              echo "${name} image v${version} is unchanged since ${previous}"
-              echo "${name}_changed=false" >> "$GITHUB_OUTPUT"
+              archive="agenthub-${name}-v${version}.tar.gz"
+              if bash scripts/release-asset-exists.sh "${archive}" "${RUNNER_TEMP}/agenthub-release-assets.txt"; then
+                echo "${name} image v${version} is unchanged since ${previous} and ${archive} is published"
+                echo "${name}_changed=false" >> "$GITHUB_OUTPUT"
+              else
+                echo "::warning::${archive} has never been published; rebuilding ${name} without changing its image tag"
+                echo "${name}_changed=true" >> "$GITHUB_OUTPUT"
+              fi
             else
               echo "${name} image moves from v${previous_version:-none} to v${version}"
               echo "${name}_changed=true" >> "$GITHUB_OUTPUT"
@@ -211,6 +238,7 @@ jobs:
           BROWSERCODE_CHANGED: ${{ steps.runtimes.outputs.browsercode_changed }}
           OPENCODEREVIEW_TAG: ${{ steps.runtimes.outputs.opencodereview_tag }}
           ORCA_TAG: ${{ steps.runtimes.outputs.orca_tag }}
+          OPENHANDS_VERSION: ${{ steps.runtimes.outputs.openhands_version }}
           OPENHANDS_TAG: ${{ steps.runtimes.outputs.openhands_tag }}
           PI_TAG: ${{ steps.runtimes.outputs.pi_tag }}
           OPENCODEREVIEW_CHANGED: ${{ steps.runtimes.outputs.opencodereview_changed }}
@@ -272,7 +300,7 @@ jobs:
             echo "skipping orca; ${ORCA_TAG} from ${PREVIOUS} still applies"
           fi
           if [ "${OPENHANDS_CHANGED}" = "true" ]; then
-            docker build -f Dockerfile.openhands -t "agenthub-openhands:${OPENHANDS_TAG}" .
+            docker build -f Dockerfile.openhands --build-arg OPENHANDS_VERSION="${OPENHANDS_VERSION}" -t "agenthub-openhands:${OPENHANDS_TAG}" .
           else
             echo "skipping openhands; ${OPENHANDS_TAG} from ${PREVIOUS} still applies"
           fi
@@ -493,11 +521,11 @@ jobs:
             echo "이 릴리즈가 사용하는 런타임 base 이미지: \`agenthub-base:${BASE_TAG}\`"
             echo ""
             if [ "${BASE_CHANGED}" = "true" ]; then
-              echo "base 이미지가 갱신되어 \`agenthub-base-${BASE_TAG}.tar.gz\`로 함께 게시됩니다."
+              echo "base 이미지를 \`agenthub-base-${BASE_TAG}.tar.gz\`로 이번 릴리즈에 함께 게시합니다."
             else
               echo "base 이미지는 **변경 없음**입니다. 이미 설치된 \`agenthub-base:${BASE_TAG}\`를 그대로 사용하세요. 새로 받아야 한다면 ${BASE_PREVIOUS} 이전 릴리즈의 \`agenthub-base-${BASE_TAG}.tar.gz\` 자산을 내려받으면 됩니다."
               echo ""
-              echo "base 이미지는 용량이 커서 \`BASE_VERSION\`이 올라간 릴리즈에서만 다시 게시합니다."
+              echo "base 이미지는 용량이 커서 일반적으로 \`BASE_VERSION\`이 올라갈 때만 다시 게시하며, 기존 게시 자산이 누락된 경우에는 같은 태그로 보충합니다."
             fi
             note_image "Qwen Code" agenthub-qwencode "${QWENCODE_TAG}" "${QWENCODE_CHANGED}" "터미널 코딩 에이전트를 쓰는 사이트만 필요합니다."
             note_image "JupyterLab" agenthub-jupyter "${JUPYTER_TAG}" "${JUPYTER_CHANGED}" "노트북 작업대(Qwen Code 포함)를 쓰는 사이트만 필요합니다."

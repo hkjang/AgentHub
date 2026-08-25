@@ -1,4 +1,4 @@
-.PHONY: test build image image-base image-langflow image-qwencode image-jupyter image-goose image-holmes image-browsercode image-openhands image-nodered image-n8n validate release-archives
+.PHONY: test build image image-base image-langflow image-qwencode image-jupyter image-goose image-holmes image-browsercode image-opencodereview image-orca image-openhands image-pi image-nodered image-n8n validate release-archives
 
 VERSION ?= $(shell cat VERSION)
 TAG := v$(VERSION)
@@ -23,8 +23,14 @@ HOLMES_VERSION ?= $(shell cat HOLMES_VERSION)
 HOLMES_TAG := v$(HOLMES_VERSION)
 BROWSERCODE_VERSION ?= $(shell cat BROWSERCODE_VERSION)
 BROWSERCODE_TAG := v$(BROWSERCODE_VERSION)
+OPENCODEREVIEW_VERSION ?= $(shell cat OPENCODEREVIEW_VERSION)
+OPENCODEREVIEW_TAG := v$(OPENCODEREVIEW_VERSION)
+ORCA_VERSION ?= $(shell cat ORCA_VERSION)
+ORCA_TAG := v$(ORCA_VERSION)
 OPENHANDS_VERSION ?= $(shell cat OPENHANDS_VERSION)
 OPENHANDS_TAG := v$(OPENHANDS_VERSION)
+PI_VERSION ?= $(shell cat PI_VERSION)
+PI_TAG := v$(PI_VERSION)
 
 test:
 	go test -race ./cmd/... ./internal/...
@@ -60,8 +66,17 @@ image-holmes:
 image-browsercode:
 	docker build -f Dockerfile.browsercode -t agenthub-browsercode:$(BROWSERCODE_TAG) .
 
+image-opencodereview:
+	docker build -f Dockerfile.opencodereview -t agenthub-opencodereview:$(OPENCODEREVIEW_TAG) .
+
+image-orca:
+	docker build -f Dockerfile.orca -t agenthub-orca:$(ORCA_TAG) .
+
 image-openhands:
-	docker build -f Dockerfile.openhands -t agenthub-openhands:$(OPENHANDS_TAG) .
+	docker build -f Dockerfile.openhands --build-arg OPENHANDS_VERSION=$(OPENHANDS_VERSION) -t agenthub-openhands:$(OPENHANDS_TAG) .
+
+image-pi:
+	docker build -f Dockerfile.pi -t agenthub-pi:$(PI_TAG) .
 
 image-nodered:
 	docker build -f Dockerfile.nodered -t agenthub-nodered:$(NODERED_TAG) .
@@ -81,7 +96,7 @@ validate:
 # collapses back to a plain .tar.gz. Reassemble with `cat <name>.part-* > <name>`.
 RELEASE_CHUNK ?= 1900M
 
-release-archives: image image-base image-langflow image-qwencode image-jupyter image-goose image-holmes image-browsercode image-nodered image-n8n
+release-archives: image image-base image-langflow image-qwencode image-jupyter image-goose image-holmes image-browsercode image-opencodereview image-orca image-openhands image-pi image-nodered image-n8n
 	mkdir -p release
 	$(call package_image,agenthub:$(TAG),agenthub-$(TAG).tar.gz)
 	$(call package_image,agenthub-base:$(BASE_TAG),agenthub-base-$(BASE_TAG).tar.gz)
@@ -91,6 +106,10 @@ release-archives: image image-base image-langflow image-qwencode image-jupyter i
 	$(call package_image,agenthub-goose:$(GOOSE_TAG),agenthub-goose-$(GOOSE_TAG).tar.gz)
 	$(call package_image,agenthub-holmes:$(HOLMES_TAG),agenthub-holmes-$(HOLMES_TAG).tar.gz)
 	$(call package_image,agenthub-browsercode:$(BROWSERCODE_TAG),agenthub-browsercode-$(BROWSERCODE_TAG).tar.gz)
+	$(call package_image,agenthub-opencodereview:$(OPENCODEREVIEW_TAG),agenthub-opencodereview-$(OPENCODEREVIEW_TAG).tar.gz)
+	$(call package_image,agenthub-orca:$(ORCA_TAG),agenthub-orca-$(ORCA_TAG).tar.gz)
+	$(call package_image,agenthub-openhands:$(OPENHANDS_TAG),agenthub-openhands-$(OPENHANDS_TAG).tar.gz)
+	$(call package_image,agenthub-pi:$(PI_TAG),agenthub-pi-$(PI_TAG).tar.gz)
 	$(call package_image,agenthub-nodered:$(NODERED_TAG),agenthub-nodered-$(NODERED_TAG).tar.gz)
 	$(call package_image,agenthub-n8n:$(N8N_TAG),agenthub-n8n-$(N8N_TAG).tar.gz)
 	cd release && sha256sum -- agenthub-* > SHA256SUMS

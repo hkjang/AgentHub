@@ -17,13 +17,21 @@ change the split size.
 The control plane version lives in `VERSION`, the shared runtime base image has
 its own `BASE_VERSION`, and the runtimes that do not boot from it have theirs:
 `LANGFLOW_VERSION`, `QWENCODE_VERSION`, `JUPYTER_VERSION`, `GOOSE_VERSION`,
-`HOLMES_VERSION`, `BROWSERCODE_VERSION`, `NODERED_VERSION` and `N8N_VERSION`.
+`HOLMES_VERSION`, `BROWSERCODE_VERSION`, `OPENCODEREVIEW_VERSION`,
+`ORCA_VERSION`, `OPENHANDS_VERSION`, `PI_VERSION`, `NODERED_VERSION` and
+`N8N_VERSION`.
 Each is versioned separately because each is large, slow to build and only
 rebuilt when something it is built from changes. A release whose notes say an
 image is unchanged has no archive for it, and the notes name the tag it runs on:
-keep using the archive you already loaded. All three files are read by
+keep using the archive you already loaded. These version files are read by
 `make release-archives`, so pass overrides only when building something other
 than the checked-out release.
+
+The tag release also checks the assets on every published stable GitHub release.
+If the current version of a base or independent Runtime image has no matching
+archive asset (`.tar.gz` or `.tar.gz.part-*`), it is rebuilt and published even
+when its version file did not change. A version reference alone is not treated
+as proof that an air-gapped site can download the image.
 
 Each runtime image is only needed by sites that run Agents of that type, and
 nothing else depends on any of them: skipping one costs nothing, and an Agent of
