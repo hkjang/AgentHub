@@ -28,6 +28,23 @@ type ProvenanceSettings struct {
 	Token  string `json:"token,omitempty"`
 }
 
+// ProvenanceEvents are the endings this platform exports: the three ways a task
+// stops for good. The list is one list because it was two — the exporter added
+// the platform giving up and the screen kept advertising two endings, so the
+// answer an operator read disagreed with what the deployment did. Anything that
+// filters or advertises the export reads this.
+var ProvenanceEvents = []string{EventTaskCompleted, EventTaskFailed, EventTaskDeadLettered}
+
+// Exports reports whether an event ends a task in a way worth recording.
+func Exports(eventType string) bool {
+	for _, exported := range ProvenanceEvents {
+		if exported == eventType {
+			return true
+		}
+	}
+	return false
+}
+
 // Configured reports whether anything should be sent at all.
 func (p ProvenanceSettings) Configured() bool { return p.Endpoint != "" }
 

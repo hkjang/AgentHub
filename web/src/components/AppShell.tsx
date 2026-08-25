@@ -1,10 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import {
-  Activity, Bell, Boxes, Bot, Braces, Building2, Check, ClipboardList, ChevronDown, ChevronRight, CircleUserRound, Command,
-  Database, FileClock, FileCode2, FileCog, FileSearch, Gauge, KeyRound, LayoutDashboard, Library, LockKeyhole, LogOut, Menu, Network,
-  ListChecks, Palette, Search, Settings, ShieldAlert, ShieldCheck, Sparkles, UsersRound, Workflow, X
-} from 'lucide-react'
+import { Activity, Bell, Bot, Boxes, Braces, Building2, Check, ChevronDown, ChevronRight, CircleUserRound, ClipboardList, Command, Database, FileClock, FileCode2, FileCog, FileSearch, Gauge, KeyRound, LayoutDashboard, Library, ListChecks, LockKeyhole, LogOut, Menu, Network, Palette, Search, Settings, Share2, ShieldAlert, ShieldCheck, Sparkles, UsersRound, Workflow, X } from 'lucide-react'
 import { useAuth } from '../App'
 import { api } from '../api'
 import { setViewMode, term, useTerms, useViewMode, VIEW_MODES, type TermKey } from '../viewmode'
@@ -47,6 +43,7 @@ const groups: NavGroup[] = [
     { to: '/admin/overview', label: '운영 현황', icon: Gauge, keywords: 'overview dashboard usage statistics 통계 사용량 현황 대시보드 비용' },
     { to: '/admin/policy', label: '정책', icon: ShieldCheck, keywords: 'policy rule guardrail 정책 규칙 차단 허용 승인 거버넌스' },
     { to: '/admin/dlp', label: '내용 검사', icon: ShieldAlert, keywords: 'dlp 개인정보 민감정보 마스킹 유출 방지 주민등록번호 카드 검사' },
+    { to: '/admin/provenance', label: '결정 기록', icon: Share2, keywords: 'provenance decision export graph audit 결정 기록 내보내기 감사 지식 그래프 계보' },
     { to: '/admin/execution', label: '실행 제어', icon: Gauge, keywords: 'execution control pause worker retention cleanup 워커 중지 재개 회수 보관 정리' },
     { to: '/admin/operations', label: '로그 · 감사', icon: FileClock, keywords: 'control center operations log audit approval 로그 감사 승인 운영' },
     { to: '/admin/runtime-settings', label: '런타임 설정 주입', icon: FileCog, keywords: 'runtime settings inject locale language timezone yolo skill 언어 시간대 로케일 주입 설정' },

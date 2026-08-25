@@ -14,6 +14,7 @@ import { Dashboard } from './pages/Dashboard'
 // rendered, on a platform that is often installed where the network is the
 // slow part. Login and the dashboard stay in the first file because they are
 // what a person sees before they have chosen anything.
+const AdminProvenance = lazy(() => import('./pages/AdminProvenance').then((m) => ({ default: m.AdminProvenance })))
 const AdminDLP = lazy(() => import('./pages/AdminDLP').then((m) => ({ default: m.AdminDLP })))
 const AdminExecution = lazy(() => import('./pages/AdminExecution').then((m) => ({ default: m.AdminExecution })))
 const AdminInsights = lazy(() => import('./pages/AdminInsights').then((m) => ({ default: m.AdminInsights })))
@@ -117,6 +118,7 @@ export function App() {
           <Route path="admin/execution" element={<AdminExecution />} />
           <Route path="admin/policy" element={<AdminPolicy />} />
           <Route path="admin/dlp" element={<AdminDLP />} />
+          <Route path="admin/provenance" element={<AdminProvenance />} />
           <Route path="admin/runtime-settings" element={<AdminRuntimeSettings />} />
           <Route path="admin/operations" element={<AdminOperations />} />
           <Route path="admin/runtime-profiles" element={<AdminResources kind="profiles" />} />
