@@ -86,6 +86,7 @@ export function AdminProvenance() {
       { title: '보내는 시점', body: <>작업이 <b>완료 · 실패 · 처리 불가</b>로 끝날 때 한 건씩 보냅니다. 실패했다가 재시도로 성공한 작업은 <b>두 건</b>이 됩니다 — 시도 하나가 결정 하나이고, 두 건은 같은 <code>taskId</code>로 묶입니다.</> },
       { title: '담기는 내용', body: <>결과·근거·에이전트와 <b>실제로 실행된</b> 버전·모델·런타임 이미지, 그리고 사람이 중간에 승인했다면 그 승인 ID까지. 지금 설정이 아니라 그때 실행된 것을 적습니다.</> },
       { title: '근거의 출처', body: <>근거는 에이전트가 "성공했다"고 말한 문장이 아니라 <Link to="/admin/operations">플랫폼이 판정한 결과</Link>입니다. 둘은 다르고, 이 플랫폼은 그 둘을 구분해서 기록합니다.</> },
+      { title: '나가기 전 내용 검사', body: <><Link to="/admin/dlp">내용 검사</Link> 설정이 이 전송에도 적용됩니다. <b>가리고 전송</b>이면 값이 가려진 채로 나가고, <b>차단</b>이면 그 기록은 보내지 않고 <Link to="/admin/operations">감사 로그</Link>에 <code>provenance.withheld</code>로 남습니다(재시도하지 않습니다).</> },
       { title: '받는 쪽이 죽었을 때', body: '전송 실패는 이벤트 재시도 대상이 됩니다. 계속 실패하면 그 이벤트가 처리 불가로 남아 알림이 가고, 작업 자체는 영향을 받지 않습니다.' },
     ]} />
     {error && <ErrorBanner message={error} onClose={() => setError('')} />}

@@ -134,7 +134,7 @@ func (s *Server) testProvenance(w http.ResponseWriter, r *http.Request) {
 		TaskID:       "00000000-0000-0000-0000-000000000000",
 		OwnerID:      u.ID,
 	}
-	if err := execution.SendDecision(r.Context(), settings, record); err != nil {
+	if err := execution.SendDecision(r.Context(), settings, s.dlpSettings(r), record); err != nil {
 		s.store.Audit(r.Context(), &u, "provenance.test", "provenance", "", "failure", clientIP(r),
 			map[string]any{"endpoint": settings.Endpoint, "error": err.Error()})
 		writeError(w, http.StatusBadGateway, "provenance_unreachable", err.Error())

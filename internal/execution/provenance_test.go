@@ -2,6 +2,7 @@ package execution
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hkjang/AgentHub/internal/dlp"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -83,7 +85,7 @@ func TestSendingReachesTheAddressWithItsCredential(t *testing.T) {
 	}))
 	defer server.Close()
 	settings := store.ProvenanceSettings{Endpoint: server.URL, Header: "X-Audit-Key", Token: "s3cret"}
-	if err := SendDecision(context.Background(), settings, store.DecisionRecord{DecisionID: "run:abc", Outcome: "test"}); err != nil {
+	if err := SendDecision(context.Background(), settings, dlp.Settings{}, store.DecisionRecord{DecisionID: "run:abc", Outcome: "test"}); err != nil {
 		t.Fatalf("a receiver that answered 200 was reported as a failure: %v", err)
 	}
 	if gotAuth != "s3cret" {
@@ -103,7 +105,7 @@ func TestSendingReachesTheAddressWithItsCredential(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer refuses.Close()
-	err := SendDecision(context.Background(), store.ProvenanceSettings{Endpoint: refuses.URL}, store.DecisionRecord{})
+	err := SendDecision(context.Background(), store.ProvenanceSettings{Endpoint: refuses.URL}, dlp.Settings{}, store.DecisionRecord{})
 	if err == nil {
 		t.Fatal("a receiver answering 404 was read as success")
 	}
@@ -215,5 +217,104 @@ func TestEachAttemptIsItsOwnDecision(t *testing.T) {
 	perRun := strings.Index(source, `"run:" + record.RunID`)
 	if fallback < 0 || perRun < 0 || fallback > perRun {
 		t.Error("the fallback overwrites the per-attempt identity")
+	}
+}
+
+// The export is the fourth way text leaves this deployment, after the prompt,
+// the model's answer and the tool call. Those three are scanned; this one was
+// not, and it carries the same text — a title somebody typed and the reasoning
+// that quotes what ran.
+func TestARecordIsScannedOnItsWayOut(t *testing.T) {
+	const id = "민원인 900101-1234568 환급 검토"
+	record := store.DecisionRecord{
+		TaskID: "t1", Scenario: id, Reasoning: "확인함: " + id, SourceURL: "https://x/case?rrn=900101-1234568",
+	}
+
+	// Nothing configured must change nothing: almost every deployment.
+	same, _, blocked := scrubDecision(dlp.Settings{}, record)
+	if blocked || same.Scenario != id {
+		t.Errorf("a deployment with no scanner had its record changed: %q", same.Scenario)
+	}
+
+	redacting := dlp.Settings{Enabled: true, Classes: map[string]string{"rrn": dlp.Redact}}
+	scrubbed, findings, blocked := scrubDecision(redacting, record)
+	if blocked {
+		t.Error("redaction withheld the record instead of redacting it")
+	}
+	if len(findings) != 3 {
+		t.Errorf("want the national ID found in all three fields, found %d", len(findings))
+	}
+	for name, value := range map[string]string{
+		"scenario": scrubbed.Scenario, "reasoning": scrubbed.Reasoning, "sourceUrl": scrubbed.SourceURL,
+	} {
+		if strings.Contains(value, "900101-1234568") {
+			t.Errorf("the national ID left the building in %s: %q", name, value)
+		}
+	}
+
+	blocking := dlp.Settings{Enabled: true, Classes: map[string]string{"rrn": dlp.Block}}
+	if _, _, blocked = scrubDecision(blocking, record); !blocked {
+		t.Error("a class configured to block was sent to an external address anyway")
+	}
+
+	// The scan is part of sending rather than something a caller remembers to do:
+	// a guard that only checked the order let a mutation through that scanned the
+	// record and then sent the original.
+	var arrived []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		read, _ := io.ReadAll(r.Body)
+		arrived = append(arrived, string(read))
+	}))
+	defer server.Close()
+	sink := store.ProvenanceSettings{Endpoint: server.URL}
+
+	err := SendDecision(context.Background(), sink, blocking, record)
+	var withheld WithheldError
+	if !errors.As(err, &withheld) {
+		t.Fatalf("sending a blocked record was not refused: %v", err)
+	}
+	if len(withheld.Classes) == 0 || withheld.Classes[0] != "rrn" {
+		t.Errorf("the refusal does not say what it found: %v", withheld.Classes)
+	}
+	if len(arrived) != 0 {
+		t.Fatalf("a blocked record reached the address anyway: %q", arrived)
+	}
+
+	if err := SendDecision(context.Background(), sink, redacting, record); err != nil {
+		t.Fatalf("a redactable record was not sent: %v", err)
+	}
+	if len(arrived) != 1 || strings.Contains(arrived[0], "900101-1234568") {
+		t.Fatalf("the national ID left the building: %q", arrived)
+	}
+}
+
+// A record held back must be visible where somebody counting on the export will
+// look, and must not be retried: the scanner will refuse it again, and the
+// dispatcher's retry is for sinks that come back.
+func TestAWithheldRecordIsLoudAndFinal(t *testing.T) {
+	body, err := os.ReadFile("provenance.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	send := strings.Index(source, "SendDecision(ctx, settings, d.contentSettings(ctx), record)")
+	if send < 0 {
+		t.Fatal("the dispatcher sends without handing the send this deployment's scanner settings")
+	}
+	withheld := source[send:]
+	if end := strings.Index(withheld, "\n\td.logger.Info"); end > 0 {
+		withheld = withheld[:end]
+	}
+	if !strings.Contains(withheld, `"provenance.withheld"`) {
+		t.Error("a record held back leaves no audit entry, so nobody learns the export stopped")
+	}
+	if !strings.Contains(withheld, "errors.As(err, &withheld)") {
+		t.Error("a refusal from the scanner is treated as a transport failure and retried")
+	}
+	if !strings.Contains(withheld, "d.logger.Warn") {
+		t.Error("a record held back is not logged")
+	}
+	if !strings.Contains(withheld, "return nil") {
+		t.Error("a blocked record is retried; the scanner will refuse it every time")
 	}
 }

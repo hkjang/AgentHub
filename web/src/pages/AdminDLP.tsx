@@ -78,7 +78,7 @@ export function AdminDLP() {
       description="모델 호출과 MCP 도구 호출에 포함된 개인정보·신용정보·자격증명을 찾아 가리거나 차단합니다. 찾은 값은 어디에도 저장하지 않습니다."
       actions={<button className="button primary" disabled={busy || !dirty} onClick={() => void save()}><Save size={16} />설정 저장</button>} />
     <GuidePanel id="admin-dlp" title="어떻게 동작하나요" steps={[
-      { title: '검사 지점', body: <>모델로 나가는 프롬프트는 컨트롤 플레인이, MCP 도구 호출은 Pod 안 게이트웨이가 검사합니다. 도구 호출은 컨트롤 플레인을 거치지 않기 때문에, 에이전트가 우회할 수 없는 자리에서 검사해야 의미가 있습니다.</> },
+      { title: '검사 지점', body: <>모델로 나가는 프롬프트는 컨트롤 플레인이, MCP 도구 호출은 Pod 안 게이트웨이가 검사하며, <Link to="/admin/provenance">결정 기록 내보내기</Link>도 나가기 전에 같은 설정으로 검사합니다. 도구 호출은 컨트롤 플레인을 거치지 않기 때문에, 에이전트가 우회할 수 없는 자리에서 검사해야 의미가 있습니다.</> },
       { title: '오탐을 줄이는 방식', body: '주민등록번호·사업자등록번호는 체크섬, 카드번호는 Luhn 검증을 통과한 값만 보고합니다. 자꾸 헛경보를 내는 검사기는 일주일 안에 꺼지기 때문입니다.' },
       { title: '기록되는 것', body: '감사 로그에는 등급·건수·마스킹된 예시만 남습니다. 찾은 값 자체는 저장하지도, 로그에 쓰지도 않습니다.' },
       { title: '정책과 함께 쓰기', body: <>특정 에이전트·역할만 더 엄격하게 막으려면 <Link to="/admin/policy">정책</Link>에서 데이터 등급 조건(<code>rrn</code> 등)으로 규칙을 만드세요. 등급을 찾으면 그 규칙이 함께 판정합니다.</> },
