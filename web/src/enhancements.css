@@ -621,8 +621,13 @@ tr.rule-off { opacity: .55; }
 .quota-usage u.warn { background: #f2a93b; }
 .quota-usage u.full { background: #e0576f; }
 .quota-unlimited { margin: 0; font-size: 12px; color: #98a2b3; }
-.quota-panel .quota-usage { padding: 4px 0 0; }
-.quota-panel .quota-usage small { font-size: 11px; }
+.quota-panel .quota-usage { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; padding: 16px 19px 18px; }
+.quota-panel .quota-usage > div { min-width: 0; gap: 8px; padding: 12px 13px; border: 1px solid #edf0f4; border-radius: 10px; background: #fbfcfe; }
+.quota-panel .quota-usage > div > span:first-child { align-items: center; gap: 12px; }
+/* A flex item is blockified even when it is inline-flex. Without an explicit
+   cross-axis size the source badge stretched across the whole quota row. */
+.quota-panel .quota-usage .quota-source { display: inline-flex; align-self: flex-start; justify-content: flex-start; width: fit-content; max-width: 100%; font-size: 11px; }
+.quota-panel > .muted-cell { margin: 0; padding: 12px 19px 14px; border-top: 1px solid #edf0f4; font-size: 12px; line-height: 1.5; }
 .quota-source { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 6px; font-size: 11px; font-weight: 600; background: #f1f4f8; color: #667085; }
 .quota-source.personal { background: #efe9ff; color: #5b3ec8; }
 .quota-source.department { background: #e6f1ff; color: #1c5fb8; }

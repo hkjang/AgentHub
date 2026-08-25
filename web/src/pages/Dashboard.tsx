@@ -45,7 +45,7 @@ function MyQuota(){
     <div className="quota-usage">{rows.map(field=>{const limit=quota.effective[field.key]!,used=quota.held[field.held!];return <div key={field.key}>
       <span>{field.label}<b>{used.toLocaleString('ko-KR')} / {limit.toLocaleString('ko-KR')}{field.unit}</b></span>
       <i><u style={{width:`${Math.min(100,Math.round((used/limit)*100))}%`}} className={used>=limit?'full':used>=limit*0.8?'warn':''}/></i>
-      <small className={`quota-source ${quotaSource(quota,field.key).tone}`}>{quotaSource(quota,field.key).label}</small>
+      <span className={`quota-source ${quotaSource(quota,field.key).tone}`}>{quotaSource(quota,field.key).label}</span>
     </div>})}</div>
     {quota.departmentQuota.total.maxRuntimes?<p className="muted-cell">부서 총량 Runtime {quota.departmentHeld.runtimes} / {quota.departmentQuota.total.maxRuntimes}개 — 내 한도가 남아 있어도 부서가 가득 차면 시작할 수 없습니다.</p>:null}
   </section>

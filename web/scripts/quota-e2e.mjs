@@ -143,6 +143,14 @@ try {
   check('홈 화면에 내 한도가 보임', /Runtime 수/.test(panelText), panelText.replace(/\n/g, ' · '))
   check('내 한도에 개인 예외 4개가 반영됨', /\/ 4개/.test(panelText))
   check('부서 총량도 함께 안내됨', /부서 총량/.test(panelText))
+  const sourceBadge = panel.locator('.quota-source').first()
+  const [badgeBox, quotaRowBox] = await Promise.all([
+    sourceBadge.boundingBox(),
+    sourceBadge.locator('..').boundingBox(),
+  ])
+  check('한도 출처가 행 전체가 아닌 배지 너비로 보임',
+    Boolean(badgeBox && quotaRowBox && badgeBox.width < quotaRowBox.width * 0.75),
+    badgeBox && quotaRowBox ? `${Math.round(badgeBox.width)}px / ${Math.round(quotaRowBox.width)}px` : '크기를 읽지 못함')
 
   // --- taking the exception away puts the department's limit back -----------
   await openQuotas()
