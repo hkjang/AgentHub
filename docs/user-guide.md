@@ -903,6 +903,12 @@ Runtime 이미지에는 `python`·`pip`(`/opt/agenthub/venv`)과 `conda`·`mamba
 - **Security & Network**: Pod Security Standards, NetworkPolicy, 마스터 키 회전
 - **System Settings**: OIDC SSO, 승인 거버넌스, 클러스터 및 Runtime 공통 환경 설정
 
+*시스템 설정 ▸ Runtime Agents* 에서는 이 배포에서 새로 만들 수 있는 런타임 유형을 체크박스로 고릅니다. 체크를 해제하면 해당 유형의 템플릿이 사용자 카탈로그와 비교 화면에서 빠지고, 콘솔·REST API·YAML 가져오기를 통한 **신규 생성**이 함께 거절됩니다. 이미 만든 에이전트는 중단시키지 않으며 실행·중지·재시작할 수 있습니다. 설정 행이 아직 없는 업그레이드 설치는 기존 동작을 보존하기 위해 모든 유형을 사용합니다.
+
+*시스템 설정 ▸ Kubernetes ▸ Runtime Pod에서 hostNetwork 사용* 은 Runtime Pod가 노드의 네트워크 네임스페이스를 공유할지를 정합니다(기본값: 켜짐). 켜면 PodSpec에 `hostNetwork: true`와 `dnsPolicy: ClusterFirstWithHostNet`을 함께 넣어 클러스터 서비스 이름도 계속 해석합니다. 끄면 일반 Pod 네트워크와 `ClusterFirst` DNS 정책을 사용합니다. 변경값은 새 Runtime 또는 다음 시작·재시작 때 적용됩니다.
+
+> `hostNetwork`를 켜면 같은 노드에서 같은 포트에 바인딩하는 Runtime끼리 충돌할 수 있으며, CNI 구현에 따라 NetworkPolicy가 host-network 트래픽을 격리하지 못할 수 있습니다. 또한 Kubernetes의 `baseline`·`restricted` Pod Security 정책은 host namespace를 거절하므로 Runtime Namespace의 `enforce` 레벨이 `privileged`여야 합니다. 기본 `agent-runtime-dev` 매니페스트는 `enforce: privileged`와 `audit/warn: restricted`를 사용하고 Operator가 컨테이너 보안 설정을 계속 제한합니다. 사용자 지정 Namespace를 쓴다면 정책 레이블도 직접 맞춘 뒤, 노드 배치와 실제 네트워크 차단 여부를 함께 확인하세요.
+
 > **SSO는 켜는 것과 동작하는 것이 다릅니다.** *시스템 설정 ▸ Authentication* 의 **지금 확인** 은 Discovery 문서를 읽어 제공자가 스스로 밝히는 Issuer와 설정값이 **정확히 같은지** 보고(다르면 로그인 시점에 두 설정 중 어느 것도 언급하지 않는 오류로 실패합니다), Client Secret이 저장돼 있으면 제공자가 그 자격을 인정하는지까지 확인합니다.
 >
 > **로컬 로그인은 이 확인이 통과해야 끌 수 있습니다.** 잘못된 Issuer를 넣고 로컬 로그인을 끄면 아무도 — 방금 저장한 관리자까지 — 들어올 수 없게 됩니다. 그래서 저장하는 길목에서 같은 확인을 한 번 더 하고, 실패하면 이유와 함께 거절합니다.

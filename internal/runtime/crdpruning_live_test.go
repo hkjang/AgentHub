@@ -112,6 +112,7 @@ func comparePaths(sent, stored any, path string, missing *[]string) {
 func aFullSpec() Spec {
 	spec := Spec{
 		Image:                          "example/opencode:v1",
+		HostNetwork:                    true,
 		WorkspaceType:                  "git",
 		WorkspacePVC:                   "crdprobe-workspace",
 		WorkspaceSizeGB:                7,

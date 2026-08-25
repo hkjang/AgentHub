@@ -348,6 +348,30 @@
 .import-agent input{position:absolute;inset:0;opacity:0;cursor:pointer}
 .warm-tag{margin-left:6px;padding:2px 7px;border-radius:5px;background:#fff1e6;border:1px solid #f6d5bb;color:#b5651d;font-size:12px;font-weight:650}
 
+.runtime-agent-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.runtime-agent-controls > strong { color: #344054; font-size: 13px; }
+.runtime-agent-controls > div { display: flex; gap: 7px; }
+.runtime-agent-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.settings-fields label.runtime-agent-option { display: grid; grid-template-columns: 18px 38px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 12px; border: 1px solid #e2e7ee; border-radius: 10px; background: #fafbfc; cursor: pointer; transition: border-color .15s, background .15s, box-shadow .15s; }
+.settings-fields .runtime-agent-option:hover { border-color: #bdb1f0; }
+.settings-fields .runtime-agent-option.selected { border-color: #cfc5f6; background: #faf9ff; box-shadow: 0 0 0 1px rgba(109,74,255,.05); }
+.settings-fields .runtime-agent-option > input { width: 17px; height: 17px; min-height: 17px; margin: 0; padding: 0; accent-color: #6d4aff; box-shadow: none; }
+.runtime-agent-copy { min-width: 0; }
+.runtime-agent-copy strong { display: block; margin-bottom: 3px; color: #263244; font-size: 13px; }
+.runtime-agent-copy small { display: -webkit-box; overflow: hidden; color: #7a8699; font-size: 11px; line-height: 1.4; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.runtime-agent-option > em { padding: 3px 7px; border-radius: 999px; background: #f0edff; color: #6545dc; font-size: 10px; font-style: normal; font-weight: 650; white-space: nowrap; }
+.runtime-agent-option:not(.selected) > em { background: #eef1f5; color: #7a8699; }
+
+@media (max-width: 980px) {
+  .runtime-agent-options { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 520px) {
+  .runtime-agent-controls { align-items: flex-start; flex-direction: column; }
+  .settings-fields label.runtime-agent-option { grid-template-columns: 18px 38px minmax(0, 1fr); }
+  .runtime-agent-option > em { grid-column: 2 / -1; justify-self: start; }
+}
+
 .provisioning-list { display: grid; gap: 11px; }
 .provisioning-list article { display: grid; gap: 8px; padding: 13px; border: 1px solid #e2e7ee; border-radius: 10px; background: #fbfcfe; }
 .provisioning-list article > header { display: grid; grid-template-columns: 1fr 84px auto 30px; gap: 9px; align-items: center; }

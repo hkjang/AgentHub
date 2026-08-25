@@ -12,6 +12,9 @@ kind: Namespace
 metadata:
   name: agent-runtime-dev
   labels:
-    pod-security.kubernetes.io/enforce: restricted
+    # hostNetwork is forbidden by both the baseline and restricted Pod Security
+    # profiles. Runtime Pods still receive restricted security contexts from the
+    # Operator, while audit/warn keep reporting any drift from that profile.
+    pod-security.kubernetes.io/enforce: privileged
     pod-security.kubernetes.io/audit: restricted
     pod-security.kubernetes.io/warn: restricted

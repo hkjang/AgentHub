@@ -39,6 +39,27 @@ func TestRuntimeObjectReferencesSecretWithoutEmbeddingIt(t *testing.T) {
 	}
 }
 
+func TestHostNetworkSettingDefaultsOnAndPreservesAnExplicitChoice(t *testing.T) {
+	if !(kubernetesSettings{}).hostNetworkEnabled() {
+		t.Fatal("an upgraded installation without hostNetwork must default to enabled")
+	}
+	for _, enabled := range []bool{false, true} {
+		value := enabled
+		if got := (kubernetesSettings{HostNetwork: &value}).hostNetworkEnabled(); got != enabled {
+			t.Fatalf("saved hostNetwork=%v resolved to %v", enabled, got)
+		}
+		object := (&KubernetesSpawner{}).object(Spec{
+			Runtime:     store.Runtime{CRDName: "agent-user-agent"},
+			Agent:       store.Agent{ID: "agent-id", OwnerID: "user-id", RuntimeType: "opencode"},
+			HostNetwork: enabled,
+		})
+		got, found, err := unstructured.NestedBool(object.Object, "spec", "runtime", "hostNetwork")
+		if err != nil || !found || got != enabled {
+			t.Fatalf("AgentRuntime hostNetwork = %v, found=%v, err=%v; want %v", got, found, err, enabled)
+		}
+	}
+}
+
 func TestLabelValue(t *testing.T) {
 	if got := labelValue("USER_A/Very Long Value"); got != "user-a-very-long-value" {
 		t.Fatalf("unexpected label %q", got)

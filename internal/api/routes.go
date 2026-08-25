@@ -103,7 +103,23 @@ func (s *Server) templates(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
+	availability, err := s.store.RuntimeAgentSettings(r.Context())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	items = enabledRuntimeTemplates(items, availability)
 	writeJSON(w, 200, map[string]any{"items": items})
+}
+
+func enabledRuntimeTemplates(items []store.Template, availability runtimetype.Settings) []store.Template {
+	result := make([]store.Template, 0, len(items))
+	for _, item := range items {
+		if availability.Enabled(item.RuntimeType) {
+			result = append(result, item)
+		}
+	}
+	return result
 }
 func (s *Server) runtimeProfiles(w http.ResponseWriter, r *http.Request) {
 	items, err := s.store.RuntimeProfiles(r.Context())
@@ -138,6 +154,10 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item, err := s.store.CreateAgent(r.Context(), u.ID, input)
+	if errors.Is(err, store.ErrRuntimeTypeDisabled) {
+		writeError(w, http.StatusForbidden, "runtime_type_disabled", err.Error())
+		return
+	}
 	if errors.Is(err, store.ErrConflict) {
 		// A reused name is the person's to fix, and the database's own words for it
 		// are not something anybody can act on.
@@ -1498,7 +1518,7 @@ func (s *Server) secretConfigured(r *http.Request, key string) bool {
 func (s *Server) putAdminSetting(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	key := chi.URLParam(r, "key")
-	allowed := map[string]bool{"general": true, "authentication": true, "kubernetes": true, "sessionGateway": true, "governance": true, "logging": true, "release": true, runtimeenv.SettingKey: true, telemetry.SettingKey: true}
+	allowed := map[string]bool{"general": true, "authentication": true, "kubernetes": true, "sessionGateway": true, "governance": true, "logging": true, "release": true, runtimeenv.SettingKey: true, runtimetype.SettingKey: true, telemetry.SettingKey: true}
 	if !allowed[key] {
 		writeError(w, 404, "setting_not_found", "지원하지 않는 설정입니다.")
 		return
@@ -1591,6 +1611,11 @@ func (s *Server) validateSetting(r *http.Request, key string, value map[string]a
 		if namespace := stringValue("namespace"); namespace == "" || len(namespace) > 63 {
 			return errors.New("Runtime Namespace를 확인해 주세요")
 		}
+		if raw, present := value["hostNetwork"]; present {
+			if _, ok := raw.(bool); !ok {
+				return errors.New("hostNetwork 설정은 체크박스 값이어야 합니다")
+			}
+		}
 		if boolValue("enabled") && stringValue("mode") == "token" {
 			if !validHTTPS(stringValue("apiServer")) {
 				return errors.New("Kubernetes API Server는 HTTPS 주소여야 합니다")
@@ -1651,8 +1676,28 @@ func (s *Server) validateSetting(r *http.Request, key string, value map[string]a
 			return err
 		}
 		return settings.Validate()
+	case runtimetype.SettingKey:
+		settings, err := decodeRuntimeAgentSettings(value)
+		if err != nil {
+			return err
+		}
+		return settings.Validate()
 	}
 	return nil
+}
+
+func decodeRuntimeAgentSettings(value map[string]any) (runtimetype.Settings, error) {
+	var settings runtimetype.Settings
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return settings, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&settings); err != nil {
+		return settings, errors.New("Runtime Agent 설정 형식을 확인해 주세요: disabledTypes만 사용할 수 있습니다")
+	}
+	return settings, nil
 }
 
 // decodeSetting re-reads a submitted settings document into its typed form.

@@ -9,6 +9,8 @@ export type RuntimeType = 'openhands' | 'opencode' | 'hermes' | 'qwenpaw' | 'qwe
 
 export type RuntimeDescriptor = {
   type: string; code: string; label: string; summary: string
+  /** Whether administrators currently allow this type for new Agents. */
+  enabled?: boolean
   strengths?: string[]; watchouts?: string[]
   workspace?: string; port?: number
   browserUi?: boolean; terminal?: boolean; toolLoop?: boolean; mcpConfigured?: boolean; proxiedUi?: boolean
@@ -68,6 +70,12 @@ export function setRuntimeDescriptors(items: RuntimeDescriptor[]) {
   loaded = next
 }
 
+/** Applies a freshly saved administrator choice without waiting for a reload. */
+export function setRuntimeAvailability(disabledTypes: string[]) {
+  const disabled = new Set(disabledTypes)
+  loaded = Object.fromEntries(Object.entries(loaded).map(([type, item]) => [type, {...item, enabled: !disabled.has(type)}]))
+}
+
 /**
  * Every runtime type this deployment has, for the screens that offer a choice.
  *
@@ -81,6 +89,9 @@ export const runtimeTypeList = (): string[] => Object.keys(loaded)
 
 /** Every runtime the platform reported, in its order. */
 export const runtimeDescriptors = () => Object.values(loaded)
+
+/** Whether this type can be selected for a new Agent on this deployment. */
+export const runtimeEnabled = (type: string) => descriptor(type).enabled !== false
 
 export function descriptor(type: string): RuntimeDescriptor {
   return loaded[type] ?? SEED[type as RuntimeType] ?? FALLBACK

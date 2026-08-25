@@ -164,9 +164,13 @@ func SidecarImage() string {
 }
 
 type Spec struct {
-	Runtime                store.Runtime
-	Agent                  store.Agent
-	Profile                store.RuntimeProfile
+	Runtime store.Runtime
+	Agent   store.Agent
+	Profile store.RuntimeProfile
+	// HostNetwork is copied into the AgentRuntime object and ultimately the
+	// Runtime PodSpec. The Kubernetes administrator setting supplies it at each
+	// write so changing the setting is honoured on the next start or restart.
+	HostNetwork            bool
 	Image                  string
 	Namespace              string
 	WorkspacePVC           string

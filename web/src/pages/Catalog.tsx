@@ -3,7 +3,7 @@ import { Bot, Boxes, Check, Cpu, Database, Search, Sparkles, WandSparkles } from
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { Drawer, ErrorBanner, Loading, PageHeader } from '../components/UI'
-import { EXPERIENCE_LABELS, descriptor, runnerSummary, runtimeCode, runtimeDescriptors, runtimeLabel, runtimeLogoClass } from '../runtime'
+import { EXPERIENCE_LABELS, descriptor, runnerSummary, runtimeCode, runtimeDescriptors, runtimeEnabled, runtimeLabel, runtimeLogoClass } from '../runtime'
 import type { RuntimeProfile, Template, Workspace } from '../types'
 
 /** What this deployment has seen this runtime type do.
@@ -32,19 +32,21 @@ function ExperienceTag({ type }: { type: string }) {
 }
 
 export function Catalog({builder=false}:{builder?:boolean}){
-  const [templates,setTemplates]=useState<Template[]>([]),[profiles,setProfiles]=useState<RuntimeProfile[]>([]),[workspaces,setWorkspaces]=useState<Workspace[]>([]),[models,setModels]=useState<{id:string;name:string;defaultModel:string}[]>([]),[bundles,setBundles]=useState<{id:string;name:string;description:string}[]>([]),[selected,setSelected]=useState<Template|null>(null),[query,setQuery]=useState(''),[activeCategory,setActiveCategory]=useState('전체')
-  const load=useCallback(()=>Promise.all([api.get<{items:Template[]}>('/api/v1/templates').then(v=>setTemplates(v.items)),api.get<{items:RuntimeProfile[]}>('/api/v1/runtime-profiles').then(v=>setProfiles(v.items)),api.get<{items:Workspace[]}>('/api/v1/workspaces').then(v=>setWorkspaces(v.items)),api.get<{items:{id:string;name:string;defaultModel:string}[]}>('/api/v1/models').then(v=>setModels(v.items)),api.get<{items:{id:string;name:string;description:string}[]}>('/api/v1/mcp-bundles').then(v=>setBundles(v.items))]),[])
+  const [templates,setTemplates]=useState<Template[]>([]),[profiles,setProfiles]=useState<RuntimeProfile[]>([]),[workspaces,setWorkspaces]=useState<Workspace[]>([]),[models,setModels]=useState<{id:string;name:string;defaultModel:string}[]>([]),[bundles,setBundles]=useState<{id:string;name:string;description:string}[]>([]),[selected,setSelected]=useState<Template|null>(null),[query,setQuery]=useState(''),[activeCategory,setActiveCategory]=useState('전체'),[loading,setLoading]=useState(true),[loadError,setLoadError]=useState('')
+  const load=useCallback(async()=>{setLoading(true);setLoadError('');try{await Promise.all([api.get<{items:Template[]}>('/api/v1/templates').then(v=>setTemplates(v.items)),api.get<{items:RuntimeProfile[]}>('/api/v1/runtime-profiles').then(v=>setProfiles(v.items)),api.get<{items:Workspace[]}>('/api/v1/workspaces').then(v=>setWorkspaces(v.items)),api.get<{items:{id:string;name:string;defaultModel:string}[]}>('/api/v1/models').then(v=>setModels(v.items)),api.get<{items:{id:string;name:string;description:string}[]}>('/api/v1/mcp-bundles').then(v=>setBundles(v.items))])}catch(error){setLoadError(error instanceof Error?error.message:'카탈로그를 불러오지 못했습니다.')}finally{setLoading(false)}},[])
   useEffect(()=>{void load()},[load])
   const filtered=templates.filter(t=>{
+    if(!runtimeEnabled(t.runtimeType)) return false
     const matchQuery = `${t.name} ${t.description} ${t.category} ${t.runtimeType}`.toLowerCase().includes(query.toLowerCase())
     const matchCat = activeCategory === '전체' || t.category.toLowerCase() === activeCategory.toLowerCase()
     return matchQuery && matchCat
   })
   const [comparing,setComparing]=useState(false)
   return <div className="page"><PageHeader eyebrow={builder?'에이전트 제작':'마켓플레이스'} title={builder?'에이전트 빌더':'에이전트 카탈로그'} description={builder?'템플릿, 런타임 프로파일과 작업공간을 조합해 개인 에이전트를 만듭니다.':'관리자가 검증하고 게시한 에이전트 템플릿으로 빠르게 시작하세요.'}/>
+    {loadError&&<ErrorBanner message={loadError}/>}
     <RuntimeComparison open={comparing} toggle={()=>setComparing(!comparing)}/>
     <div className="toolbar"><div className="search-box"><Search size={17}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="템플릿 또는 런타임 검색"/></div><div className="filter-chips"><button className={activeCategory==='전체'?'selected':''} onClick={()=>setActiveCategory('전체')}>전체</button><button className={activeCategory==='Development'?'selected':''} onClick={()=>setActiveCategory('Development')}>Development</button><button className={activeCategory==='Automation'?'selected':''} onClick={()=>setActiveCategory('Automation')}>Automation</button><button className={activeCategory==='Research'?'selected':''} onClick={()=>setActiveCategory('Research')}>Research</button><button className={activeCategory==='Operations'?'selected':''} onClick={()=>setActiveCategory('Operations')}>Operations</button></div></div>
-    {templates.length===0?<Loading/>:filtered.length===0?<div className="empty-compact">검색 조건에 맞는 템플릿이 없습니다.</div>:<div className="catalog-grid">{filtered.map(t=><button className="template-card" key={t.id} onClick={()=>setSelected(t)}><div className="template-top"><div className={runtimeLogoClass(t.runtimeType,'large')}>{runtimeCode(t.runtimeType)}</div><span className="verified"><Check size={12}/>검증됨</span></div><span className="category">{t.category}</span><h3>{t.name}</h3><p>{t.description}</p><div className="template-meta"><span><Bot size={14}/>{runtimeLabel(t.runtimeType)}</span><span><Boxes size={14}/>v{t.version}</span><ExperienceTag type={t.runtimeType}/></div></button>)}</div>}
+    {loading?<Loading/>:filtered.length===0?<div className="empty-compact">{templates.length===0?(runtimeDescriptors().some((item)=>item.enabled!==false)?'현재 사용할 수 있는 게시 템플릿이 없습니다.':'관리자가 현재 사용할 수 있는 런타임 에이전트를 선택하지 않았습니다.'):'검색 조건에 맞는 템플릿이 없습니다.'}</div>:<div className="catalog-grid">{filtered.map(t=><button className="template-card" key={t.id} onClick={()=>setSelected(t)}><div className="template-top"><div className={runtimeLogoClass(t.runtimeType,'large')}>{runtimeCode(t.runtimeType)}</div><span className="verified"><Check size={12}/>검증됨</span></div><span className="category">{t.category}</span><h3>{t.name}</h3><p>{t.description}</p><div className="template-meta"><span><Bot size={14}/>{runtimeLabel(t.runtimeType)}</span><span><Boxes size={14}/>v{t.version}</span><ExperienceTag type={t.runtimeType}/></div></button>)}</div>}
     {selected&&<CreateDrawer template={selected} profiles={profiles} workspaces={workspaces} models={models} bundles={bundles} close={()=>setSelected(null)}/>}
   </div>
 }
@@ -88,7 +90,7 @@ function CreateDrawer({template,profiles,workspaces,models,bundles,close}:{templ
  * the console was last told about them.
  */
 function RuntimeComparison({open,toggle}:{open:boolean;toggle:()=>void}){
-  const items=runtimeDescriptors().filter((item)=>item.type!=='custom')
+  const items=runtimeDescriptors().filter((item)=>item.type!=='custom'&&item.enabled!==false)
   if(items.length===0) return null
   return <section className="runtime-compare">
     <button type="button" className="guide-toggle" onClick={toggle} aria-expanded={open}>

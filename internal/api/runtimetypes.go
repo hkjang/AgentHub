@@ -24,6 +24,11 @@ import (
 // and the two copies were already drifting.
 func (s *Server) runtimeTypes(w http.ResponseWriter, r *http.Request) {
 	descriptors := runtimetype.Descriptors()
+	availability, err := s.store.RuntimeAgentSettings(r.Context())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	// What this deployment has actually seen each type do.
 	//
 	// Fifteen types are offered and every one looks equally available, which is
@@ -42,8 +47,7 @@ func (s *Server) runtimeTypes(w http.ResponseWriter, r *http.Request) {
 		// is still possible; it is only less informed, and saying nothing about a
 		// type is what the platform did until now anyway.
 		s.logger.Warn("runtime type history could not be read", "error", err)
-		writeJSON(w, http.StatusOK, map[string]any{"items": descriptors})
-		return
+		experiences = nil
 	}
 	items := make([]map[string]any, 0, len(descriptors))
 	for _, descriptor := range descriptors {
@@ -52,6 +56,7 @@ func (s *Server) runtimeTypes(w http.ResponseWriter, r *http.Request) {
 		if marshalErr == nil {
 			_ = json.Unmarshal(body, &entry)
 		}
+		entry["enabled"] = availability.Enabled(descriptor.Type)
 		experience := runtimeExperienceOf(experiences[descriptor.Type])
 		// Beside "this has never run here", what would have to change for it to.
 		// The verdict alone stops where the operator's question starts.

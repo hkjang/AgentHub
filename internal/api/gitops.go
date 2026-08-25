@@ -336,6 +336,10 @@ func (s *Server) importAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"agent": saved, "mode": "updated", "execution": "kept"})
 	case errors.Is(lookupErr, store.ErrNotFound):
 		saved, err := s.store.CreateAgent(r.Context(), u.ID, input)
+		if errors.Is(err, store.ErrRuntimeTypeDisabled) {
+			writeError(w, http.StatusForbidden, "runtime_type_disabled", err.Error())
+			return
+		}
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "agent_import_failed", err.Error())
 			return

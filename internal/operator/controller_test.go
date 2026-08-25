@@ -3,6 +3,8 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -12,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/hkjang/AgentHub/internal/dlp"
@@ -20,6 +23,38 @@ import (
 	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
 )
+
+func TestBundledRuntimeNamespaceAllowsDefaultHostNetwork(t *testing.T) {
+	manifest, err := os.Open("../../deploy/kubernetes/namespace.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manifest.Close()
+
+	decoder := utilyaml.NewYAMLOrJSONDecoder(manifest, 4096)
+	for {
+		var namespace corev1.Namespace
+		if err := decoder.Decode(&namespace); err != nil {
+			if err == io.EOF {
+				break
+			}
+			t.Fatal(err)
+		}
+		if namespace.Name != "agent-runtime-dev" {
+			continue
+		}
+		if got := namespace.Labels["pod-security.kubernetes.io/enforce"]; got != "privileged" {
+			t.Fatalf("Runtime namespace Pod Security enforce = %q, want privileged so hostNetwork Pods are admitted", got)
+		}
+		for _, mode := range []string{"audit", "warn"} {
+			if got := namespace.Labels["pod-security.kubernetes.io/"+mode]; got != "restricted" {
+				t.Errorf("Runtime namespace Pod Security %s = %q, want restricted", mode, got)
+			}
+		}
+		return
+	}
+	t.Fatal("bundled manifests do not define the agent-runtime-dev namespace")
+}
 
 func TestRuntimeConfigsCompileModelAndMCPBindings(t *testing.T) {
 	var value spec
@@ -162,6 +197,43 @@ func TestHermesStatefulSetUsesLoopbackDashboardAndAuthenticatedProxy(t *testing.
 	}
 	if statefulSet.Spec.Template.Spec.AutomountServiceAccountToken == nil || *statefulSet.Spec.Template.Spec.AutomountServiceAccountToken {
 		t.Fatal("Runtime Pod must not receive a Kubernetes service account token")
+	}
+	if !statefulSet.Spec.Template.Spec.HostNetwork {
+		t.Fatal("Runtime Pod must use the host network")
+	}
+	if statefulSet.Spec.Template.Spec.DNSPolicy != corev1.DNSClusterFirstWithHostNet {
+		t.Fatalf("host-network Runtime Pod DNS policy = %q, want %q", statefulSet.Spec.Template.Spec.DNSPolicy, corev1.DNSClusterFirstWithHostNet)
+	}
+}
+
+func TestRuntimePodCanDisableHostNetwork(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	controller := &Controller{client: client}
+	owner := &unstructured.Unstructured{}
+	owner.SetAPIVersion("agenthub.io/v1alpha1")
+	owner.SetKind("AgentRuntime")
+	owner.SetName("isolated-runtime")
+	owner.SetNamespace("agent-runtime-dev")
+	owner.SetUID(types.UID("test-owner"))
+
+	var value spec
+	value.Owner = "user-1"
+	value.Runtime.Type = runtimetype.OpenCode
+	value.Runtime.Image = "agenthub-base:v0.1.0"
+	hostNetwork := false
+	value.Runtime.HostNetwork = &hostNetwork
+	if err := controller.ensureStatefulSet(context.Background(), "agent-runtime-dev", "isolated-runtime", "isolated-workspace", value, owner); err != nil {
+		t.Fatal(err)
+	}
+	statefulSet, err := client.AppsV1().StatefulSets("agent-runtime-dev").Get(context.Background(), "isolated-runtime", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if statefulSet.Spec.Template.Spec.HostNetwork {
+		t.Fatal("an administrator's unchecked hostNetwork setting was ignored")
+	}
+	if statefulSet.Spec.Template.Spec.DNSPolicy != corev1.DNSClusterFirst {
+		t.Fatalf("isolated Runtime Pod DNS policy = %q, want %q", statefulSet.Spec.Template.Spec.DNSPolicy, corev1.DNSClusterFirst)
 	}
 }
 

@@ -53,6 +53,14 @@ type kubernetesSettings struct {
 	APIServer  string `json:"apiServer"`
 	VerifyTLS  bool   `json:"verifyTls"`
 	CRDEnabled bool   `json:"crdEnabled"`
+	// A pointer preserves the upgrade default: installations whose Kubernetes
+	// setting predates this field should behave like the requested checked state,
+	// while an administrator can still save an explicit false.
+	HostNetwork *bool `json:"hostNetwork"`
+}
+
+func (s kubernetesSettings) hostNetworkEnabled() bool {
+	return s.HostNetwork == nil || *s.HostNetwork
 }
 
 type KubernetesSpawner struct {
@@ -286,7 +294,7 @@ func stringList(values []string) []any {
 // runtimeObject renders the runtime section of the CRD. A custom runtime carries
 // its own command and port, because there is no adapter to supply them.
 func runtimeObject(spec Spec, image string) map[string]any {
-	value := map[string]any{"type": spec.Agent.RuntimeType, "image": image, "sidecarImage": spec.SidecarImage}
+	value := map[string]any{"type": spec.Agent.RuntimeType, "image": image, "sidecarImage": spec.SidecarImage, "hostNetwork": spec.HostNetwork}
 	if len(spec.CustomCommand) > 0 {
 		command := make([]any, 0, len(spec.CustomCommand))
 		for _, part := range spec.CustomCommand {
@@ -406,6 +414,7 @@ func (k *KubernetesSpawner) Spawn(ctx context.Context, spec Spec) error {
 	if namespace == "" {
 		namespace = "agent-runtime-dev"
 	}
+	spec.HostNetwork = settings.hostNetworkEnabled()
 	tokenBytes := make([]byte, 32)
 	if _, err = rand.Read(tokenBytes); err != nil {
 		return err
@@ -580,6 +589,7 @@ func (k *KubernetesSpawner) Restart(ctx context.Context, spec Spec) error {
 	if namespace == "" {
 		namespace = "agent-runtime-dev"
 	}
+	spec.HostNetwork = settings.hostNetworkEnabled()
 	if coreClient != nil {
 		_ = k.ensureSecret(ctx, coreClient, namespace, spec)
 	}
@@ -621,6 +631,7 @@ func (k *KubernetesSpawner) Sync(ctx context.Context, spec Spec) error {
 	if namespace == "" {
 		namespace = "agent-runtime-dev"
 	}
+	spec.HostNetwork = settings.hostNetworkEnabled()
 	stored, err := updateRuntimeObject(ctx, client, namespace, spec.Runtime.CRDName, func(object *unstructured.Unstructured) error {
 		return syncSpec(object, k.object(spec))
 	})
@@ -779,6 +790,7 @@ func (k *KubernetesSpawner) setDesired(ctx context.Context, spec Spec, state str
 	if namespace == "" {
 		namespace = "agent-runtime-dev"
 	}
+	spec.HostNetwork = settings.hostNetworkEnabled()
 	if state == "Running" && coreClient != nil {
 		_ = k.ensureSecret(ctx, coreClient, namespace, spec)
 	}

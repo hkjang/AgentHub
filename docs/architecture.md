@@ -158,6 +158,29 @@ branch through the StatefulSet builder.
 means updating the CRD enum in `deploy/kubernetes/crd.yaml` and the
 `runtime_type` CHECK constraints in the initial migration to match.
 
+The site-wide `runtimeAgents` setting is a deny-list over that source of truth.
+No row and an empty list both preserve every adapter for upgrades; disabled
+types stay described by `GET /api/v1/runtime-types` with `enabled: false` so an
+administrator can turn them back on, while the user template endpoint omits
+them and `Store.CreateAgent` enforces the same decision for console, API and
+GitOps callers. Existing definitions are intentionally unaffected.
+
+The Kubernetes setting also carries the Runtime Pod network-namespace choice.
+The control plane writes it as `spec.runtime.hostNetwork` on every AgentRuntime
+create, start, restart and settings sync; the CRD preserves it; and the Operator
+maps it to `PodSpec.HostNetwork`. Enabled Pods explicitly use
+`ClusterFirstWithHostNet`, while disabled Pods use `ClusterFirst`. The field is
+pointer-shaped inside the Operator so an AgentRuntime written before the field
+existed defaults to enabled rather than changing behaviour during an upgrade.
+Host networking can bypass NetworkPolicy enforcement on some CNIs and makes
+host-port collisions possible, so the console says both before it is saved.
+Because the Kubernetes baseline and restricted Pod Security profiles reject
+host namespaces, the bundled `agent-runtime-dev` namespace enforces the
+privileged profile while retaining restricted audit and warning labels. The
+Operator still supplies restricted container and Pod security contexts; custom
+runtime namespaces must make the same admission-policy allowance before an
+administrator enables host networking.
+
 The Operator compiles each selected MCP Bundle into native runtime configuration:
 
 - Shared endpoints are injected as remote MCP servers.

@@ -66,6 +66,10 @@ spec:
                     # cannot pin the platform's code with it. Empty falls back
                     # to the runtime image.
                     sidecarImage: {type: string}
+                    # Whether Runtime Pods share the node network namespace.
+                    # True is the platform default; the control plane always
+                    # writes the administrator's explicit choice.
+                    hostNetwork: {type: boolean, default: true}
                     # A custom runtime has no adapter, so it declares how it
                     # starts and which port it serves on. Ignored for every
                     # other runtime type.

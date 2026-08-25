@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/hkjang/AgentHub/internal/runtimeenv"
+	"github.com/hkjang/AgentHub/internal/runtimetype"
+	"github.com/hkjang/AgentHub/internal/store"
 )
 
 // The runtime environment setting is the one whose shape the platform has to
@@ -30,6 +32,56 @@ func TestRuntimeEnvironmentSettingIsValidatedOnTheWayIn(t *testing.T) {
 		if err := server.validateSetting(request, runtimeenv.SettingKey, value, nil); err == nil {
 			t.Fatalf("%s was accepted", name)
 		}
+	}
+}
+
+func TestRuntimeAgentSettingIsValidatedOnTheWayIn(t *testing.T) {
+	server := &Server{}
+	request := httptest.NewRequest("PUT", "/api/v1/admin/settings/"+runtimetype.SettingKey, nil)
+	if err := server.validateSetting(request, runtimetype.SettingKey, map[string]any{
+		"disabledTypes": []any{runtimetype.Hermes, runtimetype.Custom},
+	}, nil); err != nil {
+		t.Fatalf("valid runtime Agent settings were rejected: %v", err)
+	}
+	for name, value := range map[string]map[string]any{
+		"unknown runtime": {"disabledTypes": []any{"not-a-runtime"}},
+		"duplicate":       {"disabledTypes": []any{runtimetype.OpenCode, runtimetype.OpenCode}},
+		"wrong type":      {"disabledTypes": "opencode"},
+		"unknown field":   {"enabledTypes": []any{runtimetype.OpenCode}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := server.validateSetting(request, runtimetype.SettingKey, value, nil); err == nil {
+				t.Fatal("invalid runtime Agent settings were accepted")
+			}
+		})
+	}
+}
+
+func TestKubernetesHostNetworkSettingRequiresABoolean(t *testing.T) {
+	server := &Server{}
+	request := httptest.NewRequest("PUT", "/api/v1/admin/settings/kubernetes", nil)
+	valid := map[string]any{"namespace": "agent-runtime-dev", "hostNetwork": true}
+	if err := server.validateSetting(request, "kubernetes", valid, nil); err != nil {
+		t.Fatalf("a boolean hostNetwork setting was rejected: %v", err)
+	}
+	invalid := map[string]any{"namespace": "agent-runtime-dev", "hostNetwork": "true"}
+	if err := server.validateSetting(request, "kubernetes", invalid, nil); err == nil {
+		t.Fatal("a non-boolean hostNetwork setting was accepted")
+	}
+}
+
+func TestDisabledRuntimeTemplatesAreNotOffered(t *testing.T) {
+	items := []store.Template{
+		{ID: "open", RuntimeType: runtimetype.OpenCode},
+		{ID: "hermes", RuntimeType: runtimetype.Hermes},
+		{ID: "custom", RuntimeType: runtimetype.Custom},
+	}
+	filtered := enabledRuntimeTemplates(items, runtimetype.Settings{DisabledTypes: []string{runtimetype.Hermes, runtimetype.Custom}})
+	if len(filtered) != 1 || filtered[0].ID != "open" {
+		t.Fatalf("disabled runtime templates were still offered: %#v", filtered)
+	}
+	if defaults := enabledRuntimeTemplates(items, runtimetype.Settings{}); len(defaults) != len(items) {
+		t.Fatalf("the missing setting did not preserve every template: %#v", defaults)
 	}
 }
 

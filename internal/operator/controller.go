@@ -192,6 +192,9 @@ type spec struct {
 	Runtime struct {
 		Type  string `json:"type"`
 		Image string `json:"image"`
+		// Pointer keeps AgentRuntime objects written before this field compatible:
+		// absent means the administrator's new default, enabled.
+		HostNetwork *bool `json:"hostNetwork"`
 		// SidecarImage runs AgentHub's own sidecars. It is the control plane's
 		// image, so an agent pinned to an older runtime image still gets the
 		// session proxy and MCP gateway from this release. Empty falls back to
@@ -1919,7 +1922,17 @@ func (c *Controller) ensureStatefulSet(ctx context.Context, ns, name, pvcName st
 	if restartedAt := owner.GetAnnotations()["agenthub.io/restarted-at"]; restartedAt != "" {
 		podAnnotations["agenthub.io/restarted-at"] = restartedAt
 	}
+	hostNetwork := value.Runtime.HostNetwork == nil || *value.Runtime.HostNetwork
+	dnsPolicy := corev1.DNSClusterFirst
+	if hostNetwork {
+		dnsPolicy = corev1.DNSClusterFirstWithHostNet
+	}
 	desired := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels(name, nil), OwnerReferences: ownerRef(owner)}, Spec: appsv1.StatefulSetSpec{ServiceName: name, Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"agenthub.io/runtime": name}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels(name, map[string]string{"agenthub.io/owner": safeLabel(value.Owner)}), Annotations: podAnnotations}, Spec: corev1.PodSpec{
+		// When the administrator enables it, Runtime agents can reach services bound
+		// to the node's loopback and host interfaces. Kubernetes' normal ClusterFirst
+		// policy does not preserve cluster DNS for host-network Pods, so use the
+		// matching policy while keeping ordinary Pod DNS when it is disabled.
+		HostNetwork: hostNetwork, DNSPolicy: dnsPolicy,
 		ServiceAccountName: name, AutomountServiceAccountToken: ptr(false), EnableServiceLinks: ptr(false), SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonRoot, RunAsUser: &runAs, RunAsGroup: &runAs, FSGroup: &runAs, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
 		InitContainers: initContainers, Containers: containers,
 		Volumes: append([]corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName}}}, {Name: "home", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: homePVCName(name)}}}, {Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}, {Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}}}}}, clusterReadVolume(value)...),
