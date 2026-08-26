@@ -42,7 +42,7 @@ build:
 	go build -o bin/agenthub-operator ./cmd/operator
 
 image:
-	docker build --build-arg VERSION=$(VERSION) --build-arg BASE_VERSION=$(BASE_VERSION) --build-arg LANGFLOW_VERSION=$(LANGFLOW_VERSION) --build-arg QWENCODE_VERSION=$(QWENCODE_VERSION) --build-arg JUPYTER_VERSION=$(JUPYTER_VERSION) --build-arg NODERED_VERSION=$(NODERED_VERSION) --build-arg N8N_VERSION=$(N8N_VERSION) --build-arg GOOSE_VERSION=$(GOOSE_VERSION) --build-arg HOLMES_VERSION=$(HOLMES_VERSION) --build-arg BROWSERCODE_VERSION=$(BROWSERCODE_VERSION) --build-arg COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) --build-arg BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ) -t agenthub:$(TAG) .
+	docker build --build-arg VERSION=$(VERSION) --build-arg BASE_VERSION=$(BASE_VERSION) --build-arg LANGFLOW_VERSION=$(LANGFLOW_VERSION) --build-arg QWENCODE_VERSION=$(QWENCODE_VERSION) --build-arg JUPYTER_VERSION=$(JUPYTER_VERSION) --build-arg NODERED_VERSION=$(NODERED_VERSION) --build-arg N8N_VERSION=$(N8N_VERSION) --build-arg GOOSE_VERSION=$(GOOSE_VERSION) --build-arg HOLMES_VERSION=$(HOLMES_VERSION) --build-arg BROWSERCODE_VERSION=$(BROWSERCODE_VERSION) --build-arg OPENCODEREVIEW_VERSION=$(OPENCODEREVIEW_VERSION) --build-arg ORCA_VERSION=$(ORCA_VERSION) --build-arg OPENHANDS_VERSION=$(OPENHANDS_VERSION) --build-arg PI_VERSION=$(PI_VERSION) --build-arg COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) --build-arg BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ) -t agenthub:$(TAG) .
 
 image-base:
 	docker build -f Dockerfile.base -t agenthub-base:$(BASE_TAG) .

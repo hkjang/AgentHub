@@ -62,6 +62,160 @@ func TestReleaseDecisionsUsePublishedAssetEvidence(t *testing.T) {
 	}
 }
 
+func TestRuntimeProxyLocalDependenciesFollowTheDockerBuild(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(root, "scripts", "runtime-proxy-local-go-deps.sh")
+	command := exec.Command("bash", script)
+	command.Dir = root
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("resolve runtime-proxy dependencies: %v\n%s", err, output)
+	}
+	dependencies := map[string]bool{}
+	for _, dependency := range strings.Fields(string(output)) {
+		dependencies[filepath.ToSlash(dependency)] = true
+		if filepath.IsAbs(dependency) || strings.HasPrefix(dependency, "../") {
+			t.Errorf("dependency %q is not relative to the Docker build context", dependency)
+		}
+	}
+	for _, expected := range []string{"cmd/runtime-proxy", "internal/dlp", "internal/policy"} {
+		if !dependencies[expected] {
+			t.Errorf("runtime-proxy dependency list does not include %s; got %q", expected, output)
+		}
+	}
+	if dependencies["internal/api"] {
+		t.Error("runtime-proxy dependency list includes unrelated control-plane package internal/api")
+	}
+}
+
+func TestRuntimeProxyDependencyLookupUsesLinuxWithoutCgoAndFailsClosed(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(root, "scripts", "runtime-proxy-local-go-deps.sh")
+	fakeBin := t.TempDir()
+	fakeGo := filepath.Join(fakeBin, "go")
+	good := `#!/usr/bin/env bash
+set -euo pipefail
+test "${CGO_ENABLED:-}" = 0
+test "${GOOS:-}" = linux
+test "${GOARCH:-}" = amd64
+test "${GOWORK:-}" = off
+case " $* " in *" -mod=readonly "*) ;; *) exit 1 ;; esac
+printf '%s\n' \
+  'github.com/hkjang/AgentHub github.com/hkjang/AgentHub/cmd/runtime-proxy' \
+  'github.com/hkjang/AgentHub github.com/hkjang/AgentHub/internal/dlp'
+`
+	if err := os.WriteFile(fakeGo, []byte(good), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("bash", script)
+	command.Dir = root
+	command.Env = append(os.Environ(), "PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("dependency helper did not use Docker's Go environment: %v\n%s", err, output)
+	}
+	if got := strings.Fields(string(output)); strings.Join(got, " ") != "cmd/runtime-proxy internal/dlp" {
+		t.Fatalf("dependency helper output = %q", output)
+	}
+
+	failing := "#!/usr/bin/env bash\nexit 23\n"
+	if err := os.WriteFile(fakeGo, []byte(failing), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	command = exec.Command("bash", script)
+	command.Dir = root
+	command.Env = append(os.Environ(), "PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	output, err = command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("dependency helper ignored go list failure; output %q", output)
+	}
+	if !strings.Contains(string(output), "failed to resolve runtime-proxy dependencies") {
+		t.Fatalf("dependency helper failure has no useful diagnostic: %q", output)
+	}
+}
+
+func TestReleaseWatchesRuntimeProxyLocalDependenciesFailClosed(t *testing.T) {
+	root := filepath.Join("..", "..")
+	body, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(body)
+	for _, required := range []string{
+		`uses: actions/setup-go@v7`,
+		`go-version-file: go.mod`,
+		`if ! local_go_source_lines="$(bash scripts/runtime-proxy-local-go-deps.sh)"; then`,
+		`sources+=("${local_go_sources[@]}")`,
+		`GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go list -mod=readonly -deps`,
+		`echo "::error::could not resolve runtime-proxy's module graph"`,
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("release workflow does not fail-closed over base Go dependencies; missing %q", required)
+		}
+	}
+}
+
+// The control plane chooses these runtime images from buildinfo. Keeping the
+// wrapper version only in the runtime image build is not enough: when the
+// wrapper is bumped, a control image built without its ARG/ldflag keeps asking
+// Kubernetes for the previous tag.
+func TestIndependentRuntimeVersionsReachTheControlPlaneBuild(t *testing.T) {
+	root := filepath.Join("..", "..")
+	read := func(name string) string {
+		t.Helper()
+		body, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+	dockerfile := read("Dockerfile")
+	makefile := read("Makefile")
+	compose := read("compose.yaml")
+	workflow := read(filepath.Join(".github", "workflows", "release.yaml"))
+
+	for _, runtime := range []struct {
+		variable string
+		field    string
+		output   string
+	}{
+		{"OPENCODEREVIEW_VERSION", "OpenCodeReviewVersion", "opencodereview_version"},
+		{"ORCA_VERSION", "OrcaVersion", "orca_version"},
+		{"OPENHANDS_VERSION", "OpenHandsVersion", "openhands_version"},
+		{"PI_VERSION", "PiVersion", "pi_version"},
+	} {
+		if !strings.Contains(dockerfile, "ARG "+runtime.variable+"=") {
+			t.Errorf("Dockerfile does not declare %s", runtime.variable)
+		}
+		ldflag := "buildinfo." + runtime.field + "=${" + runtime.variable + "}"
+		if count := strings.Count(dockerfile, ldflag); count != 3 {
+			t.Errorf("Dockerfile injects %s into %d control binaries, want 3", runtime.variable, count)
+		}
+		makeArg := "--build-arg " + runtime.variable + "=$(" + runtime.variable + ")"
+		if !strings.Contains(makefile, makeArg) {
+			t.Errorf("make image does not pass %s", runtime.variable)
+		}
+		version := strings.TrimSpace(read(runtime.variable))
+		if !strings.Contains(compose, runtime.variable+": "+version) {
+			t.Errorf("compose build args do not pin %s to its version file", runtime.variable)
+		}
+		workflowEnv := runtime.variable + ": ${{ steps.runtimes.outputs." + runtime.output + " }}"
+		if !strings.Contains(workflow, workflowEnv) {
+			t.Errorf("release control build has no %s environment value", runtime.variable)
+		}
+		workflowArg := `--build-arg ` + runtime.variable + `="${` + runtime.variable + `}"`
+		if !strings.Contains(workflow, workflowArg) {
+			t.Errorf("release control build does not pass %s", runtime.variable)
+		}
+	}
+}
+
 // Every image's package command must be guarded by that image's own decision.
 // OpenHands was once nested under ORCA_CHANGED: the runner built it and then
 // uploaded nothing, while later releases assumed the missing archive existed.

@@ -54,3 +54,20 @@ func TestEveryWorkflowIsOneGitHubCanRead(t *testing.T) {
 		}
 	}
 }
+
+// Independent runtime versions are part of the public build response and feed
+// the spawner's default image tags. Omitting one here leaves an operator unable
+// to tell which image the running control plane will request.
+func TestCurrentIncludesIndependentRuntimeVersions(t *testing.T) {
+	got := Current()
+	for name, versions := range map[string][2]string{
+		"OpenCodeReview": {got.OpenCodeReviewVersion, OpenCodeReviewVersion},
+		"Orca":           {got.OrcaVersion, OrcaVersion},
+		"OpenHands":      {got.OpenHandsVersion, OpenHandsVersion},
+		"Pi":             {got.PiVersion, PiVersion},
+	} {
+		if versions[0] != versions[1] {
+			t.Errorf("Current().%sVersion = %q, want %q", name, versions[0], versions[1])
+		}
+	}
+}

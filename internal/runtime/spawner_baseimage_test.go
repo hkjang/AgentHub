@@ -66,16 +66,59 @@ func TestDefaultBaseImageHonoursTheOverride(t *testing.T) {
 }
 
 // The shipped versions have to be plain versions, since each becomes an image
-// tag in the manifests and in every offline install instruction.
+// tag in the manifests and in every offline install instruction. The buildinfo
+// defaults and spawner must follow every version file as well: release builds
+// replace these defaults through ldflags, but a missing ldflag used to stay
+// hidden while the source default happened to equal the version file.
 func TestShippedImageVersionsAreUsableAsTags(t *testing.T) {
-	for _, name := range []string{"BASE_VERSION", "LANGFLOW_VERSION"} {
-		raw, err := os.ReadFile("../../" + name)
+	type shippedImage struct {
+		versionFile  string
+		buildVersion *string
+		runtimeType  string
+		repository   string
+		overrideEnv  string
+	}
+	images := []shippedImage{
+		{"BASE_VERSION", &buildinfo.BaseVersion, runtimetype.OpenCode, "agenthub-base", EnvDefaultBaseImage},
+		{"BROWSERCODE_VERSION", &buildinfo.BrowserCodeVersion, runtimetype.BrowserCode, "agenthub-browsercode", EnvDefaultBrowserCode},
+		{"GOOSE_VERSION", &buildinfo.GooseVersion, runtimetype.Goose, "agenthub-goose", EnvDefaultGooseImage},
+		{"HOLMES_VERSION", &buildinfo.HolmesVersion, runtimetype.Holmes, "agenthub-holmes", EnvDefaultHolmesImage},
+		{"JUPYTER_VERSION", &buildinfo.JupyterVersion, runtimetype.Jupyter, "agenthub-jupyter", EnvDefaultJupyterImage},
+		{"LANGFLOW_VERSION", &buildinfo.LangflowVersion, runtimetype.Langflow, "agenthub-langflow", EnvDefaultLangflowImage},
+		{"N8N_VERSION", &buildinfo.N8NVersion, runtimetype.N8N, "agenthub-n8n", EnvDefaultN8NImage},
+		{"NODERED_VERSION", &buildinfo.NodeREDVersion, runtimetype.NodeRED, "agenthub-nodered", EnvDefaultNodeREDImage},
+		{"OPENCODEREVIEW_VERSION", &buildinfo.OpenCodeReviewVersion, runtimetype.OpenCodeReview, "agenthub-opencodereview", EnvDefaultOpenCodeReviewImage},
+		{"OPENHANDS_VERSION", &buildinfo.OpenHandsVersion, runtimetype.OpenHands, "agenthub-openhands", EnvDefaultOpenHandsImage},
+		{"ORCA_VERSION", &buildinfo.OrcaVersion, runtimetype.Orca, "agenthub-orca", EnvDefaultOrcaImage},
+		{"PI_VERSION", &buildinfo.PiVersion, runtimetype.Pi, "agenthub-pi", EnvDefaultPiImage},
+		{"QWENCODE_VERSION", &buildinfo.QwenCodeVersion, runtimetype.QwenCode, "agenthub-qwencode", EnvDefaultQwenCodeImage},
+	}
+
+	root := repositoryRoot(t)
+	files, err := filepath.Glob(filepath.Join(root, "*_VERSION"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != len(images) {
+		t.Fatalf("found %d *_VERSION files but the spawner test knows %d; add every independently published image", len(files), len(images))
+	}
+	for _, image := range images {
+		t.Setenv(image.overrideEnv, "")
+		raw, err := os.ReadFile(filepath.Join(root, image.versionFile))
 		if err != nil {
-			t.Fatalf("%s is not readable: %v", name, err)
+			t.Fatalf("%s is not readable: %v", image.versionFile, err)
 		}
 		value := strings.TrimSpace(string(raw))
 		if value == "" || strings.ContainsAny(value, " \t/:") {
-			t.Fatalf("%s %q is not usable as an image tag", name, value)
+			t.Errorf("%s %q is not usable as an image tag", image.versionFile, value)
+			continue
+		}
+		if got := strings.TrimSuffix(*image.buildVersion, "-dev"); got != value {
+			t.Errorf("buildinfo for %s = %q, want %q", image.versionFile, got, value)
+		}
+		want := image.repository + ":v" + value
+		if got := DefaultRuntimeImage(image.runtimeType); got != want {
+			t.Errorf("DefaultRuntimeImage(%q) = %q, want %q from %s", image.runtimeType, got, want, image.versionFile)
 		}
 	}
 }

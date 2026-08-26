@@ -12,6 +12,12 @@ jobs:
         with:
           # Tag history is needed to diff this release against the previous one.
           fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          # Change detection resolves the exact package graph compiled by the
+          # runtime-proxy stage in Dockerfile.base.
+          go-version-file: go.mod
+          cache: true
       - name: Resolve version
         id: version
         shell: bash
@@ -54,11 +60,20 @@ jobs:
           # as a directory. That directory holds the scripts of three different
           # images now, and watching all of it demanded a multi-gigabyte base
           # rebuild for a file only the Qwen Code image contains.
-          sources=(Dockerfile.base cmd/runtime-proxy
+          sources=(Dockerfile.base
                    deploy/runtime/entrypoint.sh
                    deploy/runtime/qwenpaw-configure.sh
                    deploy/runtime/agenthub-report-config.sh
                    deploy/runtime/agenthub-toolchain.sh)
+          # Dockerfile.base copies the full internal tree, but only packages in
+          # runtime-proxy's Linux/no-cgo graph affect its binary. Discover those
+          # paths rather than maintaining another list that can silently drift.
+          if ! local_go_source_lines="$(bash scripts/runtime-proxy-local-go-deps.sh)"; then
+            echo "::error::could not resolve runtime-proxy's local Go dependencies" >&2
+            exit 1
+          fi
+          mapfile -t local_go_sources <<< "${local_go_source_lines}"
+          sources+=("${local_go_sources[@]}")
           # A named list drifts the moment somebody adds a script to the base
           # image and forgets this one — and the failure would be silent: a
           # released base tag whose image never got the new file. So the list is
@@ -90,12 +105,9 @@ jobs:
           # image never links — which is the cost this whole mechanism exists
           # to avoid.
           if [ "${inputs_changed}" = false ] && ! git diff --quiet "${previous}" "${GITHUB_REF_NAME}" -- go.mod go.sum; then
-            if ! modules="$(go list -deps -f '{{if .Module}}{{.Module.Path}}{{end}}' ./cmd/runtime-proxy | sort -u)"; then
-              # Unable to tell: assume the base image is affected rather than
-              # publishing a release whose base tag may be stale.
-              echo "could not resolve the proxy's module graph; treating the dependency change as a base change"
-              modules=""
-              inputs_changed=true
+            if ! modules="$(GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go list -mod=readonly -deps -f '{{if .Module}}{{.Module.Path}}{{end}}' ./cmd/runtime-proxy | sort -u)"; then
+              echo "::error::could not resolve runtime-proxy's module graph" >&2
+              exit 1
             fi
             moved="$(git diff -U0 "${previous}" "${GITHUB_REF_NAME}" -- go.mod go.sum \
               | grep -E '^[+-][^+-]' | grep -oE '[a-z0-9.-]+\.[a-z]{2,}/[^ ]+' | sed 's/ .*//' | sort -u || true)"
@@ -236,10 +248,13 @@ jobs:
           BROWSERCODE_VERSION: ${{ steps.runtimes.outputs.browsercode_version }}
           BROWSERCODE_TAG: ${{ steps.runtimes.outputs.browsercode_tag }}
           BROWSERCODE_CHANGED: ${{ steps.runtimes.outputs.browsercode_changed }}
+          OPENCODEREVIEW_VERSION: ${{ steps.runtimes.outputs.opencodereview_version }}
           OPENCODEREVIEW_TAG: ${{ steps.runtimes.outputs.opencodereview_tag }}
+          ORCA_VERSION: ${{ steps.runtimes.outputs.orca_version }}
           ORCA_TAG: ${{ steps.runtimes.outputs.orca_tag }}
           OPENHANDS_VERSION: ${{ steps.runtimes.outputs.openhands_version }}
           OPENHANDS_TAG: ${{ steps.runtimes.outputs.openhands_tag }}
+          PI_VERSION: ${{ steps.runtimes.outputs.pi_version }}
           PI_TAG: ${{ steps.runtimes.outputs.pi_tag }}
           OPENCODEREVIEW_CHANGED: ${{ steps.runtimes.outputs.opencodereview_changed }}
           ORCA_CHANGED: ${{ steps.runtimes.outputs.orca_changed }}
@@ -258,6 +273,8 @@ jobs:
             --build-arg JUPYTER_VERSION="${JUPYTER_VERSION}" --build-arg NODERED_VERSION="${NODERED_VERSION}" \
             --build-arg N8N_VERSION="${N8N_VERSION}" --build-arg GOOSE_VERSION="${GOOSE_VERSION}" \
             --build-arg HOLMES_VERSION="${HOLMES_VERSION}" --build-arg BROWSERCODE_VERSION="${BROWSERCODE_VERSION}" \
+            --build-arg OPENCODEREVIEW_VERSION="${OPENCODEREVIEW_VERSION}" --build-arg ORCA_VERSION="${ORCA_VERSION}" \
+            --build-arg OPENHANDS_VERSION="${OPENHANDS_VERSION}" --build-arg PI_VERSION="${PI_VERSION}" \
             --build-arg COMMIT="${GITHUB_SHA}" --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -t "agenthub:${RELEASE_TAG}" .
           if [ "${BASE_CHANGED}" = "true" ]; then
             docker build -f Dockerfile.base -t "agenthub-base:${BASE_TAG}" .
