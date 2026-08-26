@@ -19,9 +19,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AGENTHUB_IMAGE_CATALOG: runtime-images.json
-      AGENTHUB_RELEASE_INDEX: ${{ runner.temp }}/agenthub-release-index.json
-      AGENTHUB_IMAGE_PLAN: ${{ runner.temp }}/agenthub-image-plan.json
-      AGENTHUB_BUILT_IMAGES: ${{ runner.temp }}/agenthub-built-images.txt
       RELEASE_DIRECTORY: release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -37,6 +34,16 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
+
+      # The runner context is unavailable while GitHub evaluates job-level env.
+      # Resolve runner-local paths only after the job has started.
+      - name: Configure release workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "AGENTHUB_RELEASE_INDEX=${RUNNER_TEMP}/agenthub-release-index.json" >> "$GITHUB_ENV"
+          echo "AGENTHUB_IMAGE_PLAN=${RUNNER_TEMP}/agenthub-image-plan.json" >> "$GITHUB_ENV"
+          echo "AGENTHUB_BUILT_IMAGES=${RUNNER_TEMP}/agenthub-built-images.txt" >> "$GITHUB_ENV"
 
       - name: Resolve and validate release version
         id: version

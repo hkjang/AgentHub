@@ -216,6 +216,9 @@ func TestReleaseWorkflowIsCatalogDrivenAndSupplyChainChecked(t *testing.T) {
 
 	for _, required := range []string{
 		"runtime-images.json",
+		`AGENTHUB_RELEASE_INDEX=${RUNNER_TEMP}/agenthub-release-index.json`,
+		`AGENTHUB_IMAGE_PLAN=${RUNNER_TEMP}/agenthub-image-plan.json`,
+		`AGENTHUB_BUILT_IMAGES=${RUNNER_TEMP}/agenthub-built-images.txt`,
 		"release-catalog-images.sh plan",
 		"release-catalog-images.sh build",
 		"release-catalog-images.sh package",
@@ -240,6 +243,9 @@ func TestReleaseWorkflowIsCatalogDrivenAndSupplyChainChecked(t *testing.T) {
 		if !strings.Contains(combined, required) {
 			t.Errorf("catalog release wiring is missing %q", required)
 		}
+	}
+	if strings.Contains(workflow, `${{ runner.temp }}`) {
+		t.Error("release workflow uses runner context in job-level env; GitHub rejects it before creating a job")
 	}
 	for _, image := range catalog.Images {
 		for _, forbidden := range []string{
