@@ -47,19 +47,26 @@ RUN uv venv --seed --python /usr/bin/python3 /opt/agenthub/venv \
 
 # Miniforge rather than Anaconda's distribution: it is conda and mamba against
 # conda-forge only, so an offline site swaps a channel instead of negotiating a
-# licence. 'latest' resolves at build time; pin it for a reproducible release.
+# licence. The installer and its checksums are pinned because this image is
+# distributed as an offline trust root; following a moving "latest" URL would
+# put different bytes behind the same AgentHub image tag.
 #
 # Environments and package caches are pointed at the agent's home volume, so an
 # environment an agent creates survives the Pod that created it.
-ARG MINIFORGE_VERSION=latest
+ARG MINIFORGE_VERSION=26.5.3-0
+ARG MINIFORGE_SHA256_X86_64=14db468222ad564658656f769506056209b6dc375f5e7dfd31eb5ebbf08fa529
+ARG MINIFORGE_SHA256_AARCH64=0391e42075a7632e9665d6e728387ee6b905f6c3e704d3513e1c1133d0d69b89
 RUN set -eu; \
     arch="$(uname -m)"; \
-    if [ "${MINIFORGE_VERSION}" = "latest" ]; then \
-      url="https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-${arch}.sh"; \
-    else \
-      url="https://github.com/conda-forge/miniforge/releases/download/${MINIFORGE_VERSION}/Miniforge3-Linux-${arch}.sh"; \
-    fi; \
+    case "${arch}" in \
+      x86_64) sum="${MINIFORGE_SHA256_X86_64}" ;; \
+      aarch64) sum="${MINIFORGE_SHA256_AARCH64}" ;; \
+      *) echo "unsupported architecture ${arch}" >&2; exit 1 ;; \
+    esac; \
+    test -n "${sum}"; \
+    url="https://github.com/conda-forge/miniforge/releases/download/${MINIFORGE_VERSION}/Miniforge3-${MINIFORGE_VERSION}-Linux-${arch}.sh"; \
     curl -fsSL "${url}" -o /tmp/miniforge.sh; \
+    echo "${sum}  /tmp/miniforge.sh" | sha256sum -c -; \
     bash /tmp/miniforge.sh -b -p /opt/conda; \
     rm -f /tmp/miniforge.sh; \
     /opt/conda/bin/conda clean -afy; \

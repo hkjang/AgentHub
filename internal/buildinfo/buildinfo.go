@@ -9,7 +9,7 @@ var (
 	// tracked separately from Version because the base image is several GB and
 	// is only rebuilt when something it is built from changes, so a control
 	// plane release usually keeps running on an older base tag.
-	BaseVersion = "0.13.0-dev"
+	BaseVersion = "0.14.0-dev"
 	// LangflowVersion is the Langflow runtime image this control plane expects.
 	// Langflow ships its own Python tree and frontend, so it is built and
 	// published apart from the shared base image and moves on its own schedule.
@@ -22,7 +22,7 @@ var (
 	// its own schedule and only the sites that use it have to carry it.
 	JupyterVersion = "0.1.0-dev"
 	NodeREDVersion = "0.1.0-dev"
-	N8NVersion     = "0.1.0-dev"
+	N8NVersion     = "0.2.0-dev"
 	GooseVersion   = "0.1.0-dev"
 	HolmesVersion  = "0.2.0-dev"
 	// BrowserCodeVersion is the image that carries the browser-driving agent.
@@ -33,7 +33,7 @@ var (
 	OpenCodeReviewVersion = "0.1.0-dev"
 	// OrcaVersion is the execution fabric image. It carries an Electron
 	// application and is published on its own schedule.
-	OrcaVersion = "0.4.0-dev"
+	OrcaVersion = "0.5.0-dev"
 	// PiVersion is the image carrying the RPC-driven coding agent.
 	PiVersion = "0.1.0-dev"
 	// OpenHandsVersion is the agent server image. It is the vendor's own version

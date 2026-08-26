@@ -49,9 +49,12 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
  && codex --version
 
 ARG ORCA_VERSION
+ARG ORCA_SHA256_X86_64=2e70cb5e199741e5602a7060825575319f5e03bc2faa4b89cd27328f3f55d4b4
 RUN mkdir -p /opt/orca \
+ && test "$(uname -m)" = x86_64 \
  && curl -fsSL -o /opt/orca/orca-linux.AppImage \
       "https://github.com/stablyai/orca/releases/download/v${ORCA_VERSION}/orca-linux.AppImage" \
+ && echo "${ORCA_SHA256_X86_64}  /opt/orca/orca-linux.AppImage" | sha256sum -c - \
  && chmod +x /opt/orca/orca-linux.AppImage \
  && cd /opt/orca && ./orca-linux.AppImage --appimage-extract >/dev/null \
  && rm -f /opt/orca/orca-linux.AppImage \

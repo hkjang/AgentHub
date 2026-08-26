@@ -1,4 +1,7 @@
 name: agenthub
+# Local development only. Release and air-gapped deployments use
+# deploy/offline/compose.yaml, which never bundles PostgreSQL and requires the
+# externally operated database DSN.
 services:
   postgres:
     image: postgres:17-alpine
@@ -23,17 +26,17 @@ services:
       context: .
       args:
         VERSION: 0.219.0
-        BASE_VERSION: 0.13.0
+        BASE_VERSION: 0.14.0
         LANGFLOW_VERSION: 0.2.0
         QWENCODE_VERSION: 0.2.0
         JUPYTER_VERSION: 0.1.0
         NODERED_VERSION: 0.1.0
-        N8N_VERSION: 0.1.0
+        N8N_VERSION: 0.2.0
         GOOSE_VERSION: 0.1.0
         HOLMES_VERSION: 0.2.0
         BROWSERCODE_VERSION: 0.2.0
         OPENCODEREVIEW_VERSION: 0.1.0
-        ORCA_VERSION: 0.4.0
+        ORCA_VERSION: 0.5.0
         OPENHANDS_VERSION: 1.43.1
         PI_VERSION: 0.1.0
     restart: unless-stopped

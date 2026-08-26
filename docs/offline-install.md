@@ -1,99 +1,169 @@
 # Offline installation
 
-## Docker Compose
+## External PostgreSQL is required
 
-On an internet-connected build host, create the release archives:
+PostgreSQL is deliberately **not** included in the AgentHub container, release
+assets, offline downloader, Compose deployment, SBOM set, or provenance subject
+list. Provision it as an independently operated service before installing
+AgentHub. The release is tested with PostgreSQL major version 17.
+
+The API and every worker must be able to reach the database. Configure database
+authentication, TLS, backups and restore drills, monitoring, capacity and
+upgrades in the database platform. Supply its connection string through
+`AGENTHUB_POSTGRES_DSN`; installation fails closed when that value is absent.
+
+## Select and fetch a release bundle
+
+Every GitHub release publishes `offline-bundle.json` and the static
+`agenthub-offline-linux-amd64` helper. The manifest records each archive's
+original release, exact size and SHA-256. This matters because runtime images
+have independent versions: an unchanged image may correctly come from an older
+stable release instead of being republished under every control-plane release.
+
+On an internet-connected staging host, download those two small assets from the
+target release, make the helper executable, then choose exactly one runtime
+selection mode:
+
+```bash
+chmod 0755 agenthub-offline-linux-amd64
+
+# Inspect the exact files and total transfer size first.
+./agenthub-offline-linux-amd64 plan \
+  --manifest offline-bundle.json \
+  --runtime openhands --runtime orca
+
+# Use the same selection for the download.
+./agenthub-offline-linux-amd64 fetch \
+  --manifest offline-bundle.json \
+  --output-dir ./agenthub-offline \
+  --runtime openhands --runtime orca
+```
+
+Use `--all-runtimes` to prepare every platform runtime, or `--no-runtimes` for
+the control plane only. `--runtime` may be repeated and accepts catalog runtime
+types such as `opencode`, `hermes`, `qwenpaw`, `jupyter`, `openhands`, `orca` and
+`pi`. A custom runtime image is administrator-supplied and cannot be selected
+from this bundle. Dependencies and duplicate archives are resolved
+automatically.
+
+`fetch` verifies the declared size and SHA-256 before atomically accepting every
+file. Existing verified files are reused. A GitHub asset larger than 2 GiB is
+published as contiguous `.part-aa`, `.part-ab`, … files; all parts must come
+from one release, and the helper never mixes or silently skips them.
+
+## Verify checksums, provenance and SBOMs
+
+Before moving files across the air gap, verify the target release on the
+connected staging host. Download `SHA256SUMS` and the release's Sigstore bundle
+in addition to the selected transfer set. `SHA256SUMS` lists the assets produced
+before attestation, so it does not list itself or the Sigstore bundle. Starting
+with releases that use this workflow, the release also includes an SPDX JSON
+SBOM for the control image and every runtime image newly published in that
+release. An archive reused from an older release may not have an SBOM; its exact
+source, size and digest are still bound into the signed `offline-bundle.json`.
+
+```bash
+export AGENTHUB_VERSION=v0.219.0
+
+# Use this form after downloading every asset listed in SHA256SUMS.
+sha256sum -c SHA256SUMS
+
+# Repeat for each asset accepted into the transfer set.
+gh attestation verify offline-bundle.json \
+  --repo hkjang/AgentHub \
+  --signer-workflow hkjang/AgentHub/.github/workflows/release.yaml \
+  --source-ref "refs/tags/${AGENTHUB_VERSION}"
+```
+
+For verification inside the disconnected environment, obtain the trusted root
+on the connected host and transfer it with the release's
+`agenthub-<version>.provenance.sigstore.json` bundle:
+
+```bash
+# Connected host
+gh attestation trusted-root > trusted_root.jsonl
+
+# Disconnected host; repeat for each transferred asset.
+gh attestation verify offline-bundle.json \
+  --repo hkjang/AgentHub \
+  --bundle "agenthub-${AGENTHUB_VERSION}.provenance.sigstore.json" \
+  --custom-trusted-root trusted_root.jsonl \
+  --signer-workflow hkjang/AgentHub/.github/workflows/release.yaml \
+  --source-ref "refs/tags/${AGENTHUB_VERSION}"
+```
+
+Use a current GitHub CLI with the `gh attestation` commands. Treat a checksum,
+provenance, signer identity, source tag or manifest validation failure as a hard
+stop; do not load that archive.
+
+Transfer `offline-bundle.json` and the complete `agenthub-offline/` directory
+through the approved media path. Do not add a PostgreSQL image to that media.
+
+## Load and run with Docker Compose
+
+On the offline Linux amd64 host, use the copied helper and exactly the same
+selection. `load` verifies every file again and streams split archives directly
+to `docker load`; it does not create another multi-gigabyte reassembled file.
+
+```bash
+cd agenthub-offline
+chmod 0755 agenthub-offline-linux-amd64
+./agenthub-offline-linux-amd64 load \
+  --manifest ../offline-bundle.json \
+  --input-dir . \
+  --runtime openhands --runtime orca
+
+install -m 0600 agenthub-offline.env.example .env
+install -m 0644 agenthub-offline-compose.yaml compose.yaml
+```
+
+Edit `.env` and set the externally operated PostgreSQL DSN plus the bootstrap
+values. Never commit or send the populated file back through the connected
+staging host.
+
+```dotenv
+AGENTHUB_POSTGRES_DSN=postgres://agenthub:<password>@postgres.example.internal:5432/agenthub?sslmode=verify-full
+AGENTHUB_BOOTSTRAP_ADMIN=admin
+AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD=<a-long-unique-password>
+AGENTHUB_ENCRYPTION_KEY=<base64-encoded-32-byte-key>
+```
+
+Then validate and start the deployment:
+
+```bash
+docker compose config --quiet
+docker compose up -d
+docker compose exec agenthub /app/agenthub version --json
+```
+
+The offline Compose file has no PostgreSQL service or image. The Portal listens
+on host port 8080. Change only the host-side port mapping if that port is
+reserved.
+
+`AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD` is read once to create the first
+administrator. Rotate it from the profile menu after first login; changing the
+environment value later does not reset an existing account. Preserve
+`AGENTHUB_ENCRYPTION_KEY` in enterprise secret escrow: losing or replacing it
+makes encrypted settings and personal keyrings unrecoverable.
+
+After the first login, configure General → Public URL, Authentication →
+Keycloak, Kubernetes, Session Gateway, governance, logging, and offline policy
+in the admin UI.
+
+## Build archives locally (maintainers)
+
+An internet-connected maintainer can still build every catalog image and create
+`release/` locally:
 
 ```bash
 make release-archives
 ```
 
-This produces `release/` containing the image archives and a `SHA256SUMS`
-manifest. A GitHub release asset may not exceed 2 GiB, so any archive larger
-than that is emitted as `<name>.tar.gz.part-aa`, `.part-ab`, … instead of a
-single file; smaller archives stay a plain `.tar.gz`. Set `RELEASE_CHUNK` to
-change the split size.
-
-The control plane version lives in `VERSION`, the shared runtime base image has
-its own `BASE_VERSION`, and the runtimes that do not boot from it have theirs:
-`LANGFLOW_VERSION`, `QWENCODE_VERSION`, `JUPYTER_VERSION`, `GOOSE_VERSION`,
-`HOLMES_VERSION`, `BROWSERCODE_VERSION`, `OPENCODEREVIEW_VERSION`,
-`ORCA_VERSION`, `OPENHANDS_VERSION`, `PI_VERSION`, `NODERED_VERSION` and
-`N8N_VERSION`.
-Each is versioned separately because each is large, slow to build and only
-rebuilt when something it is built from changes. A release whose notes say an
-image is unchanged has no archive for it, and the notes name the tag it runs on:
-keep using the archive you already loaded. These version files are read by
-`make release-archives`, so pass overrides only when building something other
-than the checked-out release.
-
-The tag release also checks the assets on every published stable GitHub release.
-If the current version of a base or independent Runtime image has no matching
-archive asset (`.tar.gz` or `.tar.gz.part-*`), it is rebuilt and published even
-when its version file did not change. A version reference alone is not treated
-as proof that an air-gapped site can download the image.
-
-Each runtime image is only needed by sites that run Agents of that type, and
-nothing else depends on any of them: skipping one costs nothing, and an Agent of
-that runtime type simply will not start until its image is loaded. The one
-relationship worth knowing is that `agenthub-jupyter` is built from
-`agenthub-qwencode` — it already contains it, so a site running only the
-notebook runtime does not need both archives.
-
-Transfer the whole `release/` directory, `compose.yaml`, and the Kubernetes
-manifests through the approved media path. On the offline host, verify the media
-first, then reassemble any split archive before loading it:
-
-```bash
-sha256sum -c SHA256SUMS
-
-# Only needed for archives that were split; a plain .tar.gz loads directly.
-for archive in *.tar.gz.part-aa; do
-  name="${archive%.part-aa}"
-  cat "${name}".part-* > "${name}"
-done
-
-docker load < agenthub-v0.219.0.tar.gz
-docker load < agenthub-base-v0.13.0.tar.gz
-# Only if this site runs Agents of that runtime type.
-docker load < agenthub-langflow-v0.2.0.tar.gz
-docker load < agenthub-qwencode-v0.2.0.tar.gz
-docker load < agenthub-jupyter-v0.1.0.tar.gz
-docker load < agenthub-goose-v0.1.0.tar.gz
-docker load < agenthub-holmes-v0.2.0.tar.gz
-docker load < agenthub-browsercode-v0.2.0.tar.gz
-docker load < agenthub-opencodereview-v0.1.0.tar.gz
-docker load < agenthub-orca-v0.4.0.tar.gz
-docker load < agenthub-openhands-v1.43.1.tar.gz
-docker load < agenthub-pi-v0.1.0.tar.gz
-docker load < agenthub-nodered-v0.1.0.tar.gz
-docker load < agenthub-n8n-v0.1.0.tar.gz
-export AGENTHUB_BOOTSTRAP_ADMIN=admin
-export AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD='a-long-unique-password'
-export AGENTHUB_ENCRYPTION_KEY="$(openssl rand -base64 32)"
-docker compose up -d
-```
-
-`AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD` is read once, on the first start, and creates
-the admin account. It is not read again — changing it later and restarting does
-nothing, because the bootstrap stands down as soon as an admin exists. Sign in
-and change the password from the profile menu after the first start: the value
-above is written in a shell history and in whatever file this procedure was
-copied into, and on an offline site this account is the only way in. Changing it
-signs every other browser out.
-
-The Portal listens on host port 8080. Change the host-side Compose port mapping
-in `compose.yaml` if the offline host reserves that port; AgentHub itself still
-accepts only the four bootstrap environment variables shown above.
-
-For an external PostgreSQL server, additionally set
-`AGENTHUB_POSTGRES_DSN`. Preserve `AGENTHUB_ENCRYPTION_KEY` in the enterprise
-secret escrow: losing or replacing it makes encrypted settings and personal
-keyrings unrecoverable.
-
-After the first login, configure General → Public URL, Authentication →
-Keycloak, Kubernetes, Session Gateway, governance, logging, and offline policy
-in the admin UI.
+Archives are compressed deterministically with `gzip -n`, split below GitHub's
+per-asset limit, and listed in `release/SHA256SUMS`. The authoritative runtime
+image/version/source/build/health metadata is `runtime-images.json`; the
+individual `*_VERSION` files remain the published tag values. Changing a runtime
+image source without bumping its version is rejected by the release workflow.
 
 ## Internal package mirrors
 
@@ -156,10 +226,12 @@ of the shared origin.
 
 ## Kubernetes
 
-1. Load both images into the offline registry and update image references in
-   `deploy/kubernetes`.
-2. Replace every placeholder in `agenthub-bootstrap` using the cluster's secret
-   management process. Do not commit the populated Secret.
+1. Load the control image and every runtime image selected in the bundle into
+   the offline registry, then update their image references in
+   `deploy/kubernetes` and the AgentHub image catalog.
+2. Replace every placeholder in `agenthub-bootstrap`, including the external
+   `AGENTHUB_POSTGRES_DSN`, using the cluster's secret management process. Do
+   not commit the populated Secret.
 3. Apply `kubectl apply -k deploy/kubernetes`.
 4. Configure OIDC and Runtime settings in AgentHub. In-cluster mode requires no
    Kubernetes token in the database.
@@ -172,6 +244,11 @@ newer sections from it. The most visible symptom is the platform-wide runtime
 environment — `/etc/pip.conf` and friends — never reaching any Pod. Saving that
 setting detects it and names this step.
 
-The runtime namespace enforces the Kubernetes `restricted` Pod Security level.
-Review storage classes, default-deny egress rules, ingress TLS, PostgreSQL TLS,
+The control-plane namespace enforces the Kubernetes `restricted` Pod Security
+level. The runtime namespace enforces `privileged`, because Kubernetes baseline
+and restricted policies both reject `hostNetwork`; Runtime Pods still receive
+restricted container security contexts, while Pod Security audit/warn report
+drift. Administrators can turn host networking off in System Settings →
+Kubernetes when the cluster does not require it. Review storage classes,
+default-deny egress rules, ingress TLS, external PostgreSQL TLS and
 backup/restore, and image registry trust before production use.

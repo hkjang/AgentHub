@@ -112,7 +112,7 @@
             "name": "인터넷이 차단된 오프라인 폐쇄망(Air-Gapped) 환경에서도 배포 가능한가요?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "네. AgentHub는 Go 단일 바이너리 내에 React 19 웹 프론트엔드를 내장(go:embed)하고 있어, 외부 통신 없이 PostgreSQL 16+ 하나만 연결하면 단 4개의 환경변수로 즉시 완벽하게 자립 구동됩니다."
+              "text": "네. AgentHub는 Go 단일 바이너리 내에 React 19 웹 프론트엔드를 내장(go:embed)하고 있습니다. AgentHub 번들에 데이터베이스 이미지는 포함하지 않으며, 폐쇄망에서 별도로 운영하는 PostgreSQL 17을 AGENTHUB_POSTGRES_DSN으로 연결하면 외부 통신 없이 구동됩니다."
             }
           }
         ]
@@ -937,7 +937,7 @@
             <ul>
               <li>Go 1.26+ 컴파일 단일 바이너리</li>
               <li>React 19 SPA 내장 임베딩 (go:embed)</li>
-              <li>PostgreSQL 16+ 단일 런타임 의존성</li>
+              <li>별도 운영 PostgreSQL 17 연동 (AgentHub 번들 미포함)</li>
             </ul>
           </div>
           <div class="tech-box">
@@ -994,7 +994,7 @@
           <details class="faq-item">
             <summary class="faq-question">인터넷 연결이 없는 오프라인 폐쇄망(Air-Gapped) 환경에서도 구동 가능한가요?</summary>
             <div class="faq-answer">
-              네, 100% 완전 독립 구동이 가능합니다. AgentHub는 단일 Go 실행 파일 내에 React 19 웹 프론트엔드 에셋을 임베딩하고 있으므로 외부 CDN 요청을 보내지 않습니다. 오프라인 망에서 PostgreSQL 16+ 컨테이너와 4개의 필수 환경변수만 설정하면 즉시 완벽하게 동작합니다.
+              네, 100% 완전 독립 구동이 가능합니다. AgentHub는 단일 Go 실행 파일 내에 React 19 웹 프론트엔드 에셋을 임베딩하고 있으므로 외부 CDN 요청을 보내지 않습니다. PostgreSQL 이미지는 AgentHub 오프라인 번들에 포함하지 않습니다. 폐쇄망에서 별도로 운영하는 PostgreSQL 17을 준비하고 <code>AGENTHUB_POSTGRES_DSN</code>과 나머지 필수 환경변수를 설정하면 동작합니다.
             </div>
           </details>
 
@@ -1014,7 +1014,7 @@
         <div class="section-head">
           <p class="eyebrow">Ready to deploy?</p>
           <h2>30초 만에 로컬에서 실행하기</h2>
-          <p class="section-desc">단 4개의 환경변수로 나만의 엔터프라이즈 에이전트 런타임을 즉시 기동하세요.</p>
+          <p class="section-desc">아래 예시는 로컬 개발 전용입니다. 운영 배포는 별도 PostgreSQL 17을 연결하세요.</p>
         </div>
         
         <div class="code-terminal">
@@ -1023,7 +1023,7 @@
             <div class="terminal-title">bash · quickstart.sh</div>
           </div>
           <div class="terminal-body">
-            <span class="comment"># 1. PostgreSQL 컨테이너 실행</span><br>
+            <span class="comment"># 1. 로컬 개발 전용 PostgreSQL 컨테이너 실행 (릴리스 번들에는 미포함)</span><br>
             <span class="cmd">docker compose up -d postgres</span><br><br>
             <span class="comment"># 2. 필수 환경변수 설정 (정확히 4개)</span><br>
             <span class="cmd">export AGENTHUB_POSTGRES_DSN='postgres://agenthub:agenthub-local-database-password@127.0.0.1:55434/agenthub?sslmode=disable'</span><br>

@@ -1,565 +1,284 @@
 name: Offline Image Release
+
 on:
   push:
     tags: ['v*.*.*']
+
 permissions:
   contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      AGENTHUB_IMAGE_CATALOG: runtime-images.json
+      AGENTHUB_RELEASE_INDEX: ${{ runner.temp }}/agenthub-release-index.json
+      AGENTHUB_IMAGE_PLAN: ${{ runner.temp }}/agenthub-image-plan.json
+      AGENTHUB_BUILT_IMAGES: ${{ runner.temp }}/agenthub-built-images.txt
+      RELEASE_DIRECTORY: release
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Tag history is needed to diff this release against the previous one.
+          # Tag history is required for source/version guards.
           fetch-depth: 0
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          # Change detection resolves the exact package graph compiled by the
-          # runtime-proxy stage in Dockerfile.base.
           go-version-file: go.mod
           cache: true
-      - name: Resolve version
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Resolve and validate release version
         id: version
         shell: bash
         run: |
+          set -euo pipefail
           tag="${GITHUB_REF_NAME}"
+          [[ "${tag}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           version="${tag#v}"
           test "${version}" = "$(tr -d '\r\n' < VERSION)"
-          base="$(tr -d '\r\n' < BASE_VERSION)"
+          test "$(git rev-list -n 1 "${tag}")" = "${GITHUB_SHA}"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "baseVersion=${base}" >> "$GITHUB_OUTPUT"
-          echo "baseTag=v${base}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify tag commit is on main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" refs/remotes/origin/main; then
+            echo "::error::release tag ${GITHUB_REF_NAME} does not point to a commit on origin/main" >&2
+            exit 1
+          fi
+
+      - name: Test release commit
+        shell: bash
+        env:
+          AGENTHUB_BOOTSTRAP_ADMIN: ci-admin
+          AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD: ci-password-at-least-12
+          AGENTHUB_ENCRYPTION_KEY: MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=
+        run: |
+          set -euo pipefail
+          go test -race ./cmd/... ./internal/...
+          npm --prefix web ci
+          npm --prefix web run lint
+          npm --prefix web run build
+          kubectl kustomize deploy/kubernetes >/dev/null
+          docker compose config --quiet
+          if env -u AGENTHUB_POSTGRES_DSN AGENTHUB_VERSION="${GITHUB_REF_NAME}" \
+            docker compose -f deploy/offline/compose.yaml config --quiet 2>/dev/null; then
+            echo '::error::offline Compose accepted a missing external PostgreSQL DSN' >&2
+            exit 1
+          fi
+          AGENTHUB_VERSION="${GITHUB_REF_NAME}" \
+          AGENTHUB_POSTGRES_DSN='postgres://agenthub:ci-password@postgres.example:5432/agenthub?sslmode=require' \
+          docker compose -f deploy/offline/compose.yaml config --format json \
+            > "${RUNNER_TEMP}/agenthub-offline-compose.json"
+          jq -e '
+            (.services | keys | sort) == ["agenthub", "agenthub-worker"] and
+            all(.services[];
+              (.image == ("agenthub:" + env.GITHUB_REF_NAME)) and
+              ((.image // "") | ascii_downcase | contains("postgres") | not))
+          ' "${RUNNER_TEMP}/agenthub-offline-compose.json" >/dev/null
+
       - name: Index published offline image archives
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # A version file records what an image should be called; only the
-          # release assets prove an offline site can actually obtain it. Keep a
-          # local index so every image decision below uses the same snapshot.
-          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
-            --jq '.[] | select(.draft == false and .prerelease == false) | .assets[]?.name' \
-            > "${RUNNER_TEMP}/agenthub-release-assets.txt"
-      - name: Decide whether the runtime base image must be rebuilt
-        id: base
-        shell: bash
-        env:
-          BASE_VERSION: ${{ steps.version.outputs.baseVersion }}
-        run: |
-          set -euo pipefail
-          # The base image is several GB and dominates release time, so it is
-          # normally published only when BASE_VERSION says it changed. A
-          # missing archive is repaired under the same image tag. Changing what
-          # it is built from without bumping BASE_VERSION is still a mistake:
-          # the control plane would keep pointing at a tag whose contents no
-          # longer match.
-          #
-          # The scripts are named one by one rather than watching deploy/runtime
-          # as a directory. That directory holds the scripts of three different
-          # images now, and watching all of it demanded a multi-gigabyte base
-          # rebuild for a file only the Qwen Code image contains.
-          sources=(Dockerfile.base
-                   deploy/runtime/entrypoint.sh
-                   deploy/runtime/qwenpaw-configure.sh
-                   deploy/runtime/agenthub-report-config.sh
-                   deploy/runtime/agenthub-toolchain.sh)
-          # Dockerfile.base copies the full internal tree, but only packages in
-          # runtime-proxy's Linux/no-cgo graph affect its binary. Discover those
-          # paths rather than maintaining another list that can silently drift.
-          if ! local_go_source_lines="$(bash scripts/runtime-proxy-local-go-deps.sh)"; then
-            echo "::error::could not resolve runtime-proxy's local Go dependencies" >&2
-            exit 1
-          fi
-          mapfile -t local_go_sources <<< "${local_go_source_lines}"
-          sources+=("${local_go_sources[@]}")
-          # A named list drifts the moment somebody adds a script to the base
-          # image and forgets this one — and the failure would be silent: a
-          # released base tag whose image never got the new file. So the list is
-          # checked against what the Dockerfile actually copies.
-          missing=false
-          while read -r copied; do
-            case " ${sources[*]} " in
-              *" ${copied} "*) ;;
-              *) echo "::error::${copied} is copied into the base image but is not watched by this step; add it to sources" >&2; missing=true ;;
-            esac
-          done < <(grep -oE 'deploy/runtime/[A-Za-z0-9._-]+' Dockerfile.base | sort -u)
-          if [ "${missing}" = true ]; then exit 1; fi
-          previous="$(git tag --list 'v*.*.*' --sort=-v:refname | grep -v "^${GITHUB_REF_NAME}$" | head -1 || true)"
-          if [ -z "${previous}" ]; then
-            echo "no previous release tag; building the base image"
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "comparing ${previous}..${GITHUB_REF_NAME}"
-          previous_base="$(git show "${previous}:BASE_VERSION" 2>/dev/null | tr -d '\r\n' || true)"
-          inputs_changed=false
-          if ! git diff --quiet "${previous}" "${GITHUB_REF_NAME}" -- "${sources[@]}"; then
-            git diff --name-only "${previous}" "${GITHUB_REF_NAME}" -- "${sources[@]}"
-            inputs_changed=true
-          fi
-          # Dependency files matter only when they move a module the proxy in
-          # the base image actually compiles. Treating every go.mod edit as a
-          # base change forced a multi-gigabyte rebuild for dependencies the
-          # image never links — which is the cost this whole mechanism exists
-          # to avoid.
-          if [ "${inputs_changed}" = false ] && ! git diff --quiet "${previous}" "${GITHUB_REF_NAME}" -- go.mod go.sum; then
-            if ! modules="$(GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go list -mod=readonly -deps -f '{{if .Module}}{{.Module.Path}}{{end}}' ./cmd/runtime-proxy | sort -u)"; then
-              echo "::error::could not resolve runtime-proxy's module graph" >&2
-              exit 1
-            fi
-            moved="$(git diff -U0 "${previous}" "${GITHUB_REF_NAME}" -- go.mod go.sum \
-              | grep -E '^[+-][^+-]' | grep -oE '[a-z0-9.-]+\.[a-z]{2,}/[^ ]+' | sed 's/ .*//' | sort -u || true)"
-            hit=false
-            for module in ${moved}; do
-              if printf '%s\n' "${modules}" | grep -qx "${module}"; then
-                echo "dependency ${module} is compiled into the base image"
-                hit=true
-              fi
-            done
-            if [ "${hit}" = true ]; then
-              inputs_changed=true
-            else
-              echo "go.mod/go.sum changed, but no module the base image compiles moved"
-            fi
-          fi
-          if [ "${inputs_changed}" = true ] && [ "${BASE_VERSION}" = "${previous_base}" ]; then
-            echo "::error::base image sources changed since ${previous} but BASE_VERSION is still ${BASE_VERSION}; bump BASE_VERSION so the new image gets its own tag" >&2
-            exit 1
-          fi
-          if [ "${BASE_VERSION}" = "${previous_base}" ]; then
-            archive="agenthub-base-v${BASE_VERSION}.tar.gz"
-            if bash scripts/release-asset-exists.sh "${archive}" "${RUNNER_TEMP}/agenthub-release-assets.txt"; then
-              echo "base image v${BASE_VERSION} is unchanged since ${previous} and ${archive} is published"
-              echo "changed=false" >> "$GITHUB_OUTPUT"
-              echo "previous=${previous}" >> "$GITHUB_OUTPUT"
-            else
-              echo "::warning::${archive} has never been published; rebuilding the base image without changing its image tag"
-              echo "changed=true" >> "$GITHUB_OUTPUT"
-            fi
-          else
-            echo "base image moves from v${previous_base:-none} to v${BASE_VERSION}"
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
+          raw="${RUNNER_TEMP}/agenthub-release-pages.json"
+          # gh writes one JSON array per page. jq --slurp combines those pages
+          # into the GitHub release shape consumed by planning and manifests.
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > "$raw"
+          jq -s '
+            (add // []) |
+            map(select(.draft == false and .prerelease == false)) |
+            sort_by(.published_at // "") | reverse |
+            map({
+              tag_name,
+              draft,
+              prerelease,
+              published_at,
+              assets: [.assets[]? | {
+                id,
+                name,
+                size,
+                digest,
+                content_type,
+                created_at,
+                updated_at,
+                browser_download_url
+              }]
+            })
+          ' "$raw" > "$AGENTHUB_RELEASE_INDEX"
+          jq -e 'type == "array" and all(.[]; has("tag_name") and has("assets"))' \
+            "$AGENTHUB_RELEASE_INDEX" >/dev/null
 
-      - name: Decide which runtime images must be rebuilt
-        id: runtimes
+      - name: Plan catalog image release
         shell: bash
         run: |
           set -euo pipefail
-          # One table rather than one step per image. Each row is an image, the
-          # file holding its version, and the sources it is built from; the rule
-          # is the same for all of them and repeating it five times is how the
-          # five drift apart.
-          #
-          # The rule: publish when the version file changes or when no release
-          # actually carries that version's offline archive. Fail loudly when
-          # sources changed and the version did not — the alternative is a
-          # released image tag whose contents no longer match its name.
-          images=(
-            "langflow:LANGFLOW_VERSION:Dockerfile.langflow deploy/runtime/agenthub-report-config.sh"
-            "qwencode:QWENCODE_VERSION:Dockerfile.qwencode deploy/runtime/agenthub-report-config.sh deploy/runtime/qwencode-configure.sh deploy/runtime/qwencode-shell.sh deploy/runtime/qwencode-run.sh deploy/runtime/qwencode-toolchain.sh"
-            "jupyter:JUPYTER_VERSION:Dockerfile.jupyter Dockerfile.qwencode deploy/runtime/agenthub-report-config.sh deploy/runtime/qwencode-configure.sh deploy/runtime/qwencode-shell.sh deploy/runtime/qwencode-run.sh deploy/runtime/qwencode-toolchain.sh"
-            "goose:GOOSE_VERSION:Dockerfile.goose deploy/runtime/agenthub-report-config.sh deploy/runtime/goose-configure.sh deploy/runtime/goose-shell.sh deploy/runtime/goose-run.sh deploy/runtime/goose-toolchain.sh"
-            "holmes:HOLMES_VERSION:Dockerfile.holmes deploy/runtime/agenthub-report-config.sh deploy/runtime/holmes-configure.sh deploy/runtime/holmes-shell.sh deploy/runtime/holmes-run.sh deploy/runtime/holmes-toolchain.sh"
-            "browsercode:BROWSERCODE_VERSION:Dockerfile.browsercode deploy/runtime/agenthub-report-config.sh deploy/runtime/browsercode-configure.sh deploy/runtime/browsercode-shell.sh deploy/runtime/browsercode-run.sh deploy/runtime/browsercode-start.sh deploy/runtime/browsercode-toolchain.sh deploy/runtime/browsercode-browser.md"
-            "pi:PI_VERSION:Dockerfile.pi deploy/runtime/agenthub-report-config.sh deploy/runtime/pi-configure.sh deploy/runtime/pi-run.sh deploy/runtime/pi-shell.sh deploy/runtime/pi-toolchain.sh"
-            "orca:ORCA_VERSION:Dockerfile.orca deploy/runtime/agenthub-report-config.sh deploy/runtime/orca-serve.sh deploy/runtime/orca-agents-configure.sh deploy/runtime/orca-run.sh deploy/runtime/orca-shell.sh deploy/runtime/orca-toolchain.sh"
-            "openhands:OPENHANDS_VERSION:Dockerfile.openhands deploy/runtime/agenthub-report-config.sh deploy/runtime/openhands-serve.sh deploy/runtime/openhands-shell.sh deploy/runtime/openhands-toolchain.sh"
-            "opencodereview:OPENCODEREVIEW_VERSION:Dockerfile.opencodereview deploy/runtime/agenthub-report-config.sh deploy/runtime/opencodereview-configure.sh deploy/runtime/opencodereview-shell.sh deploy/runtime/opencodereview-run.sh deploy/runtime/opencodereview-toolchain.sh"
-            "nodered:NODERED_VERSION:Dockerfile.nodered deploy/runtime/agenthub-report-config.sh"
-            "n8n:N8N_VERSION:Dockerfile.n8n deploy/runtime/agenthub-report-config.sh"
-          )
-          previous="$(git tag --list 'v*.*.*' --sort=-v:refname | grep -v "^${GITHUB_REF_NAME}$" | head -1 || true)"
-          echo "previous=${previous}" >> "$GITHUB_OUTPUT"
-          for row in "${images[@]}"; do
-            name="${row%%:*}"; rest="${row#*:}"
-            versionfile="${rest%%:*}"; sources="${rest#*:}"
-            version="$(tr -d '\r\n' < "${versionfile}")"
-            echo "${name}_version=${version}" >> "$GITHUB_OUTPUT"
-            echo "${name}_tag=v${version}" >> "$GITHUB_OUTPUT"
-            if [ -z "${previous}" ]; then
-              echo "no previous release tag; building ${name}"
-              echo "${name}_changed=true" >> "$GITHUB_OUTPUT"
-              continue
-            fi
-            previous_version="$(git show "${previous}:${versionfile}" 2>/dev/null | tr -d '\r\n' || true)"
-            changed_sources=false
-            if [ -z "${previous_version}" ]; then
-              # The previous release did not ship this image at all.
-              changed_sources=true
-            elif ! git diff --quiet "${previous}" "${GITHUB_REF_NAME}" -- ${sources}; then
-              git diff --name-only "${previous}" "${GITHUB_REF_NAME}" -- ${sources}
-              changed_sources=true
-            fi
-            if [ "${changed_sources}" = true ] && [ "${version}" = "${previous_version}" ]; then
-              echo "::error::${name} image sources changed since ${previous} but ${versionfile} is still ${version}; bump it so the new image gets its own tag" >&2
-              exit 1
-            fi
-            if [ "${version}" = "${previous_version}" ]; then
-              archive="agenthub-${name}-v${version}.tar.gz"
-              if bash scripts/release-asset-exists.sh "${archive}" "${RUNNER_TEMP}/agenthub-release-assets.txt"; then
-                echo "${name} image v${version} is unchanged since ${previous} and ${archive} is published"
-                echo "${name}_changed=false" >> "$GITHUB_OUTPUT"
-              else
-                echo "::warning::${archive} has never been published; rebuilding ${name} without changing its image tag"
-                echo "${name}_changed=true" >> "$GITHUB_OUTPUT"
-              fi
-            else
-              echo "${name} image moves from v${previous_version:-none} to v${version}"
-              echo "${name}_changed=true" >> "$GITHUB_OUTPUT"
-            fi
-          done
+          previous="$(git tag --merged "${GITHUB_SHA}" --list 'v*.*.*' |
+            bash scripts/release-catalog-images.sh previous-tag)"
+          export AGENTHUB_PREVIOUS_TAG="${previous}"
+          echo "AGENTHUB_PREVIOUS_TAG=${previous}" >> "$GITHUB_ENV"
+          bash scripts/release-catalog-images.sh plan
 
       - name: Reclaim runner disk
         shell: bash
         run: |
-          # The runtime base image is several GB before compression, so the
-          # hosted runner's preinstalled toolchains have to go first.
+          # The runtime base is several GB before compression.
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
           docker system prune -af --volumes >/dev/null 2>&1 || true
           df -h /
-      - uses: docker/setup-buildx-action@v4
-      - name: Build offline images
+
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Build and smoke-check planned images
+        shell: bash
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
-          BASE_VERSION: ${{ steps.version.outputs.baseVersion }}
-          BASE_TAG: ${{ steps.version.outputs.baseTag }}
-          BASE_CHANGED: ${{ steps.base.outputs.changed }}
-          BASE_PREVIOUS: ${{ steps.base.outputs.previous }}
-          PREVIOUS: ${{ steps.runtimes.outputs.previous }}
-          LANGFLOW_VERSION: ${{ steps.runtimes.outputs.langflow_version }}
-          LANGFLOW_TAG: ${{ steps.runtimes.outputs.langflow_tag }}
-          LANGFLOW_CHANGED: ${{ steps.runtimes.outputs.langflow_changed }}
-          QWENCODE_VERSION: ${{ steps.runtimes.outputs.qwencode_version }}
-          QWENCODE_TAG: ${{ steps.runtimes.outputs.qwencode_tag }}
-          QWENCODE_CHANGED: ${{ steps.runtimes.outputs.qwencode_changed }}
-          JUPYTER_VERSION: ${{ steps.runtimes.outputs.jupyter_version }}
-          JUPYTER_TAG: ${{ steps.runtimes.outputs.jupyter_tag }}
-          JUPYTER_CHANGED: ${{ steps.runtimes.outputs.jupyter_changed }}
-          GOOSE_VERSION: ${{ steps.runtimes.outputs.goose_version }}
-          GOOSE_TAG: ${{ steps.runtimes.outputs.goose_tag }}
-          GOOSE_CHANGED: ${{ steps.runtimes.outputs.goose_changed }}
-          HOLMES_VERSION: ${{ steps.runtimes.outputs.holmes_version }}
-          HOLMES_TAG: ${{ steps.runtimes.outputs.holmes_tag }}
-          HOLMES_CHANGED: ${{ steps.runtimes.outputs.holmes_changed }}
-          BROWSERCODE_VERSION: ${{ steps.runtimes.outputs.browsercode_version }}
-          BROWSERCODE_TAG: ${{ steps.runtimes.outputs.browsercode_tag }}
-          BROWSERCODE_CHANGED: ${{ steps.runtimes.outputs.browsercode_changed }}
-          OPENCODEREVIEW_VERSION: ${{ steps.runtimes.outputs.opencodereview_version }}
-          OPENCODEREVIEW_TAG: ${{ steps.runtimes.outputs.opencodereview_tag }}
-          ORCA_VERSION: ${{ steps.runtimes.outputs.orca_version }}
-          ORCA_TAG: ${{ steps.runtimes.outputs.orca_tag }}
-          OPENHANDS_VERSION: ${{ steps.runtimes.outputs.openhands_version }}
-          OPENHANDS_TAG: ${{ steps.runtimes.outputs.openhands_tag }}
-          PI_VERSION: ${{ steps.runtimes.outputs.pi_version }}
-          PI_TAG: ${{ steps.runtimes.outputs.pi_tag }}
-          OPENCODEREVIEW_CHANGED: ${{ steps.runtimes.outputs.opencodereview_changed }}
-          ORCA_CHANGED: ${{ steps.runtimes.outputs.orca_changed }}
-          OPENHANDS_CHANGED: ${{ steps.runtimes.outputs.openhands_changed }}
-          PI_CHANGED: ${{ steps.runtimes.outputs.pi_changed }}
-          NODERED_VERSION: ${{ steps.runtimes.outputs.nodered_version }}
-          NODERED_TAG: ${{ steps.runtimes.outputs.nodered_tag }}
-          NODERED_CHANGED: ${{ steps.runtimes.outputs.nodered_changed }}
-          N8N_VERSION: ${{ steps.runtimes.outputs.n8n_version }}
-          N8N_TAG: ${{ steps.runtimes.outputs.n8n_tag }}
-          N8N_CHANGED: ${{ steps.runtimes.outputs.n8n_changed }}
         run: |
           set -euo pipefail
-          docker build --build-arg VERSION="${RELEASE_VERSION}" --build-arg BASE_VERSION="${BASE_VERSION}" \
-            --build-arg LANGFLOW_VERSION="${LANGFLOW_VERSION}" --build-arg QWENCODE_VERSION="${QWENCODE_VERSION}" \
-            --build-arg JUPYTER_VERSION="${JUPYTER_VERSION}" --build-arg NODERED_VERSION="${NODERED_VERSION}" \
-            --build-arg N8N_VERSION="${N8N_VERSION}" --build-arg GOOSE_VERSION="${GOOSE_VERSION}" \
-            --build-arg HOLMES_VERSION="${HOLMES_VERSION}" --build-arg BROWSERCODE_VERSION="${BROWSERCODE_VERSION}" \
-            --build-arg OPENCODEREVIEW_VERSION="${OPENCODEREVIEW_VERSION}" --build-arg ORCA_VERSION="${ORCA_VERSION}" \
-            --build-arg OPENHANDS_VERSION="${OPENHANDS_VERSION}" --build-arg PI_VERSION="${PI_VERSION}" \
-            --build-arg COMMIT="${GITHUB_SHA}" --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -t "agenthub:${RELEASE_TAG}" .
-          if [ "${BASE_CHANGED}" = "true" ]; then
-            docker build -f Dockerfile.base -t "agenthub-base:${BASE_TAG}" .
-          else
-            echo "skipping the runtime base image build; ${BASE_TAG} from ${BASE_PREVIOUS} still applies"
-          fi
-          if [ "${LANGFLOW_CHANGED}" = "true" ]; then
-            docker build -f Dockerfile.langflow -t "agenthub-langflow:${LANGFLOW_TAG}" .
-          else
-            echo "skipping langflow; ${LANGFLOW_TAG} from ${PREVIOUS} still applies"
-          fi
-          if [ "${GOOSE_CHANGED}" = "true" ]; then
-            docker build -f Dockerfile.goose -t "agenthub-goose:${GOOSE_TAG}" .
-          else
-            echo "skipping goose; ${GOOSE_TAG} from ${PREVIOUS} still applies"
-          fi
-          if [ "${HOLMES_CHANGED}" = "true" ]; then
-            docker build -f Dockerfile.holmes -t "agenthub-holmes:${HOLMES_TAG}" .
-          else
-            echo "skipping holmes; ${HOLMES_TAG} from ${PREVIOUS} still applies"
-          fi
-          if [ "${BROWSERCODE_CHANGED}" = "true" ]; then
-            docker build -f Dockerfile.browsercode -t "agenthub-browsercode:${BROWSERCODE_TAG}" .
-          else
-            echo "skipping browsercode; ${BROWSERCODE_TAG} from ${PREVIOUS} still applies"
-          fi
-          if [ "${OPENCODEREVIEW_CHANGED}" = "true" ]; then
-            docker build -f Dockerfile.opencodereview -t "agenthub-opencodereview:${OPENCODEREVIEW_TAG}" .
-          else
-            echo "skipping opencodereview; ${OPENCODEREVIEW_TAG} from ${PREVIOUS} still applies"
-          fi
-          if [ "${PI_CHANGED}" = "true" ]; then
-            docker build -f Dockerfile.pi -t "agenthub-pi:${PI_TAG}" .
-          else
-            echo "skipping pi; ${PI_TAG} from ${PREVIOUS} still applies"
-          fi
-          if [ "${ORCA_CHANGED}" = "true" ]; then
-            docker build -f Dockerfile.orca -t "agenthub-orca:${ORCA_TAG}" .
-          else
-            echo "skipping orca; ${ORCA_TAG} from ${PREVIOUS} still applies"
-          fi
-          if [ "${OPENHANDS_CHANGED}" = "true" ]; then
-            docker build -f Dockerfile.openhands --build-arg OPENHANDS_VERSION="${OPENHANDS_VERSION}" -t "agenthub-openhands:${OPENHANDS_TAG}" .
-          else
-            echo "skipping openhands; ${OPENHANDS_TAG} from ${PREVIOUS} still applies"
-          fi
-          if [ "${NODERED_CHANGED}" = "true" ]; then
-            docker build -f Dockerfile.nodered -t "agenthub-nodered:${NODERED_TAG}" .
-          else
-            echo "skipping nodered; ${NODERED_TAG} from ${PREVIOUS} still applies"
-          fi
-          if [ "${N8N_CHANGED}" = "true" ]; then
-            docker build -f Dockerfile.n8n -t "agenthub-n8n:${N8N_TAG}" .
-          else
-            echo "skipping n8n; ${N8N_TAG} from ${PREVIOUS} still applies"
-          fi
-          # The Jupyter image is built from the Qwen Code one, so that image has to
-          # exist in this runner even when it is not being published: an unchanged
-          # tag is a tag nothing here has ever pulled.
-          if [ "${QWENCODE_CHANGED}" = "true" ] || [ "${JUPYTER_CHANGED}" = "true" ]; then
-            docker build -f Dockerfile.qwencode -t "agenthub-qwencode:${QWENCODE_TAG}" .
-          else
-            echo "skipping qwencode; ${QWENCODE_TAG} from ${PREVIOUS} still applies"
-          fi
-          if [ "${JUPYTER_CHANGED}" = "true" ]; then
-            docker build -f Dockerfile.jupyter --build-arg QWENCODE_IMAGE="agenthub-qwencode:${QWENCODE_TAG}" -t "agenthub-jupyter:${JUPYTER_TAG}" .
-          else
-            echo "skipping jupyter; ${JUPYTER_TAG} from ${PREVIOUS} still applies"
-          fi
-      - name: Package archives
+          bash scripts/release-catalog-images.sh build
+          echo 'Built image inventory:'
+          sed 's/^/ - /' "$AGENTHUB_BUILT_IMAGES"
+
+      - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          syft-version: v1.51.0
+
+      - name: Generate SPDX SBOMs for published images
         shell: bash
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
-          BASE_TAG: ${{ steps.version.outputs.baseTag }}
-          BASE_CHANGED: ${{ steps.base.outputs.changed }}
-          LANGFLOW_TAG: ${{ steps.runtimes.outputs.langflow_tag }}
-          LANGFLOW_CHANGED: ${{ steps.runtimes.outputs.langflow_changed }}
-          QWENCODE_TAG: ${{ steps.runtimes.outputs.qwencode_tag }}
-          QWENCODE_CHANGED: ${{ steps.runtimes.outputs.qwencode_changed }}
-          JUPYTER_TAG: ${{ steps.runtimes.outputs.jupyter_tag }}
-          JUPYTER_CHANGED: ${{ steps.runtimes.outputs.jupyter_changed }}
-          GOOSE_TAG: ${{ steps.runtimes.outputs.goose_tag }}
-          GOOSE_CHANGED: ${{ steps.runtimes.outputs.goose_changed }}
-          HOLMES_TAG: ${{ steps.runtimes.outputs.holmes_tag }}
-          HOLMES_CHANGED: ${{ steps.runtimes.outputs.holmes_changed }}
-          BROWSERCODE_TAG: ${{ steps.runtimes.outputs.browsercode_tag }}
-          BROWSERCODE_CHANGED: ${{ steps.runtimes.outputs.browsercode_changed }}
-          OPENCODEREVIEW_TAG: ${{ steps.runtimes.outputs.opencodereview_tag }}
-          ORCA_TAG: ${{ steps.runtimes.outputs.orca_tag }}
-          OPENHANDS_TAG: ${{ steps.runtimes.outputs.openhands_tag }}
-          PI_TAG: ${{ steps.runtimes.outputs.pi_tag }}
-          OPENCODEREVIEW_CHANGED: ${{ steps.runtimes.outputs.opencodereview_changed }}
-          ORCA_CHANGED: ${{ steps.runtimes.outputs.orca_changed }}
-          OPENHANDS_CHANGED: ${{ steps.runtimes.outputs.openhands_changed }}
-          PI_CHANGED: ${{ steps.runtimes.outputs.pi_changed }}
-          NODERED_TAG: ${{ steps.runtimes.outputs.nodered_tag }}
-          NODERED_CHANGED: ${{ steps.runtimes.outputs.nodered_changed }}
-          N8N_TAG: ${{ steps.runtimes.outputs.n8n_tag }}
-          N8N_CHANGED: ${{ steps.runtimes.outputs.n8n_changed }}
         run: |
           set -euo pipefail
           mkdir -p release
-          # A GitHub release asset may not exceed 2 GiB, and the runtime base
-          # image compresses to more than that. Stream save|gzip straight into
-          # split so the whole archive never lands on the runner's disk, then
-          # collapse the single-part case back to a plain .tar.gz.
-          package() {
-            local image="$1" archive="release/$2"
-            docker save "${image}" | gzip -9 | split -b 1900M - "${archive}.part-"
-            local parts=("${archive}".part-*)
-            if [ "${#parts[@]}" -eq 1 ]; then
-              mv "${parts[0]}" "${archive}"
-              echo "packaged ${image} -> ${archive} (single file)"
-            else
-              echo "packaged ${image} -> ${#parts[@]} parts of ${archive}"
+          {
+            echo "agenthub:${RELEASE_TAG}"
+            jq -r '.images[] | select(.publish) | .image + ":" + .tag' "$AGENTHUB_IMAGE_PLAN"
+          } | while IFS= read -r reference; do
+            [ -n "${reference}" ] || continue
+            if ! grep -Fqx -- "$reference" "$AGENTHUB_BUILT_IMAGES"; then
+              echo "::error::publish image was not recorded as built: ${reference}" >&2
+              exit 1
             fi
-            # The image is no longer needed and the runner is disk constrained.
-            docker image rm "${image}" >/dev/null 2>&1 || true
-          }
-          package "agenthub:${RELEASE_TAG}" "agenthub-${RELEASE_TAG}.tar.gz"
-          if [ "${BASE_CHANGED}" = "true" ]; then
-            package "agenthub-base:${BASE_TAG}" "agenthub-base-${BASE_TAG}.tar.gz"
-          fi
-          if [ "${LANGFLOW_CHANGED}" = "true" ]; then
-            package "agenthub-langflow:${LANGFLOW_TAG}" "agenthub-langflow-${LANGFLOW_TAG}.tar.gz"
-          fi
-          if [ "${QWENCODE_CHANGED}" = "true" ]; then
-            package "agenthub-qwencode:${QWENCODE_TAG}" "agenthub-qwencode-${QWENCODE_TAG}.tar.gz"
-          fi
-          if [ "${JUPYTER_CHANGED}" = "true" ]; then
-            package "agenthub-jupyter:${JUPYTER_TAG}" "agenthub-jupyter-${JUPYTER_TAG}.tar.gz"
-          fi
-          if [ "${GOOSE_CHANGED}" = "true" ]; then
-            package "agenthub-goose:${GOOSE_TAG}" "agenthub-goose-${GOOSE_TAG}.tar.gz"
-          fi
-          if [ "${HOLMES_CHANGED}" = "true" ]; then
-            package "agenthub-holmes:${HOLMES_TAG}" "agenthub-holmes-${HOLMES_TAG}.tar.gz"
-          fi
-          if [ "${BROWSERCODE_CHANGED}" = "true" ]; then
-            package "agenthub-browsercode:${BROWSERCODE_TAG}" "agenthub-browsercode-${BROWSERCODE_TAG}.tar.gz"
-          fi
-          if [ "${OPENCODEREVIEW_CHANGED}" = "true" ]; then
-            package "agenthub-opencodereview:${OPENCODEREVIEW_TAG}" "agenthub-opencodereview-${OPENCODEREVIEW_TAG}.tar.gz"
-          fi
-          if [ "${ORCA_CHANGED}" = "true" ]; then
-            package "agenthub-orca:${ORCA_TAG}" "agenthub-orca-${ORCA_TAG}.tar.gz"
-          fi
-          if [ "${OPENHANDS_CHANGED}" = "true" ]; then
-            package "agenthub-openhands:${OPENHANDS_TAG}" "agenthub-openhands-${OPENHANDS_TAG}.tar.gz"
-          fi
-          if [ "${PI_CHANGED}" = "true" ]; then
-            package "agenthub-pi:${PI_TAG}" "agenthub-pi-${PI_TAG}.tar.gz"
-          fi
-          if [ "${NODERED_CHANGED}" = "true" ]; then
-            package "agenthub-nodered:${NODERED_TAG}" "agenthub-nodered-${NODERED_TAG}.tar.gz"
-          fi
-          if [ "${N8N_CHANGED}" = "true" ]; then
-            package "agenthub-n8n:${N8N_TAG}" "agenthub-n8n-${N8N_TAG}.tar.gz"
-          fi
-          # Glob only the archives: including SHA256SUMS in its own listing is
-          # both meaningless and racy with the redirect.
-          ( cd release && sha256sum -- agenthub-* > SHA256SUMS )
-          ls -lh release
-          df -h /
-      - name: Verify archives
+            asset="${reference/:/-}.spdx.json"
+            [[ "${asset}" =~ ^agenthub-[A-Za-z0-9_.-]+\.spdx\.json$ ]]
+            syft scan "docker:${reference}" --output "spdx-json=release/${asset}"
+          done
+
+      - name: Package planned image archives
         shell: bash
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
-          BASE_TAG: ${{ steps.version.outputs.baseTag }}
-          LANGFLOW_TAG: ${{ steps.runtimes.outputs.langflow_tag }}
-          QWENCODE_TAG: ${{ steps.runtimes.outputs.qwencode_tag }}
-          JUPYTER_TAG: ${{ steps.runtimes.outputs.jupyter_tag }}
-          GOOSE_TAG: ${{ steps.runtimes.outputs.goose_tag }}
-          HOLMES_TAG: ${{ steps.runtimes.outputs.holmes_tag }}
-          BROWSERCODE_TAG: ${{ steps.runtimes.outputs.browsercode_tag }}
-          OPENCODEREVIEW_TAG: ${{ steps.runtimes.outputs.opencodereview_tag }}
-          ORCA_TAG: ${{ steps.runtimes.outputs.orca_tag }}
-          OPENHANDS_TAG: ${{ steps.runtimes.outputs.openhands_tag }}
-          PI_TAG: ${{ steps.runtimes.outputs.pi_tag }}
-          NODERED_TAG: ${{ steps.runtimes.outputs.nodered_tag }}
-          N8N_TAG: ${{ steps.runtimes.outputs.n8n_tag }}
         run: |
           set -euo pipefail
-          ( cd release && sha256sum -c SHA256SUMS )
-          # Reassemble through a pipe: this proves the parts concatenate back
-          # into a valid archive without needing room for a second copy.
-          for name in "agenthub-${RELEASE_TAG}.tar.gz" "agenthub-base-${BASE_TAG}.tar.gz" "agenthub-langflow-${LANGFLOW_TAG}.tar.gz" "agenthub-qwencode-${QWENCODE_TAG}.tar.gz" \
-                       "agenthub-jupyter-${JUPYTER_TAG}.tar.gz" "agenthub-goose-${GOOSE_TAG}.tar.gz" \
-                       "agenthub-holmes-${HOLMES_TAG}.tar.gz" "agenthub-browsercode-${BROWSERCODE_TAG}.tar.gz" \
-                       "agenthub-opencodereview-${OPENCODEREVIEW_TAG}.tar.gz" \
-                       "agenthub-orca-${ORCA_TAG}.tar.gz" \
-                       "agenthub-openhands-${OPENHANDS_TAG}.tar.gz" \
-                       "agenthub-pi-${PI_TAG}.tar.gz" \
-                       "agenthub-nodered-${NODERED_TAG}.tar.gz" "agenthub-n8n-${N8N_TAG}.tar.gz"; do
-            if [ -z "$(ls -d release/"${name}"* 2>/dev/null)" ]; then
-              echo "skipped ${name}"
-              continue
-            fi
-            if [ -f "release/${name}" ]; then
-              gzip -t "release/${name}"
-              echo "verified ${name}"
-            else
-              cat release/"${name}".part-* | gzip -t
-              echo "verified $(ls release/"${name}".part-* | wc -l) parts of ${name}"
-            fi
-          done
-          # Every asset must be under GitHub's 2 GiB per-file limit.
-          oversized="$(find release -maxdepth 1 -type f -size +2047M)"
-          if [ -n "${oversized}" ]; then
-            echo "asset exceeds the 2 GiB GitHub limit: ${oversized}" >&2
+          bash scripts/release-catalog-images.sh package
+          ls -lh release
+          df -h /
+
+      - name: Build offline manifest and deployment assets
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath -o release/agenthub-offline-linux-amd64 ./cmd/agenthub-offline
+          install -m 0644 deploy/offline/compose.yaml release/agenthub-offline-compose.yaml
+          install -m 0644 deploy/offline/.env.example release/agenthub-offline.env.example
+          release/agenthub-offline-linux-amd64 manifest \
+            --release "$RELEASE_TAG" \
+            --repository "$GITHUB_REPOSITORY" \
+            --catalog runtime-images.json \
+            --release-index "$AGENTHUB_RELEASE_INDEX" \
+            --local-assets release \
+            --deployment-file agenthub-offline-compose.yaml=deploy/offline/compose.yaml \
+            --deployment-file agenthub-offline.env.example=deploy/offline/.env.example \
+            --deployment-file agenthub-offline-linux-amd64=release/agenthub-offline-linux-amd64 \
+            --output release/offline-bundle.json
+          jq -e '
+            .release == env.RELEASE_TAG and
+            (all(.images[]; ((.id + " " + .image) | ascii_downcase | contains("postgres") | not))) and
+            (any(.prerequisites[];
+              .id == "postgresql" and .required == true and .bundled == false and
+              .dsnEnv == "AGENTHUB_POSTGRES_DSN"))
+          ' release/offline-bundle.json >/dev/null
+
+      - name: Checksum and verify release assets
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if find release -maxdepth 1 -type f -iname '*postgres*' -print -quit | grep -q .; then
+            echo '::error::PostgreSQL must remain an external prerequisite and cannot be a release asset' >&2
             exit 1
           fi
-      - name: Note which images this release publishes
+          # The Sigstore bundle is generated from these checksums in the next
+          # step, so it cannot recursively attest/checksum itself.
+          (
+            cd release
+            find . -maxdepth 1 -type f \
+              ! -name SHA256SUMS \
+              ! -name '*.provenance.sigstore.json' \
+              -printf '%P\0' |
+              LC_ALL=C sort -z |
+              xargs -0 sha256sum -- > SHA256SUMS
+          )
+          bash scripts/release-catalog-images.sh verify
+
+      - name: Attest release asset checksums
+        id: attestation
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: release/SHA256SUMS
+
+      - name: Add Sigstore attestation bundle to release assets
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          ATTESTATION_BUNDLE: ${{ steps.attestation.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          test -f "$ATTESTATION_BUNDLE"
+          install -m 0644 "$ATTESTATION_BUNDLE" \
+            "release/agenthub-${RELEASE_TAG}.provenance.sigstore.json"
+          oversized="$(find release -maxdepth 1 -type f -size +2047M -print)"
+          if [ -n "$oversized" ]; then
+            echo "::error::release asset exceeds GitHub's 2 GiB limit: ${oversized}" >&2
+            exit 1
+          fi
+
+      - name: Generate catalog-based release notes
         id: notes
         shell: bash
         env:
-          BASE_CHANGED: ${{ steps.base.outputs.changed }}
-          BASE_PREVIOUS: ${{ steps.base.outputs.previous }}
-          BASE_TAG: ${{ steps.version.outputs.baseTag }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
-          PREVIOUS: ${{ steps.runtimes.outputs.previous }}
-          LANGFLOW_TAG: ${{ steps.runtimes.outputs.langflow_tag }}
-          LANGFLOW_CHANGED: ${{ steps.runtimes.outputs.langflow_changed }}
-          QWENCODE_TAG: ${{ steps.runtimes.outputs.qwencode_tag }}
-          QWENCODE_CHANGED: ${{ steps.runtimes.outputs.qwencode_changed }}
-          JUPYTER_TAG: ${{ steps.runtimes.outputs.jupyter_tag }}
-          JUPYTER_CHANGED: ${{ steps.runtimes.outputs.jupyter_changed }}
-          GOOSE_TAG: ${{ steps.runtimes.outputs.goose_tag }}
-          GOOSE_CHANGED: ${{ steps.runtimes.outputs.goose_changed }}
-          HOLMES_TAG: ${{ steps.runtimes.outputs.holmes_tag }}
-          HOLMES_CHANGED: ${{ steps.runtimes.outputs.holmes_changed }}
-          BROWSERCODE_TAG: ${{ steps.runtimes.outputs.browsercode_tag }}
-          BROWSERCODE_CHANGED: ${{ steps.runtimes.outputs.browsercode_changed }}
-          OPENCODEREVIEW_TAG: ${{ steps.runtimes.outputs.opencodereview_tag }}
-          ORCA_TAG: ${{ steps.runtimes.outputs.orca_tag }}
-          OPENHANDS_TAG: ${{ steps.runtimes.outputs.openhands_tag }}
-          PI_TAG: ${{ steps.runtimes.outputs.pi_tag }}
-          OPENCODEREVIEW_CHANGED: ${{ steps.runtimes.outputs.opencodereview_changed }}
-          ORCA_CHANGED: ${{ steps.runtimes.outputs.orca_changed }}
-          OPENHANDS_CHANGED: ${{ steps.runtimes.outputs.openhands_changed }}
-          PI_CHANGED: ${{ steps.runtimes.outputs.pi_changed }}
-          NODERED_TAG: ${{ steps.runtimes.outputs.nodered_tag }}
-          NODERED_CHANGED: ${{ steps.runtimes.outputs.nodered_changed }}
-          N8N_TAG: ${{ steps.runtimes.outputs.n8n_tag }}
-          N8N_CHANGED: ${{ steps.runtimes.outputs.n8n_changed }}
         run: |
-          # One line per runtime image, so the person doing an offline install can
-          # see at a glance which archives they need to move this time.
-          note_image() {
-            local label="$1" image="$2" tag="$3" changed="$4" who="$5"
-            echo ""
-            echo "${label} Runtime 이미지: \`${image}:${tag}\` — ${who}"
-            if [ "${changed}" = "true" ]; then
-              echo "이번 릴리즈에 \`${image}-${tag}.tar.gz\`로 함께 게시됩니다."
-            else
-              echo "변경 없음입니다. 이미 설치된 \`${image}:${tag}\`를 그대로 사용하세요(직전 게시는 ${PREVIOUS} 이전 릴리즈의 같은 이름 자산입니다)."
-            fi
-          }
+          set -euo pipefail
+          delimiter="AGENTHUB_RELEASE_NOTE_${GITHUB_RUN_ID}"
           {
-            echo 'body<<RELEASE_NOTE'
-            echo "이 릴리즈가 사용하는 런타임 base 이미지: \`agenthub-base:${BASE_TAG}\`"
-            echo ""
-            if [ "${BASE_CHANGED}" = "true" ]; then
-              echo "base 이미지를 \`agenthub-base-${BASE_TAG}.tar.gz\`로 이번 릴리즈에 함께 게시합니다."
-            else
-              echo "base 이미지는 **변경 없음**입니다. 이미 설치된 \`agenthub-base:${BASE_TAG}\`를 그대로 사용하세요. 새로 받아야 한다면 ${BASE_PREVIOUS} 이전 릴리즈의 \`agenthub-base-${BASE_TAG}.tar.gz\` 자산을 내려받으면 됩니다."
-              echo ""
-              echo "base 이미지는 용량이 커서 일반적으로 \`BASE_VERSION\`이 올라갈 때만 다시 게시하며, 기존 게시 자산이 누락된 경우에는 같은 태그로 보충합니다."
-            fi
-            note_image "Qwen Code" agenthub-qwencode "${QWENCODE_TAG}" "${QWENCODE_CHANGED}" "터미널 코딩 에이전트를 쓰는 사이트만 필요합니다."
-            note_image "JupyterLab" agenthub-jupyter "${JUPYTER_TAG}" "${JUPYTER_CHANGED}" "노트북 작업대(Qwen Code 포함)를 쓰는 사이트만 필요합니다."
-            note_image "Goose" agenthub-goose "${GOOSE_TAG}" "${GOOSE_CHANGED}" "Goose Agent(ACP 실행)를 쓰는 사이트만 필요합니다."
-            note_image "HolmesGPT" agenthub-holmes "${HOLMES_TAG}" "${HOLMES_CHANGED}" "장애 조사(조사 실행)를 쓰는 사이트만 필요합니다."
-            note_image "BrowserCode" agenthub-browsercode "${BROWSERCODE_TAG}" "${BROWSERCODE_CHANGED}" "브라우저를 직접 모는 에이전트를 쓰는 사이트만 필요합니다."
-            note_image "OpenCodeReview" agenthub-opencodereview "${OPENCODEREVIEW_TAG}" "${OPENCODEREVIEW_CHANGED}" "코드 리뷰 에이전트를 쓰는 사이트만 필요합니다."
-            note_image "Orca" agenthub-orca "${ORCA_TAG}" "${ORCA_CHANGED}" "멀티 에이전트 실행 패브릭을 쓰는 사이트만 필요합니다."
-            note_image "OpenHands" agenthub-openhands "${OPENHANDS_TAG}" "${OPENHANDS_CHANGED}" "OpenHands Agent Server를 쓰는 사이트만 필요합니다."
-            note_image "Pi" agenthub-pi "${PI_TAG}" "${PI_CHANGED}" "Pi 코딩 에이전트를 쓰는 사이트만 필요합니다."
-            note_image "Langflow" agenthub-langflow "${LANGFLOW_TAG}" "${LANGFLOW_CHANGED}" "Langflow Agent를 쓰는 사이트만 필요합니다."
-            note_image "Node-RED" agenthub-nodered "${NODERED_TAG}" "${NODERED_CHANGED}" "Node-RED Agent를 쓰는 사이트만 필요합니다."
-            note_image "n8n" agenthub-n8n "${N8N_TAG}" "${N8N_CHANGED}" "n8n Agent를 쓰는 사이트만 필요합니다."
-            echo 'RELEASE_NOTE'
+            echo "body<<${delimiter}"
+            bash scripts/release-catalog-images.sh notes
+            echo "${delimiter}"
           } >> "$GITHUB_OUTPUT"
 
-      - uses: softprops/action-gh-release@v3
+      - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           generate_release_notes: true
           body: ${{ steps.notes.outputs.body }}

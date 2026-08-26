@@ -1,0 +1,413 @@
+{
+  "schemaVersion": 1,
+  "images": [
+    {
+      "id": "base",
+      "image": "agenthub-base",
+      "versionFile": "BASE_VERSION",
+      "dockerfile": "Dockerfile.base",
+      "runtimeTypes": ["opencode", "hermes", "qwenpaw"],
+      "sourcePaths": [
+        "Dockerfile.base",
+        "go.mod",
+        "go.sum",
+        "cmd/runtime-proxy",
+        "internal/dlp",
+        "internal/policy",
+        "deploy/runtime/entrypoint.sh",
+        "deploy/runtime/qwenpaw-configure.sh",
+        "deploy/runtime/agenthub-report-config.sh",
+        "deploy/runtime/agenthub-toolchain.sh"
+      ],
+      "controlBuildArg": "BASE_VERSION",
+      "buildInfoSymbol": "BaseVersion",
+      "buildArgs": {
+        "HERMES_VERSION": "v2026.7.1",
+        "OPENCODE_VERSION": "1.18.18",
+        "NODE_TOOLCHAIN": "typescript tsx prettier eslint pnpm",
+        "AGENT_TOOLCHAIN": "ruff black isort mypy pytest pytest-cov pytest-asyncio ipython ipykernel rich typer httpx requests pyyaml python-dotenv jinja2 tqdm pydantic tabulate numpy pandas matplotlib openpyxl beautifulsoup4 lxml openai anthropic mcp",
+        "MINIFORGE_VERSION": "26.5.3-0",
+        "MINIFORGE_SHA256_X86_64": "14db468222ad564658656f769506056209b6dc375f5e7dfd31eb5ebbf08fa529",
+        "MINIFORGE_SHA256_AARCH64": "0391e42075a7632e9665d6e728387ee6b905f6c3e704d3513e1c1133d0d69b89"
+      },
+      "buildDependencies": [],
+      "bundleDependencies": [],
+      "label": "Runtime Base",
+      "note": "OpenCode, Hermes, Qwen Paw 런타임을 쓰는 사이트에 필요합니다.",
+      "health": {
+        "kind": "command",
+        "command": ["opencode", "--version"]
+      }
+    },
+    {
+      "id": "langflow",
+      "image": "agenthub-langflow",
+      "versionFile": "LANGFLOW_VERSION",
+      "dockerfile": "Dockerfile.langflow",
+      "runtimeTypes": ["langflow"],
+      "sourcePaths": [
+        "Dockerfile.langflow",
+        "deploy/runtime/agenthub-report-config.sh"
+      ],
+      "controlBuildArg": "LANGFLOW_VERSION",
+      "buildInfoSymbol": "LangflowVersion",
+      "buildArgs": {
+        "LANGFLOW_IMAGE": "1.11.0"
+      },
+      "buildDependencies": [],
+      "bundleDependencies": [],
+      "label": "Langflow",
+      "note": "Langflow Agent를 쓰는 사이트만 필요합니다.",
+      "health": {
+        "kind": "http",
+        "port": 7860,
+        "path": "/health"
+      }
+    },
+    {
+      "id": "qwencode",
+      "image": "agenthub-qwencode",
+      "versionFile": "QWENCODE_VERSION",
+      "dockerfile": "Dockerfile.qwencode",
+      "runtimeTypes": ["qwencode"],
+      "sourcePaths": [
+        "Dockerfile.qwencode",
+        "deploy/runtime/agenthub-report-config.sh",
+        "deploy/runtime/qwencode-configure.sh",
+        "deploy/runtime/qwencode-shell.sh",
+        "deploy/runtime/qwencode-run.sh",
+        "deploy/runtime/qwencode-toolchain.sh"
+      ],
+      "controlBuildArg": "QWENCODE_VERSION",
+      "buildInfoSymbol": "QwenCodeVersion",
+      "buildArgs": {
+        "NODE_IMAGE": "22-bookworm-slim",
+        "QWEN_CODE_VERSION": "0.21.14",
+        "TTYD_VERSION": "1.7.7",
+        "TTYD_SHA256_X86_64": "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55",
+        "TTYD_SHA256_AARCH64": "",
+        "AGENT_TOOLCHAIN": "pip setuptools wheel ruff black mypy pytest pytest-asyncio ipython rich typer httpx requests pyyaml python-dotenv jinja2 tqdm pydantic tabulate openai mcp"
+      },
+      "buildDependencies": [],
+      "bundleDependencies": [],
+      "label": "Qwen Code",
+      "note": "터미널 코딩 에이전트를 쓰는 사이트만 필요합니다.",
+      "health": {
+        "kind": "command",
+        "command": ["qwen", "--version"]
+      }
+    },
+    {
+      "id": "jupyter",
+      "image": "agenthub-jupyter",
+      "versionFile": "JUPYTER_VERSION",
+      "dockerfile": "Dockerfile.jupyter",
+      "runtimeTypes": ["jupyter"],
+      "sourcePaths": [
+        "Dockerfile.jupyter",
+        "Dockerfile.qwencode",
+        "deploy/runtime/agenthub-report-config.sh",
+        "deploy/runtime/qwencode-configure.sh",
+        "deploy/runtime/qwencode-shell.sh",
+        "deploy/runtime/qwencode-run.sh",
+        "deploy/runtime/qwencode-toolchain.sh"
+      ],
+      "controlBuildArg": "JUPYTER_VERSION",
+      "buildInfoSymbol": "JupyterVersion",
+      "buildArgs": {
+        "QWENCODE_IMAGE": "agenthub-qwencode:v0.2.0",
+        "NOTEBOOK_TOOLCHAIN": "jupyterlab notebook ipywidgets jupyterlab-lsp papermill pandas numpy matplotlib seaborn scipy scikit-learn openpyxl pyarrow duckdb sqlalchemy"
+      },
+      "buildDependencies": ["qwencode"],
+      "bundleDependencies": [],
+      "label": "JupyterLab",
+      "note": "노트북 작업대(Qwen Code 포함)를 쓰는 사이트만 필요합니다.",
+      "health": {
+        "kind": "command",
+        "command": ["/opt/agenthub/venv/bin/jupyter", "--version"]
+      }
+    },
+    {
+      "id": "goose",
+      "image": "agenthub-goose",
+      "versionFile": "GOOSE_VERSION",
+      "dockerfile": "Dockerfile.goose",
+      "runtimeTypes": ["goose"],
+      "sourcePaths": [
+        "Dockerfile.goose",
+        "deploy/runtime/agenthub-report-config.sh",
+        "deploy/runtime/goose-configure.sh",
+        "deploy/runtime/goose-shell.sh",
+        "deploy/runtime/goose-run.sh",
+        "deploy/runtime/goose-toolchain.sh"
+      ],
+      "controlBuildArg": "GOOSE_VERSION",
+      "buildInfoSymbol": "GooseVersion",
+      "buildArgs": {
+        "GOOSE_VERSION": "1.46.0",
+        "GOOSE_SHA256_X86_64": "80eca3f89b961baf6ab707b84610a2948108a16ffc7080ef97cb8f05e4500c7e",
+        "GOOSE_SHA256_AARCH64": "",
+        "TTYD_VERSION": "1.7.7",
+        "TTYD_SHA256_X86_64": "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55",
+        "TTYD_SHA256_AARCH64": "",
+        "AGENT_TOOLCHAIN": "pip setuptools wheel ruff black mypy pytest pytest-asyncio ipython rich typer httpx requests pyyaml python-dotenv jinja2 tqdm pydantic tabulate openai mcp"
+      },
+      "buildDependencies": [],
+      "bundleDependencies": [],
+      "label": "Goose",
+      "note": "Goose Agent(ACP 실행)를 쓰는 사이트만 필요합니다.",
+      "health": {
+        "kind": "command",
+        "command": ["goose", "--version"]
+      }
+    },
+    {
+      "id": "holmes",
+      "image": "agenthub-holmes",
+      "versionFile": "HOLMES_VERSION",
+      "dockerfile": "Dockerfile.holmes",
+      "runtimeTypes": ["holmes"],
+      "sourcePaths": [
+        "Dockerfile.holmes",
+        "deploy/runtime/agenthub-report-config.sh",
+        "deploy/runtime/holmes-configure.sh",
+        "deploy/runtime/holmes-shell.sh",
+        "deploy/runtime/holmes-run.sh",
+        "deploy/runtime/holmes-toolchain.sh"
+      ],
+      "controlBuildArg": "HOLMES_VERSION",
+      "buildInfoSymbol": "HolmesVersion",
+      "buildArgs": {
+        "HOLMESGPT_VERSION": "0.39.0",
+        "KUBECTL_VERSION": "1.36.4",
+        "KUBECTL_SHA256_X86_64": "8b8f088da2dab964f853b38464033b1be15ede2839eca751482357c45abdd05a",
+        "KUBECTL_SHA256_AARCH64": "",
+        "TTYD_VERSION": "1.7.7",
+        "TTYD_SHA256_X86_64": "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55",
+        "TTYD_SHA256_AARCH64": "",
+        "AGENT_TOOLCHAIN": "pip setuptools wheel rich httpx requests pyyaml python-dotenv tabulate"
+      },
+      "buildDependencies": [],
+      "bundleDependencies": [],
+      "label": "HolmesGPT",
+      "note": "장애 조사(조사 실행)를 쓰는 사이트만 필요합니다.",
+      "health": {
+        "kind": "command",
+        "command": ["/opt/agenthub/venv/bin/holmes", "version"]
+      }
+    },
+    {
+      "id": "browsercode",
+      "image": "agenthub-browsercode",
+      "versionFile": "BROWSERCODE_VERSION",
+      "dockerfile": "Dockerfile.browsercode",
+      "runtimeTypes": ["browsercode"],
+      "sourcePaths": [
+        "Dockerfile.browsercode",
+        "deploy/runtime/agenthub-report-config.sh",
+        "deploy/runtime/browsercode-configure.sh",
+        "deploy/runtime/browsercode-shell.sh",
+        "deploy/runtime/browsercode-run.sh",
+        "deploy/runtime/browsercode-start.sh",
+        "deploy/runtime/browsercode-toolchain.sh",
+        "deploy/runtime/browsercode-browser.md"
+      ],
+      "controlBuildArg": "BROWSERCODE_VERSION",
+      "buildInfoSymbol": "BrowserCodeVersion",
+      "buildArgs": {
+        "BROWSERCODE_VERSION": "0.1.20",
+        "BROWSERCODE_SHA256_X86_64": "af259261fb0562fc23c9996c2d7a627ca0d657c91ca1721427947d3427734b68",
+        "BROWSERCODE_SHA256_AARCH64": "",
+        "TTYD_VERSION": "1.7.7",
+        "TTYD_SHA256_X86_64": "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55",
+        "TTYD_SHA256_AARCH64": "",
+        "AGENT_TOOLCHAIN": "pip setuptools wheel ruff pytest rich httpx requests pyyaml python-dotenv tabulate"
+      },
+      "buildDependencies": [],
+      "bundleDependencies": [],
+      "label": "BrowserCode",
+      "note": "브라우저를 직접 모는 에이전트를 쓰는 사이트만 필요합니다.",
+      "health": {
+        "kind": "command",
+        "command": ["bcode", "--version"]
+      }
+    },
+    {
+      "id": "pi",
+      "image": "agenthub-pi",
+      "versionFile": "PI_VERSION",
+      "dockerfile": "Dockerfile.pi",
+      "runtimeTypes": ["pi"],
+      "sourcePaths": [
+        "Dockerfile.pi",
+        "deploy/runtime/agenthub-report-config.sh",
+        "deploy/runtime/pi-configure.sh",
+        "deploy/runtime/pi-run.sh",
+        "deploy/runtime/pi-shell.sh",
+        "deploy/runtime/pi-toolchain.sh"
+      ],
+      "controlBuildArg": "PI_VERSION",
+      "buildInfoSymbol": "PiVersion",
+      "buildArgs": {
+        "NODE_IMAGE": "22-bookworm-slim",
+        "PI_VERSION": "0.84.2",
+        "TTYD_VERSION": "1.7.7",
+        "TTYD_SHA256_X86_64": "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55",
+        "TTYD_SHA256_AARCH64": "",
+        "AGENT_TOOLCHAIN": "pip setuptools wheel ruff pytest httpx requests pyyaml"
+      },
+      "buildDependencies": [],
+      "bundleDependencies": [],
+      "label": "Pi",
+      "note": "Pi 코딩 에이전트를 쓰는 사이트만 필요합니다.",
+      "health": {
+        "kind": "command",
+        "command": ["pi", "--version"]
+      }
+    },
+    {
+      "id": "orca",
+      "image": "agenthub-orca",
+      "versionFile": "ORCA_VERSION",
+      "dockerfile": "Dockerfile.orca",
+      "runtimeTypes": ["orca"],
+      "sourcePaths": [
+        "Dockerfile.orca",
+        "deploy/runtime/agenthub-report-config.sh",
+        "deploy/runtime/orca-serve.sh",
+        "deploy/runtime/orca-agents-configure.sh",
+        "deploy/runtime/orca-run.sh",
+        "deploy/runtime/orca-shell.sh",
+        "deploy/runtime/orca-toolchain.sh"
+      ],
+      "controlBuildArg": "ORCA_VERSION",
+      "buildInfoSymbol": "OrcaVersion",
+      "buildArgs": {
+        "ORCA_VERSION": "1.4.188",
+        "ORCA_SHA256_X86_64": "2e70cb5e199741e5602a7060825575319f5e03bc2faa4b89cd27328f3f55d4b4",
+        "CODEX_VERSION": "0.149.0",
+        "TTYD_VERSION": "1.7.7",
+        "TTYD_SHA256_X86_64": "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55",
+        "TTYD_SHA256_AARCH64": ""
+      },
+      "buildDependencies": [],
+      "bundleDependencies": [],
+      "label": "Orca",
+      "note": "멀티 에이전트 실행 패브릭을 쓰는 사이트만 필요합니다.",
+      "health": {
+        "kind": "command",
+        "command": ["/usr/bin/test", "-x", "/opt/orca/squashfs-root/AppRun"]
+      }
+    },
+    {
+      "id": "openhands",
+      "image": "agenthub-openhands",
+      "versionFile": "OPENHANDS_VERSION",
+      "dockerfile": "Dockerfile.openhands",
+      "runtimeTypes": ["openhands"],
+      "sourcePaths": [
+        "Dockerfile.openhands",
+        "deploy/runtime/agenthub-report-config.sh",
+        "deploy/runtime/openhands-serve.sh",
+        "deploy/runtime/openhands-shell.sh",
+        "deploy/runtime/openhands-toolchain.sh"
+      ],
+      "controlBuildArg": "OPENHANDS_VERSION",
+      "buildInfoSymbol": "OpenHandsVersion",
+      "buildArgs": {
+        "PYTHON_IMAGE": "3.12-slim-bookworm",
+        "OPENHANDS_VERSION": "1.43.1",
+        "AGENT_TOOLCHAIN": "pip setuptools wheel ruff pytest httpx requests pyyaml"
+      },
+      "buildDependencies": [],
+      "bundleDependencies": [],
+      "label": "OpenHands",
+      "note": "OpenHands Agent Server를 쓰는 사이트만 필요합니다.",
+      "health": {
+        "kind": "http",
+        "port": 8000,
+        "path": "/health"
+      }
+    },
+    {
+      "id": "opencodereview",
+      "image": "agenthub-opencodereview",
+      "versionFile": "OPENCODEREVIEW_VERSION",
+      "dockerfile": "Dockerfile.opencodereview",
+      "runtimeTypes": ["opencodereview"],
+      "sourcePaths": [
+        "Dockerfile.opencodereview",
+        "deploy/runtime/agenthub-report-config.sh",
+        "deploy/runtime/opencodereview-configure.sh",
+        "deploy/runtime/opencodereview-shell.sh",
+        "deploy/runtime/opencodereview-run.sh",
+        "deploy/runtime/opencodereview-toolchain.sh"
+      ],
+      "controlBuildArg": "OPENCODEREVIEW_VERSION",
+      "buildInfoSymbol": "OpenCodeReviewVersion",
+      "buildArgs": {
+        "NODE_IMAGE": "22-trixie-slim",
+        "OCR_VERSION": "1.9.9",
+        "TTYD_VERSION": "1.7.7",
+        "TTYD_SHA256_X86_64": "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55",
+        "TTYD_SHA256_AARCH64": ""
+      },
+      "buildDependencies": [],
+      "bundleDependencies": [],
+      "label": "OpenCodeReview",
+      "note": "코드 리뷰 에이전트를 쓰는 사이트만 필요합니다.",
+      "health": {
+        "kind": "command",
+        "command": ["ocr", "--version"]
+      }
+    },
+    {
+      "id": "nodered",
+      "image": "agenthub-nodered",
+      "versionFile": "NODERED_VERSION",
+      "dockerfile": "Dockerfile.nodered",
+      "runtimeTypes": ["nodered"],
+      "sourcePaths": [
+        "Dockerfile.nodered",
+        "deploy/runtime/agenthub-report-config.sh"
+      ],
+      "controlBuildArg": "NODERED_VERSION",
+      "buildInfoSymbol": "NodeREDVersion",
+      "buildArgs": {
+        "NODERED_IMAGE": "4.1.0"
+      },
+      "buildDependencies": [],
+      "bundleDependencies": [],
+      "label": "Node-RED",
+      "note": "Node-RED Agent를 쓰는 사이트만 필요합니다.",
+      "health": {
+        "kind": "command",
+        "command": ["node", "-p", "require('/usr/src/node-red/node_modules/node-red/package.json').version"]
+      }
+    },
+    {
+      "id": "n8n",
+      "image": "agenthub-n8n",
+      "versionFile": "N8N_VERSION",
+      "dockerfile": "Dockerfile.n8n",
+      "runtimeTypes": ["n8n"],
+      "sourcePaths": [
+        "Dockerfile.n8n",
+        "deploy/runtime/agenthub-report-config.sh"
+      ],
+      "controlBuildArg": "N8N_VERSION",
+      "buildInfoSymbol": "N8NVersion",
+      "buildArgs": {
+        "N8N_IMAGE": "2.36.7@sha256:14c4285bc3034dc5b51034aea393711d27053588e460722bce523453a626f23c"
+      },
+      "buildDependencies": [],
+      "bundleDependencies": [],
+      "label": "n8n",
+      "note": "n8n Agent를 쓰는 사이트만 필요합니다.",
+      "health": {
+        "kind": "command",
+        "command": ["n8n", "--version"]
+      }
+    }
+  ]
+}

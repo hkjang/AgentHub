@@ -3,6 +3,7 @@ package buildinfo
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -52,6 +53,82 @@ func TestEveryWorkflowIsOneGitHubCanRead(t *testing.T) {
 		if _, ok := document["jobs"]; !ok {
 			t.Errorf("%s declares no jobs", filepath.Base(file))
 		}
+	}
+}
+
+// A mutable action tag can be moved after review and before the next run. The
+// full commit is the boundary the release audit can actually reproduce.
+func TestEveryExternalActionIsPinnedToACommit(t *testing.T) {
+	files, err := filepath.Glob("../../.github/workflows/*.y*ml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := regexp.MustCompile(`^[0-9a-f]{40}$`)
+	count := 0
+	for _, file := range files {
+		body, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var document any
+		if err := yaml.Unmarshal(body, &document); err != nil {
+			t.Fatalf("decode %s while scanning actions: %v", filepath.Base(file), err)
+		}
+		for _, reference := range workflowUses(document) {
+			if strings.HasPrefix(reference, "./") {
+				continue
+			}
+			count++
+			separator := strings.LastIndexByte(reference, '@')
+			if separator < 0 || !commit.MatchString(reference[separator+1:]) {
+				t.Errorf("%s uses mutable external action %q; pin its full commit SHA", filepath.Base(file), reference)
+			}
+		}
+	}
+	if count < 5 {
+		t.Fatalf("found only %d external actions; the workflow scan is probably incomplete", count)
+	}
+}
+
+func workflowUses(node any) []string {
+	var references []string
+	var visit func(any)
+	visit = func(value any) {
+		switch typed := value.(type) {
+		case map[string]any:
+			for key, child := range typed {
+				if key == "uses" {
+					if reference, ok := child.(string); ok {
+						references = append(references, reference)
+					}
+				}
+				visit(child)
+			}
+		case []any:
+			for _, child := range typed {
+				visit(child)
+			}
+		}
+	}
+	visit(node)
+	return references
+}
+
+func TestWorkflowUsesFindsNamedAndUnnamedSteps(t *testing.T) {
+	var document any
+	if err := yaml.Unmarshal([]byte(`
+jobs:
+  test:
+    steps:
+      - uses: owner/first@0123456789012345678901234567890123456789
+      - id: provenance
+        uses: owner/second@abcdefabcdefabcdefabcdefabcdefabcdefabcd
+`), &document); err != nil {
+		t.Fatal(err)
+	}
+	got := workflowUses(document)
+	if len(got) != 2 || !strings.Contains(got[1], "owner/second@") {
+		t.Fatalf("workflow uses = %v, want both direct and named steps", got)
 	}
 }
 

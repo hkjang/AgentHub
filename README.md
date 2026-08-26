@@ -24,7 +24,7 @@
 
 - 🔒 **완전 폐쇄망 (Offline-Ready)**: 외부 인터넷 연결 없이 로컬 Docker 레지스트리와 내부 Kubernetes 클러스터 상에서 100% 결정론적으로 동작합니다.
 - 📦 **영속 Workspace & CSI 스냅샷**: Agent Pod가 종료/재생성되어도 사용자의 소스 코드와 데이터는 PVC에 보존되며, CSI VolumeSnapshot을 통해 언제든 원하는 시점으로 복원할 수 있습니다.
-- 🤖 **11대 엔터프라이즈 런타임**: 인터랙티브 코딩 워크스페이스(**OpenCode**), 자율 에이전트 어시스턴트(**Hermes** / [**Qwen Paw**](https://qwenpaw.agentscope.io/)), 터미널 코딩 에이전트([**Qwen Code**](https://qwenlm.github.io/qwen-code-docs/)), 프로토콜로 대화하는 에이전트([**Goose**](https://block.github.io/goose/)), 시각적 흐름 빌더([**Langflow**](https://docs.langflow.org/))를 사용자 전용 비루트(Non-root) Pod로 격리 기동합니다.
+- 🤖 **15대 플랫폼 런타임**: 인터랙티브 코딩 워크스페이스(**OpenCode**), 자율 에이전트 어시스턴트(**Hermes** / [**Qwen Paw**](https://qwenpaw.agentscope.io/)), 터미널 코딩 에이전트([**Qwen Code**](https://qwenlm.github.io/qwen-code-docs/)), 프로토콜로 대화하는 에이전트([**Goose**](https://block.github.io/goose/)), 시각적 흐름 빌더([**Langflow**](https://docs.langflow.org/))를 사용자 전용 비루트(Non-root) Pod로 격리 기동합니다.
   - **Qwen Paw (AgentScope)**: 3계층 ReMe 메모리, 커널 샌드박스 보안 가드, 스킬/MCP 확장 및 Qwen/Ollama 모델 자율 추론을 지원하는 개인 에이전트 워크스테이션
   - **OpenCode**: 브라우저 기반 풀스택 코딩 IDE 및 실시간 파일/터미널 워크스페이스
   - **Hermes Agent**: 장기 기억(Long-term Memory) 및 도구 실행 자율 에이전트
@@ -33,6 +33,10 @@
   - **BrowserCode**: 진짜 브라우저를 직접 모는 에이전트. 컨테이너 안의 Chromium을 DevTools 프로토콜로 제어하며, 고정된 동작 목록이 아니라 필요한 JavaScript를 그때그때 작성해 실행합니다. 로그인 세션이 담긴 브라우저 프로필은 홈 볼륨에 남습니다. ACP를 직접 지원해 실행 코드 없이 붙었습니다 — 전용 `agenthub-browsercode` 이미지로 별도 게시합니다.
   - **HolmesGPT**: 장애를 조사하는 [CNCF SRE 에이전트](https://holmesgpt.dev/). 알림·메트릭·로그를 스스로 조회해 근본 원인을 찾고, **그 조회 하나하나가 실행 기록의 단계로 남습니다** — 결론만 있는 답과 달리 근거를 나중에 확인할 수 있습니다. 토큰 사용량도 실제 값으로 계량됩니다. 전용 `agenthub-holmes` 이미지로 별도 게시합니다.
   - **JupyterLab (+ Qwen Code)**: 노트북·파일 브라우저·터미널이 한 화면에 있는 데이터 작업대. 같은 작업공간에서 Qwen Code 에이전트를 그대로 쓰고, 자동 실행도 그 에이전트가 수행합니다.
+  - **OpenCodeReview**: 저장소와 변경 범위를 결정론적으로 수집한 뒤 필요한 부분만 모델에 판단시켜 코드 리뷰 결과를 남깁니다.
+  - **Orca**: 여러 코딩 에이전트를 격리된 작업 사본에 동시에 배치하고 작업·dispatch 상태를 조정하는 멀티 에이전트 실행 패브릭입니다.
+  - **Pi**: 실행 도중에도 질의·조향·중단할 수 있는 RPC 기반 코딩 에이전트입니다.
+  - **OpenHands**: 플랫폼이 REST API로 대화와 작업을 구동하는 Agent Server 런타임입니다.
   - **Node-RED / n8n**: 에이전트가 아니라 **배선**입니다 — 이벤트를 받아 변환하고 다른 시스템을 호출하는 자동화가 Runtime 안에서 계속 돌아갑니다. 사내 연동이 필요한 업무는 대개 이쪽입니다.
   - **외부 앱 연결(Dify)**: 사내에 이미 돌고 있는 Dify 앱을 **작업 실행 백엔드**로 씁니다. 플랫폼이 Dify를 대신 운영하지 않고 호출만 하므로(그쪽은 컨테이너 12개짜리 배포입니다) 버전이 올라가도 깨지지 않고, 정책·DLP·쿼터·감사는 그대로 적용됩니다.
   - **Langflow**: 흐름을 그려서 만드는 시각적 빌더. 그린 흐름을 **자동 실행 백엔드로 그대로 사용**할 수 있어(작업 입력 → 흐름 → 결과·산출물), 정책·DLP·쿼터·감사 안에서 무인 실행됩니다. Langflow는 파이썬 트리와 프런트엔드를 함께 담기 때문에 공용 base 이미지와 분리된 `agenthub-langflow` 이미지로 별도 게시합니다 — 쓰지 않는 사이트는 내려받지 않습니다.
@@ -125,6 +129,10 @@ Browser ──> AgentHub Portal / Session Gateway ──> PostgreSQL
 
 AgentHub는 단 4개의 필수 환경변수만으로 동작합니다:
 
+아래 `postgres` 서비스는 로컬 개발 전용입니다. 릴리스 이미지와 오프라인
+배포에는 PostgreSQL이 포함되지 않으며, 운영 환경은 별도 PostgreSQL 17을
+준비해 `AGENTHUB_POSTGRES_DSN`으로 연결해야 합니다.
+
 ```bash
 # 1. 환경 설정 파일 생성
 cp .env.example .env
@@ -153,16 +161,20 @@ set -a && . ./.env && set +a
 # 1. Minikube 클러스터 시작
 minikube start --driver=docker
 
-# 2. Kubernetes CRD, RBAC 및 Operator 매니페스트 배포
-kubectl apply -k deploy/kubernetes
+# 2. 별도 운영 PostgreSQL 17 준비 및 Secret 교체
+# deploy/kubernetes/agenthub.yaml의 예시 AGENTHUB_POSTGRES_DSN과 bootstrap 값을
+# 조직의 Secret 관리/overlay 방식으로 교체합니다. 값을 저장소에 커밋하지 마세요.
 
 # 3. AgentHub 런타임 베이스 이미지 빌드 및 로드
 make image image-base
 # base 이미지는 BASE_VERSION 파일을 따르며, 변경이 없으면 이전 태그를 그대로 사용합니다.
 minikube image load agenthub:v0.219.0
-minikube image load agenthub-base:v0.13.0
+minikube image load agenthub-base:v0.14.0
 
-# 4. 파드 상태 확인
+# 4. Kubernetes CRD, RBAC 및 Operator 매니페스트 배포
+kubectl apply -k deploy/kubernetes
+
+# 5. 파드 상태 확인
 kubectl get pods -n agent-platform-system
 ```
 

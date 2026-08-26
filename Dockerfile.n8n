@@ -6,7 +6,9 @@
 # endpoint, which is what most "automate this" requests actually want. It sits
 # beside Langflow rather than against it — the usual shape is a model deciding
 # something and n8n carrying it out.
-ARG N8N_IMAGE=latest
+# Pin both the vendor version and the multi-platform manifest. A mutable tag is
+# not acceptable for an image archived and restored in an air-gapped site.
+ARG N8N_IMAGE=2.36.7@sha256:14c4285bc3034dc5b51034aea393711d27053588e460722bce523453a626f23c
 FROM n8nio/n8n:${N8N_IMAGE}
 
 # A hardened vendor image: a shell, node and wget, and no package manager to add

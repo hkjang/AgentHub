@@ -5,7 +5,9 @@ metadata:
   namespace: agent-platform-system
 type: Opaque
 stringData:
-  AGENTHUB_POSTGRES_DSN: postgres://agenthub:agenthub-local-database-password@host.minikube.internal:55434/agenthub?sslmode=disable
+  # PostgreSQL is operated outside this deployment. Replace this example using
+  # the cluster's secret management process before applying the manifests.
+  AGENTHUB_POSTGRES_DSN: postgres://agenthub:REPLACE_ME@postgres.example.internal:5432/agenthub?sslmode=verify-full
   AGENTHUB_BOOTSTRAP_ADMIN: admin
   AGENTHUB_BOOTSTRAP_ADMIN_PASSWORD: local-development-password
   AGENTHUB_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=

@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -21,9 +24,37 @@ import (
 )
 
 func main() {
+	handled, err := runInfoCommand(os.Args[1:], os.Stdout)
+	if handled {
+		if err != nil {
+			slog.Error("AgentHub command failed", "error", err)
+			os.Exit(2)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		slog.Error("AgentHub stopped", "error", err)
 		os.Exit(1)
+	}
+}
+
+// runInfoCommand handles commands that must work without database credentials.
+// In particular, a release can inspect the binary inside its freshly built
+// container before any deployment configuration exists.
+func runInfoCommand(args []string, output io.Writer) (bool, error) {
+	if len(args) == 0 || args[0] != "version" {
+		return false, nil
+	}
+	switch {
+	case len(args) == 1:
+		_, err := fmt.Fprintln(output, buildinfo.Version)
+		return true, err
+	case len(args) == 2 && args[1] == "--json":
+		encoder := json.NewEncoder(output)
+		encoder.SetEscapeHTML(false)
+		return true, encoder.Encode(buildinfo.Current())
+	default:
+		return true, fmt.Errorf("usage: agenthub version [--json]")
 	}
 }
 
