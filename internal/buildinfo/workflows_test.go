@@ -2,6 +2,7 @@ package buildinfo
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -146,5 +147,65 @@ func TestCurrentIncludesIndependentRuntimeVersions(t *testing.T) {
 		if versions[0] != versions[1] {
 			t.Errorf("Current().%sVersion = %q, want %q", name, versions[0], versions[1])
 		}
+	}
+}
+
+// The release refuses to publish an image whose sources moved under a version
+// that says they did not, and that refusal used to arrive only after a tag was
+// pushed — v0.223.0 failed on it and cost a second version to repair. The same
+// check needs nothing but git and the catalog, so CI runs it on every push.
+//
+// This fails if that step is dropped, and if the checkout it depends on stops
+// fetching the history it compares against.
+func TestCIRefusesAStaleImageVersionBeforeATagExists(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(body)
+	if !strings.Contains(workflow, "release-catalog-images.sh check-versions") {
+		t.Error("CI does not check image versions, so a stale one is only found by a failing release")
+	}
+	if !strings.Contains(workflow, "fetch-depth: 0") {
+		t.Error("CI checks out without history, so the version check has no release to compare against")
+	}
+	script, err := os.ReadFile(filepath.Join("..", "..", "scripts", "release-catalog-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(script), "check-versions) check_versions ;;") {
+		t.Error("the check CI runs is not a command this script answers to")
+	}
+}
+
+// And the check itself, against the commit it exists because of.
+//
+// 9a35494 added a function to internal/dlp, which the runtime base image is
+// built from, and left BASE_VERSION alone; the release refused it and v0.223.0
+// was lost. b742060 is the repair. Wiring a check into CI is not the same as
+// the check working, so this runs it on both.
+func TestTheImageVersionCheckCatchesTheReleaseItWasWrittenFor(t *testing.T) {
+	root := filepath.Join("..", "..")
+	for _, commit := range []string{"9a35494", "b742060"} {
+		if exec.Command("git", "-C", root, "cat-file", "-e", commit+"^{commit}").Run() != nil {
+			t.Skipf("%s is not in this checkout; the history to compare against is missing", commit)
+		}
+	}
+	run := func(commit string) (string, error) {
+		command := exec.Command("bash", "scripts/release-catalog-images.sh", "check-versions")
+		command.Dir = root
+		command.Env = append(os.Environ(), "GITHUB_SHA="+commit)
+		out, err := command.CombinedOutput()
+		return string(out), err
+	}
+	out, err := run("9a35494")
+	if err == nil {
+		t.Errorf("the check passed the commit that broke the release: %s", out)
+	}
+	if !strings.Contains(out, "BASE_VERSION") {
+		t.Errorf("the refusal does not name the file to bump: %s", out)
+	}
+	if out, err := run("b742060"); err != nil {
+		t.Errorf("the check refuses the commit that repaired it: %v\n%s", err, out)
 	}
 }

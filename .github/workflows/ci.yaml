@@ -10,6 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Tags and history, because the image source guard below compares this
+          # commit with the last release.
+          fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -24,6 +28,11 @@ jobs:
       - run: go test -race ./cmd/... ./internal/...
       - run: npm ci && npm run lint && npm run build
         working-directory: web
+      # The release refuses an image whose sources changed under a version that
+      # says they did not. That check used to run only after a tag was pushed,
+      # so the author learned about it by watching a release fail and paid for
+      # it with a second version. It needs only git and the catalog.
+      - run: bash scripts/release-catalog-images.sh check-versions
       - run: kubectl kustomize deploy/kubernetes >/dev/null
       - run: docker compose config --quiet
         env:

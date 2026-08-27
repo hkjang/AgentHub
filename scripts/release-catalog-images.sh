@@ -612,8 +612,46 @@ release_notes() {
   echo '각 자산의 실제 원본 릴리즈와 분할 파일/체크섬은 `offline-bundle.json`에 기록됩니다.'
 }
 
+# check_versions is the release's source guard, run before there is a release.
+#
+# The guard that refuses a stale image tag lives in the plan step, which only
+# runs once a tag has been pushed — so the author finds out after tagging, and
+# the repair is a second version. It needs nothing but git and the catalog, so
+# it can run on every push instead, where the author is still standing.
+check_versions() {
+  require_file "$catalog"
+  resolve_image_order
+  local current="${GITHUB_SHA:-HEAD}" previous
+  previous="$(git tag --merged "$current" --list 'v*.*.*' |
+    grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' | sort -V | tail -1)"
+  if [ -z "$previous" ]; then
+    echo "no release tag is reachable from ${current}; nothing to compare against"
+    return 0
+  fi
+  local id entry version_file version previous_version stale=false
+  for id in "${image_order[@]}"; do
+    entry="$(catalog_entry "$id")"
+    version_file="$(jq -r '.versionFile' <<<"$entry")"
+    require_file "$version_file"
+    # Read from the commit under test, not from the working tree: they are the
+    # same thing in CI and are not the same thing when this is replayed against
+    # history, and a guard that quietly reads the wrong one passes everything.
+    version="$(git show "${current}:${version_file}" 2>/dev/null | tr -d '\r\n' ||
+      tr -d '\r\n' < "$version_file")"
+    previous_version="$(git show "${previous}:${version_file}" 2>/dev/null | tr -d '\r\n' || true)"
+    if image_inputs_changed "$id" "$previous" "$current" && [ "$version" = "$previous_version" ]; then
+      echo "::error::${id}: inputs changed since ${previous} but ${version_file} is still ${version}" >&2
+      stale=true
+    fi
+  done
+  [ "$stale" = false ] ||
+    die "bump the version files named above, so each image that changed gets a tag that says so"
+  echo "every image whose inputs changed since ${previous} already has a new version"
+}
+
 case "${1:-}" in
   validate) validate_catalog ;;
+  check-versions) check_versions ;;
   plan) create_plan ;;
   build) build_images ;;
   package) package_images ;;
@@ -625,5 +663,5 @@ case "${1:-}" in
     archive_source_release "$2"
     ;;
   previous-tag) previous_release_tag ;;
-  *) die "usage: $0 <validate|plan|build|package|verify|notes|archive-source|previous-tag>" ;;
+  *) die "usage: $0 <validate|check-versions|plan|build|package|verify|notes|archive-source|previous-tag>" ;;
 esac
