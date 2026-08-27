@@ -179,7 +179,21 @@ func (o *Orchestrator) Execute(ctx context.Context, task store.AgentTask, traceI
 	if run.Status == "failed" {
 		span.SetStatus(codes.Error, outcome.Failure)
 	}
-	o.event(finish, run, "task."+outcome.Status, outcome.Failure, map[string]any{
+	// A run always ends; the task it was working on does not have to end with it.
+	// One parked for an approval or stopped by a quota leaves no task status
+	// behind, and typing the event with it wrote "task." into the timeline — a
+	// dot with nothing after it, on the last line, which is exactly where somebody
+	// looks to find out how the run ended. The run row above already decided how
+	// it ended, so the event says that instead, and says what it is waiting for
+	// when there is no failure to report.
+	ending, note := outcome.Status, outcome.Failure
+	if ending == "" {
+		ending = run.Status
+	}
+	if note == "" {
+		note = outcome.Note
+	}
+	o.event(finish, run, "task."+ending, note, map[string]any{
 		"durationMs": run.DurationMs, "steps": run.StepCount, "totalTokens": run.TotalTokens,
 		"metering": run.Metering,
 	})

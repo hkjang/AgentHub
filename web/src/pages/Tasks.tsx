@@ -9,6 +9,7 @@ import { ConfirmDialog, Drawer, Empty, ErrorBanner, GuideLegend, GuidePanel, Loa
 import { useTerms } from '../viewmode'
 import { relativeTime, runtimeCode, runtimeLabel, runtimeLogoClass } from '../runtime'
 import { metering as meteringOf } from '../metering'
+import { runEventLabel } from '../runEvents'
 import type { Agent, AgentArtifact, AgentPlan, AgentRun, AgentRunEvent, AgentRunStep, AgentTask, PlatformEvent, QueueSnapshot, UsageBudget, UsageReport } from '../types'
 
 /** Statuses that are still moving, and therefore worth polling for. */
@@ -562,7 +563,7 @@ export function RunDrawer({ runId, close }: { runId: string; close: () => void }
     <section className="detail-section"><h4>타임라인</h4>
       <ol className="run-timeline">{events.map((event) => <li key={event.id} className={event.type.replace('.', '-')}>
         <time>{new Date(event.occurredAt).toLocaleTimeString('ko-KR')}</time>
-        <div><strong>{event.type}</strong>{event.message && <p>{event.message}</p>}</div>
+        <div><strong title={event.type}>{runEventLabel(event.type)}</strong>{event.message && <p>{event.message}</p>}</div>
       </li>)}</ol>
     </section>
 
