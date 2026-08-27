@@ -74,12 +74,12 @@ func (d *Dispatcher) exportDecision(ctx context.Context, event store.PlatformEve
 // screen and disagree with the deployment.
 func SendDecision(ctx context.Context, settings store.ProvenanceSettings, scan dlp.Settings, record store.DecisionRecord) error {
 	// Scanned here rather than by the caller, because a caller can forget. The
-	// export is the fourth way text leaves this deployment and it was the one
-	// that was not inspected; a second sending path added later must not be able
-	// to repeat that.
+	// export was one of two ways text left this deployment uninspected — the other
+	// was the review comment posted back to a forge — and a sending path added
+	// later must not be able to repeat that.
 	record, findings, blocked := scrubDecision(scan, record)
 	if blocked {
-		return WithheldError{Classes: dlp.Result{Findings: findings}.Classes()}
+		return WithheldError{Subject: "결정 기록", Classes: dlp.Result{Findings: findings}.Classes()}
 	}
 	body, err := json.Marshal(record)
 	if err != nil {
@@ -117,20 +117,32 @@ func (d *Dispatcher) contentSettings(ctx context.Context) dlp.Settings {
 	return settings
 }
 
-// WithheldError says a record was not sent because the deployment's content
-// scanner found something it is configured to block. It is a refusal, not a
+// WithheldError says something was not sent because the deployment's content
+// scanner found a class it is configured to block. It is a refusal, not a
 // transport failure: retrying it changes nothing.
-type WithheldError struct{ Classes []string }
+//
+// Subject names what was held back, because there is more than one thing that
+// leaves this deployment carrying free text and an operator reading a log needs
+// to know which one stopped.
+type WithheldError struct {
+	Subject string
+	Classes []string
+}
 
 func (e WithheldError) Error() string {
-	return "결정 기록에 " + strings.Join(e.Classes, ", ") + " 가 포함되어 보내지 않았습니다"
+	subject := e.Subject
+	if subject == "" {
+		subject = "보내려던 내용"
+	}
+	return subject + "에 " + strings.Join(e.Classes, ", ") + " 가 포함되어 보내지 않았습니다"
 }
 
 // scrubDecision applies the content scanner to the free text in a record.
 //
-// The export is the fourth way text leaves this deployment — after the model
-// call, the model's answer and the MCP tool call, all three of which are
-// scanned. It was not, and the text it carries is the same text: the scenario is
+// The export is one of the ways text leaves this deployment — alongside the
+// model call, the model's answer, the MCP tool call and the review comment
+// posted back to a forge. It was not scanned, and the text it carries is the
+// same text: the scenario is
 // whatever a person typed as the title, and the reasoning quotes what ran. A
 // deployment set to block national IDs in a prompt was posting them to an
 // external address in the clear.

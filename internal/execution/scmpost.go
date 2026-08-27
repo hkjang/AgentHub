@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hkjang/AgentHub/internal/dlp"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -154,7 +155,18 @@ func authorize(header http.Header, kind, token string) {
 // One comment per pull request, rewritten. A review runs again every time
 // somebody pushes a fix, and a comment per run turns a page people read into a
 // page people mute — while the newest verdict sinks under the older ones.
-func PostReviewComment(ctx context.Context, client *http.Client, connection store.SCMConnection, token, sourceURL, text string) error {
+func PostReviewComment(ctx context.Context, client *http.Client, connection store.SCMConnection, token, sourceURL, text string, scan dlp.Settings) error {
+	// Scanned here rather than by the caller. A review comment is written by a
+	// model quoting somebody's code, addressed to a host this deployment does not
+	// own, and it was the one way out of the building that inspected nothing —
+	// so the inspection belongs where the sending happens and cannot be skipped
+	// by a second caller that forgets it exists.
+	scanned := dlp.Scan(scan, text)
+	if scanned.Blocked {
+		return WithheldError{Subject: "리뷰 코멘트", Classes: scanned.Classes()}
+	}
+	text = scanned.Text
+
 	request, err := commentRequest(connection, sourceURL, text)
 	if err != nil {
 		return err
@@ -249,7 +261,20 @@ func (o *Orchestrator) announceReview(ctx context.Context, run store.AgentRun, t
 	}
 	failure := ""
 	if err := PostReviewComment(ctx, scmHTTPClient, connection, token, task.SourceURL,
-		ReviewComment(summary, findings, 10)); err != nil {
+		ReviewComment(summary, findings, 10), o.contentSettings(ctx)); err != nil {
+		var withheld WithheldError
+		if errors.As(err, &withheld) {
+			// Nothing was sent and nothing was attempted, so the connection is not
+			// at fault and its last use is left alone. Loud on the run instead: a
+			// review that posts nothing looks exactly like a clean one from the pull
+			// request, and the difference has to be readable somewhere.
+			o.logger.Warn("the review was withheld by the content scan",
+				"run", run.ID, "host", connection.Host, "classes", withheld.Classes)
+			o.event(ctx, run, "review.withheld",
+				connection.Host+"의 원래 페이지에 리뷰를 남기지 않았습니다: "+withheld.Error(),
+				map[string]any{"url": task.SourceURL, "classes": withheld.Classes})
+			return
+		}
 		failure = err.Error()
 		o.logger.Warn("the review could not be posted back", "run", run.ID, "host", connection.Host, "error", err)
 		o.event(ctx, run, "review.post.failed", "리뷰를 "+connection.Host+"에 남기지 못했습니다: "+failure, nil)
@@ -374,3 +399,15 @@ func CheckSCMConnection(ctx context.Context, client *http.Client, connection sto
 // SCMCheckClient is the client the connection check uses. Short, because a
 // person is waiting on the answer with the form still open.
 var SCMCheckClient = &http.Client{Timeout: 10 * time.Second}
+
+// contentSettings reads what this deployment allows out of the building. An
+// unreadable setting scans nothing rather than refusing everything: a review is
+// not the place to discover that the settings table is unavailable, and a
+// deployment that has not configured DLP is not silently told it has.
+func (o *Orchestrator) contentSettings(ctx context.Context) dlp.Settings {
+	var settings dlp.Settings
+	if err := o.store.Setting(ctx, dlp.SettingKey, &settings); err != nil {
+		return dlp.Settings{}
+	}
+	return settings
+}
