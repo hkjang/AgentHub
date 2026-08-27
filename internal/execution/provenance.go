@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hkjang/AgentHub/internal/dlp"
+	"github.com/hkjang/AgentHub/internal/korean"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -79,7 +80,8 @@ func SendDecision(ctx context.Context, settings store.ProvenanceSettings, scan d
 	// later must not be able to repeat that.
 	record, findings, blocked := scrubDecision(scan, record)
 	if blocked {
-		return WithheldError{Subject: "결정 기록", Classes: dlp.Result{Findings: findings}.Classes()}
+		result := dlp.Result{Findings: findings}
+		return WithheldError{Subject: "결정 기록", Classes: result.Classes(), Labels: result.Labels()}
 	}
 	body, err := json.Marshal(record)
 	if err != nil {
@@ -126,7 +128,14 @@ func (d *Dispatcher) contentSettings(ctx context.Context) dlp.Settings {
 // to know which one stopped.
 type WithheldError struct {
 	Subject string
+	// Classes is what the platform files the finding under — "rrn", "card" — and
+	// it goes in the audit entry and the log, where a machine-readable name is
+	// the point.
 	Classes []string
+	// Labels is what the same finding is called in the sentence somebody reads.
+	// Kept apart from Classes because the first version of this message printed
+	// the class id at a person: "결정 기록에 rrn 가 포함되어".
+	Labels []string
 }
 
 func (e WithheldError) Error() string {
@@ -134,7 +143,15 @@ func (e WithheldError) Error() string {
 	if subject == "" {
 		subject = "보내려던 내용"
 	}
-	return subject + "에 " + strings.Join(e.Classes, ", ") + " 가 포함되어 보내지 않았습니다"
+	found := e.Labels
+	if len(found) == 0 {
+		found = e.Classes
+	}
+	// The particle follows the last word, which is whatever the scanner found —
+	// 주민등록번호 takes 가 and 여권번호 takes 이, and picking one is picking wrong
+	// half the time.
+	names := strings.Join(found, ", ")
+	return subject + "에 " + names + korean.Subject(names) + " 포함되어 보내지 않았습니다"
 }
 
 // scrubDecision applies the content scanner to the free text in a record.

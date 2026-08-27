@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/hkjang/AgentHub/internal/korean"
 	"github.com/hkjang/AgentHub/internal/runtime"
 )
 
@@ -94,7 +95,11 @@ func runtimeEnvironmentApplied(result syncResult) map[string]any {
 	case result.pruned:
 		message = "저장했지만 Kubernetes가 이 설정을 버리고 있습니다. 클러스터의 AgentRuntime CRD가 오래되었습니다 — deploy/kubernetes/crd.yaml을 다시 적용한 뒤 저장하세요."
 	case applied > 0 && failed > 0:
-		message = "저장했습니다. 런타임 " + plural(applied) + "에 적용했고 " + plural(failed) + "은 실패했습니다. 적용된 Pod는 새 설정으로 재시작됩니다."
+		// The particle follows the count, and plural() has always ended in 개 —
+		// so this shipped "2개은 실패했습니다" to every administrator who saved
+		// while one runtime was unreachable.
+		message = "저장했습니다. 런타임 " + plural(applied) + "에 적용했고 " + plural(failed) +
+			korean.Topic(plural(failed)) + " 실패했습니다. 적용된 Pod는 새 설정으로 재시작됩니다."
 	case applied > 0:
 		message = "저장했습니다. 런타임 " + plural(applied) + "에 적용했습니다. 해당 Pod는 새 설정으로 재시작됩니다."
 	case failed > 0:

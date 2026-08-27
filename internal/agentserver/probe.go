@@ -59,7 +59,10 @@ func Probe(ctx context.Context, baseURL string) (string, string) {
 	// registration is the whole point of checking.
 	for _, path := range []string{"/api/conversations"} {
 		if _, present := described.Paths[path]; !present {
-			return Refused, "이 서버에는 " + path + " 가 없습니다 — 에이전트 서버가 맞는지 확인해 주세요."
+			// "경로가" rather than a particle chosen for whatever the path ends in:
+			// a sentence that needs no guess is a better answer than a correct
+			// guess.
+			return Refused, "이 서버에는 " + path + " 경로가 없습니다 — 에이전트 서버가 맞는지 확인해 주세요."
 		}
 	}
 	return Healthy, "대화를 시작할 수 있는 서버입니다."

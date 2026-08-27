@@ -204,6 +204,19 @@ func (r Result) Classes() []string {
 	return classes
 }
 
+// Labels is what a person reads. Classes are the names this platform files a
+// finding under — "rrn", "card" — and they belong in an audit entry and a log,
+// where something machine-readable is the point. A sentence shown to somebody
+// whose data was held back is not that place: it said "rrn 가 포함되어" in a
+// product whose users speak Korean.
+func (r Result) Labels() []string {
+	labels := make([]string, 0, len(r.Findings))
+	for _, finding := range r.Findings {
+		labels = append(labels, finding.Label)
+	}
+	return labels
+}
+
 // Summary is a one-line description for a log or an audit entry.
 func (r Result) Summary() string {
 	parts := make([]string, 0, len(r.Findings))

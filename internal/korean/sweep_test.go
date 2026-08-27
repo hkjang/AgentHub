@@ -22,6 +22,22 @@ func TestNoSentenceGuessesAParticle(t *testing.T) {
 	// followed, in these mistakes, by a particle that cannot know what came
 	// before it.
 	guessing := regexp.MustCompile(`(%[sdv]|\})(이|가|을|를|은|는)[\s"` + "`" + `.,)]`)
+	// The same mistake with a different join. A sentence built by concatenation
+	// puts the particle at the start of the next literal, where %s never appears
+	// — and that is how "결정 기록에 rrn 가 포함되어" and "런타임 2개은
+	// 실패했습니다" shipped past the sweep above. The value is on the other side
+	// of the +, so the particle is guessing just the same.
+	concatenating := regexp.MustCompile(`\+\s*[` + "`" + `"']\s*(이|가|을|를|은|는)[\s"'` + "`" + `.,)]`)
+	// And once more, for the join that wraps. A long sentence puts the + at the
+	// end of one line and the particle at the start of the next, which reads as
+	// clean to a rule that looks at one line at a time — this sweep found the
+	// mistake and then let the fix for it through in that shape.
+	//
+	// Only when the line before it ends in the +. Plenty of sentences open with
+	// the demonstrative 이 — "이 Agent에는 진행 중인 작업이 있습니다" — and those
+	// are not particles at all; what makes one a particle is the value it was
+	// just glued to.
+	continuing := regexp.MustCompile(`^\s*[` + "`" + `"']\s*(이|가|을|를|은|는)[\s"'` + "`" + `.,)]`)
 	offenders := []string{}
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -49,8 +65,11 @@ func TestNoSentenceGuessesAParticle(t *testing.T) {
 		if readErr != nil {
 			return nil
 		}
-		for index, line := range strings.Split(string(body), "\n") {
-			if guessing.MatchString(line) {
+		lines := strings.Split(string(body), "\n")
+		for index, line := range lines {
+			glued := index > 0 && strings.HasSuffix(strings.TrimSpace(lines[index-1]), "+")
+			if guessing.MatchString(line) || concatenating.MatchString(line) ||
+				(glued && continuing.MatchString(line)) {
 				offenders = append(offenders, filepath.ToSlash(path)+":"+itoa(index+1))
 			}
 		}

@@ -163,7 +163,7 @@ func PostReviewComment(ctx context.Context, client *http.Client, connection stor
 	// by a second caller that forgets it exists.
 	scanned := dlp.Scan(scan, text)
 	if scanned.Blocked {
-		return WithheldError{Subject: "리뷰 코멘트", Classes: scanned.Classes()}
+		return WithheldError{Subject: "리뷰 코멘트", Classes: scanned.Classes(), Labels: scanned.Labels()}
 	}
 	text = scanned.Text
 
