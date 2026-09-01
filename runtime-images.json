@@ -6,7 +6,11 @@
       "image": "agenthub-base",
       "versionFile": "BASE_VERSION",
       "dockerfile": "Dockerfile.base",
-      "runtimeTypes": ["opencode", "hermes", "qwenpaw"],
+      "runtimeTypes": [
+        "opencode",
+        "hermes",
+        "qwenpaw"
+      ],
       "sourcePaths": [
         "Dockerfile.base",
         "go.mod",
@@ -36,7 +40,10 @@
       "note": "OpenCode, Hermes, Qwen Paw 런타임을 쓰는 사이트에 필요합니다.",
       "health": {
         "kind": "command",
-        "command": ["opencode", "--version"]
+        "command": [
+          "opencode",
+          "--version"
+        ]
       }
     },
     {
@@ -44,7 +51,9 @@
       "image": "agenthub-langflow",
       "versionFile": "LANGFLOW_VERSION",
       "dockerfile": "Dockerfile.langflow",
-      "runtimeTypes": ["langflow"],
+      "runtimeTypes": [
+        "langflow"
+      ],
       "sourcePaths": [
         "Dockerfile.langflow",
         "deploy/runtime/agenthub-report-config.sh"
@@ -69,7 +78,9 @@
       "image": "agenthub-qwencode",
       "versionFile": "QWENCODE_VERSION",
       "dockerfile": "Dockerfile.qwencode",
-      "runtimeTypes": ["qwencode"],
+      "runtimeTypes": [
+        "qwencode"
+      ],
       "sourcePaths": [
         "Dockerfile.qwencode",
         "deploy/runtime/agenthub-report-config.sh",
@@ -94,7 +105,10 @@
       "note": "터미널 코딩 에이전트를 쓰는 사이트만 필요합니다.",
       "health": {
         "kind": "command",
-        "command": ["qwen", "--version"]
+        "command": [
+          "qwen",
+          "--version"
+        ]
       }
     },
     {
@@ -102,7 +116,9 @@
       "image": "agenthub-jupyter",
       "versionFile": "JUPYTER_VERSION",
       "dockerfile": "Dockerfile.jupyter",
-      "runtimeTypes": ["jupyter"],
+      "runtimeTypes": [
+        "jupyter"
+      ],
       "sourcePaths": [
         "Dockerfile.jupyter",
         "Dockerfile.qwencode",
@@ -118,13 +134,18 @@
         "QWENCODE_IMAGE": "agenthub-qwencode:v0.2.0",
         "NOTEBOOK_TOOLCHAIN": "jupyterlab notebook ipywidgets jupyterlab-lsp papermill pandas numpy matplotlib seaborn scipy scikit-learn openpyxl pyarrow duckdb sqlalchemy"
       },
-      "buildDependencies": ["qwencode"],
+      "buildDependencies": [
+        "qwencode"
+      ],
       "bundleDependencies": [],
       "label": "JupyterLab",
       "note": "노트북 작업대(Qwen Code 포함)를 쓰는 사이트만 필요합니다.",
       "health": {
         "kind": "command",
-        "command": ["/opt/agenthub/venv/bin/jupyter", "--version"]
+        "command": [
+          "/opt/agenthub/venv/bin/jupyter",
+          "--version"
+        ]
       }
     },
     {
@@ -132,7 +153,9 @@
       "image": "agenthub-goose",
       "versionFile": "GOOSE_VERSION",
       "dockerfile": "Dockerfile.goose",
-      "runtimeTypes": ["goose"],
+      "runtimeTypes": [
+        "goose"
+      ],
       "sourcePaths": [
         "Dockerfile.goose",
         "deploy/runtime/agenthub-report-config.sh",
@@ -158,7 +181,10 @@
       "note": "Goose Agent(ACP 실행)를 쓰는 사이트만 필요합니다.",
       "health": {
         "kind": "command",
-        "command": ["goose", "--version"]
+        "command": [
+          "goose",
+          "--version"
+        ]
       }
     },
     {
@@ -166,7 +192,9 @@
       "image": "agenthub-holmes",
       "versionFile": "HOLMES_VERSION",
       "dockerfile": "Dockerfile.holmes",
-      "runtimeTypes": ["holmes"],
+      "runtimeTypes": [
+        "holmes"
+      ],
       "sourcePaths": [
         "Dockerfile.holmes",
         "deploy/runtime/agenthub-report-config.sh",
@@ -193,7 +221,10 @@
       "note": "장애 조사(조사 실행)를 쓰는 사이트만 필요합니다.",
       "health": {
         "kind": "command",
-        "command": ["/opt/agenthub/venv/bin/holmes", "version"]
+        "command": [
+          "/opt/agenthub/venv/bin/holmes",
+          "version"
+        ]
       }
     },
     {
@@ -201,7 +232,9 @@
       "image": "agenthub-browsercode",
       "versionFile": "BROWSERCODE_VERSION",
       "dockerfile": "Dockerfile.browsercode",
-      "runtimeTypes": ["browsercode"],
+      "runtimeTypes": [
+        "browsercode"
+      ],
       "sourcePaths": [
         "Dockerfile.browsercode",
         "deploy/runtime/agenthub-report-config.sh",
@@ -229,7 +262,10 @@
       "note": "브라우저를 직접 모는 에이전트를 쓰는 사이트만 필요합니다.",
       "health": {
         "kind": "command",
-        "command": ["bcode", "--version"]
+        "command": [
+          "bcode",
+          "--version"
+        ]
       }
     },
     {
@@ -237,7 +273,9 @@
       "image": "agenthub-pi",
       "versionFile": "PI_VERSION",
       "dockerfile": "Dockerfile.pi",
-      "runtimeTypes": ["pi"],
+      "runtimeTypes": [
+        "pi"
+      ],
       "sourcePaths": [
         "Dockerfile.pi",
         "deploy/runtime/agenthub-report-config.sh",
@@ -262,7 +300,50 @@
       "note": "Pi 코딩 에이전트를 쓰는 사이트만 필요합니다.",
       "health": {
         "kind": "command",
-        "command": ["pi", "--version"]
+        "command": [
+          "pi",
+          "--version"
+        ]
+      }
+    },
+    {
+      "id": "primeagent",
+      "image": "agenthub-primeagent",
+      "versionFile": "PRIMEAGENT_VERSION",
+      "dockerfile": "Dockerfile.primeagent",
+      "runtimeTypes": [
+        "primeagent"
+      ],
+      "sourcePaths": [
+        "Dockerfile.primeagent",
+        "deploy/runtime/agenthub-report-config.sh",
+        "deploy/runtime/primeagent-configure.sh",
+        "deploy/runtime/primeagent-run.sh",
+        "deploy/runtime/primeagent-shell.sh",
+        "deploy/runtime/primeagent-toolchain.sh"
+      ],
+      "controlBuildArg": "PRIMEAGENT_VERSION",
+      "buildInfoSymbol": "PrimeAgentVersion",
+      "buildArgs": {
+        "NODE_IMAGE": "22-bookworm-slim",
+        "PRIME_AGENT_VERSION": "0.8.1",
+        "PRIME_AGENT_BASE_URL": "https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev",
+        "PRIME_AGENT_SHA256": "46c24db1782dd31adc35d5c6cbcc75564faba6ced3bf2ccf03d836ee77134475",
+        "TTYD_VERSION": "1.7.7",
+        "TTYD_SHA256_X86_64": "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55",
+        "TTYD_SHA256_AARCH64": "",
+        "AGENT_TOOLCHAIN": "pip setuptools wheel ipykernel dill ruff pytest requests httpx pyyaml tomli python-dotenv pandas numpy scipy beautifulsoup4 lxml pydantic tyro"
+      },
+      "buildDependencies": [],
+      "bundleDependencies": [],
+      "label": "Prime Agent",
+      "note": "Prime Agent 런타임을 쓰는 사이트만 필요합니다.",
+      "health": {
+        "kind": "command",
+        "command": [
+          "prime-agent",
+          "--version"
+        ]
       }
     },
     {
@@ -270,7 +351,9 @@
       "image": "agenthub-orca",
       "versionFile": "ORCA_VERSION",
       "dockerfile": "Dockerfile.orca",
-      "runtimeTypes": ["orca"],
+      "runtimeTypes": [
+        "orca"
+      ],
       "sourcePaths": [
         "Dockerfile.orca",
         "deploy/runtime/agenthub-report-config.sh",
@@ -296,7 +379,11 @@
       "note": "멀티 에이전트 실행 패브릭을 쓰는 사이트만 필요합니다.",
       "health": {
         "kind": "command",
-        "command": ["/usr/bin/test", "-x", "/opt/orca/squashfs-root/AppRun"]
+        "command": [
+          "/usr/bin/test",
+          "-x",
+          "/opt/orca/squashfs-root/AppRun"
+        ]
       }
     },
     {
@@ -304,7 +391,9 @@
       "image": "agenthub-openhands",
       "versionFile": "OPENHANDS_VERSION",
       "dockerfile": "Dockerfile.openhands",
-      "runtimeTypes": ["openhands"],
+      "runtimeTypes": [
+        "openhands"
+      ],
       "sourcePaths": [
         "Dockerfile.openhands",
         "deploy/runtime/agenthub-report-config.sh",
@@ -334,7 +423,9 @@
       "image": "agenthub-opencodereview",
       "versionFile": "OPENCODEREVIEW_VERSION",
       "dockerfile": "Dockerfile.opencodereview",
-      "runtimeTypes": ["opencodereview"],
+      "runtimeTypes": [
+        "opencodereview"
+      ],
       "sourcePaths": [
         "Dockerfile.opencodereview",
         "deploy/runtime/agenthub-report-config.sh",
@@ -358,7 +449,10 @@
       "note": "코드 리뷰 에이전트를 쓰는 사이트만 필요합니다.",
       "health": {
         "kind": "command",
-        "command": ["ocr", "--version"]
+        "command": [
+          "ocr",
+          "--version"
+        ]
       }
     },
     {
@@ -366,7 +460,9 @@
       "image": "agenthub-nodered",
       "versionFile": "NODERED_VERSION",
       "dockerfile": "Dockerfile.nodered",
-      "runtimeTypes": ["nodered"],
+      "runtimeTypes": [
+        "nodered"
+      ],
       "sourcePaths": [
         "Dockerfile.nodered",
         "deploy/runtime/agenthub-report-config.sh"
@@ -382,7 +478,11 @@
       "note": "Node-RED Agent를 쓰는 사이트만 필요합니다.",
       "health": {
         "kind": "command",
-        "command": ["node", "-p", "require('/usr/src/node-red/node_modules/node-red/package.json').version"]
+        "command": [
+          "node",
+          "-p",
+          "require('/usr/src/node-red/node_modules/node-red/package.json').version"
+        ]
       }
     },
     {
@@ -390,7 +490,9 @@
       "image": "agenthub-n8n",
       "versionFile": "N8N_VERSION",
       "dockerfile": "Dockerfile.n8n",
-      "runtimeTypes": ["n8n"],
+      "runtimeTypes": [
+        "n8n"
+      ],
       "sourcePaths": [
         "Dockerfile.n8n",
         "deploy/runtime/agenthub-report-config.sh"
@@ -406,7 +508,10 @@
       "note": "n8n Agent를 쓰는 사이트만 필요합니다.",
       "health": {
         "kind": "command",
-        "command": ["n8n", "--version"]
+        "command": [
+          "n8n",
+          "--version"
+        ]
       }
     }
   ]

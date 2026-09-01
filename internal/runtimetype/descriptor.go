@@ -113,6 +113,12 @@ type Descriptor struct {
 // Only the protocol for now. Pi also has a print mode, and offering it would be
 // claiming the platform knows how to read it — the guard that refused this said
 // so, which is what it is for.
+// primeAgentACP starts Prime Agent as a protocol peer. Its ACP mode is a
+// long-lived process on stdin/stdout, so the wrapper redirects everything that
+// is not a protocol frame to stderr — one stray line on stdout is a frame the
+// client cannot parse.
+var primeAgentCommands = map[string][]string{RunnerACP: {"/usr/local/bin/agenthub-primeagent-run", "--mode", "acp"}}
+
 var piCommands = map[string][]string{
 	RunnerRPC: {"/usr/local/bin/agenthub-pi-run", "--mode", "rpc"},
 }
@@ -297,6 +303,34 @@ var descriptors = map[string]Descriptor{
 		Workspace: "/workspace", Port: 7681,
 		BrowserUI: true, Terminal: true, ToolLoop: true, MCPConfigured: false, ProxiedUI: true,
 		Runners: []string{RunnerRPC}, Commands: piCommands,
+	},
+	PrimeAgent: {
+		Type: PrimeAgent, Code: "PA", Label: "Prime Agent",
+		Summary: "파이썬 REPL 하나로 일하는 코딩 에이전트. 도구 호출 하나하나가 실행 기록에 남습니다.",
+		BestFor: "코드를 읽고 고치고 바로 돌려 봐야 하는 일 — 무엇을 실행했는지가 기록으로 남아야 할 때",
+		Strengths: []string{
+			// Measured against the real agent over ACP, not read off a README.
+			"Agent Client Protocol을 직접 지원해 도구 호출·응답이 실행 기록의 단계로 남음",
+			"도구 종류를 execute 로 정확히 알려주므로 세분화된 승인 모드가 판단할 수 있음",
+			"모델 호출마다 실제 토큰 사용량을 보고해 그대로 계량됨",
+			"파이썬 REPL이 곧 도구라, 코드를 고치고 그 자리에서 실행·검증함(%%bash 셀로 셸도 실행)",
+			"세션이 홈 볼륨에 파일로 남아 Pod를 다시 띄워도 이어서 함",
+			"터미널 대화를 브라우저에서 그대로 사용",
+		},
+		Watchouts: []string{
+			// The decisive one, and the opposite of Goose's problem: Goose asks
+			// but cannot say what it is asking about; this one says exactly what
+			// it is doing and never asks. Learned by driving it — there is no
+			// session/request_permission anywhere in the agent's source.
+			"도구를 실행하기 전에 묻지 않습니다 — ACP 승인 모드가 개입할 자리가 없고, 무엇을 했는지는 기록되지만 막을 수는 없습니다. 격리는 전적으로 Pod와 네트워크 정책이 합니다",
+			"자체 인증이 없는 브라우저 터미널이라 플랫폼 프록시로만 공개됩니다",
+			"ACP 모드가 백그라운드 데몬(유닉스 소켓)을 씁니다 — 그 상태 디렉터리가 사라지면 실행 중인 세션이 함께 죽습니다",
+			"MCP 도구는 이 런타임의 설정 파일이 아니라 세션을 열 때 프로토콜로 전달됩니다",
+			"제조사 원격 통계가 기본으로 켜져 있어 이미지에서 꺼 두었습니다",
+		},
+		Workspace: "/workspace", Port: 7681,
+		BrowserUI: true, Terminal: true, ToolLoop: true, MCPConfigured: false, ProxiedUI: true,
+		Runners: []string{RunnerACP}, Commands: primeAgentCommands,
 	},
 	Orca: {
 		Type: Orca, Code: "OR", Label: "Orca",

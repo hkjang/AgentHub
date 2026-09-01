@@ -58,6 +58,8 @@ const (
 	EnvDefaultOrcaImage = "AGENTHUB_DEFAULT_ORCA_IMAGE"
 	// EnvDefaultPiImage overrides the RPC-driven coding agent image.
 	EnvDefaultPiImage = "AGENTHUB_DEFAULT_PI_IMAGE"
+	// EnvDefaultPrimeAgentImage overrides the Prime Agent image.
+	EnvDefaultPrimeAgentImage = "AGENTHUB_DEFAULT_PRIMEAGENT_IMAGE"
 	// EnvDefaultOpenHandsImage overrides the agent server image.
 	EnvDefaultOpenHandsImage = "AGENTHUB_DEFAULT_OPENHANDS_IMAGE"
 	EnvDefaultJupyterImage   = "AGENTHUB_DEFAULT_JUPYTER_IMAGE"
@@ -104,6 +106,11 @@ func DefaultRuntimeImage(runtimeType string) string {
 			return override
 		}
 		return "agenthub-pi:v" + strings.TrimSuffix(buildinfo.PiVersion, "-dev")
+	case runtimetype.PrimeAgent:
+		if override := strings.TrimSpace(os.Getenv(EnvDefaultPrimeAgentImage)); override != "" {
+			return override
+		}
+		return "agenthub-primeagent:v" + strings.TrimSuffix(buildinfo.PrimeAgentVersion, "-dev")
 	case runtimetype.Orca:
 		if override := strings.TrimSpace(os.Getenv(EnvDefaultOrcaImage)); override != "" {
 			return override

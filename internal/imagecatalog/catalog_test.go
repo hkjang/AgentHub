@@ -16,8 +16,8 @@ func TestRepositoryCatalogIsCompleteAndValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog.Images) != 13 {
-		t.Fatalf("catalog has %d images, want base plus 12 independent images", len(catalog.Images))
+	if len(catalog.Images) != 14 {
+		t.Fatalf("catalog has %d images, want base plus 13 independent images", len(catalog.Images))
 	}
 
 	base, found := catalog.ByID("base")

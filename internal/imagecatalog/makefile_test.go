@@ -17,8 +17,8 @@ func TestMakefileConsumesEveryCatalogImageDynamically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog.Images) != 13 {
-		t.Fatalf("catalog has %d images, want 13", len(catalog.Images))
+	if len(catalog.Images) != 14 {
+		t.Fatalf("catalog has %d images, want 14", len(catalog.Images))
 	}
 
 	makefileBytes, err := os.ReadFile(root + "/Makefile")

@@ -1,0 +1,106 @@
+# syntax=docker/dockerfile:1.7
+#
+# The Prime Agent runtime image.
+#
+# Prime Agent is Prime Intellect's coding agent. It shares its core with the Pi
+# runtime already in this catalog — both are built on @earendil-works/pi-* — but
+# it is a different distribution on its own version line, and the thing that
+# earns it a runtime here is the one Pi's npm build does not have: an Agent
+# Client Protocol mode. That is the seam this platform already drives for Goose
+# and Qwen Code, so the agent arrives with a backend rather than needing one.
+#
+# The release is a signed tarball rather than an npm package, so it is pinned by
+# version and checked against the SHA-256 the vendor publishes in SHA256SUMS
+# beside it. An unverified download is not shipped.
+ARG NODE_IMAGE=22-bookworm-slim
+FROM node:${NODE_IMAGE}
+
+# The vendor's own release bucket, resolved from the installer they publish. It
+# is an ARG so an air-gapped site can point the build at its own mirror without
+# editing this file.
+ARG PRIME_AGENT_VERSION=0.8.1
+ARG PRIME_AGENT_BASE_URL=https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev
+ARG PRIME_AGENT_SHA256=46c24db1782dd31adc35d5c6cbcc75564faba6ced3bf2ccf03d836ee77134475
+ARG TTYD_VERSION=1.7.7
+ARG TTYD_SHA256_X86_64=8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55
+ARG TTYD_SHA256_AARCH64=
+
+USER root
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      git ca-certificates curl openssh-client tini jq ripgrep less procps \
+      python3 python3-venv \
+ && tarball="prime-agent-${PRIME_AGENT_VERSION}.tgz" \
+ && curl -fsSL -o "/tmp/${tarball}" \
+      "${PRIME_AGENT_BASE_URL}/releases/v${PRIME_AGENT_VERSION}/${tarball}" \
+ && echo "${PRIME_AGENT_SHA256}  /tmp/${tarball}" | sha256sum -c - \
+ && npm install --global --ignore-scripts "/tmp/${tarball}" \
+ && rm -f "/tmp/${tarball}" \
+ && npm cache clean --force \
+ && arch="$(uname -m)"; \
+    case "${arch}" in \
+      x86_64) asset="ttyd.x86_64"; sum="${TTYD_SHA256_X86_64}" ;; \
+      aarch64) asset="ttyd.aarch64"; sum="${TTYD_SHA256_AARCH64}" ;; \
+      *) echo "unsupported architecture ${arch}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /usr/local/bin/ttyd "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/${asset}"; \
+    if [ -n "${sum}" ]; then echo "${sum}  /usr/local/bin/ttyd" | sha256sum -c -; \
+    else echo "no checksum pinned for ${arch}; refusing to ship an unverified binary" >&2; exit 1; fi \
+ && chmod 0755 /usr/local/bin/ttyd \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /workspace /home/agent/.prime/agent/sessions \
+ && chown -R 10000:10000 /workspace /home/agent \
+ && prime-agent --version
+
+# The agent's only model-facing tool is a Python REPL, so a Python it can install
+# into is not an extra — it is the tool. The default security profile mounts the
+# root filesystem read-only, so the environment the agent installs into lives on
+# the home volume, which is writable and survives the Pod.
+# The list the agent checks its kernel Python against before it will run a cell,
+# taken from its own bootstrap rather than guessed — a missing one fails the tool
+# call with "points to a Python missing default Python packages". dill is what
+# revives a session's namespace after a restart, which is what makes the sessions
+# on the home volume worth keeping.
+ARG AGENT_TOOLCHAIN="pip setuptools wheel ipykernel dill ruff pytest requests httpx pyyaml tomli python-dotenv pandas numpy scipy beautifulsoup4 lxml pydantic tyro"
+# prime-agent-runtime is the kernel-side half of the agent: without it the
+# Python cell — the agent's only model-facing tool — fails with "points to a
+# Python missing a current prime-agent-runtime". It ships inside the release
+# tarball, so it is installed from there rather than fetched, which keeps it
+# pinned to the same release and installable with no network.
+RUN python3 -m venv /opt/agenthub/venv \
+ && /opt/agenthub/venv/bin/pip install --no-cache-dir --upgrade ${AGENT_TOOLCHAIN} \
+ && /opt/agenthub/venv/bin/pip install --no-cache-dir \
+      /usr/local/lib/node_modules/prime-agent/dist/prime-agent-runtime \
+ && /opt/agenthub/venv/bin/python -c "import rlm; print('prime-agent-runtime', rlm.__name__)" \
+ && mkdir -p /home/agent/.npm-global /home/agent/.cache \
+ && chown -R 10000:10000 /opt/agenthub /home/agent
+
+COPY deploy/runtime/agenthub-report-config.sh /usr/local/bin/agenthub-report-config
+COPY deploy/runtime/primeagent-configure.sh /usr/local/bin/agenthub-primeagent-configure
+COPY deploy/runtime/primeagent-run.sh /usr/local/bin/agenthub-primeagent-run
+COPY deploy/runtime/primeagent-shell.sh /usr/local/bin/agenthub-primeagent-shell
+COPY deploy/runtime/primeagent-toolchain.sh /etc/profile.d/agenthub-toolchain.sh
+RUN chmod 0755 /usr/local/bin/agenthub-report-config /usr/local/bin/agenthub-primeagent-configure \
+      /usr/local/bin/agenthub-primeagent-run /usr/local/bin/agenthub-primeagent-shell \
+ && chmod 0644 /etc/profile.d/agenthub-toolchain.sh
+
+USER 10000:10000
+ENV PATH=/home/agent/.venv/bin:/opt/agenthub/venv/bin:/home/agent/.npm-global/bin:$PATH \
+    HOME=/home/agent \
+    AGENTHUB_RUNTIME_TYPE=primeagent \
+    AGENTHUB_WORKSPACE=/workspace \
+    npm_config_prefix=/home/agent/.npm-global \
+    npm_config_cache=/home/agent/.npm \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONUNBUFFERED=1 \
+    PRIME_AGENT_KERNEL_PYTHON=/opt/agenthub/venv/bin/python \
+    PRIME_AGENT_KERNEL_VENV=/home/agent/.venv \
+    PRIME_AGENT_SKIP_VERSION_CHECK=1 \
+    PI_SKIP_VERSION_CHECK=1 \
+    PRIME_AGENT_INSTALL_UV=0 \
+    PRIME_AGENT_TELEMETRY=0 \
+    DO_NOT_TRACK=1
+WORKDIR /workspace
+EXPOSE 7681
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/usr/local/bin/ttyd", "--port", "7681", "--interface", "127.0.0.1", "--writable", "/usr/local/bin/agenthub-primeagent-shell"]

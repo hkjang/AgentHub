@@ -36,6 +36,10 @@ var (
 	OrcaVersion = "0.5.0-dev"
 	// PiVersion is the image carrying the RPC-driven coding agent.
 	PiVersion = "0.1.0-dev"
+	// PrimeAgentVersion is the image carrying Prime Intellect's distribution of
+	// that agent. It is a separate image because it is a separate release line
+	// with a protocol Pi's build does not speak.
+	PrimeAgentVersion = "0.1.0-dev"
 	// OpenHandsVersion is the agent server image. It is the vendor's own version
 	// rather than a number of ours: the three packages in it are pinned to each
 	// other, and a server that does not match its SDK fails on a module the older

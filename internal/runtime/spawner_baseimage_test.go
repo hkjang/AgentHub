@@ -91,6 +91,7 @@ func TestShippedImageVersionsAreUsableAsTags(t *testing.T) {
 		{"OPENHANDS_VERSION", &buildinfo.OpenHandsVersion, runtimetype.OpenHands, "agenthub-openhands", EnvDefaultOpenHandsImage},
 		{"ORCA_VERSION", &buildinfo.OrcaVersion, runtimetype.Orca, "agenthub-orca", EnvDefaultOrcaImage},
 		{"PI_VERSION", &buildinfo.PiVersion, runtimetype.Pi, "agenthub-pi", EnvDefaultPiImage},
+		{"PRIMEAGENT_VERSION", &buildinfo.PrimeAgentVersion, runtimetype.PrimeAgent, "agenthub-primeagent", EnvDefaultPrimeAgentImage},
 		{"QWENCODE_VERSION", &buildinfo.QwenCodeVersion, runtimetype.QwenCode, "agenthub-qwencode", EnvDefaultQwenCodeImage},
 	}
 

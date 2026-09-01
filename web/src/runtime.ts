@@ -5,7 +5,7 @@
 // are facts about the adapter the operator runs, not about this console. They
 // were duplicated here and had already started to drift. The palette stays local:
 // which colour a tile is is genuinely a console decision.
-export type RuntimeType = 'openhands' | 'opencode' | 'hermes' | 'qwenpaw' | 'qwencode' | 'goose' | 'holmes' | 'browsercode' | 'jupyter' | 'langflow' | 'nodered' | 'n8n' | 'opencodereview' | 'orca' | 'pi' | 'custom'
+export type RuntimeType = 'openhands' | 'opencode' | 'hermes' | 'qwenpaw' | 'qwencode' | 'goose' | 'holmes' | 'browsercode' | 'jupyter' | 'langflow' | 'nodered' | 'n8n' | 'opencodereview' | 'orca' | 'pi' | 'primeagent' | 'custom'
 
 export type RuntimeDescriptor = {
   type: string; code: string; label: string; summary: string
@@ -50,6 +50,7 @@ const SEED: Record<RuntimeType, RuntimeDescriptor> = {
   opencodereview: {type: 'opencodereview', code: 'CR', label: 'Open Code Review', summary: '코드리뷰 전용 엔진'},
   orca: {type: 'orca', code: 'OR', label: 'Orca', summary: '여러 코딩 에이전트를 한 작업에 동시에 붙이는 실행 패브릭'},
   pi: {type: 'pi', code: 'PI', label: 'Pi', summary: '일하는 도중에 말을 걸 수 있는 코딩 에이전트'},
+  primeagent: {type: 'primeagent', code: 'PA', label: 'Prime Agent', summary: '파이썬 REPL 하나로 일하는 코딩 에이전트'},
   openhands: {type: 'openhands', code: 'OH', label: 'OpenHands', summary: 'REST API로 대화를 열어 일을 시키는 에이전트 서버'},
   custom: {type: 'custom', code: 'A', label: 'Custom', summary: '직접 정의한 컨테이너 실행 명령'},
 }

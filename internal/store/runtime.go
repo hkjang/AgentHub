@@ -219,6 +219,7 @@ var starterTemplates = []starterTemplate{
 	{"Open Code Review", "open-code-review", "코드 변경분을 파일·줄·심각도별로 검토하고 근거가 있는 finding을 남기는 전용 리뷰 엔진입니다.", "Development", runtimetype.OpenCodeReview, "rp-developer", "변경된 코드만 근거로 검토하고, 확실한 문제를 파일과 줄 번호와 함께 설명하세요. 코드를 직접 수정하지 마세요."},
 	{"Orca Multi-Agent", "orca-multi-agent", "여러 코딩 에이전트를 격리된 git worktree에서 동시에 실행하고 결과를 비교하는 멀티 에이전트 패브릭입니다.", "Development", runtimetype.Orca, "rp-advanced", "작업을 독립적인 역할로 나누고 병렬로 검증하세요. 각 결과의 근거와 차이를 비교한 뒤 최종 결론을 남기세요."},
 	{"Pi Coding Agent", "pi-coding-agent", "실행 중에도 방향 수정·후속 지시·중단이 가능한 대화형 코딩 에이전트입니다.", "Development", runtimetype.Pi, "rp-developer", "신중하게 코드를 읽고 작은 단위로 변경하세요. 진행 상황과 검증 결과를 계속 알려 주고, 새 지시가 오면 현재 계획을 조정하세요."},
+	{"Prime Agent", "prime-agent", "파이썬 REPL로 코드를 고치고 그 자리에서 실행해 확인하는 코딩 에이전트입니다. 실행한 도구 하나하나가 기록으로 남습니다.", "Development", runtimetype.PrimeAgent, "rp-developer", "코드를 읽고 작은 단위로 고친 뒤, 파이썬 셀에서 직접 실행해 확인하세요. 셸이 필요하면 %%bash 셀을 쓰고, 무엇을 실행했고 결과가 무엇이었는지 함께 남기세요."},
 	{"OpenHands Agent Server", "openhands-agent-server", "REST API 대화를 통해 코드를 수정하고 진행 사건과 사용량을 남기는 에이전트 서버입니다.", "Development", runtimetype.OpenHands, "rp-advanced", "작업을 단계별로 수행하고 각 결정과 실행 결과를 기록하세요. 완료 전에 변경사항을 테스트하고 확인하지 못한 내용은 분명히 밝히세요."},
 }
 

@@ -254,6 +254,16 @@ func piStart(build adapterBuild) string {
 		"/usr/local/bin/agenthub-pi-shell"
 }
 
+// primeAgentStart serves the agent's terminal under the runtime's own path, the
+// same way Pi's is served: ttyd asks for its websocket relative to the base path
+// it was started with.
+func primeAgentStart(build adapterBuild) string {
+	return "exec /usr/local/bin/ttyd --port 7681 --interface 127.0.0.1 --writable " +
+		"--base-path /" + build.runtimeID() + " " +
+		"--client-option titleFixed=AgentHub " +
+		"/usr/local/bin/agenthub-primeagent-shell"
+}
+
 // orcaStart serves the fabric's terminal under the runtime's own path. The
 // fabric's runtime itself is a sidecar, so a person closing this shell does not
 // take the workers with it.
@@ -533,6 +543,43 @@ var runtimeAdapters = map[string]runtimeAdapter{
 		},
 		Sidecars: func(build adapterBuild) []corev1.Container {
 			return []corev1.Container{runtimeProxyContainer("pi-proxy", build.Name, build.sidecarImage(), "http://127.0.0.1:7681")}
+		},
+		Probes: func(build adapterBuild) (*corev1.Probe, *corev1.Probe) {
+			command := qwenCodeHealthCommand(build)
+			return &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 5, PeriodSeconds: 5, TimeoutSeconds: 3, FailureThreshold: 24,
+				}, &corev1.Probe{
+					ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: command}},
+					InitialDelaySeconds: 60, PeriodSeconds: 30, TimeoutSeconds: 3, FailureThreshold: 4,
+				}
+		},
+	},
+	runtimetype.PrimeAgent: {
+		Type:    runtimetype.PrimeAgent,
+		Command: []string{"/bin/sh", "-ec"},
+		ArgsFor: func(build adapterBuild) []string { return []string{primeAgentStart(build)} },
+		Env: func(build adapterBuild) []corev1.EnvVar {
+			// The endpoint reaches the agent through the file the configure step
+			// writes, not through these — like Pi, it selects a provider from its
+			// own models.json and ignores OPENAI_BASE_URL, which was measured
+			// against a stub gateway. These are what that step reads.
+			return []corev1.EnvVar{{Name: "AGENTHUB_MODEL_NAME", Value: build.Value.Model.Name}}
+		},
+		InitContainers: func(build adapterBuild) []corev1.Container {
+			// Written at start as well as on every run, so a runtime that cannot
+			// reach its gateway fails where somebody is watching rather than on
+			// the first task at three in the morning.
+			return []corev1.Container{{
+				Name: "primeagent-config-init", Image: build.image(), ImagePullPolicy: corev1.PullIfNotPresent,
+				Command: []string{"/usr/local/bin/agenthub-primeagent-configure"}, Env: build.Env,
+				Resources:       initResources("200m", "256Mi"),
+				SecurityContext: restrictedContainerSecurityContext(build.Value.Security.ReadOnlyRootFilesystem),
+				VolumeMounts:    homeAndConfigMounts,
+			}}
+		},
+		Sidecars: func(build adapterBuild) []corev1.Container {
+			return []corev1.Container{runtimeProxyContainer("primeagent-proxy", build.Name, build.sidecarImage(), "http://127.0.0.1:7681")}
 		},
 		Probes: func(build adapterBuild) (*corev1.Probe, *corev1.Probe) {
 			command := qwenCodeHealthCommand(build)
