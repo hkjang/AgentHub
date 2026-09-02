@@ -390,13 +390,30 @@ func validCard(value string) bool {
 // notPhone keeps the account-number pattern from claiming phone numbers, which
 // share its shape. The phone detector reports those, and reporting one value as
 // two classes would double every count an operator reads.
+//
+// Neither has a check digit, so the grouping is all there is to go on. A Korean
+// telephone number written with hyphens is always three groups — an area code
+// that starts with a zero, a three or four digit exchange, and exactly four
+// digits — and an account number is almost never all three at once.
+//
+// Refusing every candidate that starts with a zero, which is what this did, was
+// the wrong reading of the same fact: 기업은행·우체국 계좌번호 and a good many
+// 국민은행 ones begin with a zero, and a scanner told to block them passed every
+// one of them through instead.
 func notPhone(value string) bool {
 	number := digits(value)
 	if len(number) < 9 {
 		return false
 	}
-	return !strings.HasPrefix(number, "01") && !strings.HasPrefix(number, "02") &&
-		!strings.HasPrefix(number, "0")
+	groups := strings.Split(value, "-")
+	if len(groups) != 3 {
+		return true
+	}
+	area, exchange, subscriber := groups[0], groups[1], groups[2]
+	if !strings.HasPrefix(area, "0") || len(area) < 2 || len(area) > 4 {
+		return true
+	}
+	return len(exchange) < 3 || len(exchange) > 4 || len(subscriber) != 4
 }
 
 // SortFindings orders findings for display: the most serious first, then by
