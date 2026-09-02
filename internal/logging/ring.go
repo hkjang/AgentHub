@@ -2,6 +2,7 @@ package logging
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -58,12 +59,49 @@ func (r *Ring) Entries(min slog.Level, query string, limit int) []Entry {
 		if parseLevel(entry.Level) < min {
 			continue
 		}
-		if query != "" && !containsFold(entry.Message, query) && !containsFold(entry.Source, query) {
+		if query != "" && !matches(entry, query) {
 			continue
 		}
 		result = append(result, entry)
 	}
 	return result
+}
+
+// matches reports whether a search term appears anywhere in the entry a person
+// is actually looking at.
+//
+// The console prints the structured fields on the line, right after the message
+// — the agent's name, the runtime id, the error the platform gave up with. The
+// search box next to that line used to read the message and the source and
+// nothing else, so an operator who typed a task id they could see on screen was
+// told 조건에 맞는 로그가 없습니다 about the very line in front of them, and the
+// only way to find it was to stop searching and scroll. A field that is worth
+// rendering is worth finding.
+func matches(entry Entry, query string) bool {
+	if containsFold(entry.Message, query) || containsFold(entry.Source, query) {
+		return true
+	}
+	for key, value := range entry.Fields {
+		// The key too: "error" is what an operator narrows to when they want the
+		// failures and do not yet know what any of them say.
+		if containsFold(key, query) {
+			return true
+		}
+		// A search that misses reads every field of every entry, and it does that
+		// while holding the lock every request path needs to write its own line.
+		// Almost all of them are already strings, so the formatter is for the few
+		// that are not rather than for all of them.
+		if text, ok := value.(string); ok {
+			if containsFold(text, query) {
+				return true
+			}
+			continue
+		}
+		if containsFold(fmt.Sprint(value), query) {
+			return true
+		}
+	}
+	return false
 }
 
 func parseLevel(value string) slog.Level {
