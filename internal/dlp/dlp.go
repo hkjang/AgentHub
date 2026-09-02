@@ -60,8 +60,12 @@ type Detector struct {
 	keep int
 }
 
-// detectors are ordered so that the more specific patterns run first: a resident
-// registration number would otherwise be partly consumed by the phone matcher.
+// detectors are ordered so that the more specific patterns run first, and Scan
+// gives each match to the first detector that claims it. Specific here means
+// "has something to check": a resident registration number, a card number and a
+// 사업자등록번호 all carry a check digit, and all three also fit the account-number
+// shape, which has nothing but its grouping to go on. Whoever runs first is who
+// the value is reported as.
 var detectors = []Detector{
 	{
 		Class: "rrn", Label: "주민등록번호", Description: "13자리 주민등록번호(체크섬 검증)",
@@ -72,16 +76,16 @@ var detectors = []Detector{
 		pattern: regexp.MustCompile(`\b(?:\d[ -]?){12,18}\d\b`), validate: validCard, keep: 4,
 	},
 	{
-		Class: "account", Label: "계좌번호", Description: "은행 계좌 형식(3-2-6 이상, 하이픈 포함)",
-		pattern: regexp.MustCompile(`\b\d{2,6}-\d{2,6}-\d{2,8}(?:-\d{1,6})?\b`), validate: notPhone, keep: 4,
+		Class: "business", Label: "사업자등록번호", Description: "10자리 사업자등록번호(체크섬 검증)",
+		pattern: regexp.MustCompile(`\b\d{3}-?\d{2}-?\d{5}\b`), validate: validBusiness, keep: 3,
 	},
 	{
 		Class: "phone", Label: "휴대전화번호", Description: "01x-xxxx-xxxx 형식",
 		pattern: regexp.MustCompile(`\b01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}\b`), keep: 3,
 	},
 	{
-		Class: "business", Label: "사업자등록번호", Description: "10자리 사업자등록번호(체크섬 검증)",
-		pattern: regexp.MustCompile(`\b\d{3}-?\d{2}-?\d{5}\b`), validate: validBusiness, keep: 3,
+		Class: "account", Label: "계좌번호", Description: "은행 계좌 형식(3-2-6 이상, 하이픈 포함)",
+		pattern: regexp.MustCompile(`\b\d{2,6}-\d{2,6}-\d{2,8}(?:-\d{1,6})?\b`), validate: notPhone, keep: 4,
 	},
 	{
 		Class: "passport", Label: "여권번호", Description: "대한민국 여권번호 형식",
@@ -247,17 +251,23 @@ func Scan(settings Settings, text string) Result {
 
 	redacted := scanned
 	blocked := []string{}
+	claimed := newClaim(len(scanned))
 	for _, detector := range detectors {
 		action := settings.Action(detector.Class)
 		if action == Off {
 			continue
 		}
-		matches := detector.pattern.FindAllString(scanned, -1)
+		matches := detector.pattern.FindAllStringIndex(scanned, -1)
 		hits := make([]string, 0, len(matches))
-		for _, candidate := range matches {
+		for _, span := range matches {
+			if claimed.overlaps(span[0], span[1]) {
+				continue
+			}
+			candidate := scanned[span[0]:span[1]]
 			if detector.validate != nil && !detector.validate(candidate) {
 				continue
 			}
+			claimed.take(span[0], span[1])
 			hits = append(hits, candidate)
 		}
 		if len(hits) == 0 {
@@ -287,6 +297,37 @@ func Scan(settings Settings, text string) Result {
 		result.Text = redacted + text[len(scanned):]
 	}
 	return result
+}
+
+// claim records which bytes of the payload a detector has already taken, so one
+// value is reported once.
+//
+// The number shapes overlap by construction: 220-81-62517 is a 사업자등록번호 and
+// also a valid account grouping, and 4111-1111-1111-1111 is a card number and
+// also a four-group one. Without this, an operator counting findings sees each of
+// those twice, and the redaction marker carries whichever label happened to run
+// second — a 사업자등록번호 leaving the platform as "[계좌번호 삭제됨]" tells the
+// person reading the transcript the wrong thing about their own data.
+//
+// A class set to off never runs, so it never claims: a site that turned on only
+// 계좌번호 still gets its finding, under the only label it asked about.
+type claim struct{ taken []bool }
+
+func newClaim(size int) claim { return claim{taken: make([]bool, size)} }
+
+func (c claim) overlaps(start, end int) bool {
+	for i := start; i < end; i++ {
+		if c.taken[i] {
+			return true
+		}
+	}
+	return false
+}
+
+func (c claim) take(start, end int) {
+	for i := start; i < end; i++ {
+		c.taken[i] = true
+	}
 }
 
 // marker is what replaces a redacted value. It names the class so the model, the

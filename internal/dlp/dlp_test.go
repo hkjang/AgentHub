@@ -218,6 +218,69 @@ func TestPhoneShapedNumbersAreNotAccounts(t *testing.T) {
 	}
 }
 
+// The account shape has nothing but its grouping to go on, so it fits every other
+// number this scanner knows about. A value that a check digit already identified
+// must not be counted a second time as an account: an operator reading "계좌번호
+// 12건" wants to know how many account numbers there were, and every card number
+// and 사업자등록번호 in the payload was being added to that total.
+func TestValuesWithACheckDigitAreNotAlsoAccounts(t *testing.T) {
+	settings := Settings{Enabled: true, Classes: map[string]string{
+		"card": Audit, "business": Audit, "rrn": Audit, "account": Audit,
+	}}
+	cases := []struct{ class, text string }{
+		{"business", "사업자등록번호 220-81-62517"},
+		{"card", "카드 4111-1111-1111-1111 로 결제"},
+		{"rrn", "주민번호 900101-1234568"},
+	}
+	for _, test := range cases {
+		t.Run(test.class, func(t *testing.T) {
+			findings := Scan(settings, test.text).Findings
+			if len(findings) != 1 {
+				t.Fatalf("%q was reported under more than one class: %#v", test.text, findings)
+			}
+			if findings[0].Class != test.class {
+				t.Fatalf("%q was reported as %s, want %s", test.text, findings[0].Class, test.class)
+			}
+		})
+	}
+}
+
+// Whichever class claimed the value is also the one that names the marker. A
+// 사업자등록번호 that leaves as "[계좌번호 삭제됨]" tells whoever reads the
+// transcript the wrong thing about their own data.
+func TestRedactionMarkerNamesTheClassThatClaimedTheValue(t *testing.T) {
+	settings := Settings{Enabled: true, Classes: map[string]string{"business": Redact, "account": Redact}}
+	result := Scan(settings, "사업자등록번호 220-81-62517 입니다")
+	if !strings.Contains(result.Text, "[사업자등록번호 삭제됨]") {
+		t.Fatalf("the marker names the wrong class: %q", result.Text)
+	}
+	if strings.Contains(result.Text, "220-81-62517") {
+		t.Fatalf("the value survived redaction: %q", result.Text)
+	}
+}
+
+// An account number that is nothing else is still an account number — the claim
+// only takes what an earlier detector actually matched.
+func TestAccountsAreStillFoundAlongsideTheOtherClasses(t *testing.T) {
+	settings := Settings{Enabled: true, Classes: map[string]string{
+		"card": Audit, "business": Audit, "phone": Audit, "account": Audit,
+	}}
+	result := Scan(settings, "계좌 012345-01-123456, 카드 4111-1111-1111-1111, 연락처 010-1234-5678")
+	got := map[string]int{}
+	for _, finding := range result.Findings {
+		got[finding.Class] = finding.Count
+	}
+	want := map[string]int{"card": 1, "phone": 1, "account": 1}
+	if len(got) != len(want) {
+		t.Fatalf("findings were double-counted: %#v", result.Findings)
+	}
+	for class, count := range want {
+		if got[class] != count {
+			t.Fatalf("%s: got %d, want %d (%#v)", class, got[class], count, result.Findings)
+		}
+	}
+}
+
 // A date is not an account number, which is what the minimum digit count is for.
 func TestShortHyphenatedNumbersAreNotAccounts(t *testing.T) {
 	settings := all("account", Audit)
