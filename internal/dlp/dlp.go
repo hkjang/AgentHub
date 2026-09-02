@@ -249,9 +249,9 @@ func Scan(settings Settings, text string) Result {
 		scanned, result.Truncated = scanned[:limit], true
 	}
 
-	redacted := scanned
 	blocked := []string{}
 	claimed := newClaim(len(scanned))
+	cuts := []cut{}
 	for _, detector := range detectors {
 		action := settings.Action(detector.Class)
 		if action == Off {
@@ -269,6 +269,9 @@ func Scan(settings Settings, text string) Result {
 			}
 			claimed.take(span[0], span[1])
 			hits = append(hits, candidate)
+			if action == Redact {
+				cuts = append(cuts, cut{start: span[0], end: span[1], marker: marker(detector)})
+			}
 		}
 		if len(hits) == 0 {
 			continue
@@ -277,13 +280,8 @@ func Scan(settings Settings, text string) Result {
 			Class: detector.Class, Label: detector.Label, Count: len(hits),
 			Action: action, Sample: mask(hits[0], detector.keep),
 		})
-		switch action {
-		case Block:
+		if action == Block {
 			blocked = append(blocked, detector.Label)
-		case Redact:
-			for _, hit := range hits {
-				redacted = strings.ReplaceAll(redacted, hit, marker(detector))
-			}
 		}
 	}
 	if len(blocked) > 0 {
@@ -291,12 +289,45 @@ func Scan(settings Settings, text string) Result {
 		result.Reason = fmt.Sprintf("민감정보(%s)가 포함되어 전송을 차단했습니다.", strings.Join(blocked, ", "))
 		return result
 	}
-	if redacted != scanned {
+	if len(cuts) > 0 {
 		// The tail beyond the scan limit is carried through unchanged, because
 		// dropping it would silently truncate the payload instead of protecting it.
-		result.Text = redacted + text[len(scanned):]
+		result.Text = apply(scanned, cuts) + text[len(scanned):]
 	}
 	return result
+}
+
+// cut is one byte range to replace with a marker.
+type cut struct {
+	start, end int
+	marker     string
+}
+
+// apply rewrites the payload at the ranges the detectors claimed.
+//
+// Replacing by value instead — strings.ReplaceAll of the matched text, which is
+// what this used to do — rewrites every other place those same bytes appear,
+// including the ones no detector matched. The number shapes nest: an account
+// number 111-1111-1111 sits inside the card number 4111-1111-1111-1111, so a
+// payload holding both came out as "4[계좌번호 삭제됨]-1111" — the card was set to
+// audit and was supposed to pass through untouched, one account number was
+// reported, and two places in the text had changed. Whatever the model or the
+// tool downstream was given, it was not the payload, and nothing in the findings
+// said so.
+//
+// Claiming guarantees the ranges do not overlap, so one left-to-right pass is
+// enough.
+func apply(text string, cuts []cut) string {
+	sort.Slice(cuts, func(i, j int) bool { return cuts[i].start < cuts[j].start })
+	var b strings.Builder
+	end := 0
+	for _, c := range cuts {
+		b.WriteString(text[end:c.start])
+		b.WriteString(c.marker)
+		end = c.end
+	}
+	b.WriteString(text[end:])
+	return b.String()
 }
 
 // claim records which bytes of the payload a detector has already taken, so one

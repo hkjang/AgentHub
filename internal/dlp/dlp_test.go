@@ -281,6 +281,32 @@ func TestAccountsAreStillFoundAlongsideTheOtherClasses(t *testing.T) {
 	}
 }
 
+// Redaction replaces what a detector matched, and only that. The shapes nest —
+// the account number here is a substring of the card number — so substituting by
+// value rewrote a card number that was set to audit and was supposed to pass
+// through whole. The payload the model or the tool receives has to be the payload
+// minus the findings, not minus every place those bytes happen to appear.
+func TestRedactionOnlyTouchesWhatWasMatched(t *testing.T) {
+	settings := Settings{Enabled: true, Classes: map[string]string{"card": Audit, "account": Redact}}
+	result := Scan(settings, "카드 4111-1111-1111-1111 이고 사번 111-1111-1111 입니다")
+	want := "카드 4111-1111-1111-1111 이고 사번 [계좌번호 삭제됨] 입니다"
+	if result.Text != want {
+		t.Fatalf("got  %q\nwant %q", result.Text, want)
+	}
+}
+
+// Two classes redacting at once must each mark their own value where it stands.
+// The detectors run in their own order, not the payload's, so the ranges are
+// rewritten out of order unless they are sorted first.
+func TestRedactionMarksEveryValueInPlace(t *testing.T) {
+	settings := Settings{Enabled: true, Classes: map[string]string{"email": Redact, "phone": Redact, "rrn": Redact}}
+	result := Scan(settings, "메일 hong@example.com, 연락처 010-1234-5678, 주민 900101-1234568, 그리고 010-9876-5432")
+	want := "메일 [이메일 주소 삭제됨], 연락처 [휴대전화번호 삭제됨], 주민 [주민등록번호 삭제됨], 그리고 [휴대전화번호 삭제됨]"
+	if result.Text != want {
+		t.Fatalf("got  %q\nwant %q", result.Text, want)
+	}
+}
+
 // A date is not an account number, which is what the minimum digit count is for.
 func TestShortHyphenatedNumbersAreNotAccounts(t *testing.T) {
 	settings := all("account", Audit)

@@ -9,7 +9,7 @@ var (
 	// tracked separately from Version because the base image is several GB and
 	// is only rebuilt when something it is built from changes, so a control
 	// plane release usually keeps running on an older base tag.
-	BaseVersion = "0.17.0-dev"
+	BaseVersion = "0.18.0-dev"
 	// LangflowVersion is the Langflow runtime image this control plane expects.
 	// Langflow ships its own Python tree and frontend, so it is built and
 	// published apart from the shared base image and moves on its own schedule.
