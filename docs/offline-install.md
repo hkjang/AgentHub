@@ -63,7 +63,7 @@ release. An archive reused from an older release may not have an SBOM; its exact
 source, size and digest are still bound into the signed `offline-bundle.json`.
 
 ```bash
-export AGENTHUB_VERSION=v0.227.0
+export AGENTHUB_VERSION=v0.228.0
 
 # Use this form after downloading every asset listed in SHA256SUMS.
 sha256sum -c SHA256SUMS
