@@ -4,7 +4,7 @@ name: agenthub-offline
 # operate it separately, then set AGENTHUB_POSTGRES_DSN before running Compose.
 services:
   agenthub:
-    image: "agenthub:${AGENTHUB_VERSION:?set AGENTHUB_VERSION, for example v0.228.0}"
+    image: "agenthub:${AGENTHUB_VERSION:?set AGENTHUB_VERSION, for example v0.229.0}"
     restart: unless-stopped
     environment:
       AGENTHUB_POSTGRES_DSN: "${AGENTHUB_POSTGRES_DSN:?external PostgreSQL DSN is required}"
@@ -22,7 +22,7 @@ services:
     networks: [frontend, database]
 
   agenthub-worker:
-    image: "agenthub:${AGENTHUB_VERSION:?set AGENTHUB_VERSION, for example v0.228.0}"
+    image: "agenthub:${AGENTHUB_VERSION:?set AGENTHUB_VERSION, for example v0.229.0}"
     entrypoint: [/app/agenthub-worker]
     restart: unless-stopped
     depends_on: [agenthub]
