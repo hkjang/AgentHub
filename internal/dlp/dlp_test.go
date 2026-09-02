@@ -177,3 +177,53 @@ func TestPhoneNumbersAreNotAlsoAccounts(t *testing.T) {
 		t.Fatalf("a phone number was double-counted: %#v", result.Findings)
 	}
 }
+
+// Telling accounts and phone numbers apart by "does it start with a zero" cost
+// the whole class of accounts that do. These are the banks an offline site
+// actually uses, and a scanner told to block them was letting every one of them
+// out — the quiet half of a false negative nobody sees in an audit trail.
+func TestAccountsThatBeginWithZeroAreStillFound(t *testing.T) {
+	settings := Settings{Enabled: true, Classes: map[string]string{"phone": Audit, "account": Block}}
+	accounts := []string{
+		"012-345678-01-011", // 기업은행
+		"012345-01-123456",  // 우체국
+		"0123-456-789012",   // 4자리 지점번호 + 6자리 계좌
+	}
+	for _, account := range accounts {
+		t.Run(account, func(t *testing.T) {
+			result := Scan(settings, "입금 계좌는 "+account+" 입니다")
+			if !result.Blocked {
+				t.Fatalf("an account number was not found: %q", account)
+			}
+			if len(result.Findings) != 1 || result.Findings[0].Class != "account" {
+				t.Fatalf("%q was reported as %#v", account, result.Findings)
+			}
+		})
+	}
+}
+
+// The shape a phone number takes is the reason the account detector has to be
+// careful: three groups, an area code starting with zero, and exactly four
+// digits at the end. Landlines are not reported by the phone detector either,
+// but claiming them as bank accounts is the false positive that gets a scanner
+// switched off.
+func TestPhoneShapedNumbersAreNotAccounts(t *testing.T) {
+	settings := all("account", Audit)
+	for _, phone := range []string{"02-1234-5678", "031-123-4567", "070-1234-5678", "010-1234-5678"} {
+		t.Run(phone, func(t *testing.T) {
+			if findings := Scan(settings, "연락처 "+phone).Findings; len(findings) != 0 {
+				t.Fatalf("%q was reported as an account: %#v", phone, findings)
+			}
+		})
+	}
+}
+
+// A date is not an account number, which is what the minimum digit count is for.
+func TestShortHyphenatedNumbersAreNotAccounts(t *testing.T) {
+	settings := all("account", Audit)
+	for _, text := range []string{"2026-09-02", "버전 1-2-3", "10-20-30"} {
+		if findings := Scan(settings, text).Findings; len(findings) != 0 {
+			t.Fatalf("%q was reported as an account: %#v", text, findings)
+		}
+	}
+}
