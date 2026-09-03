@@ -389,3 +389,47 @@ func TestLoadScanner(t *testing.T) {
 		t.Fatalf("a valid configuration must load: %#v %v", got, err)
 	}
 }
+
+// A class set to 기록만 records the finding and changes nothing.
+//
+// The gateway logged every finding it did not refuse as "redacted", so a site in
+// the learning phase — which is what 기록만 is for — read a Pod log claiming its
+// tool calls had been rewritten on the way out. They had not: the arguments went
+// to the MCP server exactly as the agent wrote them, and the one place that says
+// otherwise is the record somebody uses to decide whether to start redacting.
+func TestAnAuditOnlyFindingIsNotLoggedAsARedaction(t *testing.T) {
+	var received string
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		received = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[]}}`))
+	}))
+	defer origin.Close()
+
+	var audited []map[string]any
+	handler := mcpGatewayWith([]mcpUpstream{{Name: "jira", Upstream: origin.URL}},
+		func(entry map[string]any) { audited = append(audited, entry) }, nil, scannerFor("rrn", "audit"))
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_issue","arguments":{"summary":"고객 900101-1234568 문의"}}}`
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest("POST", "/mcp/jira", strings.NewReader(body)))
+
+	// 기록만 means the call goes out untouched, which is the fact the log has to
+	// agree with.
+	if !strings.Contains(received, "900101-1234568") {
+		t.Fatalf("an audited call was rewritten on its way out: %s", received)
+	}
+	var decision string
+	for _, entry := range audited {
+		if entry["dlp"] != nil {
+			decision = fmt.Sprint(entry["decision"])
+		}
+	}
+	if decision == "" {
+		t.Fatalf("the finding was not audited at all: %#v", audited)
+	}
+	if decision != dlp.OutcomeAudited {
+		t.Fatalf("a call nothing was removed from was logged as %q: %#v", decision, audited)
+	}
+}

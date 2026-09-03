@@ -199,6 +199,42 @@ type Result struct {
 	Truncated bool `json:"truncated,omitempty"`
 }
 
+// Outcomes name what a scan did to the payload. They are what the audit trail
+// files the event under and what the console shows in its 결과 column.
+const (
+	// OutcomeBlocked is a call that did not go out.
+	OutcomeBlocked = "blocked"
+	// OutcomeRedacted is text that left with a marker in place of a value.
+	OutcomeRedacted = "redacted"
+	// OutcomeAudited is a finding that was recorded and nothing else: the payload
+	// went out exactly as the agent wrote it.
+	OutcomeAudited = "audited"
+)
+
+// Outcome is what actually happened to the text.
+//
+// Every boundary used to record "redacted" for anything it found and did not
+// block, which is not what Audit means. Audit is the documented way a site
+// learns what its agents really handle before it starts blocking anything — and
+// for as long as it ran that way, every entry in its trail claimed the platform
+// had rewritten traffic it had in fact passed through untouched. The operator
+// deciding whether to move a class from 기록만 to 가리고 전송 reads that trail;
+// it was answering a question nobody had asked the settings.
+//
+// A class can be redacted and another only recorded in the same payload, and
+// then the text did change, so one Redact finding is enough to say so.
+func (r Result) Outcome() string {
+	if r.Blocked {
+		return OutcomeBlocked
+	}
+	for _, finding := range r.Findings {
+		if finding.Action == Redact {
+			return OutcomeRedacted
+		}
+	}
+	return OutcomeAudited
+}
+
 // Classes lists what was found, for a policy decision.
 func (r Result) Classes() []string {
 	classes := make([]string, 0, len(r.Findings))
