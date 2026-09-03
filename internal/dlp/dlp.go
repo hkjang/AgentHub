@@ -282,7 +282,8 @@ func Scan(settings Settings, text string) Result {
 	}
 	scanned := text
 	if len(scanned) > limit {
-		scanned, result.Truncated = scanned[:limit], true
+		end := valueEnd(scanned, limit)
+		scanned, result.Truncated = scanned[:end], end < len(text)
 	}
 
 	blocked := []string{}
@@ -331,6 +332,50 @@ func Scan(settings Settings, text string) Result {
 		result.Text = apply(scanned, cuts) + text[len(scanned):]
 	}
 	return result
+}
+
+// maxStraddle bounds how far past the scan limit the window is stretched to
+// finish a value the cut landed inside. Every shape here is far shorter than
+// this: the longest is a private key header at 31 characters and a nineteen
+// digit card written in groups at 37.
+const maxStraddle = 128
+
+// valueEnd moves the scan boundary forward until it is somewhere a value cannot
+// be.
+//
+// Cutting the payload at exactly MaxBytes cuts wherever the byte count lands,
+// and half of a resident registration number matches nothing: a payload set to
+// block national IDs went out carrying one, with a finding count of zero and the
+// only trace a truncated flag on an entry that otherwise read clean. The tail is
+// not scanned by design — that is what a scan limit is — but a value that begins
+// inside the scanned region is one the operator asked us to look at, and the
+// byte offset is an arbitrary place to stop looking.
+//
+// It cuts the other way too. Twenty digits of an order number sliced down to
+// sixteen is a candidate the whole number never was, and a scanner that invents
+// a card number out of where the payload happened to be long is one that gets
+// switched off.
+//
+// Stopping at a byte no match can contain also restores the \b the patterns are
+// written against, so the last value in the window is matched as itself rather
+// than as its prefix.
+func valueEnd(text string, limit int) int {
+	end := limit
+	for end < len(text) && end-limit < maxStraddle && continuesValue(text[end]) {
+		end++
+	}
+	return end
+}
+
+// continuesValue reports whether a byte can appear inside something a detector
+// matches — the digits and letters the shapes are made of, the separators they
+// are written with, and the punctuation an email address carries.
+func continuesValue(b byte) bool {
+	switch {
+	case b >= '0' && b <= '9', b >= 'A' && b <= 'Z', b >= 'a' && b <= 'z':
+		return true
+	}
+	return strings.IndexByte("-_.@%+ ", b) >= 0
 }
 
 // cut is one byte range to replace with a marker.
