@@ -264,8 +264,7 @@ func mcpGatewayWith(upstreams []mcpUpstream, auditor func(entry map[string]any),
 			replacement, found := inspect.inspect(r.Context(), name, request.Params.Name, "요청", string(request.Params.Arguments))
 			if found != nil {
 				auditor(map[string]any{"server": name, "tool": request.Params.Name,
-					"decision": map[bool]string{true: "denied", false: "redacted"}[found.Blocked],
-					"dlp":      found.Summary()})
+					"decision": scanDecision(found), "dlp": found.Summary()})
 				if found.Blocked {
 					writeRPCError(w, request.ID, -32006, found.Reason+" (도구 "+request.Params.Name+")")
 					return

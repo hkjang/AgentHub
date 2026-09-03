@@ -102,6 +102,9 @@ export function AdminOperations() {
         <label><span>결과</span>
           <select value={auditQuery.outcome} onChange={(e) => search({ outcome: e.target.value })}>
             <option value="">전체</option><option value="success">성공</option><option value="failure">실패</option><option value="denied">거부</option>
+            {/* What a content scan did: 차단됨 held the call back, 가림 처리됨 rewrote
+                the text, 기록만 let it through untouched. */}
+            <option value="blocked">차단됨</option><option value="redacted">가림 처리됨</option><option value="audited">기록만</option>
           </select>
         </label>
         <label><span>시작</span><input type="datetime-local" value={auditQuery.from} onChange={(e) => search({ from: e.target.value })} /></label>

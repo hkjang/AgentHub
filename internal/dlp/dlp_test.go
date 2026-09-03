@@ -316,3 +316,45 @@ func TestShortHyphenatedNumbersAreNotAccounts(t *testing.T) {
 		}
 	}
 }
+
+// The audit trail has to say what happened to the text, not what the scanner
+// might have done to it.
+//
+// Every boundary recorded "redacted" for anything it found and did not block.
+// Audit is the documented way a site learns what its agents actually handle
+// before it starts blocking, so the sites that follow that advice are exactly
+// the ones whose trail claimed, of every entry, that the platform had rewritten
+// traffic it passed through untouched — and that trail is what somebody reads to
+// decide whether to move a class from 기록만 to 가리고 전송.
+func TestTheOutcomeNamesWhatHappenedToTheText(t *testing.T) {
+	text := "주민번호 900101-1234568, 메일 hong@example.com"
+	cases := []struct {
+		name     string
+		settings Settings
+		want     string
+	}{
+		{"기록만", all("rrn", Audit), OutcomeAudited},
+		{"가리고 전송", all("rrn", Redact), OutcomeRedacted},
+		{"차단", all("rrn", Block), OutcomeBlocked},
+		// One class recorded and another redacted: the text did change, so the
+		// stronger word is the true one.
+		{"둘 다", Settings{Enabled: true, Classes: map[string]string{"rrn": Audit, "email": Redact}}, OutcomeRedacted},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			result := Scan(test.settings, text)
+			if len(result.Findings) == 0 {
+				t.Fatal("nothing was found; this case is asserting nothing")
+			}
+			outcome := result.Outcome()
+			if outcome != test.want {
+				t.Fatalf("the trail says %q for %#v", outcome, result.Findings)
+			}
+			// And the word matches the text: only 가리고 전송 rewrites the payload,
+			// so every other outcome has to leave it as the agent wrote it.
+			if (result.Text == text) != (outcome != OutcomeRedacted) {
+				t.Fatalf("outcome %q does not describe the text: %q", outcome, result.Text)
+			}
+		})
+	}
+}

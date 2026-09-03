@@ -200,9 +200,11 @@ func (m *Model) subjectName() string {
 // produced. A DLP trail that quotes the value it found has moved the problem
 // rather than solved it.
 func (m *Model) record(ctx context.Context, step workflow.Step, result dlp.Result, decision policy.Decision, direction string, blocked bool) {
-	outcome := "redacted"
+	// The scanner says what it did to the text; the policy can refuse text the
+	// scanner itself only recorded, so a block has the last word over both.
+	outcome := result.Outcome()
 	if blocked {
-		outcome = "blocked"
+		outcome = dlp.OutcomeBlocked
 	}
 	findings := make([]map[string]any, 0, len(result.Findings))
 	for _, finding := range result.Findings {

@@ -78,6 +78,19 @@ func (s *scanner) inspect(ctx context.Context, server, tool, direction, text str
 	return result.Text, &result
 }
 
+// scanDecision names what the scan did to this call, in the vocabulary this
+// gateway's own log already uses: a refusal is "denied" here, the word the tool
+// policy writes for a call that never went out.
+//
+// The rest comes from the scanner, so a class set to 기록만 is not logged as a
+// call whose arguments were rewritten — they were not.
+func scanDecision(result *dlp.Result) string {
+	if result.Blocked {
+		return "denied"
+	}
+	return result.Outcome()
+}
+
 // record sends the finding to the control plane and logs it locally.
 //
 // What leaves the Pod is the class, the count and the masked sample the scanner

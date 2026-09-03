@@ -163,10 +163,9 @@ func (s *Server) reportDLPEvent(w http.ResponseWriter, r *http.Request) {
 	if len(findings) > maxReportedFindings {
 		findings = findings[:maxReportedFindings]
 	}
-	outcome := "redacted"
-	if input.Event.Blocked {
-		outcome = "blocked"
-	}
+	// What the gateway did to the call, not what it might have done: a class set
+	// to 기록만 leaves the tool call exactly as the agent wrote it.
+	outcome := dlp.Result{Blocked: input.Event.Blocked, Findings: input.Event.Findings}.Outcome()
 	details := map[string]any{
 		"server": input.Event.Server, "tool": input.Event.Tool, "direction": input.Event.Direction,
 		"truncated": input.Event.Truncated, "findings": findings, "runtimeId": runtime.ID,
