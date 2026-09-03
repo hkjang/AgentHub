@@ -146,7 +146,7 @@ func (s *Server) effectiveQuota(w http.ResponseWriter, r *http.Request) {
 func quotaComplaint(limits quota.Limits) string {
 	switch {
 	case limits.MaxRuntimes < 0 || limits.MaxCPUMillis < 0 || limits.MaxMemoryMB < 0 ||
-		limits.MaxStorageGB < 0 || limits.MaxRunningTasks < 0 || limits.TokenBudget < 0 || limits.CostBudget < 0:
+		limits.MaxStorageGB < 0 || limits.MaxGPUs < 0 || limits.MaxRunningTasks < 0 || limits.TokenBudget < 0 || limits.CostBudget < 0:
 		return "Quota는 0 이상이어야 합니다(0은 상위 설정을 따른다는 뜻입니다)."
 	case limits.MaxRuntimes > 1000:
 		return "Runtime 수 상한이 너무 큽니다(최대 1000)."
@@ -156,6 +156,8 @@ func quotaComplaint(limits quota.Limits) string {
 		return "Memory 상한이 너무 큽니다. 단위는 MB입니다."
 	case limits.MaxStorageGB > 1_000_000:
 		return "Storage 상한이 너무 큽니다. 단위는 GB입니다."
+	case limits.MaxGPUs > 1000:
+		return "GPU 수 상한이 너무 큽니다(최대 1000)."
 	}
 	return ""
 }

@@ -99,6 +99,16 @@ func Resolve(levels ...Limits) Limits {
 		if level.MaxStorageGB > 0 {
 			out.MaxStorageGB = level.MaxStorageGB
 		}
+		// GPUs fall through like every other dimension. Left out of this loop —
+		// which is how they shipped — the field was still stored, still shown on
+		// the settings screen and still checked by CheckHeld, but the limits that
+		// reached CheckHeld came from here, so it was always zero: unlimited. The
+		// one dimension nobody can buy more of overnight was the one with no
+		// ceiling, while every other number on the screen said the quota was
+		// working.
+		if level.MaxGPUs > 0 {
+			out.MaxGPUs = level.MaxGPUs
+		}
 		if level.MaxRunningTasks > 0 {
 			out.MaxRunningTasks = level.MaxRunningTasks
 		}

@@ -2,9 +2,41 @@ package quota
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+// Every limit has to survive resolution, and this is the sweep that says so.
+//
+// Resolve is written field by field, so a dimension added to Limits and not to
+// this loop is stored, validated, shown on the settings screen and enforced by
+// CheckHeld — while the value CheckHeld is handed is always zero, which this
+// package spells "unlimited". Nothing fails; the limit is simply not there. GPUs
+// shipped that way, and a per-dimension test would not have found it because the
+// tests that existed asked CheckHeld directly.
+func TestEveryLimitSurvivesResolution(t *testing.T) {
+	limits := reflect.TypeOf(Limits{})
+	for index := 0; index < limits.NumField(); index++ {
+		field := limits.Field(index)
+		level := reflect.New(limits).Elem()
+		// A distinct non-zero value per field, so a Resolve that copies the wrong
+		// one is a failure rather than a coincidence.
+		set := float64(index + 1)
+		switch value := level.Field(index); value.Kind() {
+		case reflect.Int, reflect.Int64:
+			value.SetInt(int64(set))
+		case reflect.Float64:
+			value.SetFloat(set)
+		default:
+			t.Fatalf("%s is a %s, which this sweep does not know how to set", field.Name, value.Kind())
+		}
+		resolved := reflect.ValueOf(Resolve(level.Interface().(Limits)))
+		if got := resolved.Field(index).Interface(); got != level.Field(index).Interface() {
+			t.Errorf("%s = %v after resolution, want %v — Resolve does not carry it", field.Name, got, set)
+		}
+	}
+}
 
 // Inheritance is field by field, because that is what an administrator means by
 // "the platform allows four, our department eight, and this one person sixteen":

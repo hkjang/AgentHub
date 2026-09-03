@@ -4,13 +4,18 @@ import type { EffectiveQuota, Limits } from './types'
 // personal panel name and order them the same way. A limit whose name differs
 // between two screens reads as two different limits.
 
-export type LimitField = { key:keyof Limits; label:string; unit:string; step?:number; held?:'runtimes'|'cpuMillis'|'memoryMb'|'storageGb' }
+export type LimitField = { key:keyof Limits; label:string; unit:string; step?:number; held?:'runtimes'|'cpuMillis'|'memoryMb'|'storageGb'|'gpus' }
 
 export const LIMIT_FIELDS:LimitField[] = [
   {key:'maxRuntimes',label:'Runtime 수',unit:'개',held:'runtimes'},
   {key:'maxCpuMillis',label:'CPU',unit:'m',step:100,held:'cpuMillis'},
   {key:'maxMemoryMb',label:'Memory',unit:'MB',step:256,held:'memoryMb'},
   {key:'maxStorageGb',label:'Storage',unit:'GB',held:'storageGb'},
+  // The dimension this table was missing. Without a row here a department or a
+  // person had no way to be given a GPU ceiling at all — the field existed on
+  // the server and on the platform settings screen, so the quota screens showed
+  // every limit except the scarce one and read as though it were unlimited.
+  {key:'maxGpus',label:'GPU',unit:'개',held:'gpus'},
   {key:'maxRunningTasks',label:'동시 실행 작업',unit:'개'},
   {key:'tokenBudget',label:'토큰 예산 (30일)',unit:'토큰',step:1000},
   {key:'costBudget',label:'비용 예산 (30일)',unit:'',step:0.5}
