@@ -153,6 +153,48 @@ func TestScanIsBounded(t *testing.T) {
 	}
 }
 
+// The byte the limit lands on is an arbitrary place to stop looking, and a value
+// sliced in half matches nothing.
+func TestScanFinishesAValueTheLimitSplits(t *testing.T) {
+	settings := Settings{Enabled: true, Classes: map[string]string{"rrn": Redact}, MaxBytes: 64}
+	tail := "\n" + strings.Repeat("y", 200)
+	// 64 bytes in is four digits into the number, which is where the scan used to
+	// stop: no finding, no redaction, and the national ID left in the clear under
+	// a trail that reported nothing but a truncated flag.
+	result := Scan(settings, strings.Repeat("x", 58)+" 900101-1234568"+tail)
+	if len(result.Findings) != 1 || result.Findings[0].Class != "rrn" {
+		t.Fatalf("a value the limit split was not found: %#v", result.Findings)
+	}
+	if strings.Contains(result.Text, "900101-1234568") {
+		t.Fatalf("the value was reported and then sent anyway: %q", result.Text)
+	}
+	if !strings.Contains(result.Text, "[주민등록번호 삭제됨]") {
+		t.Fatalf("the marker is missing: %q", result.Text)
+	}
+	if !result.Truncated {
+		t.Fatal("what is still past the limit must be reported as truncated")
+	}
+	if !strings.HasSuffix(result.Text, tail) {
+		t.Fatalf("the tail was dropped: %q", result.Text)
+	}
+}
+
+// And it cuts the other way: a scanner that invents a card number out of where
+// the payload happened to be long is one that gets switched off in a week.
+func TestScanDoesNotInventAValueOutOfTheLimit(t *testing.T) {
+	settings := Settings{Enabled: true, Classes: map[string]string{"card": Block}, MaxBytes: 16}
+	// Twenty-four digits are no card number — but the first sixteen of them pass
+	// Luhn, and stopping at the byte count handed the detector a candidate that
+	// was never in the payload.
+	result := Scan(settings, "411111111111111112345678\n"+strings.Repeat("y", 100))
+	if len(result.Findings) != 0 {
+		t.Fatalf("the scan limit invented a finding: %#v", result.Findings)
+	}
+	if result.Blocked {
+		t.Fatal("a call was refused over a value the payload does not contain")
+	}
+}
+
 func TestSettingsValidate(t *testing.T) {
 	if err := (Settings{Enabled: true, Classes: map[string]string{"rrn": Block}}).Validate(); err != nil {
 		t.Fatalf("a normal configuration must be accepted: %v", err)
