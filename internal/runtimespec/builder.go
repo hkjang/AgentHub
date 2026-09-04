@@ -190,7 +190,7 @@ func (b *Builder) Build(ctx context.Context, rt store.Runtime, agent store.Agent
 				Agent: agent.Name, AgentID: agent.ID, Server: server.Name,
 				User: owner.Username, UserID: agent.OwnerID, Role: owner.Role,
 			}); !rules.Empty() {
-				binding.PolicyDenied, binding.PolicyGated, binding.PolicyDenyAll = rules.Denied, rules.Gated, rules.DenyAll
+				applyServerRules(&binding, rules)
 			}
 			// The catalogue's own switches finally mean something: a server marked
 			// "approval required", or a high-risk server while the governance switch
@@ -331,4 +331,17 @@ func (b *Builder) highRiskApprovalEnabled(ctx context.Context) bool {
 		return true
 	}
 	return governance.HighRiskToolApproval == nil || *governance.HighRiskToolApproval
+}
+
+// applyServerRules copies the compiled platform policy onto the binding that
+// reaches the Pod.
+//
+// It is a function rather than four assignments inline because every field has to
+// make the trip: one left behind is a restriction an operator wrote, the
+// simulator confirmed, and the gateway never received — and nothing on any screen
+// says so. TestEveryCompiledPolicyFieldReachesTheBinding walks both structs so a
+// field added to one end alone fails here rather than in a Pod.
+func applyServerRules(binding *runtime.MCPBinding, rules policy.ServerRules) {
+	binding.PolicyDenied, binding.PolicyGated = rules.Denied, rules.Gated
+	binding.PolicyDenyAll, binding.PolicyGateAll = rules.DenyAll, rules.GateAll
 }

@@ -349,8 +349,13 @@ func CompileServer(document Document, request Request) ServerRules {
 		switch {
 		case rule.Effect == Allow && len(rule.Tools) == 0:
 			// A blanket allow for this agent on this server ends the evaluation the
-			// same way it would at call time: first match wins.
-			return ServerRules{}
+			// same way it would at call time: first match wins. What was compiled
+			// above it stays — those rules matched first, so at call time they are
+			// what decides, and dropping them here would let a broad allow written
+			// below a restriction quietly undo it in the Pod alone.
+			sort.Strings(compiled.Denied)
+			sort.Strings(compiled.Gated)
+			return compiled
 		case rule.Effect == Allow:
 			// A narrower allow cannot be expressed to the gateway, which only
 			// carries restrictions. Skipping it keeps the two ends in agreement:

@@ -133,6 +133,31 @@ func TestGatedToolWaitsForApprovalThenRuns(t *testing.T) {
 	}
 }
 
+// A platform rule that named no tool gates every tool on the server, including
+// the ones nobody declared — the same reading as the server-wide denial beside
+// it, and the reason it is a flag rather than a list of names.
+func TestServerWideGateHoldsAnUndeclaredTool(t *testing.T) {
+	var upstreamCalls int32
+	upstream := upstreamStub(&upstreamCalls)
+	defer upstream.Close()
+	stub := newControlPlaneStub("rejected")
+	defer stub.close()
+
+	server := mcpUpstream{Name: "git", Upstream: upstream.URL, PolicyGateAll: true}
+	handler := mcpGatewayWithApprover([]mcpUpstream{server}, func(map[string]any) {}, stub.approver())
+	response := callTool(handler, "a_tool_nobody_declared")
+
+	if message := rpcErrorMessage(t, response.Body.String()); !strings.Contains(message, "거절") {
+		t.Fatalf("an undeclared tool was not gated: %q", message)
+	}
+	if atomic.LoadInt32(&upstreamCalls) != 0 {
+		t.Fatal("a call nobody approved reached the MCP server")
+	}
+	if atomic.LoadInt32(&stub.requests) != 1 {
+		t.Fatalf("the gate asked %d times", stub.requests)
+	}
+}
+
 func TestRejectedToolNeverReachesTheServer(t *testing.T) {
 	var upstreamCalls int32
 	upstream := upstreamStub(&upstreamCalls)
