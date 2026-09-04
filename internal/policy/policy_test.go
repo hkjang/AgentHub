@@ -204,3 +204,51 @@ func TestCompileServer(t *testing.T) {
 		t.Fatal("an empty policy must compile to nothing")
 	}
 }
+
+// "Every tool this agent calls needs a person" is a rule with no tool selector,
+// the same shape as a server-wide deny. It has to survive compilation, because
+// the gateway is the only place the approval can be held.
+func TestCompileServerCarriesAServerWideGate(t *testing.T) {
+	request := Request{Agent: "결산 에이전트", AgentID: "a-1", Server: "github"}
+	whole := CompileServer(Document{Rules: []Rule{
+		{ID: "gate-server", Effect: RequireApproval, Actions: []string{ActionToolCall}, Servers: []string{"github"}, Reason: "모든 도구 승인"},
+	}}, request)
+	if !whole.GateAll {
+		t.Fatalf("a server-wide gate did not compile: %#v", whole)
+	}
+	if len(whole.Gated) > 0 || whole.DenyAll {
+		t.Fatalf("a server-wide gate must not compile to a list or a denial: %#v", whole)
+	}
+	// The call-time answer this has to agree with, for a tool nobody has declared.
+	decision := Evaluate(Document{Rules: []Rule{
+		{ID: "gate-server", Effect: RequireApproval, Actions: []string{ActionToolCall}, Servers: []string{"github"}, Reason: "모든 도구 승인"},
+	}}, Request{Action: ActionToolCall, Agent: "결산 에이전트", Server: "github", Tool: "a_tool_nobody_declared"})
+	if decision.Effect != RequireApproval {
+		t.Fatalf("call time says %q while compilation says gated", decision.Effect)
+	}
+}
+
+// A broad allow written below a restriction does not undo it: the restriction
+// matched first, so first match wins at call time and has to win here too.
+func TestCompileServerKeepsRestrictionsWrittenAboveABroadAllow(t *testing.T) {
+	document := Document{Rules: []Rule{
+		{ID: "no-shell", Effect: Deny, Actions: []string{ActionToolCall}, Tools: []string{"run_shell"}, Reason: "셸 금지"},
+		{ID: "everything-else", Effect: Allow, Actions: []string{ActionToolCall}},
+		{ID: "gate-writes", Effect: RequireApproval, Actions: []string{ActionToolCall}, Tools: []string{"delete_*"}, Reason: "쓰기 승인"},
+	}}
+	request := Request{Agent: "결산 에이전트", Server: "github"}
+	compiled := CompileServer(document, request)
+	if !MatchTool(compiled.Denied, "github", "run_shell") {
+		t.Fatalf("the deny above the allow was dropped: %#v", compiled)
+	}
+	// And the rule below the allow is not compiled, because the allow decides
+	// first for every tool that rule would have named.
+	if len(compiled.Gated) > 0 || compiled.GateAll {
+		t.Fatalf("a rule below a blanket allow must not reach the gateway: %#v", compiled)
+	}
+	for tool, want := range map[string]string{"run_shell": Deny, "delete_branch": Allow} {
+		if got := Evaluate(document, Request{Action: ActionToolCall, Agent: "결산 에이전트", Server: "github", Tool: tool}).Effect; got != want {
+			t.Fatalf("call time gives %q for %s, want %q", got, tool, want)
+		}
+	}
+}

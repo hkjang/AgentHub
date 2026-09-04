@@ -249,11 +249,12 @@ type MCPBinding struct {
 	// PolicyDenied and PolicyGated are patterns compiled from the platform-wide
 	// policy for this agent and this server. They are patterns rather than tool
 	// names because the tool list is not known until the server runs, and a rule
-	// has to cover the tools nobody has seen yet. PolicyDenyAll is a rule that
-	// named no tool at all.
+	// has to cover the tools nobody has seen yet. PolicyDenyAll and PolicyGateAll
+	// are a rule that named no tool at all.
 	PolicyDenied  []string
 	PolicyGated   []string
 	PolicyDenyAll bool
+	PolicyGateAll bool
 }
 
 type SecurityProfile struct {

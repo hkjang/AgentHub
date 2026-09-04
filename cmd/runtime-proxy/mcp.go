@@ -52,11 +52,14 @@ type mcpUpstream struct {
 	PolicyDenied  []string `json:"policyDenied,omitempty"`
 	PolicyGated   []string `json:"policyGated,omitempty"`
 	PolicyDenyAll bool     `json:"policyDenyAll,omitempty"`
+	// PolicyGateAll is a policy rule that named no tool at all: every tool on this
+	// server waits for a person, including the ones nobody has seen yet.
+	PolicyGateAll bool `json:"policyGateAll,omitempty"`
 }
 
 // needsApproval reports whether a call has to wait for a person.
 func (u mcpUpstream) needsApproval(tool string) bool {
-	return u.ApprovalRequired || contains(u.ApprovalTools, tool) || policy.MatchTool(u.PolicyGated, u.Name, tool)
+	return u.ApprovalRequired || u.PolicyGateAll || contains(u.ApprovalTools, tool) || policy.MatchTool(u.PolicyGated, u.Name, tool)
 }
 
 // permits reports whether a tool may be called.

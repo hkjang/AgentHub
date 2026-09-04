@@ -166,6 +166,7 @@ spec:
                           # A policy rule that named no tool at all covers every
                           # tool the server offers, including ones nobody has seen.
                           policyDenyAll: {type: boolean, default: false}
+                          policyGateAll: {type: boolean, default: false}
                 security:
                   type: object
                   properties:

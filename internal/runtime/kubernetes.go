@@ -129,7 +129,7 @@ func (k *KubernetesSpawner) object(spec Spec) *unstructured.Unstructured {
 			port = 8000
 		}
 		binding := map[string]any{"name": m.Name, "mode": m.Mode, "endpoint": m.Endpoint, "image": m.Image, "port": int64(port)}
-		if m.ToolPolicyMode != "" || m.ApprovalAll || m.PolicyDenyAll || len(m.ApprovalTools) > 0 || len(m.PolicyDenied) > 0 || len(m.PolicyGated) > 0 {
+		if m.ToolPolicyMode != "" || m.ApprovalAll || m.PolicyDenyAll || m.PolicyGateAll || len(m.ApprovalTools) > 0 || len(m.PolicyDenied) > 0 || len(m.PolicyGated) > 0 {
 			policy := map[string]any{
 				"tools":            stringList(m.ToolPolicyTools),
 				"approvalTools":    stringList(m.ApprovalTools),
@@ -150,6 +150,9 @@ func (k *KubernetesSpawner) object(spec Spec) *unstructured.Unstructured {
 			}
 			if m.PolicyDenyAll {
 				policy["policyDenyAll"] = true
+			}
+			if m.PolicyGateAll {
+				policy["policyGateAll"] = true
 			}
 			binding["toolPolicy"] = policy
 		}
