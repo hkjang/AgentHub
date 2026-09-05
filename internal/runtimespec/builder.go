@@ -343,5 +343,6 @@ func (b *Builder) highRiskApprovalEnabled(ctx context.Context) bool {
 // field added to one end alone fails here rather than in a Pod.
 func applyServerRules(binding *runtime.MCPBinding, rules policy.ServerRules) {
 	binding.PolicyDenied, binding.PolicyGated = rules.Denied, rules.Gated
+	binding.PolicyAllowed = rules.Allowed
 	binding.PolicyDenyAll, binding.PolicyGateAll = rules.DenyAll, rules.GateAll
 }

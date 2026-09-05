@@ -320,6 +320,11 @@ type ServerRules struct {
 	// the matching rules, matched by the gateway with MatchTool.
 	Denied []string `json:"denied,omitempty"`
 	Gated  []string `json:"gated,omitempty"`
+	// Allowed are the exceptions: tool patterns an allow rule named above the
+	// restrictions below it. The gateway checks them first, which is what makes
+	// "nobody may use this server, except read_file" mean the same thing in the
+	// Pod as it does at every other decision point.
+	Allowed []string `json:"allowed,omitempty"`
 	// DenyAll and GateAll come from a rule with no tool selector, which covers
 	// every tool the server offers including the ones nobody has seen yet.
 	DenyAll bool `json:"denyAll,omitempty"`
@@ -328,17 +333,19 @@ type ServerRules struct {
 
 // Empty reports whether the policy has nothing to say about this server, so the
 // provisioning path can leave the binding exactly as it was.
+//
+// Exceptions alone are nothing to say: an allow rule with no restriction under
+// it permits what was already permitted.
 func (r ServerRules) Empty() bool {
 	return len(r.Denied) == 0 && len(r.Gated) == 0 && !r.DenyAll && !r.GateAll
 }
 
 // CompileServer resolves the tool.call rules for one agent and one MCP server.
 //
-// Only deny and require_approval compile: an allow rule is the absence of a
-// restriction, and the gateway has no notion of "explicitly permitted" to carry.
-// An allow rule that sits above a deny still wins, and that is decided here —
-// once a rule allows this agent on this server, the restrictions below it are not
-// compiled at all.
+// An allow rule that sits above a deny still wins, and that is decided here.
+// A blanket allow ends the compilation, exactly as it ends the evaluation at
+// call time; a narrow one becomes an exception the gateway checks before the
+// restrictions written below it.
 func CompileServer(document Document, request Request) ServerRules {
 	compiled := ServerRules{}
 	request.Action = ActionToolCall
@@ -353,15 +360,18 @@ func CompileServer(document Document, request Request) ServerRules {
 			// above it stays — those rules matched first, so at call time they are
 			// what decides, and dropping them here would let a broad allow written
 			// below a restriction quietly undo it in the Pod alone.
-			sort.Strings(compiled.Denied)
-			sort.Strings(compiled.Gated)
-			return compiled
+			return sorted(compiled)
 		case rule.Effect == Allow:
-			// A narrower allow cannot be expressed to the gateway, which only
-			// carries restrictions. Skipping it keeps the two ends in agreement:
-			// anything it would have permitted is not restricted here either,
-			// because a restriction below it is what this rule sits above.
-			continue
+			// The narrow exception the effect exists for: "nobody may use this
+			// server, except read_file". It only holds over the restrictions
+			// written below it — one written above already decided at call time,
+			// so it decides here too, and a pattern it caught is not carried.
+			for _, tool := range rule.Tools {
+				if restrictedAbove(compiled, request.Server, tool) {
+					continue
+				}
+				compiled.Allowed = appendUnique(compiled.Allowed, tool)
+			}
 		case rule.Effect == Deny && len(rule.Tools) == 0:
 			compiled.DenyAll = true
 		case rule.Effect == Deny:
@@ -372,9 +382,96 @@ func CompileServer(document Document, request Request) ServerRules {
 			compiled.Gated = appendUnique(compiled.Gated, rule.Tools...)
 		}
 	}
+	return sorted(compiled)
+}
+
+// sorted puts the compiled patterns in a stable order, so provisioning the same
+// policy twice produces the same object and the operator sees no change.
+func sorted(compiled ServerRules) ServerRules {
 	sort.Strings(compiled.Denied)
 	sort.Strings(compiled.Gated)
+	sort.Strings(compiled.Allowed)
 	return compiled
+}
+
+// restrictedAbove reports whether something already compiled would catch a tool
+// this allow rule names — in which case that restriction is above it in the
+// document, decides at call time, and the exception must not travel.
+//
+// It is answered on patterns rather than tool names because that is all either
+// end has: the tools a server offers are not known until it is running.
+func restrictedAbove(compiled ServerRules, server, tool string) bool {
+	if compiled.DenyAll || compiled.GateAll {
+		return true
+	}
+	for _, restriction := range compiled.Denied {
+		if overlaps(restriction, tool, server) {
+			return true
+		}
+	}
+	for _, restriction := range compiled.Gated {
+		if overlaps(restriction, tool, server) {
+			return true
+		}
+	}
+	return false
+}
+
+// overlaps reports whether some tool name could match both patterns.
+//
+// The question is asked conservatively: when it cannot be ruled out, the two
+// patterns are treated as the same tool and the restriction wins, because the
+// cost of being wrong in that direction is a call refused rather than a call the
+// policy meant to refuse getting through.
+func overlaps(left, right, server string) bool {
+	for _, a := range toolMatchers(left, server) {
+		for _, b := range toolMatchers(right, server) {
+			if matcherOverlap(a, b) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// toolMatchers reduces one pattern to the tool names it can match on this
+// server. A pattern is compared against both "tool" and "server/tool", so
+// "github/delete_*" and "delete_*" are one restriction on the github server and
+// have to be recognised as one here too.
+func toolMatchers(pattern, server string) []string {
+	pattern = strings.ToLower(strings.TrimSpace(pattern))
+	if pattern == "" {
+		return nil
+	}
+	matchers := []string{pattern}
+	qualifier := strings.ToLower(strings.TrimSpace(server)) + "/"
+	stem, star := strings.TrimSuffix(pattern, "*"), strings.HasSuffix(pattern, "*")
+	switch {
+	case star && strings.HasPrefix(qualifier, stem):
+		// The star falls inside the server name, so every tool's qualified form
+		// begins with it.
+		matchers = append(matchers, "*")
+	case server != "" && strings.HasPrefix(pattern, qualifier):
+		matchers = append(matchers, strings.TrimPrefix(pattern, qualifier))
+	}
+	return matchers
+}
+
+// matcherOverlap is the same comparison as match(), asked of two patterns rather
+// than a pattern and a value.
+func matcherOverlap(left, right string) bool {
+	leftStem, leftStar := strings.TrimSuffix(left, "*"), strings.HasSuffix(left, "*")
+	rightStem, rightStar := strings.TrimSuffix(right, "*"), strings.HasSuffix(right, "*")
+	switch {
+	case leftStar && rightStar:
+		return strings.HasPrefix(leftStem, rightStem) || strings.HasPrefix(rightStem, leftStem)
+	case leftStar:
+		return strings.HasPrefix(right, leftStem)
+	case rightStar:
+		return strings.HasPrefix(left, rightStem)
+	default:
+		return left == right
+	}
 }
 
 // MatchTool reports whether a tool matches one of the compiled patterns. The

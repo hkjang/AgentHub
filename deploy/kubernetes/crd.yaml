@@ -163,6 +163,13 @@ spec:
                             type: array
                             maxItems: 200
                             items: {type: string, maxLength: 200}
+                          # The exceptions an allow rule named above those
+                          # restrictions. Checked first, so a narrow allow over a
+                          # server-wide deny means the same thing in the Pod.
+                          policyAllowed:
+                            type: array
+                            maxItems: 200
+                            items: {type: string, maxLength: 200}
                           # A policy rule that named no tool at all covers every
                           # tool the server offers, including ones nobody has seen.
                           policyDenyAll: {type: boolean, default: false}

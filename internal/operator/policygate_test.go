@@ -51,3 +51,43 @@ func TestServerWideGateReachesTheGatewayAndItsEgress(t *testing.T) {
 		t.Fatal("the egress to the control plane stays closed, so every gated call would fail instead of waiting")
 	}
 }
+
+// The exception the restriction was written with has to arrive with it. The
+// operator reads the CRD and writes the gateway's configuration, so a field it
+// does not copy is a rule that was compiled, stored, delivered, and then dropped
+// one hop short of the process that enforces it.
+func TestAnExceptionReachesTheGatewayWithItsRestriction(t *testing.T) {
+	var value spec
+	value.Owner = "user-1"
+	value.Runtime.Type = "opencode"
+	value.Runtime.Image = "agenthub-base:v0.7.0"
+	value.MCP = append(value.MCP, mcpBinding{
+		Name: "github", Mode: "shared", Endpoint: "https://mcp.github.test/mcp",
+		ToolPolicy: &mcpToolPolicy{PolicyDenyAll: true, PolicyAllowed: []string{"read_file"}},
+	})
+
+	bindings := effectiveMCP("agent-runtime-dev", "rt-1", value)
+	gateway, ok := mcpGatewayContainer(value.Runtime.Image, "rt-1", "runtime-1", bindings, value.MCP, value)
+	if !ok {
+		t.Fatal("a server-wide deny must produce a gateway container")
+	}
+	var config string
+	for _, env := range gateway.Env {
+		if env.Name == "AGENTHUB_MCP_GATEWAY" {
+			config = env.Value
+		}
+	}
+	var upstreams []struct {
+		PolicyDenyAll bool     `json:"policyDenyAll"`
+		PolicyAllowed []string `json:"policyAllowed"`
+	}
+	if err := json.Unmarshal([]byte(config), &upstreams); err != nil {
+		t.Fatalf("gateway config is not valid JSON: %v (%s)", err, config)
+	}
+	if len(upstreams) != 1 || !upstreams[0].PolicyDenyAll {
+		t.Fatalf("the deny did not reach the gateway: %s", config)
+	}
+	if len(upstreams[0].PolicyAllowed) != 1 || upstreams[0].PolicyAllowed[0] != "read_file" {
+		t.Fatalf("the exception did not reach the gateway, so the deny arrives alone: %s", config)
+	}
+}
