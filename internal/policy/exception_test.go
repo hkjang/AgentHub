@@ -5,22 +5,19 @@ import (
 	"testing"
 )
 
-// gatewayDecides replays what the in-Pod gateway does with a compiled rule set:
-// the platform's denial first, then its gate, with the exceptions ahead of both.
-// It is the other half of every comparison below, because "the compiled form
-// says the same thing as the document" is the only property that matters here —
-// the gateway is the only place a tool call is actually refused.
+// gatewayDecides is what the in-Pod gateway does with a compiled rule set. It is
+// the other half of every comparison below, because "the compiled form says the
+// same thing as the document" is the only property that matters here — the
+// gateway is the only place a tool call is actually refused.
 func gatewayDecides(compiled ServerRules, server, tool string) string {
-	if MatchTool(compiled.Allowed, server, tool) {
-		return Allow
-	}
-	if compiled.DenyAll || MatchTool(compiled.Denied, server, tool) {
-		return Deny
-	}
-	if compiled.GateAll || MatchTool(compiled.Gated, server, tool) {
-		return RequireApproval
-	}
-	return Allow
+	return Decide(compiled, server, tool)
+}
+
+// olderGatewayDecides is the same question asked of a Pod that only reads the
+// summary lists, which is every Pod provisioned before the ordered rules
+// existed. The summary is still compiled for them, so this has to keep working.
+func olderGatewayDecides(compiled ServerRules, server, tool string) string {
+	return decideProjection(compiled, server, tool)
 }
 
 // The shape the effect exists for, and the one the documentation advertises: a
@@ -123,6 +120,23 @@ func TestTheCompiledRulesAgreeWithTheDocument(t *testing.T) {
 			{ID: "1", Effect: Allow, Actions: []string{ActionToolCall}, Tools: []string{"github/read_file"}},
 			{ID: "2", Effect: Deny, Actions: []string{ActionToolCall}, Reason: "차단"},
 		}},
+		"a gate above a server-wide deny": {Rules: []Rule{
+			{ID: "1", Effect: RequireApproval, Actions: []string{ActionToolCall}, Tools: []string{"delete_*"}, Reason: "승인 후 삭제"},
+			{ID: "2", Effect: Deny, Actions: []string{ActionToolCall}, Reason: "차단"},
+		}},
+		"a deny above a server-wide gate": {Rules: []Rule{
+			{ID: "1", Effect: Deny, Actions: []string{ActionToolCall}, Tools: []string{"run_shell"}, Reason: "셸 금지"},
+			{ID: "2", Effect: RequireApproval, Actions: []string{ActionToolCall}, Reason: "승인"},
+		}},
+		"a server-wide gate above a server-wide deny": {Rules: []Rule{
+			{ID: "1", Effect: Deny, Actions: []string{ActionToolCall}, Tools: []string{"run_shell"}, Reason: "셸 금지"},
+			{ID: "2", Effect: RequireApproval, Actions: []string{ActionToolCall}, Reason: "승인"},
+			{ID: "3", Effect: Deny, Actions: []string{ActionToolCall}, Reason: "차단"},
+		}},
+		"a default of deny": {DefaultEffect: Deny, Rules: []Rule{
+			{ID: "1", Effect: Allow, Actions: []string{ActionToolCall}, Tools: []string{"read_*", "list_*"}},
+		}},
+		"a default of approval with nothing else to say": {DefaultEffect: RequireApproval},
 		"a blanket allow ends it": {Rules: []Rule{
 			{ID: "1", Effect: Deny, Actions: []string{ActionToolCall}, Tools: []string{"run_shell"}, Reason: "셸 금지"},
 			{ID: "2", Effect: Allow, Actions: []string{ActionToolCall}, Tools: []string{"read_file"}},

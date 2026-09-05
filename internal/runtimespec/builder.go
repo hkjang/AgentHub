@@ -342,6 +342,11 @@ func (b *Builder) highRiskApprovalEnabled(ctx context.Context) bool {
 // says so. TestEveryCompiledPolicyFieldReachesTheBinding walks both structs so a
 // field added to one end alone fails here rather than in a Pod.
 func applyServerRules(binding *runtime.MCPBinding, rules policy.ServerRules) {
+	binding.PolicyRules = make([]runtime.PolicyRule, 0, len(rules.Rules))
+	for _, rule := range rules.Rules {
+		binding.PolicyRules = append(binding.PolicyRules, runtime.PolicyRule{Effect: rule.Effect, Tools: rule.Tools})
+	}
+	binding.PolicyDefault = rules.Default
 	binding.PolicyDenied, binding.PolicyGated = rules.Denied, rules.Gated
 	binding.PolicyAllowed = rules.Allowed
 	binding.PolicyDenyAll, binding.PolicyGateAll = rules.DenyAll, rules.GateAll

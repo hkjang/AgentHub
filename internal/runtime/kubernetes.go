@@ -129,7 +129,7 @@ func (k *KubernetesSpawner) object(spec Spec) *unstructured.Unstructured {
 			port = 8000
 		}
 		binding := map[string]any{"name": m.Name, "mode": m.Mode, "endpoint": m.Endpoint, "image": m.Image, "port": int64(port)}
-		if m.ToolPolicyMode != "" || m.ApprovalAll || m.PolicyDenyAll || m.PolicyGateAll || len(m.ApprovalTools) > 0 || len(m.PolicyDenied) > 0 || len(m.PolicyGated) > 0 {
+		if m.ToolPolicyMode != "" || m.ApprovalAll || m.PolicyDenyAll || m.PolicyGateAll || m.PolicyDefault != "" || len(m.ApprovalTools) > 0 || len(m.PolicyDenied) > 0 || len(m.PolicyGated) > 0 || len(m.PolicyRules) > 0 {
 			policy := map[string]any{
 				"tools":            stringList(m.ToolPolicyTools),
 				"approvalTools":    stringList(m.ApprovalTools),
@@ -142,6 +142,20 @@ func (k *KubernetesSpawner) object(spec Spec) *unstructured.Unstructured {
 			// merged into it: they are different statements, and merging would make
 			// "the platform forbids this" indistinguishable from "this agent was not
 			// given it" in every screen that reads them back.
+			//
+			// Its rules travel in order, because the order decides. The lists below
+			// are the same rules summarised, kept for a Pod whose base image predates
+			// this field and reads nothing else.
+			if len(m.PolicyRules) > 0 {
+				rules := make([]any, 0, len(m.PolicyRules))
+				for _, rule := range m.PolicyRules {
+					rules = append(rules, map[string]any{"effect": rule.Effect, "tools": stringList(rule.Tools)})
+				}
+				policy["policyRules"] = rules
+			}
+			if m.PolicyDefault != "" {
+				policy["policyDefault"] = m.PolicyDefault
+			}
 			if len(m.PolicyDenied) > 0 {
 				policy["policyDenied"] = stringList(m.PolicyDenied)
 			}
