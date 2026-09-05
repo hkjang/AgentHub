@@ -170,7 +170,7 @@ minikube start --driver=docker
 make image image-base
 # base 이미지는 BASE_VERSION 파일을 따르며, 변경이 없으면 이전 태그를 그대로 사용합니다.
 minikube image load agenthub:v0.234.0
-minikube image load agenthub-base:v0.22.0
+minikube image load agenthub-base:v0.23.0
 
 # 4. Kubernetes CRD, RBAC 및 Operator 매니페스트 배포
 kubectl apply -k deploy/kubernetes

@@ -150,11 +150,30 @@ spec:
                           # what an approval-required or high-risk catalogue entry
                           # means.
                           approvalRequired: {type: boolean, default: false}
-                          # Patterns compiled from the platform-wide policy, kept
-                          # apart from the per-agent list above: one is the
-                          # platform's statement and the other the agent owner's.
-                          # A trailing * is the only wildcard, matched against both
-                          # "tool" and "server/tool".
+                          # The platform-wide policy's own rules for this agent and
+                          # this server, in the order the document wrote them: the
+                          # first one that names the tool decides, exactly as it
+                          # does everywhere else. A rule with no tools covers every
+                          # tool the server offers. They are kept apart from the
+                          # per-agent list above because one is the platform's
+                          # statement and the other the agent owner's.
+                          policyRules:
+                            type: array
+                            maxItems: 200
+                            items:
+                              type: object
+                              properties:
+                                effect: {type: string, enum: [allow, deny, require_approval]}
+                                tools:
+                                  type: array
+                                  maxItems: 200
+                                  items: {type: string, maxLength: 200}
+                          # What the document decides about a tool no rule named.
+                          policyDefault: {type: string, enum: [allow, deny, require_approval]}
+                          # The same rules summarised, for a Pod whose base image
+                          # predates policyRules and reads nothing else. A trailing
+                          # * is the only wildcard, matched against both "tool" and
+                          # "server/tool".
                           policyDenied:
                             type: array
                             maxItems: 200
