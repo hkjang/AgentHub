@@ -167,22 +167,47 @@ type mcpToolPolicy struct {
 	// route around.
 	ApprovalTools    []string `json:"approvalTools"`
 	ApprovalRequired bool     `json:"approvalRequired"`
-	// PolicyDenied and PolicyGated are patterns compiled from the platform-wide
-	// policy. They travel beside the per-agent list rather than merged into it:
-	// "the platform forbids this" and "this agent was not given it" are different
-	// statements, and only one of them is the agent owner's to change.
-	PolicyDenied []string `json:"policyDenied,omitempty"`
-	PolicyGated  []string `json:"policyGated,omitempty"`
-	// PolicyAllowed are the exceptions written above those restrictions, which
-	// the gateway checks before them.
+	// PolicyRules are the platform-wide policy's rules for this agent and this
+	// server, in the order they were written, and PolicyDefault decides a tool
+	// none of them named. They travel beside the per-agent list rather than merged
+	// into it: "the platform forbids this" and "this agent was not given it" are
+	// different statements, and only one of them is the agent owner's to change.
+	PolicyRules   []mcpPolicyRule `json:"policyRules,omitempty"`
+	PolicyDefault string          `json:"policyDefault,omitempty"`
+	// PolicyDenied, PolicyGated, PolicyAllowed, PolicyDenyAll and PolicyGateAll
+	// are the same rules summarised, for a Pod whose base image predates
+	// PolicyRules and reads nothing else.
+	PolicyDenied  []string `json:"policyDenied,omitempty"`
+	PolicyGated   []string `json:"policyGated,omitempty"`
 	PolicyAllowed []string `json:"policyAllowed,omitempty"`
 	PolicyDenyAll bool     `json:"policyDenyAll,omitempty"`
 	PolicyGateAll bool     `json:"policyGateAll,omitempty"`
 }
 
+// mcpPolicyRule is one rule of that policy: the effect, and the tool patterns it
+// names. No patterns means every tool on the server.
+type mcpPolicyRule struct {
+	Effect string   `json:"effect"`
+	Tools  []string `json:"tools,omitempty"`
+}
+
 // gated reports whether this policy needs a decision for at least one tool.
+//
+// It decides whether the Pod may reach the control plane at all, so a gate it
+// misses is a call that fails instead of one that waits.
 func (p *mcpToolPolicy) gated() bool {
-	return p != nil && (p.ApprovalRequired || p.PolicyGateAll || len(p.ApprovalTools) > 0 || len(p.PolicyGated) > 0)
+	if p == nil {
+		return false
+	}
+	if p.PolicyDefault == "require_approval" {
+		return true
+	}
+	for _, rule := range p.PolicyRules {
+		if rule.Effect == "require_approval" {
+			return true
+		}
+	}
+	return p.ApprovalRequired || p.PolicyGateAll || len(p.ApprovalTools) > 0 || len(p.PolicyGated) > 0
 }
 
 type spec struct {
@@ -463,11 +488,15 @@ func mcpGatewayContainer(image, runtimeName, runtimeRef string, bindings []map[s
 		// server does.
 		ApprovalTools    []string `json:"approvalTools,omitempty"`
 		ApprovalRequired bool     `json:"approvalRequired,omitempty"`
-		PolicyDenied     []string `json:"policyDenied,omitempty"`
-		PolicyGated      []string `json:"policyGated,omitempty"`
-		PolicyAllowed    []string `json:"policyAllowed,omitempty"`
-		PolicyDenyAll    bool     `json:"policyDenyAll,omitempty"`
-		PolicyGateAll    bool     `json:"policyGateAll,omitempty"`
+		// The policy's rules in order, and what it says about a tool none of them
+		// named. The summary below them is for a gateway that predates both.
+		PolicyRules   []mcpPolicyRule `json:"policyRules,omitempty"`
+		PolicyDefault string          `json:"policyDefault,omitempty"`
+		PolicyDenied  []string        `json:"policyDenied,omitempty"`
+		PolicyGated   []string        `json:"policyGated,omitempty"`
+		PolicyAllowed []string        `json:"policyAllowed,omitempty"`
+		PolicyDenyAll bool            `json:"policyDenyAll,omitempty"`
+		PolicyGateAll bool            `json:"policyGateAll,omitempty"`
 	}
 	configs := []upstreamConfig{}
 	env := []corev1.EnvVar{}
@@ -480,6 +509,7 @@ func mcpGatewayContainer(image, runtimeName, runtimeRef string, bindings []map[s
 			Name: safeLabel(fmt.Sprint(binding["name"])), Upstream: fmt.Sprint(binding["upstream"]),
 			Mode: policy.Mode, Tools: policy.Tools,
 			ApprovalTools: policy.ApprovalTools, ApprovalRequired: policy.ApprovalRequired,
+			PolicyRules: policy.PolicyRules, PolicyDefault: policy.PolicyDefault,
 			PolicyDenied: policy.PolicyDenied, PolicyGated: policy.PolicyGated,
 			PolicyAllowed: policy.PolicyAllowed,
 			PolicyDenyAll: policy.PolicyDenyAll, PolicyGateAll: policy.PolicyGateAll,

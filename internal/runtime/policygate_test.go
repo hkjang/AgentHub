@@ -81,6 +81,54 @@ func TestAnExceptionReachesTheCRDBesideItsRestriction(t *testing.T) {
 	}
 }
 
+// The rules reach the CRD in the order they were written, with the default
+// beside them. Summarised into lists, the order — which is what decides — was
+// left behind in the control plane.
+func TestTheOrderedRulesReachTheCRD(t *testing.T) {
+	spawner := &KubernetesSpawner{}
+	object := spawner.object(Spec{
+		Runtime: store.Runtime{CRDName: "agent-user-agent"},
+		Agent:   store.Agent{ID: "agent-id", OwnerID: "user-id", RuntimeType: "opencode"},
+		Profile: store.RuntimeProfile{CPUMillis: 2000, MemoryMB: 4096, StorageGB: 10},
+		MCPServers: []MCPBinding{{Name: "github", Mode: "shared", Endpoint: "https://mcp.example/mcp",
+			PolicyRules: []PolicyRule{
+				{Effect: "require_approval", Tools: []string{"delete_*"}},
+				{Effect: "deny"},
+			},
+			PolicyDefault: "deny"}},
+	})
+	raw, err := json.Marshal(object.Object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Spec struct {
+			MCP []struct {
+				ToolPolicy *struct {
+					PolicyRules []struct {
+						Effect string   `json:"effect"`
+						Tools  []string `json:"tools"`
+					} `json:"policyRules"`
+					PolicyDefault string `json:"policyDefault"`
+				} `json:"toolPolicy"`
+			} `json:"mcp"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Spec.MCP) != 1 || decoded.Spec.MCP[0].ToolPolicy == nil {
+		t.Fatalf("a binding the policy decides has to be policied: %s", raw)
+	}
+	rules := decoded.Spec.MCP[0].ToolPolicy.PolicyRules
+	if len(rules) != 2 || rules[0].Effect != "require_approval" || strings.Join(rules[0].Tools, ",") != "delete_*" {
+		t.Fatalf("the rules did not reach the CRD in order: %s", raw)
+	}
+	if decoded.Spec.MCP[0].ToolPolicy.PolicyDefault != "deny" {
+		t.Fatalf("the document default did not reach the CRD: %s", raw)
+	}
+}
+
 // The CRD schema prunes anything it does not declare, so a field the spawner
 // writes and the schema omits never arrives — silently, and only in a cluster.
 func TestCRDDeclaresEveryToolPolicyFieldTheSpawnerWrites(t *testing.T) {
@@ -89,7 +137,7 @@ func TestCRDDeclaresEveryToolPolicyFieldTheSpawnerWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	schema := string(body)
-	for _, field := range []string{"policyDenied", "policyGated", "policyAllowed", "policyDenyAll", "policyGateAll", "approvalTools", "approvalRequired"} {
+	for _, field := range []string{"policyRules", "policyDefault", "policyDenied", "policyGated", "policyAllowed", "policyDenyAll", "policyGateAll", "approvalTools", "approvalRequired"} {
 		if !strings.Contains(schema, field+":") {
 			t.Errorf("the CRD does not declare toolPolicy.%s, so the API server drops it", field)
 		}

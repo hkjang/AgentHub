@@ -246,17 +246,32 @@ type MCPBinding struct {
 	// waits, so an agent that never asks for approval is gated anyway.
 	ApprovalTools []string
 	ApprovalAll   bool
-	// PolicyDenied and PolicyGated are patterns compiled from the platform-wide
-	// policy for this agent and this server. They are patterns rather than tool
-	// names because the tool list is not known until the server runs, and a rule
-	// has to cover the tools nobody has seen yet. PolicyDenyAll and PolicyGateAll
-	// are a rule that named no tool at all. PolicyAllowed are the exceptions an
-	// allow rule named above those restrictions, which the gateway checks first.
+	// PolicyRules are the platform-wide policy's own rules for this agent and this
+	// server, in the order they were written, and PolicyDefault is what the
+	// document decides about a tool none of them named. Order is what "first match
+	// wins" is made of: a gateway given the restrictions without it answers a gate
+	// written above a deny with the deny.
+	PolicyRules   []PolicyRule
+	PolicyDefault string
+	// PolicyDenied and PolicyGated are the same rules summarised, for a Pod
+	// running a base image from before PolicyRules existed. They are patterns
+	// rather than tool names because the tool list is not known until the server
+	// runs, and a rule has to cover the tools nobody has seen yet. PolicyDenyAll
+	// and PolicyGateAll are a rule that named no tool at all. PolicyAllowed are
+	// the exceptions an allow rule named above those restrictions, which such a
+	// gateway checks first.
 	PolicyDenied  []string
 	PolicyGated   []string
 	PolicyAllowed []string
 	PolicyDenyAll bool
 	PolicyGateAll bool
+}
+
+// PolicyRule is one compiled policy rule on its way to the Pod: the effect, and
+// the tool patterns it names. No patterns means every tool on the server.
+type PolicyRule struct {
+	Effect string
+	Tools  []string
 }
 
 type SecurityProfile struct {

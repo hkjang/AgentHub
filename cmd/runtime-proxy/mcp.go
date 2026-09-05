@@ -44,30 +44,43 @@ type mcpUpstream struct {
 	// route around.
 	ApprovalTools    []string `json:"approvalTools"`
 	ApprovalRequired bool     `json:"approvalRequired"`
-	// PolicyDenied and PolicyGated are patterns compiled from the platform-wide
-	// policy — the rules an agent's owner cannot change. They are patterns rather
-	// than names because the tool list is not known when a runtime is provisioned,
-	// and they are matched with the control plane's own matcher so both ends
-	// decide the same way.
+	// PolicyRules are the platform-wide policy's rules for this server — the ones
+	// an agent's owner cannot change — in the order they were written, and
+	// PolicyDefault is what that policy says about a tool none of them named. The
+	// order is the policy: the first rule that names the tool decides, here as in
+	// the console.
+	//
+	// They carry patterns rather than names because the tool list is not known
+	// when a runtime is provisioned, and they are read with the control plane's
+	// own code so both ends decide the same way.
+	PolicyRules   []policy.CompiledRule `json:"policyRules,omitempty"`
+	PolicyDefault string                `json:"policyDefault,omitempty"`
+	// The rest are the same policy summarised, and all a control plane from before
+	// PolicyRules sends. A gateway that reads them alone answers a gate written
+	// above a deny with the deny, which is why they are no longer the only form.
 	PolicyDenied  []string `json:"policyDenied,omitempty"`
 	PolicyGated   []string `json:"policyGated,omitempty"`
 	PolicyDenyAll bool     `json:"policyDenyAll,omitempty"`
-	// PolicyGateAll is a policy rule that named no tool at all: every tool on this
-	// server waits for a person, including the ones nobody has seen yet.
-	PolicyGateAll bool `json:"policyGateAll,omitempty"`
-	// PolicyAllowed are the tools an allow rule named above those restrictions.
-	// The exception is the reason the two restrictions above are writable at all:
-	// "nobody may use this server, except read_file" is one deny and one allow,
-	// and without this the Pod would only ever receive the deny.
+	PolicyGateAll bool     `json:"policyGateAll,omitempty"`
 	PolicyAllowed []string `json:"policyAllowed,omitempty"`
 }
 
-// exemptFromPolicy reports whether the platform's own policy named this tool as
-// an exception. It says nothing about the agent's list or the catalogue: those
-// are other people's statements, and an exception to the platform's rules is not
-// an exception to theirs.
-func (u mcpUpstream) exemptFromPolicy(tool string) bool {
-	return policy.MatchTool(u.PolicyAllowed, u.Name, tool)
+// platformPolicy is the compiled policy this binding carries, in the shape the
+// control plane compiled it.
+func (u mcpUpstream) platformPolicy() policy.ServerRules {
+	return policy.ServerRules{
+		Rules: u.PolicyRules, Default: u.PolicyDefault,
+		Denied: u.PolicyDenied, Gated: u.PolicyGated, Allowed: u.PolicyAllowed,
+		DenyAll: u.PolicyDenyAll, GateAll: u.PolicyGateAll,
+	}
+}
+
+// policyEffect is what the platform's policy says about this tool. It says
+// nothing about the agent's list or the catalogue: those are other people's
+// statements, and an allow the platform wrote is not permission the agent's
+// owner never gave.
+func (u mcpUpstream) policyEffect(tool string) string {
+	return policy.Decide(u.platformPolicy(), u.Name, tool)
 }
 
 // needsApproval reports whether a call has to wait for a person.
@@ -75,10 +88,7 @@ func (u mcpUpstream) needsApproval(tool string) bool {
 	if u.ApprovalRequired || contains(u.ApprovalTools, tool) {
 		return true
 	}
-	if u.exemptFromPolicy(tool) {
-		return false
-	}
-	return u.PolicyGateAll || policy.MatchTool(u.PolicyGated, u.Name, tool)
+	return u.policyEffect(tool) == policy.RequireApproval
 }
 
 // permits reports whether a tool may be called.
@@ -105,17 +115,22 @@ func (u mcpUpstream) permits(tool string) bool {
 // restricts reports whether anything at all limits what this agent may call, and
 // therefore whether the advertised tool list has to be filtered.
 func (u mcpUpstream) restricts() bool {
-	return u.Mode != "" || u.PolicyDenyAll || len(u.PolicyDenied) > 0
+	if u.Mode != "" || u.PolicyDenyAll || len(u.PolicyDenied) > 0 || u.PolicyDefault == policy.Deny {
+		return true
+	}
+	for _, rule := range u.PolicyRules {
+		if rule.Effect == policy.Deny {
+			return true
+		}
+	}
+	return false
 }
 
 // deniedByPlatform separates the two refusals in the audit trail and in what the
 // agent is told: "your owner did not give you this" and "the platform forbids
 // this" need different follow-ups.
 func (u mcpUpstream) deniedByPlatform(tool string) bool {
-	if u.exemptFromPolicy(tool) {
-		return false
-	}
-	return u.PolicyDenyAll || policy.MatchTool(u.PolicyDenied, u.Name, tool)
+	return u.policyEffect(tool) == policy.Deny
 }
 
 func contains(values []string, want string) bool {
