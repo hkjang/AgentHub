@@ -171,8 +171,11 @@ type mcpToolPolicy struct {
 	// policy. They travel beside the per-agent list rather than merged into it:
 	// "the platform forbids this" and "this agent was not given it" are different
 	// statements, and only one of them is the agent owner's to change.
-	PolicyDenied  []string `json:"policyDenied,omitempty"`
-	PolicyGated   []string `json:"policyGated,omitempty"`
+	PolicyDenied []string `json:"policyDenied,omitempty"`
+	PolicyGated  []string `json:"policyGated,omitempty"`
+	// PolicyAllowed are the exceptions written above those restrictions, which
+	// the gateway checks before them.
+	PolicyAllowed []string `json:"policyAllowed,omitempty"`
 	PolicyDenyAll bool     `json:"policyDenyAll,omitempty"`
 	PolicyGateAll bool     `json:"policyGateAll,omitempty"`
 }
@@ -462,6 +465,7 @@ func mcpGatewayContainer(image, runtimeName, runtimeRef string, bindings []map[s
 		ApprovalRequired bool     `json:"approvalRequired,omitempty"`
 		PolicyDenied     []string `json:"policyDenied,omitempty"`
 		PolicyGated      []string `json:"policyGated,omitempty"`
+		PolicyAllowed    []string `json:"policyAllowed,omitempty"`
 		PolicyDenyAll    bool     `json:"policyDenyAll,omitempty"`
 		PolicyGateAll    bool     `json:"policyGateAll,omitempty"`
 	}
@@ -477,6 +481,7 @@ func mcpGatewayContainer(image, runtimeName, runtimeRef string, bindings []map[s
 			Mode: policy.Mode, Tools: policy.Tools,
 			ApprovalTools: policy.ApprovalTools, ApprovalRequired: policy.ApprovalRequired,
 			PolicyDenied: policy.PolicyDenied, PolicyGated: policy.PolicyGated,
+			PolicyAllowed: policy.PolicyAllowed,
 			PolicyDenyAll: policy.PolicyDenyAll, PolicyGateAll: policy.PolicyGateAll,
 		}
 		if entry.Tools == nil {

@@ -55,11 +55,30 @@ type mcpUpstream struct {
 	// PolicyGateAll is a policy rule that named no tool at all: every tool on this
 	// server waits for a person, including the ones nobody has seen yet.
 	PolicyGateAll bool `json:"policyGateAll,omitempty"`
+	// PolicyAllowed are the tools an allow rule named above those restrictions.
+	// The exception is the reason the two restrictions above are writable at all:
+	// "nobody may use this server, except read_file" is one deny and one allow,
+	// and without this the Pod would only ever receive the deny.
+	PolicyAllowed []string `json:"policyAllowed,omitempty"`
+}
+
+// exemptFromPolicy reports whether the platform's own policy named this tool as
+// an exception. It says nothing about the agent's list or the catalogue: those
+// are other people's statements, and an exception to the platform's rules is not
+// an exception to theirs.
+func (u mcpUpstream) exemptFromPolicy(tool string) bool {
+	return policy.MatchTool(u.PolicyAllowed, u.Name, tool)
 }
 
 // needsApproval reports whether a call has to wait for a person.
 func (u mcpUpstream) needsApproval(tool string) bool {
-	return u.ApprovalRequired || u.PolicyGateAll || contains(u.ApprovalTools, tool) || policy.MatchTool(u.PolicyGated, u.Name, tool)
+	if u.ApprovalRequired || contains(u.ApprovalTools, tool) {
+		return true
+	}
+	if u.exemptFromPolicy(tool) {
+		return false
+	}
+	return u.PolicyGateAll || policy.MatchTool(u.PolicyGated, u.Name, tool)
 }
 
 // permits reports whether a tool may be called.
@@ -68,7 +87,7 @@ func (u mcpUpstream) needsApproval(tool string) bool {
 // list is its owner's statement about what the agent needs, and it cannot widen
 // what the platform forbids.
 func (u mcpUpstream) permits(tool string) bool {
-	if u.PolicyDenyAll || policy.MatchTool(u.PolicyDenied, u.Name, tool) {
+	if u.deniedByPlatform(tool) {
 		return false
 	}
 	switch u.Mode {
@@ -93,6 +112,9 @@ func (u mcpUpstream) restricts() bool {
 // agent is told: "your owner did not give you this" and "the platform forbids
 // this" need different follow-ups.
 func (u mcpUpstream) deniedByPlatform(tool string) bool {
+	if u.exemptFromPolicy(tool) {
+		return false
+	}
 	return u.PolicyDenyAll || policy.MatchTool(u.PolicyDenied, u.Name, tool)
 }
 

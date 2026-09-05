@@ -250,9 +250,11 @@ type MCPBinding struct {
 	// policy for this agent and this server. They are patterns rather than tool
 	// names because the tool list is not known until the server runs, and a rule
 	// has to cover the tools nobody has seen yet. PolicyDenyAll and PolicyGateAll
-	// are a rule that named no tool at all.
+	// are a rule that named no tool at all. PolicyAllowed are the exceptions an
+	// allow rule named above those restrictions, which the gateway checks first.
 	PolicyDenied  []string
 	PolicyGated   []string
+	PolicyAllowed []string
 	PolicyDenyAll bool
 	PolicyGateAll bool
 }

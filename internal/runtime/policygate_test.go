@@ -46,6 +46,41 @@ func TestServerWideGateReachesTheCRD(t *testing.T) {
 	}
 }
 
+// An exception has to travel with the restriction it is an exception to. If only
+// the deny arrives, the Pod enforces a rule the operator never wrote — and the
+// console, which evaluates the document, keeps saying the tool is allowed.
+func TestAnExceptionReachesTheCRDBesideItsRestriction(t *testing.T) {
+	spawner := &KubernetesSpawner{}
+	object := spawner.object(Spec{
+		Runtime:    store.Runtime{CRDName: "agent-user-agent"},
+		Agent:      store.Agent{ID: "agent-id", OwnerID: "user-id", RuntimeType: "opencode"},
+		Profile:    store.RuntimeProfile{CPUMillis: 2000, MemoryMB: 4096, StorageGB: 10},
+		MCPServers: []MCPBinding{{Name: "github", Mode: "shared", Endpoint: "https://mcp.example/mcp", PolicyDenyAll: true, PolicyAllowed: []string{"read_file"}}},
+	})
+	raw, err := json.Marshal(object.Object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Spec struct {
+			MCP []struct {
+				ToolPolicy *struct {
+					PolicyAllowed []string `json:"policyAllowed"`
+				} `json:"toolPolicy"`
+			} `json:"mcp"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Spec.MCP) != 1 || decoded.Spec.MCP[0].ToolPolicy == nil {
+		t.Fatalf("a policied binding must be policied: %s", raw)
+	}
+	if strings.Join(decoded.Spec.MCP[0].ToolPolicy.PolicyAllowed, ",") != "read_file" {
+		t.Fatalf("the exception did not reach the CRD: %s", raw)
+	}
+}
+
 // The CRD schema prunes anything it does not declare, so a field the spawner
 // writes and the schema omits never arrives — silently, and only in a cluster.
 func TestCRDDeclaresEveryToolPolicyFieldTheSpawnerWrites(t *testing.T) {
@@ -54,7 +89,7 @@ func TestCRDDeclaresEveryToolPolicyFieldTheSpawnerWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	schema := string(body)
-	for _, field := range []string{"policyDenied", "policyGated", "policyDenyAll", "policyGateAll", "approvalTools", "approvalRequired"} {
+	for _, field := range []string{"policyDenied", "policyGated", "policyAllowed", "policyDenyAll", "policyGateAll", "approvalTools", "approvalRequired"} {
 		if !strings.Contains(schema, field+":") {
 			t.Errorf("the CRD does not declare toolPolicy.%s, so the API server drops it", field)
 		}

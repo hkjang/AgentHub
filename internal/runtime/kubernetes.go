@@ -148,6 +148,12 @@ func (k *KubernetesSpawner) object(spec Spec) *unstructured.Unstructured {
 			if len(m.PolicyGated) > 0 {
 				policy["policyGated"] = stringList(m.PolicyGated)
 			}
+			// The exceptions travel with the restrictions they are exceptions to.
+			// Without them a narrow allow written above a server-wide deny reaches
+			// the Pod as the deny alone.
+			if len(m.PolicyAllowed) > 0 {
+				policy["policyAllowed"] = stringList(m.PolicyAllowed)
+			}
 			if m.PolicyDenyAll {
 				policy["policyDenyAll"] = true
 			}
