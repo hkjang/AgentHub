@@ -97,7 +97,7 @@ func (o *Orchestrator) runRPC(ctx context.Context, run *store.AgentRun, task sto
 		return nil, Outcome{Status: store.TaskFailed,
 			Failure: runtimetype.Describe(agent.RuntimeType).Label + " 런타임은 프로토콜 실행을 지원하지 않습니다."}
 	}
-	step := workflow.Step{ID: "rpc", AgentID: agent.ID, AgentName: agent.Name}
+	step := workflow.Step{ID: "rpc", AgentID: agent.ID, AgentName: agent.Name, OwnerID: task.OwnerID}
 	prompt := runnerInput(task, goal)
 	if o.flowInspector != nil {
 		scanned, scanErr := o.flowInspector.Outbound(ctx, step, prompt)

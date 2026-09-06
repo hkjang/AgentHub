@@ -65,7 +65,7 @@ func (o *Orchestrator) runAgentServer(ctx context.Context, run *store.AgentRun, 
 		return nil, outcome
 	}
 
-	step := workflow.Step{ID: "agentserver", AgentID: agent.ID, AgentName: agent.Name}
+	step := workflow.Step{ID: "agentserver", AgentID: agent.ID, AgentName: agent.Name, OwnerID: task.OwnerID}
 	prompt := runnerInput(task, goal)
 	if o.flowInspector != nil {
 		scanned, scanErr := o.flowInspector.Outbound(ctx, step, prompt)

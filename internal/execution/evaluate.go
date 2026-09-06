@@ -144,7 +144,7 @@ func significantWords(criterion string) []string {
 // answer is asked in prose instead and the verdict says so.
 func (o *Orchestrator) judgeVerdict(ctx context.Context, run *store.AgentRun, goal store.AgentGoal, model resolvedModel, transcript []string) Verdict {
 	step := workflow.Step{
-		ID: "judge", AgentName: "Completion Evaluator",
+		ID: "judge", AgentName: "Completion Evaluator", OwnerID: run.OwnerID,
 		SystemPrompt: "당신은 엄격한 평가자입니다. 실행 기록이 완료 조건을 실제로 충족했는지 판정하고, 반드시 " +
 			`{"passed": true|false, "reason": "...", "unmet": ["충족되지 않은 완료 조건"]} 형식의 JSON만 출력하세요. ` +
 			"unmet 에는 주어진 완료 조건 문장만 그대로 넣고, 새로운 조건을 만들지 마세요. " +

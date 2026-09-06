@@ -74,7 +74,7 @@ func (o *Orchestrator) runACP(ctx context.Context, run *store.AgentRun, task sto
 		return nil, Outcome{Status: store.TaskFailed, Retryable: true,
 			Failure: "에이전트를 실행할 Runtime이 없습니다. Goal의 '작업 시 Runtime 시작'을 켜고 Kubernetes 연결을 확인해 주세요."}
 	}
-	step := workflow.Step{ID: "acp", AgentID: agent.ID, AgentName: agent.Name}
+	step := workflow.Step{ID: "acp", AgentID: agent.ID, AgentName: agent.Name, OwnerID: task.OwnerID}
 	prompt := runnerInput(task, goal)
 	if o.flowInspector != nil {
 		scanned, scanErr := o.flowInspector.Outbound(ctx, step, prompt)

@@ -26,7 +26,7 @@ func (o *Orchestrator) plan(ctx context.Context, run *store.AgentRun, task store
 		return ""
 	}
 	step := workflow.Step{
-		ID: "plan", AgentName: "Planner",
+		ID: "plan", AgentName: "Planner", OwnerID: task.OwnerID,
 		SystemPrompt: "당신은 실행 계획을 세우는 플래너입니다. 주어진 목표와 완료 조건을 달성할 단계를 설계하고, " +
 			`반드시 {"steps":[{"id":"01","type":"tool|reasoning|artifact","action":"..."}]} 형식의 JSON만 출력하세요. ` +
 			"설명이나 코드 펜스를 붙이지 마세요.",

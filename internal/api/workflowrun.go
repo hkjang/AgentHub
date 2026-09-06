@@ -151,6 +151,7 @@ func (s *Server) resolveWorkflowSteps(ctx context.Context, ownerID string, defin
 			ID:           step.ID,
 			AgentID:      agent.ID,
 			AgentName:    agent.Name,
+			OwnerID:      ownerID,
 			DependsOn:    step.DependsOn,
 			SystemPrompt: agentSystemPrompt(agent),
 		}

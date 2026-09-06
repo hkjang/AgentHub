@@ -97,7 +97,7 @@ func (o *Orchestrator) runOrca(ctx context.Context, run *store.AgentRun, task st
 	}
 
 	prompt := runnerInput(task, goal)
-	step := workflow.Step{ID: "orca", AgentID: agent.ID, AgentName: agent.Name}
+	step := workflow.Step{ID: "orca", AgentID: agent.ID, AgentName: agent.Name, OwnerID: task.OwnerID}
 	if o.flowInspector != nil {
 		scanned, scanErr := o.flowInspector.Outbound(ctx, step, prompt)
 		if scanErr != nil {
