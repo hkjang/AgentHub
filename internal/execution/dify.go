@@ -56,7 +56,7 @@ func (o *Orchestrator) runExternalApp(ctx context.Context, run *store.AgentRun, 
 		return nil, Outcome{Status: store.TaskFailed, Failure: fmt.Sprintf("외부 앱 %s 의 API 키가 설정되어 있지 않습니다.", app.Name)}
 	}
 
-	step := workflow.Step{ID: "external", AgentID: agent.ID, AgentName: agent.Name}
+	step := workflow.Step{ID: "external", AgentID: agent.ID, AgentName: agent.Name, OwnerID: task.OwnerID}
 	input := runnerInput(task, goal)
 	if o.flowInspector != nil {
 		scanned, scanErr := o.flowInspector.Outbound(ctx, step, input)

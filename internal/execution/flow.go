@@ -69,7 +69,7 @@ func (o *Orchestrator) runFlow(ctx context.Context, run *store.AgentRun, task st
 	// The content check comes before the runtime is even addressed: a task that
 	// must not leave the platform has no business being sent to a flow engine, and
 	// finding that out first costs nothing.
-	step := workflow.Step{ID: "flow", AgentID: agent.ID, AgentName: agent.Name}
+	step := workflow.Step{ID: "flow", AgentID: agent.ID, AgentName: agent.Name, OwnerID: task.OwnerID}
 	input := runnerInput(task, goal)
 	if o.flowInspector != nil {
 		scanned, scanErr := o.flowInspector.Outbound(ctx, step, input)

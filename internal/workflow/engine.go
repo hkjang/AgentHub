@@ -24,8 +24,17 @@ import (
 
 // Step is one node of the graph, already resolved against an agent definition.
 type Step struct {
-	ID           string
-	AgentID      string
+	ID      string
+	AgentID string
+	// OwnerID is the person this step is being run for.
+	//
+	// It is carried because the content inspector evaluates the central policy at
+	// this boundary, and a policy rule names people: 역할 and 사용자 are the first
+	// selectors anybody writes. Every other decision point already knew who was
+	// acting — the worker reads the task's owner, the runtime gate the agent's,
+	// the in-Pod gateway's rules are compiled per owner — and this one did not,
+	// so those rules could not match here no matter what the simulator answered.
+	OwnerID      string
 	AgentName    string
 	DependsOn    []string
 	SystemPrompt string

@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -149,10 +150,7 @@ func (m *Model) inspect(ctx context.Context, step workflow.Step, text, direction
 	// The scanner says what is there; the policy says what this deployment does
 	// about it. A rule can be narrower than the global action — one agent, one
 	// role — which is the whole reason the two are separate.
-	decision := policy.Evaluate(document, policy.Request{
-		Action: m.policyAction(), Agent: step.AgentName, AgentID: step.AgentID,
-		DataClasses: result.Classes(),
-	})
+	decision := policy.Evaluate(document, m.request(ctx, step, result.Classes()))
 	blocked := result.Blocked || decision.Effect != policy.Allow
 	reason := result.Reason
 	if reason == "" && decision.Reason != "" {
@@ -169,6 +167,58 @@ func (m *Model) inspect(ctx context.Context, step workflow.Step, text, direction
 		return "", fmt.Errorf("%w: %s %s에 민감정보가 포함되어 있습니다 — %s", workflow.ErrBlocked, m.subjectName(), direction, reason)
 	}
 	return result.Text, nil
+}
+
+// request describes what is being decided, to whoever wrote the rules.
+//
+// A rule matches on every selector it sets, so a selector the request leaves
+// empty is a rule that can never fire. This boundary filled in the action, the
+// agent and the data classes and left the person out, which made
+// "계약직은 주민번호를 모델로 보낼 수 없다" — the sentence the package doc opens
+// with — unenforceable at the only place it applies: the rule matched nothing,
+// the global action for the class decided instead, and the console's simulator
+// went on answering 차단 for exactly that request because it is given a user.
+func (m *Model) request(ctx context.Context, step workflow.Step, classes []string) policy.Request {
+	return requestFor(m.policyAction(), step, m.actor(ctx, step.OwnerID), classes)
+}
+
+// requestFor is the shape of that request, without the lookup, so what the
+// policy is asked can be checked without a database behind it.
+func requestFor(action string, step workflow.Step, actor store.User, classes []string) policy.Request {
+	return policy.Request{
+		Action: action, Agent: step.AgentName, AgentID: step.AgentID,
+		Role: actor.Role, User: actor.Username, UserID: actor.ID,
+		DataClasses: classes,
+	}
+}
+
+// actor reads who a run belongs to.
+//
+// Only reached when the scanner already found something, so the lookup costs a
+// query on the rare path rather than on every model call — which is why it is
+// not cached alongside the settings.
+//
+// An owner nobody can read is logged and left empty. That is the same answer
+// the runtime gate and the task gate give when the owner is unreadable: a
+// database that briefly cannot answer must not decide, by itself, that every
+// agent on the platform has stopped being allowed to think.
+func (m *Model) actor(ctx context.Context, ownerID string) store.User {
+	ownerID = strings.TrimSpace(ownerID)
+	if ownerID == "" {
+		return store.User{}
+	}
+	// On a context of its own, for the reason config() reads its settings on one:
+	// a run at its time limit must not be the reason a rule about somebody else's
+	// role stops being applied.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), settingsRead)
+	defer cancel()
+	user, err := m.store.UserByID(ctx, ownerID)
+	if err != nil {
+		m.logger.Warn("the owner of this run is unreadable; user and role rules are not being applied",
+			"owner", ownerID, "error", err)
+		return store.User{}
+	}
+	return user
 }
 
 // The three describers default to the model boundary, so an inspector built

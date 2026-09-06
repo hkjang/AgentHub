@@ -402,7 +402,7 @@ func (o *Orchestrator) think(ctx context.Context, run *store.AgentRun, task stor
 	// it just made, and any approval decision that resumed this task.
 	prelude := systemPromptWithEnvironment(agent, goal, env) + o.loadMemory(ctx, agent.ID)
 	step := workflow.Step{
-		ID: "task", AgentID: agent.ID, AgentName: agent.Name,
+		ID: "task", AgentID: agent.ID, AgentName: agent.Name, OwnerID: task.OwnerID,
 		SystemPrompt: prelude,
 		ModelBaseURL: model.BaseURL, ModelName: model.ModelName, ModelAPIKey: model.APIKey,
 	}

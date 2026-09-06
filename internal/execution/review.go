@@ -408,7 +408,7 @@ func (o *Orchestrator) runReview(ctx context.Context, run *store.AgentRun, task 
 	}
 	// The step this text belongs to, for the scanner's own record: a blocked
 	// review has to be attributable to the agent whose review it was.
-	step := workflow.Step{ID: "review", AgentID: agent.ID, AgentName: agent.Name}
+	step := workflow.Step{ID: "review", AgentID: agent.ID, AgentName: agent.Name, OwnerID: task.OwnerID}
 	// Scanned before they are stored, and therefore before they are published.
 	//
 	// This backend has had a content scanner since the day it was written — its
