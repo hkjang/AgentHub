@@ -23,8 +23,12 @@ func TestEveryCompiledPolicyFieldReachesTheBinding(t *testing.T) {
 		switch field := value.Field(index); field.Kind() {
 		case reflect.Bool:
 			field.SetBool(true)
+		case reflect.String:
+			field.SetString(policy.Deny)
 		case reflect.Slice:
-			field.Set(reflect.ValueOf([]string{"some_tool"}))
+			// One element of whatever the slice holds: the sweep asks whether the
+			// field travelled, not what was in it.
+			field.Set(reflect.MakeSlice(field.Type(), 1, 1))
 		default:
 			t.Fatalf("ServerRules.%s is a %s, which this sweep does not know how to fill",
 				value.Type().Field(index).Name, field.Kind())
@@ -58,5 +62,29 @@ func TestAServerWideGateReachesTheBinding(t *testing.T) {
 	applyServerRules(&binding, rules)
 	if !binding.PolicyGateAll {
 		t.Fatalf("the gate did not reach the binding: %#v", binding)
+	}
+}
+
+// The rules travel in the order they were written, because that order is what
+// decides. Summarised into lists, "a delete needs a person, and nothing else is
+// allowed" reached the Pod as the deny alone.
+func TestTheRulesReachTheBindingInTheDocumentsOrder(t *testing.T) {
+	rules := policy.CompileServer(policy.Document{DefaultEffect: policy.Deny, Rules: []policy.Rule{
+		{ID: "gate-deletes", Effect: policy.RequireApproval, Actions: []string{policy.ActionToolCall},
+			Servers: []string{"github"}, Tools: []string{"delete_*"}, Reason: "삭제는 승인 후"},
+		{ID: "deny-server", Effect: policy.Deny, Actions: []string{policy.ActionToolCall},
+			Servers: []string{"github"}, Reason: "서버 차단"},
+	}}, policy.Request{Agent: "결산 에이전트", Server: "github"})
+	binding := runtime.MCPBinding{Name: "github"}
+	applyServerRules(&binding, rules)
+
+	if len(binding.PolicyRules) != 2 {
+		t.Fatalf("both rules have to travel: %#v", binding.PolicyRules)
+	}
+	if binding.PolicyRules[0].Effect != policy.RequireApproval || binding.PolicyRules[0].Tools[0] != "delete_*" {
+		t.Errorf("the gate is no longer first: %#v", binding.PolicyRules)
+	}
+	if binding.PolicyDefault != policy.Deny {
+		t.Errorf("the document default did not travel: %q", binding.PolicyDefault)
 	}
 }

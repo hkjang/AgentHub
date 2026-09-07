@@ -316,6 +316,18 @@ func valid(allowed []string, value string) bool {
 // running — a policy that only covers the tools we happened to know about at
 // provisioning time is not a policy.
 type ServerRules struct {
+	// Rules are the document's own rules for this agent and server, in the
+	// document's order, with every selector except the tool already resolved.
+	// Decide reads them the way Evaluate reads the document — first match wins —
+	// which is the only arrangement that can express what the document says.
+	//
+	// The three lists below are a summary of the same thing, and a summary loses
+	// the order: they are kept because a Pod running an older base image reads
+	// nothing else.
+	Rules []CompiledRule `json:"rules,omitempty"`
+	// Default decides a tool no rule named, and it is the document's own default.
+	// Empty means allow, so the common case adds nothing to the object.
+	Default string `json:"default,omitempty"`
 	// Denied never runs; Gated waits for a person. Both hold the patterns from
 	// the matching rules, matched by the gateway with MatchTool.
 	Denied []string `json:"denied,omitempty"`
@@ -331,28 +343,91 @@ type ServerRules struct {
 	GateAll bool `json:"gateAll,omitempty"`
 }
 
+// CompiledRule is one rule of the document as it applies to this agent and this
+// server: the effect, and the tools it names. No tools means every tool on the
+// server, including the ones nobody has seen yet.
+type CompiledRule struct {
+	Effect string   `json:"effect"`
+	Tools  []string `json:"tools,omitempty"`
+}
+
 // Empty reports whether the policy has nothing to say about this server, so the
 // provisioning path can leave the binding exactly as it was.
 //
 // Exceptions alone are nothing to say: an allow rule with no restriction under
-// it permits what was already permitted.
+// it permits what was already permitted. A default of anything but allow is
+// something to say about every tool at once, including on a server no rule
+// mentions.
 func (r ServerRules) Empty() bool {
+	if r.Default != "" && r.Default != Allow {
+		return false
+	}
+	for _, rule := range r.Rules {
+		if rule.Effect != Allow {
+			return false
+		}
+	}
 	return len(r.Denied) == 0 && len(r.Gated) == 0 && !r.DenyAll && !r.GateAll
+}
+
+// Decide answers one tool call from the compiled rules, exactly as Evaluate
+// answers it from the document: the first rule that covers the tool decides, and
+// the document's default decides a tool none of them named.
+//
+// The gateway calls this rather than reading the fields itself, so the Pod and
+// the console run the same procedure over the same rules instead of two
+// summaries that agree until they do not.
+func Decide(rules ServerRules, server, tool string) string {
+	if len(rules.Rules) == 0 && rules.Default == "" {
+		return decideProjection(rules, server, tool)
+	}
+	for _, rule := range rules.Rules {
+		if len(rule.Tools) == 0 || MatchTool(rule.Tools, server, tool) {
+			return rule.Effect
+		}
+	}
+	if rules.Default != "" {
+		return rules.Default
+	}
+	return Allow
+}
+
+// decideProjection reads the summary lists, which is all a Pod provisioned by an
+// older control plane was given. It cannot see which rule was written above
+// which, so it answers a deny and a gate over the same tool with the deny — the
+// safe direction, and the reason the ordered rules exist.
+func decideProjection(rules ServerRules, server, tool string) string {
+	switch {
+	case MatchTool(rules.Allowed, server, tool):
+		return Allow
+	case rules.DenyAll || MatchTool(rules.Denied, server, tool):
+		return Deny
+	case rules.GateAll || MatchTool(rules.Gated, server, tool):
+		return RequireApproval
+	default:
+		return Allow
+	}
 }
 
 // CompileServer resolves the tool.call rules for one agent and one MCP server.
 //
-// An allow rule that sits above a deny still wins, and that is decided here.
-// A blanket allow ends the compilation, exactly as it ends the evaluation at
-// call time; a narrow one becomes an exception the gateway checks before the
-// restrictions written below it.
+// What travels is the rules themselves, in the document's order, plus the
+// document's default: an order is what "first match wins" is made of, and a
+// summary that drops it answers a gate written above a deny with the deny.
+//
+// The summary is compiled beside them for a Pod running an older base image,
+// which reads nothing else. An allow rule that sits above a deny still wins
+// there: a blanket allow ends the compilation, exactly as it ends the evaluation
+// at call time, and a narrow one becomes an exception the gateway checks before
+// the restrictions written below it.
 func CompileServer(document Document, request Request) ServerRules {
-	compiled := ServerRules{}
+	compiled := ServerRules{Default: compiledDefault(document)}
 	request.Action = ActionToolCall
 	for _, rule := range document.Rules {
 		if !rule.Active() || !matchesWithoutTools(rule, request) {
 			continue
 		}
+		compiled.Rules = append(compiled.Rules, CompiledRule{Effect: rule.Effect, Tools: append([]string(nil), rule.Tools...)})
 		switch {
 		case rule.Effect == Allow && len(rule.Tools) == 0:
 			// A blanket allow for this agent on this server ends the evaluation the
@@ -383,6 +458,16 @@ func CompileServer(document Document, request Request) ServerRules {
 		}
 	}
 	return sorted(compiled)
+}
+
+// compiledDefault is the document's default as the gateway needs it: empty when
+// it is allow, so a document that never set one adds nothing to the binding and
+// provisioning stays a no-op.
+func compiledDefault(document Document) string {
+	if effect := defaultEffect(document); effect != Allow {
+		return effect
+	}
+	return ""
 }
 
 // sorted puts the compiled patterns in a stable order, so provisioning the same
