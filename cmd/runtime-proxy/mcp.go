@@ -235,6 +235,18 @@ func mcpGatewayWith(upstreams []mcpUpstream, auditor func(entry map[string]any),
 			return
 		}
 
+		// A compressed request body is the same hole wearing a different hat: an
+		// encoding the gateway cannot read leaves the method empty, so every check
+		// below compares against "" and the body goes upstream unread with the
+		// credential attached. Refused rather than decoded, for the reason a batch
+		// is — no MCP client compresses what it sends, so nothing legitimate needs
+		// it, and a refusal that says so is better than a second decoding path.
+		if encoding := strings.TrimSpace(r.Header.Get("Content-Encoding")); encoding != "" && !strings.EqualFold(encoding, "identity") {
+			auditor(map[string]any{"server": name, "decision": "denied", "reason": "content_encoding", "encoding": encoding})
+			writeRPCError(w, nil, -32600, "이 게이트웨이는 압축된 요청 본문을 처리하지 않습니다. 압축하지 않고 보내 주세요.")
+			return
+		}
+
 		// Read the method and the tool name out of the message itself rather than
 		// out of a struct that has to fit all of it. A field elsewhere in the
 		// message with an unexpected type used to fail the whole decode and leave
@@ -317,6 +329,22 @@ func mcpGatewayWith(upstreams []mcpUpstream, auditor func(entry map[string]any),
 			return
 		}
 		copyHeaders(outbound.Header, r.Header)
+		// The agent's Accept-Encoding is not the gateway's.
+		//
+		// Every HTTP client advertises gzip without being asked to — Go's transport,
+		// undici, requests — so copying the header along meant the answer came back
+		// compressed. Go decompresses transparently only when it added the header
+		// itself, so it did not, and what arrived here was gzip: rewriteToolsPayload
+		// could not parse it and returned it untouched, which is its documented
+		// answer for a body that is not a tool list, and the content scanner ran the
+		// detectors over compressed bytes and found nothing. A denied tool was
+		// advertised to the model and a customer record was handed to it, both
+		// silently, on any deployment whose MCP server compresses — which is any of
+		// them behind an ordinary reverse proxy.
+		//
+		// Deleting it does not put more on the wire: the transport adds its own gzip
+		// and decodes the answer before this process sees it.
+		outbound.Header.Del("Accept-Encoding")
 		// The agent never holds the credential; it is attached here.
 		outbound.Header.Del("Authorization")
 		if upstream.AuthHeader != "" && upstream.CredentialEnv != "" {
