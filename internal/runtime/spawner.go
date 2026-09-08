@@ -267,11 +267,17 @@ type MCPBinding struct {
 	PolicyGateAll bool
 }
 
-// PolicyRule is one compiled policy rule on its way to the Pod: the effect, and
-// the tool patterns it names. No patterns means every tool on the server.
+// PolicyRule is one compiled policy rule on its way to the Pod: the effect, the
+// tool patterns it names, and the data classes it names. No patterns means every
+// tool on the server.
+//
+// DataClasses are what the gateway's content scanner has to find in a call for
+// the rule to decide it. They travel unresolved because the control plane cannot
+// answer them: a tool call is scanned in the Pod and never passes through here.
 type PolicyRule struct {
-	Effect string
-	Tools  []string
+	Effect      string
+	Tools       []string
+	DataClasses []string
 }
 
 type SecurityProfile struct {

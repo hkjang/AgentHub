@@ -52,7 +52,65 @@ func TestEveryCompiledPolicyFieldReachesTheBinding(t *testing.T) {
 	}
 }
 
-// And the field the sweep was written for, end to end from the document.
+// The same question one level down. A compiled rule carries the two selectors the
+// control plane cannot resolve — the tool, and what the scanner has to find in the
+// call — and only the gateway can answer either. A field dropped between the two
+// structs is a condition the Pod enforces without, which turns "refuse the calls
+// carrying a 주민등록번호" into "refuse the calls".
+func TestEveryCompiledRuleFieldReachesTheBinding(t *testing.T) {
+	rule := policy.CompiledRule{}
+	value := reflect.ValueOf(&rule).Elem()
+	for index := 0; index < value.NumField(); index++ {
+		switch field := value.Field(index); field.Kind() {
+		case reflect.String:
+			field.SetString(policy.Deny)
+		case reflect.Slice:
+			field.Set(reflect.MakeSlice(field.Type(), 1, 1))
+		default:
+			t.Fatalf("CompiledRule.%s is a %s, which this sweep does not know how to fill",
+				value.Type().Field(index).Name, field.Kind())
+		}
+	}
+
+	binding := runtime.MCPBinding{}
+	applyServerRules(&binding, policy.ServerRules{Rules: []policy.CompiledRule{rule}})
+	if len(binding.PolicyRules) != 1 {
+		t.Fatalf("the rule did not travel at all: %#v", binding)
+	}
+
+	carried := reflect.ValueOf(binding.PolicyRules[0])
+	for index := 0; index < value.NumField(); index++ {
+		name := value.Type().Field(index).Name
+		field := carried.FieldByName(name)
+		if !field.IsValid() {
+			t.Fatalf("CompiledRule.%s has no runtime.PolicyRule.%s to travel in", name, name)
+		}
+		if field.IsZero() {
+			t.Fatalf("runtime.PolicyRule.%s stayed empty: the gateway will enforce the rule without it", name)
+		}
+	}
+}
+
+// And the field that sweep was written for, end to end from the document: a rule
+// about a data class was compiled away here entirely, because compiling asks it
+// about a request nothing has scanned.
+func TestARuleAboutADataClassReachesTheBinding(t *testing.T) {
+	rules := policy.CompileServer(policy.Document{Rules: []policy.Rule{
+		{ID: "no-rrn-outward", Effect: policy.Deny, Actions: []string{policy.ActionToolCall},
+			Servers: []string{"jira"}, DataClasses: []string{"rrn"}, Reason: "주민등록번호 금지"},
+	}}, policy.Request{Agent: "상담 에이전트", Server: "jira"})
+	binding := runtime.MCPBinding{Name: "jira"}
+	applyServerRules(&binding, rules)
+
+	if len(binding.PolicyRules) != 1 || len(binding.PolicyRules[0].DataClasses) != 1 {
+		t.Fatalf("the rule did not reach the binding with its condition: %#v", binding.PolicyRules)
+	}
+	if binding.PolicyDenyAll || len(binding.PolicyDenied) != 0 {
+		t.Fatalf("a conditional rule became an unconditional restriction: %#v", binding)
+	}
+}
+
+// And the field the first sweep was written for, end to end from the document.
 func TestAServerWideGateReachesTheBinding(t *testing.T) {
 	rules := policy.CompileServer(policy.Document{Rules: []policy.Rule{
 		{ID: "gate-server", Effect: policy.RequireApproval, Actions: []string{policy.ActionToolCall},

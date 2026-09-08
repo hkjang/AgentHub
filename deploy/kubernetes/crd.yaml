@@ -168,6 +168,15 @@ spec:
                                   type: array
                                   maxItems: 200
                                   items: {type: string, maxLength: 200}
+                                # What the gateway's content scanner has to find in
+                                # a call for this rule to decide it. The control
+                                # plane cannot resolve them — a tool call is scanned
+                                # in the Pod and never passes through it — so they
+                                # travel with the rule and are answered there.
+                                dataClasses:
+                                  type: array
+                                  maxItems: 100
+                                  items: {type: string, maxLength: 100}
                           # What the document decides about a tool no rule named.
                           policyDefault: {type: string, enum: [allow, deny, require_approval]}
                           # The same rules summarised, for a Pod whose base image

@@ -2,6 +2,7 @@ package operator
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -155,5 +156,52 @@ func TestADefaultOfApprovalOpensTheEgress(t *testing.T) {
 	value.MCP = append(value.MCP, mcpBinding{Name: "github", ToolPolicy: &mcpToolPolicy{PolicyDefault: "require_approval"}})
 	if !gatesApproval(value.MCP) {
 		t.Fatal("every call would fail for want of a route to ask along")
+	}
+}
+
+// A rule about a data class travels with the classes it names. Stripped of them
+// on the way it becomes a rule about the tool, which refuses every call to it —
+// and it is the operator's narrowest rule that turns into the broadest one.
+func TestADataClassRuleReachesTheGatewayWithItsClasses(t *testing.T) {
+	var value spec
+	value.Owner = "user-1"
+	value.Runtime.Type = "opencode"
+	value.Runtime.Image = "agenthub-base:v0.7.0"
+	value.MCP = append(value.MCP, mcpBinding{
+		Name: "jira", Mode: "shared", Endpoint: "https://mcp.jira.test/mcp",
+		ToolPolicy: &mcpToolPolicy{PolicyRules: []mcpPolicyRule{
+			{Effect: "require_approval", DataClasses: []string{"rrn"}},
+		}},
+	})
+
+	bindings := effectiveMCP("agent-runtime-dev", "rt-1", value)
+	gateway, ok := mcpGatewayContainer(value.Runtime.Image, "rt-1", "runtime-1", bindings, value.MCP, value)
+	if !ok {
+		t.Fatal("a policied binding must produce a gateway container")
+	}
+	var config string
+	for _, env := range gateway.Env {
+		if env.Name == "AGENTHUB_MCP_GATEWAY" {
+			config = env.Value
+		}
+	}
+	var upstreams []struct {
+		PolicyRules []struct {
+			Effect      string   `json:"effect"`
+			DataClasses []string `json:"dataClasses"`
+		} `json:"policyRules"`
+	}
+	if err := json.Unmarshal([]byte(config), &upstreams); err != nil {
+		t.Fatalf("gateway config is not valid JSON: %v (%s)", err, config)
+	}
+	if len(upstreams) != 1 || len(upstreams[0].PolicyRules) != 1 {
+		t.Fatalf("the rule did not reach the gateway: %s", config)
+	}
+	if strings.Join(upstreams[0].PolicyRules[0].DataClasses, ",") != "rrn" {
+		t.Fatalf("the rule reached the gateway without its condition: %s", config)
+	}
+	// It asks for a person, so the Pod needs somewhere to ask.
+	if !gatesApproval(value.MCP) {
+		t.Fatal("the egress to the control plane stays closed, so the gated call would fail instead of waiting")
 	}
 }

@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/hkjang/AgentHub/internal/policy"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -142,4 +144,79 @@ func TestCRDDeclaresEveryToolPolicyFieldTheSpawnerWrites(t *testing.T) {
 			t.Errorf("the CRD does not declare toolPolicy.%s, so the API server drops it", field)
 		}
 	}
+	// And every field of a rule inside policyRules, which the schema declares
+	// separately. A rule pruned down to its effect refuses more than it was
+	// written to refuse.
+	rule := reflect.TypeOf(policy.CompiledRule{})
+	for index := 0; index < rule.NumField(); index++ {
+		field := strings.Split(rule.Field(index).Tag.Get("json"), ",")[0]
+		if field == "" || field == "-" {
+			t.Fatalf("CompiledRule.%s has no JSON name to declare", rule.Field(index).Name)
+		}
+		if !strings.Contains(schema, field+":") {
+			t.Errorf("the CRD does not declare policyRules[].%s, so the API server drops it", field)
+		}
+	}
+}
+
+// A rule's data classes are what the gateway's scanner has to find for it to
+// decide. Written to the CRD without them it becomes a rule about the tool, which
+// refuses every call to it rather than the ones the operator wrote it about.
+func TestADataClassRuleReachesTheCRDWithItsClasses(t *testing.T) {
+	spawner := &KubernetesSpawner{}
+	object := spawner.object(Spec{
+		Runtime: store.Runtime{CRDName: "agent-user-agent"},
+		Agent:   store.Agent{ID: "agent-id", OwnerID: "user-id", RuntimeType: "opencode"},
+		Profile: store.RuntimeProfile{CPUMillis: 2000, MemoryMB: 4096, StorageGB: 10},
+		MCPServers: []MCPBinding{{Name: "jira", Mode: "shared", Endpoint: "https://mcp.example/mcp",
+			PolicyRules: []PolicyRule{{Effect: "deny", DataClasses: []string{"rrn"}}}}},
+	})
+	raw, err := json.Marshal(object.Object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Spec struct {
+			MCP []struct {
+				ToolPolicy *struct {
+					PolicyRules []struct {
+						Effect      string   `json:"effect"`
+						Tools       []string `json:"tools"`
+						DataClasses []string `json:"dataClasses"`
+					} `json:"policyRules"`
+				} `json:"toolPolicy"`
+			} `json:"mcp"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Spec.MCP) != 1 || decoded.Spec.MCP[0].ToolPolicy == nil {
+		t.Fatalf("a binding the policy decides has to be policied: %s", raw)
+	}
+	rules := decoded.Spec.MCP[0].ToolPolicy.PolicyRules
+	if len(rules) != 1 || strings.Join(rules[0].DataClasses, ",") != "rrn" {
+		t.Fatalf("the rule reached the CRD without its condition: %s", raw)
+	}
+	// A rule that names no class does not grow one, so an existing policy
+	// provisions to exactly the object it did before.
+	if strings.Contains(string(mustRender(t, spawner, "delete_*")), "dataClasses") {
+		t.Fatal("a rule about tools alone gained a dataClasses field")
+	}
+}
+
+func mustRender(t *testing.T, spawner *KubernetesSpawner, tool string) []byte {
+	t.Helper()
+	object := spawner.object(Spec{
+		Runtime: store.Runtime{CRDName: "agent-user-agent"},
+		Agent:   store.Agent{ID: "agent-id", OwnerID: "user-id", RuntimeType: "opencode"},
+		Profile: store.RuntimeProfile{CPUMillis: 2000, MemoryMB: 4096, StorageGB: 10},
+		MCPServers: []MCPBinding{{Name: "jira", Mode: "shared", Endpoint: "https://mcp.example/mcp",
+			PolicyRules: []PolicyRule{{Effect: "deny", Tools: []string{tool}}}}},
+	})
+	raw, err := json.Marshal(object.Object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }

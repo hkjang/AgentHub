@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hkjang/AgentHub/internal/dlp"
 	"github.com/hkjang/AgentHub/internal/policy"
 )
 
@@ -83,6 +84,27 @@ func (u mcpUpstream) policyEffect(tool string) string {
 	return policy.Decide(u.platformPolicy(), u.Name, tool)
 }
 
+// policyAfterScan is the same question asked again once the content scanner has
+// read the call, and it answers with the effect only when the scan changed it.
+//
+// A rule naming a data class is the one kind the control plane cannot resolve: a
+// tool call never passes through it, so what the call carries is known here and
+// nowhere else. Compiled away at provisioning time such a rule reached no Pod at
+// all, and the class's own global action decided instead — a deployment that had
+// written "no resident registration numbers through this server" while leaving
+// the class set to 기록만 sent them and kept a finding.
+//
+// Only a changed answer is acted on. A rule that decided this tool by name
+// decided it before the call went out and has already been honoured; re-asking
+// would send the same call to the same reviewer twice.
+func (u mcpUpstream) policyAfterScan(tool string, classes []string) string {
+	after := policy.DecideData(u.platformPolicy(), u.Name, tool, classes)
+	if after == u.policyEffect(tool) {
+		return ""
+	}
+	return after
+}
+
 // needsApproval reports whether a call has to wait for a person.
 func (u mcpUpstream) needsApproval(tool string) bool {
 	if u.ApprovalRequired || contains(u.ApprovalTools, tool) {
@@ -119,7 +141,10 @@ func (u mcpUpstream) restricts() bool {
 		return true
 	}
 	for _, rule := range u.PolicyRules {
-		if rule.Effect == policy.Deny {
+		// A rule about a data class refuses calls, not tools: the tool stays
+		// callable with anything else, so hiding it from the list would tell the
+		// model something the policy does not say.
+		if rule.Effect == policy.Deny && len(rule.DataClasses) == 0 {
 			return true
 		}
 	}
@@ -281,33 +306,9 @@ func mcpGatewayWith(upstreams []mcpUpstream, auditor func(entry map[string]any),
 			writeRPCError(w, request.ID, -32601, message)
 			return
 		}
-		if request.Method == "tools/call" && upstream.needsApproval(request.Params.Name) {
-			if gate == nil {
-				// Configured to need a decision with no way to ask for one: refuse.
-				// Letting the call through would make the gate advisory again.
-				auditor(map[string]any{"server": name, "tool": request.Params.Name, "decision": "denied", "reason": "approval_unavailable"})
-				writeRPCError(w, request.ID, -32003, fmt.Sprintf("도구 %q 는 승인이 필요하지만 이 Runtime에서 승인 요청 경로가 설정되지 않았습니다.", request.Params.Name))
-				return
-			}
-			decision, approvalID, err := gate.decide(r.Context(), name, request.Params.Name, request.Params.Arguments)
-			entry := map[string]any{"server": name, "tool": request.Params.Name, "approvalId": approvalID, "decision": string(decision)}
-			if err != nil {
-				entry["error"] = err.Error()
-			}
-			auditor(entry)
-			switch decision {
-			case approvalGranted:
-				// Fall through to the upstream call.
-			case approvalRejected:
-				writeRPCError(w, request.ID, -32004, fmt.Sprintf("도구 %q 실행이 검토자에 의해 거절되었습니다.", request.Params.Name))
-				return
-			case approvalExpired:
-				writeRPCError(w, request.ID, -32005, fmt.Sprintf("도구 %q 실행 승인이 대기 시간 안에 처리되지 않았습니다. 승인 후 다시 시도하세요.", request.Params.Name))
-				return
-			default:
-				writeRPCError(w, request.ID, -32003, fmt.Sprintf("도구 %q 실행 승인을 요청할 수 없어 호출을 차단했습니다.", request.Params.Name))
-				return
-			}
+		gated := request.Method == "tools/call" && upstream.needsApproval(request.Params.Name)
+		if gated && !awaitApproval(w, r, gate, auditor, name, request) {
+			return
 		}
 		// The arguments are scanned before the call leaves the Pod. A tool call
 		// never passes through the control plane, so this is the only place a
@@ -315,11 +316,37 @@ func mcpGatewayWith(upstreams []mcpUpstream, auditor func(entry map[string]any),
 		if request.Method == "tools/call" && len(request.Params.Arguments) > 0 {
 			replacement, found := inspect.inspect(r.Context(), name, request.Params.Name, "요청", string(request.Params.Arguments))
 			if found != nil {
-				auditor(map[string]any{"server": name, "tool": request.Params.Name,
-					"decision": scanDecision(found), "dlp": found.Summary()})
-				if found.Blocked {
-					writeRPCError(w, request.ID, -32006, found.Reason+" (도구 "+request.Params.Name+")")
+				// The scan is also the first moment a rule about a data class can be
+				// applied, and for a tool call the only one.
+				effect := upstream.policyAfterScan(request.Params.Name, found.Classes())
+				entry := map[string]any{"server": name, "tool": request.Params.Name,
+					"decision": scanDecision(found), "dlp": found.Summary()}
+				if effect != "" {
+					entry["policyEffect"] = effect
+				}
+				if effect == policy.Deny {
+					entry["decision"] = "denied"
+				}
+				auditor(entry)
+				if found.Blocked || effect == policy.Deny {
+					writeRPCError(w, request.ID, -32006, scanRefusal(found, request.Params.Name))
 					return
+				}
+				// A rule that asks for a person because of what the call carries gets
+				// the same gate a rule that asks by tool name does — unless one has
+				// already been held for this call.
+				//
+				// What the reviewer is shown is the redacted form. They are being
+				// asked whether a call carrying a 주민등록번호 may go out, which the
+				// masked sample answers, and the approval is stored in the control
+				// plane: sending the value would copy it into the one table this rule
+				// exists to keep it out of.
+				if effect == policy.RequireApproval && !gated {
+					masked := request
+					masked.Params.Arguments = json.RawMessage(replacement)
+					if !awaitApproval(w, r, gate, auditor, name, masked) {
+						return
+					}
 				}
 				// The whole body is rewritten rather than just the arguments: the
 				// upstream reads the body, not our parsed copy of it.
@@ -399,9 +426,22 @@ func mcpGatewayWith(upstreams []mcpUpstream, auditor func(entry map[string]any),
 				return
 			}
 			replacement, found := inspect.inspect(r.Context(), name, request.Params.Name, "응답", string(raw))
-			if found != nil && found.Blocked {
-				auditor(map[string]any{"server": name, "tool": request.Params.Name, "decision": "denied", "dlp": found.Summary(), "direction": "response"})
-				writeRPCError(w, request.ID, -32006, found.Reason+" (도구 "+request.Params.Name+" 응답)")
+			// The policy decides what comes back too. An answer cannot be sent to a
+			// reviewer — it has already been read — so a rule that would have asked
+			// for one refuses it instead, which is the answer the model boundary
+			// gives for the same rule on a completion.
+			effect := ""
+			if found != nil {
+				effect = upstream.policyAfterScan(request.Params.Name, found.Classes())
+			}
+			if found != nil && (found.Blocked || effect == policy.Deny || effect == policy.RequireApproval) {
+				entry := map[string]any{"server": name, "tool": request.Params.Name, "decision": "denied",
+					"dlp": found.Summary(), "direction": "response"}
+				if effect != "" {
+					entry["policyEffect"] = effect
+				}
+				auditor(entry)
+				writeRPCError(w, request.ID, -32006, scanRefusal(found, request.Params.Name+" 응답"))
 				return
 			}
 			copyHeaders(w.Header(), response.Header)
@@ -414,6 +454,53 @@ func mcpGatewayWith(upstreams []mcpUpstream, auditor func(entry map[string]any),
 		w.WriteHeader(response.StatusCode)
 		_, _ = io.Copy(w, response.Body)
 	})
+}
+
+// awaitApproval holds the call open while a person decides, writes the refusal
+// itself when the answer is no, and reports whether the call may go on.
+//
+// It is asked twice for two different reasons — a tool the policy gates by name,
+// and a call the policy gates by what the scanner found in it — and both have to
+// reach the same reviewer with the same arguments, so there is one of it.
+func awaitApproval(w http.ResponseWriter, r *http.Request, gate *approver, auditor func(entry map[string]any), server string, request rpcRequest) bool {
+	if gate == nil {
+		// Configured to need a decision with no way to ask for one: refuse.
+		// Letting the call through would make the gate advisory again.
+		auditor(map[string]any{"server": server, "tool": request.Params.Name, "decision": "denied", "reason": "approval_unavailable"})
+		writeRPCError(w, request.ID, -32003, fmt.Sprintf("도구 %q 는 승인이 필요하지만 이 Runtime에서 승인 요청 경로가 설정되지 않았습니다.", request.Params.Name))
+		return false
+	}
+	decision, approvalID, err := gate.decide(r.Context(), server, request.Params.Name, request.Params.Arguments)
+	entry := map[string]any{"server": server, "tool": request.Params.Name, "approvalId": approvalID, "decision": string(decision)}
+	if err != nil {
+		entry["error"] = err.Error()
+	}
+	auditor(entry)
+	switch decision {
+	case approvalGranted:
+		return true
+	case approvalRejected:
+		writeRPCError(w, request.ID, -32004, fmt.Sprintf("도구 %q 실행이 검토자에 의해 거절되었습니다.", request.Params.Name))
+	case approvalExpired:
+		writeRPCError(w, request.ID, -32005, fmt.Sprintf("도구 %q 실행 승인이 대기 시간 안에 처리되지 않았습니다. 승인 후 다시 시도하세요.", request.Params.Name))
+	default:
+		writeRPCError(w, request.ID, -32003, fmt.Sprintf("도구 %q 실행 승인을 요청할 수 없어 호출을 차단했습니다.", request.Params.Name))
+	}
+	return false
+}
+
+// scanRefusal is what the agent is told about a call the scan refused.
+//
+// The scanner's own reason is preferred because it is the one an operator wrote
+// against the class. A policy rule can refuse text the scanner itself only
+// recorded, and then there is no such reason — a compiled rule carries its effect
+// and not its prose — so the classes that were found say why instead.
+func scanRefusal(found *dlp.Result, subject string) string {
+	reason := found.Reason
+	if reason == "" {
+		reason = fmt.Sprintf("민감정보(%s)가 포함되어 플랫폼 정책에 의해 차단되었습니다.", found.Summary())
+	}
+	return reason + " (도구 " + subject + ")"
 }
 
 // replaceArguments puts redacted arguments back into the JSON-RPC body.

@@ -184,11 +184,14 @@ type mcpToolPolicy struct {
 	PolicyGateAll bool     `json:"policyGateAll,omitempty"`
 }
 
-// mcpPolicyRule is one rule of that policy: the effect, and the tool patterns it
-// names. No patterns means every tool on the server.
+// mcpPolicyRule is one rule of that policy: the effect, the tool patterns it
+// names, and the data classes it names. No patterns means every tool on the
+// server; data classes are what the gateway's scanner has to find in a call for
+// the rule to decide it, which only the Pod can know.
 type mcpPolicyRule struct {
-	Effect string   `json:"effect"`
-	Tools  []string `json:"tools,omitempty"`
+	Effect      string   `json:"effect"`
+	Tools       []string `json:"tools,omitempty"`
+	DataClasses []string `json:"dataClasses,omitempty"`
 }
 
 // gated reports whether this policy needs a decision for at least one tool.

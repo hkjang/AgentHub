@@ -317,7 +317,8 @@ func valid(allowed []string, value string) bool {
 // provisioning time is not a policy.
 type ServerRules struct {
 	// Rules are the document's own rules for this agent and server, in the
-	// document's order, with every selector except the tool already resolved.
+	// document's order, with every selector already resolved except the two that
+	// only a call can answer: the tool, and what the content scanner found in it.
 	// Decide reads them the way Evaluate reads the document — first match wins —
 	// which is the only arrangement that can express what the document says.
 	//
@@ -344,11 +345,19 @@ type ServerRules struct {
 }
 
 // CompiledRule is one rule of the document as it applies to this agent and this
-// server: the effect, and the tools it names. No tools means every tool on the
-// server, including the ones nobody has seen yet.
+// server: the effect, the tools it names, and the data classes it names. No tools
+// means every tool on the server, including the ones nobody has seen yet.
+//
+// DataClasses travel unresolved for the same reason the tools do. A tool call
+// never passes through the control plane, so what it carries is known only in the
+// Pod, where the gateway scans it — and a rule conditioned on that could not be
+// answered when the runtime was provisioned. Resolving it there meant asking with
+// nothing scanned, which no such rule matches, so it was dropped and the Pod was
+// provisioned as though the operator had never written it.
 type CompiledRule struct {
-	Effect string   `json:"effect"`
-	Tools  []string `json:"tools,omitempty"`
+	Effect      string   `json:"effect"`
+	Tools       []string `json:"tools,omitempty"`
+	DataClasses []string `json:"dataClasses,omitempty"`
 }
 
 // Empty reports whether the policy has nothing to say about this server, so the
@@ -377,14 +386,31 @@ func (r ServerRules) Empty() bool {
 // The gateway calls this rather than reading the fields itself, so the Pod and
 // the console run the same procedure over the same rules instead of two
 // summaries that agree until they do not.
+//
+// Nothing has been scanned yet at this point, so a rule about a data class
+// matches nothing — the same answer Evaluate gives an unscanned request.
 func Decide(rules ServerRules, server, tool string) string {
+	return DecideData(rules, server, tool, nil)
+}
+
+// DecideData is Decide once the content scanner has said what the call carries.
+//
+// It is a separate entry point rather than a wider Decide because the two are
+// asked at different moments: the tool name is known before the call, what it
+// carries only after the arguments have been read. Both run the same loop, so a
+// rule cannot mean one thing before the scan and another after it.
+func DecideData(rules ServerRules, server, tool string, classes []string) string {
 	if len(rules.Rules) == 0 && rules.Default == "" {
 		return decideProjection(rules, server, tool)
 	}
 	for _, rule := range rules.Rules {
-		if len(rule.Tools) == 0 || MatchTool(rule.Tools, server, tool) {
-			return rule.Effect
+		if len(rule.Tools) > 0 && !MatchTool(rule.Tools, server, tool) {
+			continue
 		}
+		if len(rule.DataClasses) > 0 && !anySelects(rule.DataClasses, classes) {
+			continue
+		}
+		return rule.Effect
 	}
 	if rules.Default != "" {
 		return rules.Default
@@ -424,10 +450,21 @@ func CompileServer(document Document, request Request) ServerRules {
 	compiled := ServerRules{Default: compiledDefault(document)}
 	request.Action = ActionToolCall
 	for _, rule := range document.Rules {
-		if !rule.Active() || !matchesWithoutTools(rule, request) {
+		if !rule.Active() || !matchesServerWide(rule, request) {
 			continue
 		}
-		compiled.Rules = append(compiled.Rules, CompiledRule{Effect: rule.Effect, Tools: append([]string(nil), rule.Tools...)})
+		compiled.Rules = append(compiled.Rules, CompiledRule{Effect: rule.Effect,
+			Tools:       append([]string(nil), rule.Tools...),
+			DataClasses: append([]string(nil), rule.DataClasses...)})
+		if len(rule.DataClasses) > 0 {
+			// A rule the scanner has to answer cannot be summarised. The lists below
+			// say what happens to a tool, not what happens to a tool carrying a
+			// resident registration number, and writing it into them would refuse
+			// every call to that tool — including the ones the rule is silent about.
+			// It travels in the ordered rules alone, which leaves a Pod that reads
+			// only the summary exactly as it is today: such a rule never reached it.
+			continue
+		}
 		switch {
 		case rule.Effect == Allow && len(rule.Tools) == 0:
 			// A blanket allow for this agent on this server ends the evaluation the
@@ -566,13 +603,20 @@ func MatchTool(patterns []string, server, tool string) bool {
 	return toolSelects(patterns, server, tool)
 }
 
-// matchesWithoutTools is matches() with the tool selector skipped, for compiling
-// a rule against a whole server rather than one call.
-func matchesWithoutTools(rule Rule, request Request) bool {
+// matchesServerWide is matches() with the two selectors only a call can answer
+// skipped — the tool, and what the content scanner found in it — for compiling a
+// rule against a whole server rather than one call.
+//
+// Skipping is not the same as answering. Asked with the request as it stands, a
+// rule naming data classes is asked about a request that was never scanned, which
+// no such rule matches: it was dropped here and the gateway enforced a policy the
+// document did not have. Both selectors travel on the compiled rule instead and
+// are answered in the Pod, where the tool name and the scan both exist.
+func matchesServerWide(rule Rule, request Request) bool {
 	stripped := rule
-	stripped.Tools = nil
+	stripped.Tools, stripped.DataClasses = nil, nil
 	probe := request
-	probe.Tool = ""
+	probe.Tool, probe.DataClasses = "", nil
 	return matches(stripped, probe)
 }
 

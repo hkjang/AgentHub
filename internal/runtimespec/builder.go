@@ -344,7 +344,8 @@ func (b *Builder) highRiskApprovalEnabled(ctx context.Context) bool {
 func applyServerRules(binding *runtime.MCPBinding, rules policy.ServerRules) {
 	binding.PolicyRules = make([]runtime.PolicyRule, 0, len(rules.Rules))
 	for _, rule := range rules.Rules {
-		binding.PolicyRules = append(binding.PolicyRules, runtime.PolicyRule{Effect: rule.Effect, Tools: rule.Tools})
+		binding.PolicyRules = append(binding.PolicyRules,
+			runtime.PolicyRule{Effect: rule.Effect, Tools: rule.Tools, DataClasses: rule.DataClasses})
 	}
 	binding.PolicyDefault = rules.Default
 	binding.PolicyDenied, binding.PolicyGated = rules.Denied, rules.Gated

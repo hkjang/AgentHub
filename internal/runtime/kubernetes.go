@@ -149,7 +149,15 @@ func (k *KubernetesSpawner) object(spec Spec) *unstructured.Unstructured {
 			if len(m.PolicyRules) > 0 {
 				rules := make([]any, 0, len(m.PolicyRules))
 				for _, rule := range m.PolicyRules {
-					rules = append(rules, map[string]any{"effect": rule.Effect, "tools": stringList(rule.Tools)})
+					compiled := map[string]any{"effect": rule.Effect, "tools": stringList(rule.Tools)}
+					// The classes a rule names travel with it: they are what the
+					// gateway's scanner has to find for it to decide, and a rule
+					// stripped of them would refuse every call to the tool rather than
+					// the ones carrying what the operator wrote it about.
+					if len(rule.DataClasses) > 0 {
+						compiled["dataClasses"] = stringList(rule.DataClasses)
+					}
+					rules = append(rules, compiled)
 				}
 				policy["policyRules"] = rules
 			}
