@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/hkjang/AgentHub/internal/policy"
 )
 
 // Every action the policy engine defines has to be evaluated somewhere.
@@ -65,6 +67,31 @@ func TestEveryPolicyActionIsEvaluatedSomewhere(t *testing.T) {
 		t.Errorf("the policy engine offers these actions and nothing evaluates them: %s\n"+
 			"Either consult the action where it belongs, or stop offering it in the rule editor.",
 			strings.Join(dead, ", "))
+	}
+}
+
+// And every action it offers has to be readable on the screen that offers it.
+//
+// The console is handed the list by the API, so a new action appears in the rule
+// editor, in the summary column and in the simulator the moment it exists — with
+// its bare value where its name should be, because the label table is the one
+// half that does not come from the server. "decision.export" in a list otherwise
+// reading 작업 생성, 런타임 시작, 모델 호출 is not a rule anybody writes with
+// confidence.
+func TestThePolicyScreenNamesEveryActionItOffers(t *testing.T) {
+	page, err := os.ReadFile(filepath.Join("..", "..", "web", "src", "pages", "AdminPolicy.tsx"))
+	if err != nil {
+		t.Skipf("console source is not present in this checkout: %v", err)
+	}
+	labels := regexp.MustCompile(`'([\w.]+)':\s*'`).FindAllStringSubmatch(string(page), -1)
+	named := map[string]bool{}
+	for _, label := range labels {
+		named[label[1]] = true
+	}
+	for _, action := range policy.Actions {
+		if !named[action] {
+			t.Errorf("the policy engine offers %s and the rule editor shows it as a bare value", action)
+		}
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/hkjang/AgentHub/internal/dlp"
 	"github.com/hkjang/AgentHub/internal/korean"
+	"github.com/hkjang/AgentHub/internal/policy"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -49,13 +50,13 @@ func (d *Dispatcher) exportDecision(ctx context.Context, event store.PlatformEve
 	if err != nil {
 		return fmt.Errorf("결정 기록을 만들지 못했습니다: %w", err)
 	}
-	result, err := SendDecision(ctx, settings, d.contentSettings(ctx), record)
+	outcome, err := SendDecision(ctx, settings, d.contentGuard(ctx, record), record)
 	// Recorded once the send settled — sent, or refused here. A sink that
 	// answered with an error is retried by the dispatcher, and an entry per
 	// attempt would count one payload as many.
 	var withheld WithheldError
 	if err == nil || errors.As(err, &withheld) {
-		recordContentScan(ctx, d.store, d.logger, scanEventExport, record.AgentID, result, map[string]any{
+		recordContentScan(ctx, d.store, d.logger, scanEventExport, record.AgentID, outcome, map[string]any{
 			"boundary": "결정 기록", "agent": record.Agent, "task": record.TaskID, "run": record.RunID,
 		})
 	}
@@ -65,9 +66,10 @@ func (d *Dispatcher) exportDecision(ctx context.Context, event store.PlatformEve
 			// again, and the dispatcher's retry exists for sinks that come back. It
 			// is loud instead — somebody is counting on these records arriving, so
 			// one held back has to be visible where they will look for it.
-			d.logger.Warn("decision withheld by content scan", "task", record.TaskID, "classes", withheld.Classes)
+			d.logger.Warn("decision withheld by content scan", "task", record.TaskID,
+				"classes", withheld.Classes, "policyRule", outcome.Decision.RuleID)
 			d.store.Audit(ctx, nil, "provenance.withheld", "task", record.TaskID, "blocked", "",
-				map[string]any{"classes": withheld.Classes})
+				map[string]any{"classes": withheld.Classes, "policyRule": outcome.Decision.RuleID})
 			return nil
 		}
 		return err
@@ -82,28 +84,30 @@ func (d *Dispatcher) exportDecision(ctx context.Context, event store.PlatformEve
 // the request the dispatcher will make — the same address, the same header, the
 // same timeout — rather than a second implementation that can agree with the
 // screen and disagree with the deployment.
-// What the scan found comes back with the error so the caller can record it. A
-// finding the platform acted on and did not write down is one the operator
-// reading the DLP trail cannot see, and a redaction is exactly as invisible as a
-// block is loud.
-func SendDecision(ctx context.Context, settings store.ProvenanceSettings, scan dlp.Settings, record store.DecisionRecord) (dlp.Result, error) {
-	// Scanned here rather than by the caller, because a caller can forget. The
-	// export was one of two ways text left this deployment uninspected — the other
-	// was the review comment posted back to a forge — and a sending path added
-	// later must not be able to repeat that.
-	record, result := scrubDecision(scan, record)
-	if result.Blocked {
-		return result, WithheldError{Subject: "결정 기록", Classes: result.Classes(), Labels: result.Labels()}
+// What the scan found and what the policy decided come back with the error so
+// the caller can record both. A finding the platform acted on and did not write
+// down is one the operator reading the DLP trail cannot see, and a redaction is
+// exactly as invisible as a block is loud.
+func SendDecision(ctx context.Context, settings store.ProvenanceSettings, guard ContentGuard, record store.DecisionRecord) (ContentOutcome, error) {
+	// Scanned and decided here rather than by the caller, because a caller can
+	// forget. The export was one of two ways text left this deployment
+	// uninspected — the other was the review comment posted back to a forge — and
+	// a sending path added later must not be able to repeat that.
+	record, result := scrubDecision(guard.Scan, record)
+	outcome := guard.inspect(policy.ActionDecisionExport, result)
+	if outcome.Refused() {
+		return outcome, WithheldError{Subject: "결정 기록", Classes: result.Classes(), Labels: result.Labels(),
+			Reason: outcome.Decision.Reason}
 	}
 	body, err := json.Marshal(record)
 	if err != nil {
-		return result, fmt.Errorf("결정 기록을 인코딩하지 못했습니다: %w", err)
+		return outcome, fmt.Errorf("결정 기록을 인코딩하지 못했습니다: %w", err)
 	}
 	send, cancel := context.WithTimeout(ctx, provenanceTimeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(send, http.MethodPost, settings.Endpoint, bytes.NewReader(body))
 	if err != nil {
-		return result, fmt.Errorf("결정 기록을 보내지 못했습니다: %w", err)
+		return outcome, fmt.Errorf("결정 기록을 보내지 못했습니다: %w", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	if settings.Header != "" && settings.Token != "" {
@@ -111,24 +115,50 @@ func SendDecision(ctx context.Context, settings store.ProvenanceSettings, scan d
 	}
 	response, err := provenanceClient.Do(request)
 	if err != nil {
-		return result, fmt.Errorf("결정 기록을 보내지 못했습니다: %s", modelCallReasonLike(err))
+		return outcome, fmt.Errorf("결정 기록을 보내지 못했습니다: %s", modelCallReasonLike(err))
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode >= 300 {
-		return result, fmt.Errorf("결정 기록을 받는 쪽이 HTTP %d 로 답했습니다", response.StatusCode)
+		return outcome, fmt.Errorf("결정 기록을 받는 쪽이 HTTP %d 로 답했습니다", response.StatusCode)
 	}
-	return result, nil
+	return outcome, nil
 }
 
-// contentSettings reads what this deployment allows out of the building. An
-// unreadable setting scans nothing rather than blocking everything: the export
-// is not the place to discover that the settings table is unavailable.
-func (d *Dispatcher) contentSettings(ctx context.Context) dlp.Settings {
-	var settings dlp.Settings
-	if err := d.store.Setting(ctx, dlp.SettingKey, &settings); err != nil {
-		return dlp.Settings{}
+// contentGuard reads what this deployment allows out of the building: the
+// scanner's settings, the central policy, and who this record belongs to.
+//
+// The record's owner is the task's owner — DecisionForTask reads t.owner_id —
+// which is the person every other policy point on this platform decides about,
+// and not the owner of the agent the task happened to run on.
+//
+// An unreadable setting scans nothing and decides nothing rather than blocking
+// everything: the export is not the place to discover that the settings table is
+// unavailable. An owner nobody can read is left empty and logged, which is the
+// answer the model boundary and the runtime gate already give — a rule about a
+// person then matches nothing, and the class's own action decides.
+//
+// The owner is read here rather than lazily behind the scan because an export
+// happens once per finished task on a deployment that configured a sink, not
+// once per model call: one query on that path costs nothing worth arranging
+// around.
+func (d *Dispatcher) contentGuard(ctx context.Context, record store.DecisionRecord) ContentGuard {
+	guard := ContentGuard{Agent: record.Agent, AgentID: record.AgentID}
+	if err := d.store.Setting(ctx, dlp.SettingKey, &guard.Scan); err != nil {
+		guard.Scan = dlp.Settings{}
 	}
-	return settings
+	if err := d.store.Setting(ctx, policy.SettingKey, &guard.Policy); err != nil {
+		guard.Policy = policy.Document{}
+	}
+	if owner := strings.TrimSpace(record.OwnerID); owner != "" {
+		user, err := d.store.UserByID(ctx, owner)
+		if err != nil {
+			d.logger.Warn("the owner of this record is unreadable; user and role rules are not being applied",
+				"owner", owner, "task", record.TaskID, "error", err)
+		} else {
+			guard.Owner = user
+		}
+	}
+	return guard
 }
 
 // WithheldError says something was not sent because the deployment's content
@@ -148,6 +178,12 @@ type WithheldError struct {
 	// Kept apart from Classes because the first version of this message printed
 	// the class id at a person: "결정 기록에 rrn 가 포함되어".
 	Labels []string
+	// Reason is what the operator wrote on the rule that refused, when a rule
+	// refused rather than the class's own action. A refusal nobody can act on is
+	// a support ticket, which is why the policy requires the sentence in the
+	// first place — dropping it here would throw it away at the one moment it
+	// was written for.
+	Reason string
 }
 
 func (e WithheldError) Error() string {
@@ -163,7 +199,11 @@ func (e WithheldError) Error() string {
 	// 주민등록번호 takes 가 and 여권번호 takes 이, and picking one is picking wrong
 	// half the time.
 	names := strings.Join(found, ", ")
-	return subject + "에 " + names + korean.Subject(names) + " 포함되어 보내지 않았습니다"
+	message := subject + "에 " + names + korean.Subject(names) + " 포함되어 보내지 않았습니다"
+	if e.Reason != "" {
+		message += " — " + e.Reason
+	}
+	return message
 }
 
 // scrubDecision applies the content scanner to the free text in a record.

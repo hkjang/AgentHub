@@ -58,7 +58,7 @@ func TestAFinishedReviewReachesThePullRequest(t *testing.T) {
 	findings := []store.ReviewFinding{
 		{FilePath: "internal/api/review.go", StartLine: 42, Severity: "high", Message: "빠뜨린 오류 처리"},
 	}
-	orchestrator.announceReview(ctx, store.AgentRun{}, task, owner, "지적 1건", findings)
+	orchestrator.announceReview(ctx, store.AgentRun{}, task, store.Agent{OwnerID: owner}, "지적 1건", findings)
 
 	if posted == "" {
 		t.Fatal("the review did not reach the pull request")
@@ -105,7 +105,7 @@ func TestAReviewWithNoCredentialSaysNothingAnywhere(t *testing.T) {
 	defer forge.Close()
 	orchestrator := New(db, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), "test")
 	orchestrator.announceReview(ctx, store.AgentRun{}, store.AgentTask{SourceURL: forge.URL + "/acme/store/pulls/1"},
-		anyUser(ctx, t, db), "지적 없음", nil)
+		store.Agent{OwnerID: anyUser(ctx, t, db)}, "지적 없음", nil)
 	if reached {
 		t.Fatal("a comment was posted to a host nobody stored a credential for")
 	}
@@ -161,7 +161,7 @@ func TestAReviewWithNoSourcePageSpeaksNowhere(t *testing.T) {
 	defer func() { _ = db.DeleteSCMConnection(ctx, owner, connection.ID) }()
 
 	orchestrator := New(db, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), "test")
-	orchestrator.announceReview(ctx, store.AgentRun{}, store.AgentTask{}, owner, "지적 없음", nil)
+	orchestrator.announceReview(ctx, store.AgentRun{}, store.AgentTask{}, store.Agent{OwnerID: owner}, "지적 없음", nil)
 	if reached {
 		t.Fatal("a review with no source page still commented somewhere")
 	}
