@@ -262,12 +262,15 @@ func (m *Model) record(ctx context.Context, step workflow.Step, result dlp.Resul
 			"class": finding.Class, "count": finding.Count, "action": finding.Action, "sample": finding.Sample,
 		})
 	}
+	// The step says which part of the run this text came from — the planner's
+	// prompt, the judge's transcript, the agent's own turn. They are the same
+	// agent, so without it a reader cannot tell one boundary from another.
 	m.store.Audit(ctx, nil, m.auditEvent(), "agent", step.AgentID, outcome, "", map[string]any{
-		"direction": direction, "agent": step.AgentName, "findings": findings,
+		"direction": direction, "agent": step.AgentName, "step": step.ID, "findings": findings,
 		"policyRule": decision.RuleID, "truncated": result.Truncated,
 	})
 	m.logger.Warn("sensitive data found leaving the platform",
 		"boundary", m.subjectName(),
-		"agent", step.AgentName, "direction", direction, "outcome", outcome,
+		"agent", step.AgentName, "step", step.ID, "direction", direction, "outcome", outcome,
 		"classes", result.Summary(), "policyRule", decision.RuleID)
 }

@@ -21,17 +21,11 @@ var ErrAwaitingApproval = errors.New("task is waiting for approval")
 // Whether this happens is the agent's own configuration. OpenCode and Hermes run
 // their own agent loops, so 'native' leaves planning to them; imposing a platform
 // plan there would fight the adapter rather than help it.
-func (o *Orchestrator) plan(ctx context.Context, run *store.AgentRun, task store.AgentTask, goal store.AgentGoal, model resolvedModel) string {
+func (o *Orchestrator) plan(ctx context.Context, run *store.AgentRun, task store.AgentTask, agent store.Agent, goal store.AgentGoal, model resolvedModel) string {
 	if goal.PlannerMode != "platform" && goal.PlannerMode != "hybrid" {
 		return ""
 	}
-	step := workflow.Step{
-		ID: "plan", AgentName: "Planner", OwnerID: task.OwnerID,
-		SystemPrompt: "당신은 실행 계획을 세우는 플래너입니다. 주어진 목표와 완료 조건을 달성할 단계를 설계하고, " +
-			`반드시 {"steps":[{"id":"01","type":"tool|reasoning|artifact","action":"..."}]} 형식의 JSON만 출력하세요. ` +
-			"설명이나 코드 펜스를 붙이지 마세요.",
-		ModelBaseURL: model.BaseURL, ModelName: model.ModelName, ModelAPIKey: model.APIKey,
-	}
+	step := planStep(task, agent, model)
 	var b strings.Builder
 	b.WriteString("# 목표\n")
 	b.WriteString(goal.Description)
@@ -81,6 +75,26 @@ func (o *Orchestrator) plan(ctx context.Context, run *store.AgentRun, task store
 	}
 	o.event(ctx, *run, "plan.created", "실행 계획을 수립했습니다.", map[string]any{"mode": goal.PlannerMode})
 	return output
+}
+
+// planStep is the boundary the planner's prompt crosses on its way to a model.
+//
+// It says which agent this is, because the content inspector asks the policy
+// about the step it is given and a rule that names an agent matches nothing
+// otherwise. The prompt below is the task's own title and input — the work
+// itself — so the agent named in "이 에이전트는 주민등록번호를 모델로 보낼 수
+// 없다" was the one agent that rule never covered here.
+//
+// The step's ID keeps saying which boundary it is, which is what the audit
+// trail records alongside the agent.
+func planStep(task store.AgentTask, agent store.Agent, model resolvedModel) workflow.Step {
+	return workflow.Step{
+		ID: "plan", AgentID: agent.ID, AgentName: agent.Name, OwnerID: task.OwnerID,
+		SystemPrompt: "당신은 실행 계획을 세우는 플래너입니다. 주어진 목표와 완료 조건을 달성할 단계를 설계하고, " +
+			`반드시 {"steps":[{"id":"01","type":"tool|reasoning|artifact","action":"..."}]} 형식의 JSON만 출력하세요. ` +
+			"설명이나 코드 펜스를 붙이지 마세요.",
+		ModelBaseURL: model.BaseURL, ModelName: model.ModelName, ModelAPIKey: model.APIKey,
+	}
 }
 
 // loadMemory renders what the agent already knows into a prompt section.
