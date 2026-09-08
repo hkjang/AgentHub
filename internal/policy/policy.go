@@ -46,10 +46,24 @@ const (
 	ActionModelCall    = "model.call"
 	ActionWorkflowRun  = "workflow.run"
 	ActionAgentUpdate  = "agent.update"
+	// ActionDecisionExport is this platform's account of a finished task, posted
+	// to whatever address a deployment configured to receive it, and
+	// ActionReviewComment is the review written back onto a pull request on a
+	// host this deployment does not own.
+	//
+	// They are separate from model.call because they are a different kind of
+	// leaving: a model call goes to an endpoint this deployment chose and meters,
+	// while these two put text on somebody else's machine for good. An operator
+	// who is willing to let a contractor's transcript reach the model is not
+	// thereby willing to let it be published on a forge, and until these existed
+	// there was nowhere to write the difference down.
+	ActionDecisionExport = "decision.export"
+	ActionReviewComment  = "review.comment"
 )
 
 // Actions is every action a rule may name, in the order the console offers them.
-var Actions = []string{ActionTaskCreate, ActionRuntimeStart, ActionToolCall, ActionModelCall, ActionWorkflowRun, ActionAgentUpdate}
+var Actions = []string{ActionTaskCreate, ActionRuntimeStart, ActionToolCall, ActionModelCall, ActionWorkflowRun,
+	ActionAgentUpdate, ActionDecisionExport, ActionReviewComment}
 
 // Effects is every effect a rule may carry.
 var Effects = []string{Allow, Deny, RequireApproval}

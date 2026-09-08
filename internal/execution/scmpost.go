@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hkjang/AgentHub/internal/dlp"
+	"github.com/hkjang/AgentHub/internal/policy"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -156,25 +157,27 @@ func authorize(header http.Header, kind, token string) {
 // somebody pushes a fix, and a comment per run turns a page people read into a
 // page people mute — while the newest verdict sinks under the older ones.
 //
-// What the scan found comes back with the error, because the caller is the one
-// holding the database: a comment that went out with a customer's number redacted
-// out of it is something the deployment did, and it belongs in the trail beside
-// the ones it refused outright.
-func PostReviewComment(ctx context.Context, client *http.Client, connection store.SCMConnection, token, sourceURL, text string, scan dlp.Settings) (dlp.Result, error) {
-	// Scanned here rather than by the caller. A review comment is written by a
-	// model quoting somebody's code, addressed to a host this deployment does not
-	// own, and it was the one way out of the building that inspected nothing —
-	// so the inspection belongs where the sending happens and cannot be skipped
-	// by a second caller that forgets it exists.
-	scanned := dlp.Scan(scan, text)
-	if scanned.Blocked {
-		return scanned, WithheldError{Subject: "리뷰 코멘트", Classes: scanned.Classes(), Labels: scanned.Labels()}
+// What the scan found and what the policy decided come back with the error,
+// because the caller is the one holding the database: a comment that went out
+// with a customer's number redacted out of it is something the deployment did,
+// and it belongs in the trail beside the ones it refused outright.
+func PostReviewComment(ctx context.Context, client *http.Client, connection store.SCMConnection, token, sourceURL, text string, guard ContentGuard) (ContentOutcome, error) {
+	// Scanned and decided here rather than by the caller. A review comment is
+	// written by a model quoting somebody's code, addressed to a host this
+	// deployment does not own, and it was the one way out of the building that
+	// inspected nothing — so the inspection belongs where the sending happens and
+	// cannot be skipped by a second caller that forgets it exists.
+	scanned := dlp.Scan(guard.Scan, text)
+	outcome := guard.inspect(policy.ActionReviewComment, scanned)
+	if outcome.Refused() {
+		return outcome, WithheldError{Subject: "리뷰 코멘트", Classes: scanned.Classes(), Labels: scanned.Labels(),
+			Reason: outcome.Decision.Reason}
 	}
 	text = scanned.Text
 
 	request, err := commentRequest(connection, sourceURL, text)
 	if err != nil {
-		return scanned, err
+		return outcome, err
 	}
 	authorize(request.header, connection.Kind, token)
 
@@ -184,22 +187,22 @@ func PostReviewComment(ctx context.Context, client *http.Client, connection stor
 	}
 	call, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(request.body))
 	if err != nil {
-		return scanned, err
+		return outcome, err
 	}
 	call.Header = request.header
 	response, err := client.Do(call)
 	if err != nil {
-		return scanned, err
+		return outcome, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode >= 400 {
 		// The forge's own words, capped: a 401 says the token is revoked and a
 		// 404 says it cannot see the repository, and those are different repairs.
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, 400))
-		return scanned, fmt.Errorf("%s에서 %d로 거절했습니다: %s", connection.Host, response.StatusCode,
+		return outcome, fmt.Errorf("%s에서 %d로 거절했습니다: %s", connection.Host, response.StatusCode,
 			strings.TrimSpace(string(detail)))
 	}
-	return scanned, nil
+	return outcome, nil
 }
 
 // ReviewComment is what the pull request gets to read.
@@ -243,7 +246,10 @@ func ReviewComment(summary string, findings []store.ReviewFinding, limit int) st
 // request to comment on it. Never silent when a credential exists and the
 // attempt failed — a revoked token and a clean review both post nothing, so the
 // difference is written on the connection and on the run.
-func (o *Orchestrator) announceReview(ctx context.Context, run store.AgentRun, task store.AgentTask, ownerID, summary string, findings []store.ReviewFinding) {
+// The agent is passed whole rather than as an owner id: a rule may name an agent
+// by its display name or by its id, and the boundary that fills in only one of
+// them is the boundary the operator's narrowest rule slides past.
+func (o *Orchestrator) announceReview(ctx context.Context, run store.AgentRun, task store.AgentTask, agent store.Agent, summary string, findings []store.ReviewFinding) {
 	if task.SourceURL == "" {
 		return
 	}
@@ -253,9 +259,9 @@ func (o *Orchestrator) announceReview(ctx context.Context, run store.AgentRun, t
 	}
 	// With the port first: a self-hosted forge on one is stored that way, and
 	// looking it up without would find nothing and say nothing about it.
-	connection, token, err := o.store.SCMTokenFor(ctx, ownerID, page.Host)
+	connection, token, err := o.store.SCMTokenFor(ctx, agent.OwnerID, page.Host)
 	if errors.Is(err, store.ErrNotFound) && page.Host != page.Hostname() {
-		connection, token, err = o.store.SCMTokenFor(ctx, ownerID, page.Hostname())
+		connection, token, err = o.store.SCMTokenFor(ctx, agent.OwnerID, page.Hostname())
 	}
 	if errors.Is(err, store.ErrNotFound) {
 		return
@@ -265,14 +271,14 @@ func (o *Orchestrator) announceReview(ctx context.Context, run store.AgentRun, t
 		return
 	}
 	failure := ""
-	scanned, err := PostReviewComment(ctx, scmHTTPClient, connection, token, task.SourceURL,
-		ReviewComment(summary, findings, 10), o.contentSettings(ctx))
+	outcome, err := PostReviewComment(ctx, scmHTTPClient, connection, token, task.SourceURL,
+		ReviewComment(summary, findings, 10), o.contentGuard(ctx, agent))
 	// Recorded once the comment settled — posted, or withheld here. A forge that
 	// refused the request posted nothing, and a finding in text that never left
 	// would read in the trail as one that did.
 	var withheld WithheldError
 	if err == nil || errors.As(err, &withheld) {
-		recordContentScan(ctx, o.store, o.logger, scanEventReview, run.AgentID, scanned, map[string]any{
+		recordContentScan(ctx, o.store, o.logger, scanEventReview, run.AgentID, outcome, map[string]any{
 			"boundary": "리뷰 코멘트", "host": connection.Host, "task": task.ID, "run": run.ID,
 		})
 	}
@@ -283,10 +289,12 @@ func (o *Orchestrator) announceReview(ctx context.Context, run store.AgentRun, t
 			// review that posts nothing looks exactly like a clean one from the pull
 			// request, and the difference has to be readable somewhere.
 			o.logger.Warn("the review was withheld by the content scan",
-				"run", run.ID, "host", connection.Host, "classes", withheld.Classes)
+				"run", run.ID, "host", connection.Host, "classes", withheld.Classes,
+				"policyRule", outcome.Decision.RuleID)
 			o.event(ctx, run, "review.withheld",
 				connection.Host+"의 원래 페이지에 리뷰를 남기지 않았습니다: "+withheld.Error(),
-				map[string]any{"url": task.SourceURL, "classes": withheld.Classes})
+				map[string]any{"url": task.SourceURL, "classes": withheld.Classes,
+					"policyRule": outcome.Decision.RuleID})
 			return
 		}
 		failure = err.Error()
@@ -414,14 +422,31 @@ func CheckSCMConnection(ctx context.Context, client *http.Client, connection sto
 // person is waiting on the answer with the form still open.
 var SCMCheckClient = &http.Client{Timeout: 10 * time.Second}
 
-// contentSettings reads what this deployment allows out of the building. An
-// unreadable setting scans nothing rather than refusing everything: a review is
-// not the place to discover that the settings table is unavailable, and a
-// deployment that has not configured DLP is not silently told it has.
-func (o *Orchestrator) contentSettings(ctx context.Context) dlp.Settings {
-	var settings dlp.Settings
-	if err := o.store.Setting(ctx, dlp.SettingKey, &settings); err != nil {
-		return dlp.Settings{}
+// contentGuard reads what this deployment allows out of the building: the
+// scanner's settings, the central policy, and who the reviewing agent belongs
+// to.
+//
+// An unreadable setting scans nothing and decides nothing rather than refusing
+// everything: a review is not the place to discover that the settings table is
+// unavailable, and a deployment that has not configured DLP is not silently told
+// it has. An owner nobody can read is logged and left empty, the answer every
+// other gate on this platform gives.
+func (o *Orchestrator) contentGuard(ctx context.Context, agent store.Agent) ContentGuard {
+	guard := ContentGuard{Agent: agent.Name, AgentID: agent.ID}
+	if err := o.store.Setting(ctx, dlp.SettingKey, &guard.Scan); err != nil {
+		guard.Scan = dlp.Settings{}
 	}
-	return settings
+	if err := o.store.Setting(ctx, policy.SettingKey, &guard.Policy); err != nil {
+		guard.Policy = policy.Document{}
+	}
+	if owner := strings.TrimSpace(agent.OwnerID); owner != "" {
+		user, err := o.store.UserByID(ctx, owner)
+		if err != nil {
+			o.logger.Warn("the owner of this agent is unreadable; user and role rules are not being applied",
+				"owner", owner, "agent", agent.ID, "error", err)
+		} else {
+			guard.Owner = user
+		}
+	}
+	return guard
 }

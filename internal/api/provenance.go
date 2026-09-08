@@ -138,7 +138,16 @@ func (s *Server) testProvenance(w http.ResponseWriter, r *http.Request) {
 	// wrote itself, so a finding in it would be a finding about the sample rather
 	// than about anybody's traffic. The trail this send belongs in is
 	// provenance.test, below.
-	if _, err := execution.SendDecision(r.Context(), settings, s.dlpSettings(r), record); err != nil {
+	// The policy travels with the scanner's settings so that this button exercises
+	// the decision the dispatcher will make and not a weaker one — the reason
+	// there is a single SendDecision in the first place. The sample carries
+	// nothing sensitive, so nothing is found and no rule is consulted; a
+	// deployment that has written one still sees the same code path.
+	guard := execution.ContentGuard{
+		Scan: s.dlpSettings(r), Policy: s.policyDocument(r),
+		Agent: record.Agent, AgentID: record.AgentID, Owner: u,
+	}
+	if _, err := execution.SendDecision(r.Context(), settings, guard, record); err != nil {
 		s.store.Audit(r.Context(), &u, "provenance.test", "provenance", "", "failure", clientIP(r),
 			map[string]any{"endpoint": settings.Endpoint, "error": err.Error()})
 		writeError(w, http.StatusBadGateway, "provenance_unreachable", err.Error())

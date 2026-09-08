@@ -26,6 +26,7 @@ const EFFECT_LABELS: Record<string, string> = { allow: '허용', deny: '차단',
 const ACTION_LABELS: Record<string, string> = {
   'task.create': '작업 생성', 'runtime.start': '런타임 시작', 'tool.call': 'MCP 도구 호출',
   'model.call': '모델 호출', 'workflow.run': '워크플로 실행', 'agent.update': '에이전트 수정',
+  'decision.export': '결정 기록 전송', 'review.comment': '리뷰 코멘트 게시',
 }
 const emptyRule = (): Rule => ({ id: '', effect: 'deny', actions: ['tool.call'], reason: '' })
 const list = (values?: string[]) => (values ?? []).join(', ')
@@ -100,6 +101,7 @@ export function AdminPolicy() {
       { title: '위에서 아래로, 처음 맞는 규칙이 결정합니다', body: '방화벽 규칙과 같습니다. 좁은 예외(허용)를 넓은 차단 위에 두면 그 예외가 이깁니다.' },
       { title: '비워 둔 조건은 전체를 뜻합니다', body: '규칙은 자신이 채운 조건이 모두 맞을 때 적용됩니다. 도구 이름은 끝에 *를 붙여 "delete_*", "github/delete_*"처럼 쓸 수 있습니다.' },
       { title: '도구 규칙은 Pod 안에서 강제됩니다', body: '저장하면 실행 중인 런타임의 게이트웨이 설정까지 다시 씁니다. 에이전트가 우회할 수 없는 자리에서 막히고, 차단된 도구는 목록에도 보이지 않습니다.' },
+      { title: '내용이 밖으로 나가는 동작은 검사에서 무언가 나왔을 때 판정합니다', body: '모델 호출, Agent 실행 요청, 결정 기록 전송, 리뷰 코멘트 게시는 내용 검사(DLP)가 데이터 등급을 찾은 요청에만 규칙을 적용합니다. 아무것도 나오지 않은 요청은 규칙을 거치지 않고 그대로 나갑니다.' },
       { title: '저장 전에 시뮬레이터로 확인하세요', body: '아래 시뮬레이터는 저장하지 않은 편집 내용 그대로 판정해 주고, 어떤 규칙이 결정했는지 보여 줍니다.' },
     ]} />
     {error && <ErrorBanner message={error} onClose={() => setError('')} />}
