@@ -321,7 +321,7 @@ func (o *Orchestrator) run(ctx context.Context, run *store.AgentRun, task store.
 
 	plan := ""
 	if len(resume.transcript) == 0 {
-		plan = o.plan(ctx, run, task, goal, model)
+		plan = o.plan(ctx, run, task, agent, goal, model)
 	}
 
 	transcript, outcome := o.think(ctx, run, task, agent, goal, model, plan, resume, o.environment(ctx, agent, goal, acquired != nil))

@@ -71,6 +71,44 @@ func TestARuleNamingTheUserDecidesAtTheFlowBoundary(t *testing.T) {
 	}
 }
 
+// A step that names a boundary instead of an agent escapes every rule about
+// that agent.
+//
+// This is what the planner and the completion judge did: they went to the model
+// as "Planner" and "Completion Evaluator", with no agent id, carrying the
+// task's own input and the run's whole transcript. A rule written about the
+// agent — the narrowest and most common thing an operator writes — matched
+// nothing there, and the global action for the class decided instead.
+func TestARuleAboutAnAgentNeedsTheStepToSayWhichAgent(t *testing.T) {
+	document := policy.Document{Rules: []policy.Rule{{
+		ID: "support-bot-no-rrn", Effect: policy.Deny,
+		Actions: []string{policy.ActionModelCall}, Agents: []string{"지원 봇"},
+		DataClasses: []string{"rrn"}, Reason: "이 에이전트는 주민등록번호를 모델로 보낼 수 없습니다.",
+	}}}
+	owner := store.User{ID: "user-1", Username: "kim", Role: "user"}
+
+	labelled := workflow.Step{ID: "plan", AgentName: "Planner", OwnerID: "user-1"}
+	if decision := policy.Evaluate(document, requestFor(policy.ActionModelCall, labelled, owner, []string{"rrn"})); decision.Effect != policy.Allow {
+		t.Fatalf("this test no longer describes the gap it guards: %q", decision.Effect)
+	}
+
+	// The same call, made as the agent it is being made for.
+	named := workflow.Step{ID: "plan", AgentID: "agent-1", AgentName: "지원 봇", OwnerID: "user-1"}
+	decision := policy.Evaluate(document, requestFor(policy.ActionModelCall, named, owner, []string{"rrn"}))
+	if decision.Effect != policy.Deny || decision.RuleID != "support-bot-no-rrn" {
+		t.Errorf("the agent's own planner prompt was decided %q by %q", decision.Effect, decision.RuleID)
+	}
+	// A rule may name the agent by id rather than by the name somebody typed,
+	// and both have to reach this boundary.
+	byID := policy.Document{Rules: []policy.Rule{{
+		ID: "by-id", Effect: policy.Deny, Actions: []string{policy.ActionModelCall},
+		Agents: []string{"agent-1"}, Reason: "x",
+	}}}
+	if decision := policy.Evaluate(byID, requestFor(policy.ActionModelCall, named, owner, []string{"rrn"})); decision.Effect != policy.Deny {
+		t.Errorf("a rule naming the agent's id decided %q", decision.Effect)
+	}
+}
+
 // An owner nobody can read leaves the request as it always was rather than
 // refusing the run: the runtime gate and the task gate both start the work when
 // the owner is unreadable, and one boundary that stops instead would take the

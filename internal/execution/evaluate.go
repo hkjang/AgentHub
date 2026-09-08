@@ -42,7 +42,7 @@ func (o *Orchestrator) evaluate(ctx context.Context, run *store.AgentRun, task s
 	result := strings.TrimSpace(strings.Join(transcript, "\n\n"))
 	o.saveArtifacts(ctx, run, task, agent, transcript)
 
-	verdict := o.judgeCompletion(ctx, run, goal, model, transcript)
+	verdict := o.judgeCompletion(ctx, run, agent, goal, model, transcript)
 	encoded, _ := json.Marshal(verdict)
 	run.Completion = encoded
 
@@ -53,7 +53,7 @@ func (o *Orchestrator) evaluate(ctx context.Context, run *store.AgentRun, task s
 	return Outcome{Status: store.TaskCompleted, Result: result}
 }
 
-func (o *Orchestrator) judgeCompletion(ctx context.Context, run *store.AgentRun, goal store.AgentGoal, model resolvedModel, transcript []string) Verdict {
+func (o *Orchestrator) judgeCompletion(ctx context.Context, run *store.AgentRun, agent store.Agent, goal store.AgentGoal, model resolvedModel, transcript []string) Verdict {
 	// With nothing to check against, only the agent's own declaration is available
 	// whatever the configured strategy claims.
 	if len(goal.SuccessCriteria) == 0 {
@@ -65,19 +65,35 @@ func (o *Orchestrator) judgeCompletion(ctx context.Context, run *store.AgentRun,
 	case "rule":
 		return ruleVerdict(goal, transcript)
 	case "judge":
-		return o.judgeVerdict(ctx, run, goal, model, transcript)
+		return o.judgeVerdict(ctx, run, agent, goal, model, transcript)
 	case "composite":
 		rule := ruleVerdict(goal, transcript)
 		if !rule.Passed {
 			rule.Strategy = "composite"
 			return rule
 		}
-		judge := o.judgeVerdict(ctx, run, goal, model, transcript)
+		judge := o.judgeVerdict(ctx, run, agent, goal, model, transcript)
 		judge.Strategy = "composite"
 		judge.Met, judge.Unmet = rule.Met, rule.Unmet
 		return judge
 	default:
 		return Verdict{Strategy: goal.CompletionStrategy, Passed: true, Reason: "알 수 없는 완료 판정 방식이라 Agent 선언을 사용했습니다."}
+	}
+}
+
+// judgeStep is the boundary the transcript crosses on its way to the judge.
+//
+// Like the planner's, it says which agent this is: the text here is everything
+// the agent said and read during the run, which is the largest thing this
+// platform ever sends to a model, and a rule naming the agent has to cover it.
+func judgeStep(run *store.AgentRun, agent store.Agent, model resolvedModel) workflow.Step {
+	return workflow.Step{
+		ID: "judge", AgentID: agent.ID, AgentName: agent.Name, OwnerID: run.OwnerID,
+		SystemPrompt: "당신은 엄격한 평가자입니다. 실행 기록이 완료 조건을 실제로 충족했는지 판정하고, 반드시 " +
+			`{"passed": true|false, "reason": "...", "unmet": ["충족되지 않은 완료 조건"]} 형식의 JSON만 출력하세요. ` +
+			"unmet 에는 주어진 완료 조건 문장만 그대로 넣고, 새로운 조건을 만들지 마세요. " +
+			"Agent가 완료했다고 주장하더라도 근거가 없으면 passed는 false입니다.",
+		ModelBaseURL: model.BaseURL, ModelName: model.ModelName, ModelAPIKey: model.APIKey,
 	}
 }
 
@@ -142,15 +158,8 @@ func significantWords(criterion string) []string {
 // on should not be read out of prose, and a judge should not be able to fail a
 // task against a requirement nobody wrote. A gateway that cannot constrain the
 // answer is asked in prose instead and the verdict says so.
-func (o *Orchestrator) judgeVerdict(ctx context.Context, run *store.AgentRun, goal store.AgentGoal, model resolvedModel, transcript []string) Verdict {
-	step := workflow.Step{
-		ID: "judge", AgentName: "Completion Evaluator", OwnerID: run.OwnerID,
-		SystemPrompt: "당신은 엄격한 평가자입니다. 실행 기록이 완료 조건을 실제로 충족했는지 판정하고, 반드시 " +
-			`{"passed": true|false, "reason": "...", "unmet": ["충족되지 않은 완료 조건"]} 형식의 JSON만 출력하세요. ` +
-			"unmet 에는 주어진 완료 조건 문장만 그대로 넣고, 새로운 조건을 만들지 마세요. " +
-			"Agent가 완료했다고 주장하더라도 근거가 없으면 passed는 false입니다.",
-		ModelBaseURL: model.BaseURL, ModelName: model.ModelName, ModelAPIKey: model.APIKey,
-	}
+func (o *Orchestrator) judgeVerdict(ctx context.Context, run *store.AgentRun, agent store.Agent, goal store.AgentGoal, model resolvedModel, transcript []string) Verdict {
+	step := judgeStep(run, agent, model)
 	var b strings.Builder
 	b.WriteString("# 완료 조건\n")
 	for _, criterion := range goal.SuccessCriteria {
