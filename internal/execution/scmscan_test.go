@@ -60,7 +60,7 @@ func TestAReviewCommentIsScannedOnItsWayOut(t *testing.T) {
 	}}, 10)
 	source := forge.URL + "/acme/store/pulls/9"
 
-	_, err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret", source, comment, blockingRRN())
+	_, err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret", source, comment, ContentGuard{Scan: blockingRRN()})
 	var withheld WithheldError
 	if !asWithheld(err, &withheld) {
 		t.Fatalf("a blocked comment was not refused: %v", err)
@@ -72,7 +72,7 @@ func TestAReviewCommentIsScannedOnItsWayOut(t *testing.T) {
 		t.Fatalf("a blocked comment reached the forge anyway: %q", bodies)
 	}
 
-	if _, err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret", source, comment, redactingRRN()); err != nil {
+	if _, err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret", source, comment, ContentGuard{Scan: redactingRRN()}); err != nil {
 		t.Fatalf("a redactable comment was not posted: %v", err)
 	}
 	if len(bodies) != 1 {
@@ -91,7 +91,7 @@ func TestAReviewCommentIsScannedOnItsWayOut(t *testing.T) {
 		t.Fatalf("redaction took the whole finding with it: %q", posted.Body)
 	}
 
-	if _, err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret", source, comment, dlp.Settings{}); err != nil {
+	if _, err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret", source, comment, ContentGuard{}); err != nil {
 		t.Fatalf("an unconfigured deployment could not post: %v", err)
 	}
 	if len(bodies) != 2 || !strings.Contains(bodies[1], "900101-1234568") {
@@ -175,7 +175,11 @@ func TestTheSettingsAreReadFromTheDeployment(t *testing.T) {
 	if end := strings.Index(body, "\n// scmHTTPClient"); end > 0 {
 		body = body[:end]
 	}
-	if !strings.Contains(body, "o.contentSettings(ctx)") {
+	// The agent for the credential and the rules that name an agent, the task for
+	// the person a rule about a person decides against. Which person that is, is
+	// checked against a real database in contentpolicy_live_test.go rather than
+	// here.
+	if !strings.Contains(body, "o.contentGuard(ctx, agent, task)") {
 		t.Error("announceReview does not read this deployment's content settings")
 	}
 	if !strings.Contains(source, "o.store.Setting(ctx, dlp.SettingKey") {

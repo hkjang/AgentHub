@@ -44,13 +44,13 @@ func TestWhatTheScanFoundComesBackFromEveryBoundary(t *testing.T) {
 
 	for _, boundary := range []struct {
 		name string
-		send func(dlp.Settings) (dlp.Result, error)
+		send func(dlp.Settings) (ContentOutcome, error)
 	}{
-		{"결정 기록", func(scan dlp.Settings) (dlp.Result, error) {
-			return SendDecision(context.Background(), settings, scan, record)
+		{"결정 기록", func(scan dlp.Settings) (ContentOutcome, error) {
+			return SendDecision(context.Background(), settings, ContentGuard{Scan: scan}, record)
 		}},
-		{"리뷰 코멘트", func(scan dlp.Settings) (dlp.Result, error) {
-			return PostReviewComment(context.Background(), forge.Client(), connection, "s3cret", page, comment, scan)
+		{"리뷰 코멘트", func(scan dlp.Settings) (ContentOutcome, error) {
+			return PostReviewComment(context.Background(), forge.Client(), connection, "s3cret", page, comment, ContentGuard{Scan: scan})
 		}},
 	} {
 		t.Run(boundary.name, func(t *testing.T) {
@@ -60,8 +60,8 @@ func TestWhatTheScanFoundComesBackFromEveryBoundary(t *testing.T) {
 			if err != nil {
 				t.Fatalf("an unscanned send failed: %v", err)
 			}
-			if len(clean.Findings) != 0 {
-				t.Errorf("a deployment with no scanner reported %d findings", len(clean.Findings))
+			if len(clean.Scan.Findings) != 0 {
+				t.Errorf("a deployment with no scanner reported %d findings", len(clean.Scan.Findings))
 			}
 
 			// 기록만: the text goes out exactly as it was written, and the entry is
@@ -70,17 +70,17 @@ func TestWhatTheScanFoundComesBackFromEveryBoundary(t *testing.T) {
 			if err != nil {
 				t.Fatalf("an audited send failed: %v", err)
 			}
-			if len(audited.Findings) == 0 {
+			if len(audited.Scan.Findings) == 0 {
 				t.Fatal("a class set to 기록만 found nothing to record, so the trail this screen points at stays empty")
 			}
 			if audited.Outcome() != dlp.OutcomeAudited {
 				t.Errorf("the payload was recorded as %q rather than passed through", audited.Outcome())
 			}
-			if finding := audited.Findings[0]; finding.Class != "rrn" || finding.Action != dlp.Audit {
+			if finding := audited.Scan.Findings[0]; finding.Class != "rrn" || finding.Action != dlp.Audit {
 				t.Errorf("the finding does not say what was found or what was done: %+v", finding)
 			}
-			if strings.Contains(audited.Findings[0].Sample, rrn) {
-				t.Errorf("the audit trail carries the value itself: %q", audited.Findings[0].Sample)
+			if strings.Contains(audited.Scan.Findings[0].Sample, rrn) {
+				t.Errorf("the audit trail carries the value itself: %q", audited.Scan.Findings[0].Sample)
 			}
 
 			redacted, err := boundary.send(redacting)
@@ -95,7 +95,7 @@ func TestWhatTheScanFoundComesBackFromEveryBoundary(t *testing.T) {
 			if err == nil {
 				t.Fatal("a class configured to block was sent anyway")
 			}
-			if refused.Outcome() != dlp.OutcomeBlocked || len(refused.Findings) == 0 {
+			if refused.Outcome() != dlp.OutcomeBlocked || len(refused.Scan.Findings) == 0 {
 				t.Errorf("the refusal came back without what it found: %+v", refused)
 			}
 		})
@@ -110,7 +110,7 @@ func TestBothSendersRecordWhatCameBack(t *testing.T) {
 	for _, boundary := range []struct {
 		file, send, event string
 	}{
-		{"provenance.go", "SendDecision(ctx, settings, d.contentSettings(ctx), record)", "scanEventExport"},
+		{"provenance.go", "SendDecision(ctx, settings, d.contentGuard(ctx, record), record)", "scanEventExport"},
 		{"scmpost.go", "PostReviewComment(ctx, scmHTTPClient, connection, token, task.SourceURL", "scanEventReview"},
 	} {
 		body, err := os.ReadFile(boundary.file)

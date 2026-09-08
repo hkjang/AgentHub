@@ -85,7 +85,7 @@ func TestSendingReachesTheAddressWithItsCredential(t *testing.T) {
 	}))
 	defer server.Close()
 	settings := store.ProvenanceSettings{Endpoint: server.URL, Header: "X-Audit-Key", Token: "s3cret"}
-	if _, err := SendDecision(context.Background(), settings, dlp.Settings{}, store.DecisionRecord{DecisionID: "run:abc", Outcome: "test"}); err != nil {
+	if _, err := SendDecision(context.Background(), settings, ContentGuard{}, store.DecisionRecord{DecisionID: "run:abc", Outcome: "test"}); err != nil {
 		t.Fatalf("a receiver that answered 200 was reported as a failure: %v", err)
 	}
 	if gotAuth != "s3cret" {
@@ -105,7 +105,7 @@ func TestSendingReachesTheAddressWithItsCredential(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer refuses.Close()
-	_, err := SendDecision(context.Background(), store.ProvenanceSettings{Endpoint: refuses.URL}, dlp.Settings{}, store.DecisionRecord{})
+	_, err := SendDecision(context.Background(), store.ProvenanceSettings{Endpoint: refuses.URL}, ContentGuard{}, store.DecisionRecord{})
 	if err == nil {
 		t.Fatal("a receiver answering 404 was read as success")
 	}
@@ -268,7 +268,7 @@ func TestARecordIsScannedOnItsWayOut(t *testing.T) {
 	defer server.Close()
 	sink := store.ProvenanceSettings{Endpoint: server.URL}
 
-	_, err := SendDecision(context.Background(), sink, blocking, record)
+	_, err := SendDecision(context.Background(), sink, ContentGuard{Scan: blocking}, record)
 	var withheld WithheldError
 	if !errors.As(err, &withheld) {
 		t.Fatalf("sending a blocked record was not refused: %v", err)
@@ -280,7 +280,7 @@ func TestARecordIsScannedOnItsWayOut(t *testing.T) {
 		t.Fatalf("a blocked record reached the address anyway: %q", arrived)
 	}
 
-	if _, err := SendDecision(context.Background(), sink, redacting, record); err != nil {
+	if _, err := SendDecision(context.Background(), sink, ContentGuard{Scan: redacting}, record); err != nil {
 		t.Fatalf("a redactable record was not sent: %v", err)
 	}
 	if len(arrived) != 1 || strings.Contains(arrived[0], "900101-1234568") {
@@ -297,7 +297,7 @@ func TestAWithheldRecordIsLoudAndFinal(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := string(body)
-	send := strings.Index(source, "SendDecision(ctx, settings, d.contentSettings(ctx), record)")
+	send := strings.Index(source, "SendDecision(ctx, settings, d.contentGuard(ctx, record), record)")
 	if send < 0 {
 		t.Fatal("the dispatcher sends without handing the send this deployment's scanner settings")
 	}

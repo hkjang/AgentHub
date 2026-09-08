@@ -61,7 +61,7 @@ func TestAReviewBlockedByTheScannerLeavesTheForgeAlone(t *testing.T) {
 		FilePath: "app/pay.py", StartLine: 5, Severity: "high",
 		Message: "테스트 픽스처에 실제 주민등록번호 900101-1234568 가 그대로 들어 있습니다.",
 	}}
-	orchestrator.announceReview(ctx, store.AgentRun{}, task, owner, "지적 1건", findings)
+	orchestrator.announceReview(ctx, store.AgentRun{}, task, store.Agent{OwnerID: owner}, "지적 1건", findings)
 
 	if reached {
 		t.Fatal("a comment the scanner blocked was posted to the forge anyway")

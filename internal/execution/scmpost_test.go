@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hkjang/AgentHub/internal/dlp"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -104,7 +103,7 @@ func TestTheReviewSaysWhatItFoundOnThePage(t *testing.T) {
 	defer forge.Close()
 	connection := store.SCMConnection{Host: strings.TrimPrefix(forge.URL, "http://"), Kind: "gitea", APIBase: forge.URL + "/api/v1"}
 	_, err := PostReviewComment(context.Background(), forge.Client(), connection,
-		"s3cret", forge.URL+"/acme/store/pulls/9", "빠뜨린 오류 처리 2건", dlp.Settings{})
+		"s3cret", forge.URL+"/acme/store/pulls/9", "빠뜨린 오류 처리 2건", ContentGuard{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +131,7 @@ func TestARefusalIsReportedInTheForgesOwnWords(t *testing.T) {
 	defer forge.Close()
 	connection := store.SCMConnection{Host: strings.TrimPrefix(forge.URL, "http://"), Kind: "gitea", APIBase: forge.URL + "/api/v1"}
 	_, err := PostReviewComment(context.Background(), forge.Client(), connection, "stale",
-		forge.URL+"/acme/store/pulls/9", "리뷰 결과", dlp.Settings{})
+		forge.URL+"/acme/store/pulls/9", "리뷰 결과", ContentGuard{})
 	if err == nil {
 		t.Fatal("a refused comment was reported as posted")
 	}
@@ -157,7 +156,7 @@ func TestASecondReviewReplacesTheFirstComment(t *testing.T) {
 	defer forge.Close()
 	connection := store.SCMConnection{Host: strings.TrimPrefix(forge.URL, "http://"), Kind: "gitea", APIBase: forge.URL + "/api/v1"}
 	if _, err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret",
-		forge.URL+"/acme/store/pulls/9", ReviewComment("지적 없음", nil, 10), dlp.Settings{}); err != nil {
+		forge.URL+"/acme/store/pulls/9", ReviewComment("지적 없음", nil, 10), ContentGuard{}); err != nil {
 		t.Fatal(err)
 	}
 	if method != http.MethodPatch {
@@ -188,7 +187,7 @@ func TestSomebodyElsesCommentIsNeverRewritten(t *testing.T) {
 	defer forge.Close()
 	connection := store.SCMConnection{Host: strings.TrimPrefix(forge.URL, "http://"), Kind: "gitea", APIBase: forge.URL + "/api/v1"}
 	if _, err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret",
-		forge.URL+"/acme/store/pulls/9", ReviewComment("지적 1건", nil, 10), dlp.Settings{}); err != nil {
+		forge.URL+"/acme/store/pulls/9", ReviewComment("지적 1건", nil, 10), ContentGuard{}); err != nil {
 		t.Fatal(err)
 	}
 	if method != http.MethodPost {
@@ -214,7 +213,7 @@ func TestAnUnreadablePageStillGetsTheReview(t *testing.T) {
 	defer forge.Close()
 	connection := store.SCMConnection{Host: strings.TrimPrefix(forge.URL, "http://"), Kind: "gitea", APIBase: forge.URL + "/api/v1"}
 	if _, err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret",
-		forge.URL+"/acme/store/pulls/9", ReviewComment("지적 1건", nil, 10), dlp.Settings{}); err != nil {
+		forge.URL+"/acme/store/pulls/9", ReviewComment("지적 1건", nil, 10), ContentGuard{}); err != nil {
 		t.Fatal(err)
 	}
 	if method != http.MethodPost {
@@ -242,7 +241,7 @@ func TestBitbucketsOwnShapeIsUnderstood(t *testing.T) {
 	defer forge.Close()
 	connection := store.SCMConnection{Host: strings.TrimPrefix(forge.URL, "http://"), Kind: "bitbucket", APIBase: forge.URL + "/2.0"}
 	if _, err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret",
-		forge.URL+"/acme/store/pull-requests/3", ReviewComment("지적 없음", nil, 10), dlp.Settings{}); err != nil {
+		forge.URL+"/acme/store/pull-requests/3", ReviewComment("지적 없음", nil, 10), ContentGuard{}); err != nil {
 		t.Fatal(err)
 	}
 	if method != http.MethodPut {
@@ -269,7 +268,7 @@ func TestGitLabEditsItsNoteTheWayGitLabDoes(t *testing.T) {
 	defer forge.Close()
 	connection := store.SCMConnection{Host: strings.TrimPrefix(forge.URL, "http://"), Kind: "gitlab", APIBase: forge.URL + "/api/v4"}
 	if _, err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret",
-		forge.URL+"/acme/store/-/merge_requests/7", ReviewComment("지적 없음", nil, 10), dlp.Settings{}); err != nil {
+		forge.URL+"/acme/store/-/merge_requests/7", ReviewComment("지적 없음", nil, 10), ContentGuard{}); err != nil {
 		t.Fatal(err)
 	}
 	if method != http.MethodPut {
@@ -300,7 +299,7 @@ func TestTheCommentThePlatformWritesIsOneItCanFindAgain(t *testing.T) {
 	defer forge.Close()
 	connection := store.SCMConnection{Host: strings.TrimPrefix(forge.URL, "http://"), Kind: "gitea", APIBase: forge.URL + "/api/v1"}
 	if _, err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret",
-		forge.URL+"/acme/store/pulls/9", ReviewComment("지적 없음", nil, 10), dlp.Settings{}); err != nil {
+		forge.URL+"/acme/store/pulls/9", ReviewComment("지적 없음", nil, 10), ContentGuard{}); err != nil {
 		t.Fatal(err)
 	}
 	if method != http.MethodPatch {
