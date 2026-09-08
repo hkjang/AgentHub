@@ -85,7 +85,7 @@ func TestSendingReachesTheAddressWithItsCredential(t *testing.T) {
 	}))
 	defer server.Close()
 	settings := store.ProvenanceSettings{Endpoint: server.URL, Header: "X-Audit-Key", Token: "s3cret"}
-	if err := SendDecision(context.Background(), settings, dlp.Settings{}, store.DecisionRecord{DecisionID: "run:abc", Outcome: "test"}); err != nil {
+	if _, err := SendDecision(context.Background(), settings, dlp.Settings{}, store.DecisionRecord{DecisionID: "run:abc", Outcome: "test"}); err != nil {
 		t.Fatalf("a receiver that answered 200 was reported as a failure: %v", err)
 	}
 	if gotAuth != "s3cret" {
@@ -105,7 +105,7 @@ func TestSendingReachesTheAddressWithItsCredential(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer refuses.Close()
-	err := SendDecision(context.Background(), store.ProvenanceSettings{Endpoint: refuses.URL}, dlp.Settings{}, store.DecisionRecord{})
+	_, err := SendDecision(context.Background(), store.ProvenanceSettings{Endpoint: refuses.URL}, dlp.Settings{}, store.DecisionRecord{})
 	if err == nil {
 		t.Fatal("a receiver answering 404 was read as success")
 	}
@@ -231,18 +231,18 @@ func TestARecordIsScannedOnItsWayOut(t *testing.T) {
 	}
 
 	// Nothing configured must change nothing: almost every deployment.
-	same, _, blocked := scrubDecision(dlp.Settings{}, record)
-	if blocked || same.Scenario != id {
+	same, untouched := scrubDecision(dlp.Settings{}, record)
+	if untouched.Blocked || same.Scenario != id {
 		t.Errorf("a deployment with no scanner had its record changed: %q", same.Scenario)
 	}
 
 	redacting := dlp.Settings{Enabled: true, Classes: map[string]string{"rrn": dlp.Redact}}
-	scrubbed, findings, blocked := scrubDecision(redacting, record)
-	if blocked {
+	scrubbed, scan := scrubDecision(redacting, record)
+	if scan.Blocked {
 		t.Error("redaction withheld the record instead of redacting it")
 	}
-	if len(findings) != 3 {
-		t.Errorf("want the national ID found in all three fields, found %d", len(findings))
+	if len(scan.Findings) != 3 {
+		t.Errorf("want the national ID found in all three fields, found %d", len(scan.Findings))
 	}
 	for name, value := range map[string]string{
 		"scenario": scrubbed.Scenario, "reasoning": scrubbed.Reasoning, "sourceUrl": scrubbed.SourceURL,
@@ -253,7 +253,7 @@ func TestARecordIsScannedOnItsWayOut(t *testing.T) {
 	}
 
 	blocking := dlp.Settings{Enabled: true, Classes: map[string]string{"rrn": dlp.Block}}
-	if _, _, blocked = scrubDecision(blocking, record); !blocked {
+	if _, refused := scrubDecision(blocking, record); !refused.Blocked {
 		t.Error("a class configured to block was sent to an external address anyway")
 	}
 
@@ -268,7 +268,7 @@ func TestARecordIsScannedOnItsWayOut(t *testing.T) {
 	defer server.Close()
 	sink := store.ProvenanceSettings{Endpoint: server.URL}
 
-	err := SendDecision(context.Background(), sink, blocking, record)
+	_, err := SendDecision(context.Background(), sink, blocking, record)
 	var withheld WithheldError
 	if !errors.As(err, &withheld) {
 		t.Fatalf("sending a blocked record was not refused: %v", err)
@@ -280,7 +280,7 @@ func TestARecordIsScannedOnItsWayOut(t *testing.T) {
 		t.Fatalf("a blocked record reached the address anyway: %q", arrived)
 	}
 
-	if err := SendDecision(context.Background(), sink, redacting, record); err != nil {
+	if _, err := SendDecision(context.Background(), sink, redacting, record); err != nil {
 		t.Fatalf("a redactable record was not sent: %v", err)
 	}
 	if len(arrived) != 1 || strings.Contains(arrived[0], "900101-1234568") {

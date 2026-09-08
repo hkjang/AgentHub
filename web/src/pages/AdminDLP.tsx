@@ -144,7 +144,7 @@ export function AdminDLP() {
       <h3><ShieldAlert size={16} /> 적용 시점</h3>
       <p className="field-hint">
         모델 호출 검사는 저장 후 <b>5초 안에</b> 적용됩니다. 도구 호출 검사는 설정이 Pod로 전달되어야 하므로, 저장 시 실행 중인 런타임 정의를 다시 쓰고 해당 Pod가 재시작된 뒤 적용됩니다.
-        발견 기록은 <Link to="/admin/operations">로그 · 감사</Link>에서 <code>dlp.model</code>, <code>dlp.tool</code> 동작으로 검색할 수 있습니다.
+        발견 기록은 <Link to="/admin/operations">로그 · 감사</Link>에서 <code>dlp.model</code>, <code>dlp.flow</code>, <code>dlp.tool</code>, <code>dlp.export</code>, <code>dlp.review</code> 동작으로 검색할 수 있습니다 — 각각 모델 호출, Agent 실행 요청, 도구 호출, 결정 기록 전송, 리뷰 코멘트 게시입니다.
       </p>
     </section>
   </div>

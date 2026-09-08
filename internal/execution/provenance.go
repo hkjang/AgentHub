@@ -49,8 +49,17 @@ func (d *Dispatcher) exportDecision(ctx context.Context, event store.PlatformEve
 	if err != nil {
 		return fmt.Errorf("결정 기록을 만들지 못했습니다: %w", err)
 	}
-	if err := SendDecision(ctx, settings, d.contentSettings(ctx), record); err != nil {
-		var withheld WithheldError
+	result, err := SendDecision(ctx, settings, d.contentSettings(ctx), record)
+	// Recorded once the send settled — sent, or refused here. A sink that
+	// answered with an error is retried by the dispatcher, and an entry per
+	// attempt would count one payload as many.
+	var withheld WithheldError
+	if err == nil || errors.As(err, &withheld) {
+		recordContentScan(ctx, d.store, d.logger, scanEventExport, record.AgentID, result, map[string]any{
+			"boundary": "결정 기록", "agent": record.Agent, "task": record.TaskID, "run": record.RunID,
+		})
+	}
+	if err != nil {
 		if errors.As(err, &withheld) {
 			// Not retried: a record this deployment refuses to send will be refused
 			// again, and the dispatcher's retry exists for sinks that come back. It
@@ -73,25 +82,28 @@ func (d *Dispatcher) exportDecision(ctx context.Context, event store.PlatformEve
 // the request the dispatcher will make — the same address, the same header, the
 // same timeout — rather than a second implementation that can agree with the
 // screen and disagree with the deployment.
-func SendDecision(ctx context.Context, settings store.ProvenanceSettings, scan dlp.Settings, record store.DecisionRecord) error {
+// What the scan found comes back with the error so the caller can record it. A
+// finding the platform acted on and did not write down is one the operator
+// reading the DLP trail cannot see, and a redaction is exactly as invisible as a
+// block is loud.
+func SendDecision(ctx context.Context, settings store.ProvenanceSettings, scan dlp.Settings, record store.DecisionRecord) (dlp.Result, error) {
 	// Scanned here rather than by the caller, because a caller can forget. The
 	// export was one of two ways text left this deployment uninspected — the other
 	// was the review comment posted back to a forge — and a sending path added
 	// later must not be able to repeat that.
-	record, findings, blocked := scrubDecision(scan, record)
-	if blocked {
-		result := dlp.Result{Findings: findings}
-		return WithheldError{Subject: "결정 기록", Classes: result.Classes(), Labels: result.Labels()}
+	record, result := scrubDecision(scan, record)
+	if result.Blocked {
+		return result, WithheldError{Subject: "결정 기록", Classes: result.Classes(), Labels: result.Labels()}
 	}
 	body, err := json.Marshal(record)
 	if err != nil {
-		return fmt.Errorf("결정 기록을 인코딩하지 못했습니다: %w", err)
+		return result, fmt.Errorf("결정 기록을 인코딩하지 못했습니다: %w", err)
 	}
 	send, cancel := context.WithTimeout(ctx, provenanceTimeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(send, http.MethodPost, settings.Endpoint, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("결정 기록을 보내지 못했습니다: %w", err)
+		return result, fmt.Errorf("결정 기록을 보내지 못했습니다: %w", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	if settings.Header != "" && settings.Token != "" {
@@ -99,13 +111,13 @@ func SendDecision(ctx context.Context, settings store.ProvenanceSettings, scan d
 	}
 	response, err := provenanceClient.Do(request)
 	if err != nil {
-		return fmt.Errorf("결정 기록을 보내지 못했습니다: %s", modelCallReasonLike(err))
+		return result, fmt.Errorf("결정 기록을 보내지 못했습니다: %s", modelCallReasonLike(err))
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode >= 300 {
-		return fmt.Errorf("결정 기록을 받는 쪽이 HTTP %d 로 답했습니다", response.StatusCode)
+		return result, fmt.Errorf("결정 기록을 받는 쪽이 HTTP %d 로 답했습니다", response.StatusCode)
 	}
-	return nil
+	return result, nil
 }
 
 // contentSettings reads what this deployment allows out of the building. An
@@ -163,9 +175,11 @@ func (e WithheldError) Error() string {
 // whatever a person typed as the title, and the reasoning quotes what ran. A
 // deployment set to block national IDs in a prompt was posting them to an
 // external address in the clear.
-func scrubDecision(settings dlp.Settings, record store.DecisionRecord) (store.DecisionRecord, []dlp.Finding, bool) {
-	var findings []dlp.Finding
-	blocked := false
+// The findings of every field are gathered into one result, because one export
+// is one thing that happened: an entry per field would tell the operator the
+// same record left three times.
+func scrubDecision(settings dlp.Settings, record store.DecisionRecord) (store.DecisionRecord, dlp.Result) {
+	scan := dlp.Result{}
 	for _, field := range []struct {
 		read  func() string
 		write func(string)
@@ -176,12 +190,11 @@ func scrubDecision(settings dlp.Settings, record store.DecisionRecord) (store.De
 	} {
 		result := dlp.Scan(settings, field.read())
 		field.write(result.Text)
-		findings = append(findings, result.Findings...)
-		if result.Blocked {
-			blocked = true
-		}
+		scan.Findings = append(scan.Findings, result.Findings...)
+		scan.Blocked = scan.Blocked || result.Blocked
+		scan.Truncated = scan.Truncated || result.Truncated
 	}
-	return record, findings, blocked
+	return record, scan
 }
 
 var provenanceClient = &http.Client{Timeout: provenanceTimeout}

@@ -60,7 +60,7 @@ func TestAReviewCommentIsScannedOnItsWayOut(t *testing.T) {
 	}}, 10)
 	source := forge.URL + "/acme/store/pulls/9"
 
-	err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret", source, comment, blockingRRN())
+	_, err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret", source, comment, blockingRRN())
 	var withheld WithheldError
 	if !asWithheld(err, &withheld) {
 		t.Fatalf("a blocked comment was not refused: %v", err)
@@ -72,7 +72,7 @@ func TestAReviewCommentIsScannedOnItsWayOut(t *testing.T) {
 		t.Fatalf("a blocked comment reached the forge anyway: %q", bodies)
 	}
 
-	if err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret", source, comment, redactingRRN()); err != nil {
+	if _, err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret", source, comment, redactingRRN()); err != nil {
 		t.Fatalf("a redactable comment was not posted: %v", err)
 	}
 	if len(bodies) != 1 {
@@ -91,7 +91,7 @@ func TestAReviewCommentIsScannedOnItsWayOut(t *testing.T) {
 		t.Fatalf("redaction took the whole finding with it: %q", posted.Body)
 	}
 
-	if err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret", source, comment, dlp.Settings{}); err != nil {
+	if _, err := PostReviewComment(context.Background(), forge.Client(), connection, "s3cret", source, comment, dlp.Settings{}); err != nil {
 		t.Fatalf("an unconfigured deployment could not post: %v", err)
 	}
 	if len(bodies) != 2 || !strings.Contains(bodies[1], "900101-1234568") {

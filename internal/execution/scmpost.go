@@ -155,7 +155,12 @@ func authorize(header http.Header, kind, token string) {
 // One comment per pull request, rewritten. A review runs again every time
 // somebody pushes a fix, and a comment per run turns a page people read into a
 // page people mute — while the newest verdict sinks under the older ones.
-func PostReviewComment(ctx context.Context, client *http.Client, connection store.SCMConnection, token, sourceURL, text string, scan dlp.Settings) error {
+//
+// What the scan found comes back with the error, because the caller is the one
+// holding the database: a comment that went out with a customer's number redacted
+// out of it is something the deployment did, and it belongs in the trail beside
+// the ones it refused outright.
+func PostReviewComment(ctx context.Context, client *http.Client, connection store.SCMConnection, token, sourceURL, text string, scan dlp.Settings) (dlp.Result, error) {
 	// Scanned here rather than by the caller. A review comment is written by a
 	// model quoting somebody's code, addressed to a host this deployment does not
 	// own, and it was the one way out of the building that inspected nothing —
@@ -163,13 +168,13 @@ func PostReviewComment(ctx context.Context, client *http.Client, connection stor
 	// by a second caller that forgets it exists.
 	scanned := dlp.Scan(scan, text)
 	if scanned.Blocked {
-		return WithheldError{Subject: "리뷰 코멘트", Classes: scanned.Classes(), Labels: scanned.Labels()}
+		return scanned, WithheldError{Subject: "리뷰 코멘트", Classes: scanned.Classes(), Labels: scanned.Labels()}
 	}
 	text = scanned.Text
 
 	request, err := commentRequest(connection, sourceURL, text)
 	if err != nil {
-		return err
+		return scanned, err
 	}
 	authorize(request.header, connection.Kind, token)
 
@@ -179,22 +184,22 @@ func PostReviewComment(ctx context.Context, client *http.Client, connection stor
 	}
 	call, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(request.body))
 	if err != nil {
-		return err
+		return scanned, err
 	}
 	call.Header = request.header
 	response, err := client.Do(call)
 	if err != nil {
-		return err
+		return scanned, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode >= 400 {
 		// The forge's own words, capped: a 401 says the token is revoked and a
 		// 404 says it cannot see the repository, and those are different repairs.
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, 400))
-		return fmt.Errorf("%s에서 %d로 거절했습니다: %s", connection.Host, response.StatusCode,
+		return scanned, fmt.Errorf("%s에서 %d로 거절했습니다: %s", connection.Host, response.StatusCode,
 			strings.TrimSpace(string(detail)))
 	}
-	return nil
+	return scanned, nil
 }
 
 // ReviewComment is what the pull request gets to read.
@@ -260,9 +265,18 @@ func (o *Orchestrator) announceReview(ctx context.Context, run store.AgentRun, t
 		return
 	}
 	failure := ""
-	if err := PostReviewComment(ctx, scmHTTPClient, connection, token, task.SourceURL,
-		ReviewComment(summary, findings, 10), o.contentSettings(ctx)); err != nil {
-		var withheld WithheldError
+	scanned, err := PostReviewComment(ctx, scmHTTPClient, connection, token, task.SourceURL,
+		ReviewComment(summary, findings, 10), o.contentSettings(ctx))
+	// Recorded once the comment settled — posted, or withheld here. A forge that
+	// refused the request posted nothing, and a finding in text that never left
+	// would read in the trail as one that did.
+	var withheld WithheldError
+	if err == nil || errors.As(err, &withheld) {
+		recordContentScan(ctx, o.store, o.logger, scanEventReview, run.AgentID, scanned, map[string]any{
+			"boundary": "리뷰 코멘트", "host": connection.Host, "task": task.ID, "run": run.ID,
+		})
+	}
+	if err != nil {
 		if errors.As(err, &withheld) {
 			// Nothing was sent and nothing was attempted, so the connection is not
 			// at fault and its last use is left alone. Loud on the run instead: a
