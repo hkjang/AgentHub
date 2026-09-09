@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -316,5 +317,113 @@ func TestAWithheldRecordIsLoudAndFinal(t *testing.T) {
 	}
 	if !strings.Contains(withheld, "return nil") {
 		t.Error("a blocked record is retried; the scanner will refuse it every time")
+	}
+}
+
+// The whole record is marshalled and posted, so the whole record is what the
+// scan has to cover — the way the review comment is scanned as the one text it
+// is. It covered three fields of nine, and the ones it skipped are typed by
+// people: the agent's name, the category the platform copies out of it and the
+// name of the model endpoint.
+func TestEveryWordInARecordIsScannedOnItsWayOut(t *testing.T) {
+	const id = "900101-1234568"
+	record := store.DecisionRecord{
+		TaskID: "t1", Agent: "민원 " + id + " 담당", Category: "민원 " + id + " 담당",
+		Model: "gpt-" + id, Scenario: "환급 검토", Outcome: "completed", Source: "manual",
+	}
+
+	redacting := dlp.Settings{Enabled: true, Classes: map[string]string{"rrn": dlp.Redact}}
+	scrubbed, scan := scrubDecision(redacting, record)
+	if len(scan.Findings) != 3 {
+		t.Errorf("want the national ID found in the agent, the category and the model, found %d", len(scan.Findings))
+	}
+	for name, value := range map[string]string{
+		"agent": scrubbed.Agent, "category": scrubbed.Category, "model": scrubbed.Model,
+	} {
+		if strings.Contains(value, id) {
+			t.Errorf("the national ID left the building in %s: %q", name, value)
+		}
+	}
+
+	blocking := dlp.Settings{Enabled: true, Classes: map[string]string{"rrn": dlp.Block}}
+	if _, refused := scrubDecision(blocking, record); !refused.Blocked {
+		t.Error("a class configured to block left in the agent's name anyway")
+	}
+}
+
+// The ids are left alone on purpose, and it is not only that a redacted id is a
+// record nobody can join to anything. The account-number detector has nothing
+// but grouping to go on, so an all-digit identifier is a finding on every export
+// — and, redacting, an id rewritten on its way out.
+func TestTheIdentifiersInARecordAreNotScanned(t *testing.T) {
+	const uuid = "12345678-1234-1234-1234-123456789012"
+	record := store.DecisionRecord{
+		DecisionID: "run:" + uuid, TaskID: uuid, RunID: uuid, AgentID: uuid,
+		OwnerID: uuid, ApprovalID: uuid,
+	}
+	settings := dlp.Settings{Enabled: true, Classes: map[string]string{"account": dlp.Redact}}
+	// The detector really does claim one, which is why the exemption is written
+	// down rather than assumed.
+	if len(dlp.Scan(settings, uuid).Findings) == 0 {
+		t.Fatal("this test no longer proves anything: the detector no longer claims an all-digit id")
+	}
+	scrubbed, scan := scrubDecision(settings, record)
+	if len(scan.Findings) != 0 {
+		t.Errorf("every export of this record reports a finding about its own identifiers: %v", scan.Findings)
+	}
+	if scrubbed.DecisionID != "run:"+uuid || scrubbed.TaskID != uuid || scrubbed.OwnerID != uuid {
+		t.Errorf("an identifier was rewritten on its way out: %+v", scrubbed)
+	}
+}
+
+// A field added to the record and left out of both lists would leave the
+// building uninspected, and would do it quietly: nothing else in this package
+// reads the record field by field. Three fields were already out.
+func TestEveryFieldOfARecordIsEitherScannedOrAnIdentifier(t *testing.T) {
+	scanned := map[string]bool{}
+	for _, field := range decisionWords {
+		scanned[field.name] = true
+	}
+	exempt := map[string]bool{}
+	for _, name := range decisionIdentifiers {
+		if scanned[name] {
+			t.Errorf("%s is listed as both scanned and exempt", name)
+		}
+		exempt[name] = true
+	}
+
+	recordType := reflect.TypeOf(store.DecisionRecord{})
+	declared := map[string]bool{}
+	for i := 0; i < recordType.NumField(); i++ {
+		field := recordType.Field(i)
+		declared[field.Name] = true
+		// Only the words: a time or a count carries nothing a detector looks for.
+		if field.Type.Kind() != reflect.String {
+			continue
+		}
+		if !scanned[field.Name] && !exempt[field.Name] {
+			t.Errorf("DecisionRecord.%s is posted to an external address without being scanned; "+
+				"add it to decisionWords, or to decisionIdentifiers if it is an id", field.Name)
+		}
+	}
+	for name := range scanned {
+		if !declared[name] {
+			t.Errorf("decisionWords names %s, which the record no longer has", name)
+		}
+	}
+	for name := range exempt {
+		if !declared[name] {
+			t.Errorf("decisionIdentifiers names %s, which the record no longer has", name)
+		}
+	}
+
+	// The list drives the scan rather than sitting beside it, so a field named
+	// here is a field actually read.
+	body, err := os.ReadFile("provenance.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "for _, field := range decisionWords {") {
+		t.Error("scrubDecision no longer scans the list this test checks")
 	}
 }

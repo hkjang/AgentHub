@@ -206,6 +206,55 @@ func (e WithheldError) Error() string {
 	return message
 }
 
+// decisionField is one field of the record, named so that a test can hold this
+// list against the struct itself rather than against somebody's memory of it.
+type decisionField struct {
+	name  string
+	read  func(*store.DecisionRecord) string
+	write func(*store.DecisionRecord, string)
+}
+
+// decisionWords is everything in the record that carries words somebody wrote.
+//
+// The whole record is marshalled and posted, so the scan has to cover the whole
+// record — the way the review comment is scanned as the one text it is. It
+// covered three fields. The agent's name is typed by a person and the platform
+// copies it into the category as well, the model's name is typed by whoever
+// registered the endpoint, and none of the three was inspected: a deployment
+// blocking national IDs in a prompt was posting one to an external address as
+// soon as somebody named an agent after the case it handles.
+var decisionWords = []decisionField{
+	{"Scenario", func(r *store.DecisionRecord) string { return r.Scenario },
+		func(r *store.DecisionRecord, v string) { r.Scenario = v }},
+	{"Reasoning", func(r *store.DecisionRecord) string { return r.Reasoning },
+		func(r *store.DecisionRecord, v string) { r.Reasoning = v }},
+	{"SourceURL", func(r *store.DecisionRecord) string { return r.SourceURL },
+		func(r *store.DecisionRecord, v string) { r.SourceURL = v }},
+	{"Agent", func(r *store.DecisionRecord) string { return r.Agent },
+		func(r *store.DecisionRecord, v string) { r.Agent = v }},
+	{"Category", func(r *store.DecisionRecord) string { return r.Category },
+		func(r *store.DecisionRecord, v string) { r.Category = v }},
+	{"Model", func(r *store.DecisionRecord) string { return r.Model },
+		func(r *store.DecisionRecord, v string) { r.Model = v }},
+	{"RuntimeImage", func(r *store.DecisionRecord) string { return r.RuntimeImage },
+		func(r *store.DecisionRecord, v string) { r.RuntimeImage = v }},
+	{"Source", func(r *store.DecisionRecord) string { return r.Source },
+		func(r *store.DecisionRecord, v string) { r.Source = v }},
+	{"Outcome", func(r *store.DecisionRecord) string { return r.Outcome },
+		func(r *store.DecisionRecord, v string) { r.Outcome = v }},
+}
+
+// decisionIdentifiers is the rest, and it is deliberately not scanned.
+//
+// These are the edges the record exists to be followed along, and a redacted one
+// is a record that can no longer be joined to anything — which is the whole
+// point of exporting it. They also match: the account-number detector has
+// nothing but grouping to go on, so an all-digit id comes back as a finding on
+// every single export and, on a class set to 가리고 전송, leaves as
+// "12345678-[계좌번호 삭제됨]-123456789012". Scanning a value nobody typed to
+// mask a value nobody sent is how a scanner gets switched off.
+var decisionIdentifiers = []string{"DecisionID", "AgentID", "TaskID", "RunID", "OwnerID", "ApprovalID"}
+
 // scrubDecision applies the content scanner to the free text in a record.
 //
 // The export is one of the ways text leaves this deployment — alongside the
@@ -220,16 +269,9 @@ func (e WithheldError) Error() string {
 // same record left three times.
 func scrubDecision(settings dlp.Settings, record store.DecisionRecord) (store.DecisionRecord, dlp.Result) {
 	scan := dlp.Result{}
-	for _, field := range []struct {
-		read  func() string
-		write func(string)
-	}{
-		{func() string { return record.Scenario }, func(v string) { record.Scenario = v }},
-		{func() string { return record.Reasoning }, func(v string) { record.Reasoning = v }},
-		{func() string { return record.SourceURL }, func(v string) { record.SourceURL = v }},
-	} {
-		result := dlp.Scan(settings, field.read())
-		field.write(result.Text)
+	for _, field := range decisionWords {
+		result := dlp.Scan(settings, field.read(&record))
+		field.write(&record, result.Text)
 		scan.Findings = append(scan.Findings, result.Findings...)
 		scan.Blocked = scan.Blocked || result.Blocked
 		scan.Truncated = scan.Truncated || result.Truncated
