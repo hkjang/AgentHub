@@ -13,7 +13,6 @@ import (
 
 	"github.com/hkjang/AgentHub/internal/dlp"
 	"github.com/hkjang/AgentHub/internal/policy"
-	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -202,15 +201,7 @@ func liveUser(ctx context.Context, t *testing.T, db *store.Store, username, role
 // other than whoever the task belongs to.
 func liveAgent(ctx context.Context, t *testing.T, db *store.Store, ownerID string) store.Agent {
 	t.Helper()
-	agent, err := db.CreateAgent(ctx, ownerID, store.CreateAgentInput{
-		Name: "정책-경계-검사 리뷰 에이전트", Description: "테스트가 만든 공용 리뷰 에이전트",
-		RuntimeType: runtimetype.OpenCode,
-	})
-	if err != nil {
-		t.Skipf("this deployment will not let the check create an agent: %v", err)
-	}
-	t.Cleanup(func() { _ = db.DeleteAgent(ctx, agent.ID, ownerID, true) })
-	return agent
+	return liveNamedAgent(ctx, t, db, ownerID, "정책-경계-검사 리뷰 에이전트")
 }
 
 // liveSetting writes one settings row as actor — system_settings records who

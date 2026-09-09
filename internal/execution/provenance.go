@@ -56,9 +56,7 @@ func (d *Dispatcher) exportDecision(ctx context.Context, event store.PlatformEve
 	// attempt would count one payload as many.
 	var withheld WithheldError
 	if err == nil || errors.As(err, &withheld) {
-		recordContentScan(ctx, d.store, d.logger, scanEventExport, record.AgentID, outcome, map[string]any{
-			"boundary": "결정 기록", "agent": record.Agent, "task": record.TaskID, "run": record.RunID,
-		})
+		recordContentScan(ctx, d.store, d.logger, scanEventExport, record.AgentID, outcome, exportScanDetails(record))
 	}
 	if err != nil {
 		if errors.As(err, &withheld) {
@@ -76,6 +74,24 @@ func (d *Dispatcher) exportDecision(ctx context.Context, event store.PlatformEve
 	}
 	d.logger.Info("decision exported", "task", record.TaskID, "type", event.Type, "outcome", record.Outcome)
 	return nil
+}
+
+// exportScanDetails is what the audit entry for one export says beside the
+// findings, and it is identifiers only.
+//
+// SendDecision takes the record by value, so the record the dispatcher still
+// holds after the send is the one that came out of the database — the scrubbed
+// copy never left that function. Putting a scanned field in here would write
+// the pre-scrub string into audit_events.details, which AuditTrailEach reads
+// back out again: the export the scanner just refused would have stored the
+// value instead of sending it, in the one trail whose whole purpose is to
+// record the finding and never the value. The entry already names the agent by
+// id, which is what a person following this trail joins on anyway.
+//
+// A function rather than a literal at the call site so that a test can hold it
+// against every field the scan exists to rewrite.
+func exportScanDetails(record store.DecisionRecord) map[string]any {
+	return map[string]any{"boundary": "결정 기록", "task": record.TaskID, "run": record.RunID}
 }
 
 // SendDecision posts one record to the configured sink.
@@ -206,6 +222,99 @@ func (e WithheldError) Error() string {
 	return message
 }
 
+// decisionField is one field of the record, named so that a test can hold this
+// list against the struct itself rather than against somebody's memory of it.
+type decisionField struct {
+	name  string
+	read  func(*store.DecisionRecord) string
+	write func(*store.DecisionRecord, string)
+}
+
+// decisionWords is everything in the record that carries words somebody wrote.
+//
+// The whole record is marshalled and posted, so the scan has to cover the whole
+// record — the way the review comment is scanned as the one text it is. It
+// covered three fields. The agent's name is typed by a person and the platform
+// copies it into the category as well, the model's name is typed by whoever
+// registered the endpoint, and none of the three was inspected: a deployment
+// blocking national IDs in a prompt was posting one to an external address as
+// soon as somebody named an agent after the case it handles.
+var decisionWords = []decisionField{
+	{"Scenario", func(r *store.DecisionRecord) string { return r.Scenario },
+		func(r *store.DecisionRecord, v string) { r.Scenario = v }},
+	{"Reasoning", func(r *store.DecisionRecord) string { return r.Reasoning },
+		func(r *store.DecisionRecord, v string) { r.Reasoning = v }},
+	{"SourceURL", func(r *store.DecisionRecord) string { return r.SourceURL },
+		func(r *store.DecisionRecord, v string) { r.SourceURL = v }},
+	{"Agent", func(r *store.DecisionRecord) string { return r.Agent },
+		func(r *store.DecisionRecord, v string) { r.Agent = v }},
+	{"Category", func(r *store.DecisionRecord) string { return r.Category },
+		func(r *store.DecisionRecord, v string) { r.Category = v }},
+	{"Model", func(r *store.DecisionRecord) string { return r.Model },
+		func(r *store.DecisionRecord, v string) { r.Model = v }},
+	{"RuntimeImage", func(r *store.DecisionRecord) string { return r.RuntimeImage },
+		func(r *store.DecisionRecord, v string) { r.RuntimeImage = v }},
+	{"Source", func(r *store.DecisionRecord) string { return r.Source },
+		func(r *store.DecisionRecord, v string) { r.Source = v }},
+	{"Outcome", func(r *store.DecisionRecord) string { return r.Outcome },
+		func(r *store.DecisionRecord, v string) { r.Outcome = v }},
+}
+
+// decisionIdentifiers is the rest, and it is deliberately not scanned.
+//
+// These are the edges the record exists to be followed along, and a redacted one
+// is a record that can no longer be joined to anything — which is the whole
+// point of exporting it. They also match: the account-number detector has
+// nothing but grouping to go on, so an all-digit id comes back as a finding on
+// every single export and, on a class set to 가리고 전송, leaves as
+// "12345678-[계좌번호 삭제됨]-123456789012". Scanning a value nobody typed to
+// mask a value nobody sent is how a scanner gets switched off.
+//
+// It is also the list of what the audit entry is allowed to carry: see
+// exportScanDetails.
+var decisionIdentifiers = []string{"DecisionID", "AgentID", "TaskID", "RunID", "OwnerID", "ApprovalID"}
+
+// mergeFindings folds what one more field reported into what the record has
+// reported so far, one entry per class.
+//
+// One export is one thing that happened, and what the operator is being told is
+// what the record carries — not which struct field it sat in. Appending would
+// report the same class once per field, and this record makes that the ordinary
+// case rather than an unlucky one: DecisionForTask copies the agent's name into
+// the category, so a name with a national ID in it arrives here twice by
+// construction and would be counted, labelled and shown twice. Leaving the copy
+// out of the scan instead would send it unredacted, which is the thing the scan
+// is here for.
+//
+// The count still adds up, because the record really does carry the value that
+// many times and a redaction happened at each one. What does not repeat is the
+// class: Labels() is the sentence the person whose record was held back reads,
+// and "주민등록번호, 주민등록번호가 포함되어" is one value said twice.
+func mergeFindings(into, found []dlp.Finding) []dlp.Finding {
+	for _, finding := range found {
+		at := -1
+		for i := range into {
+			if into[i].Class == finding.Class {
+				at = i
+				break
+			}
+		}
+		if at < 0 {
+			into = append(into, finding)
+			continue
+		}
+		into[at].Count += finding.Count
+		// The action is the settings' answer for the class, so it is the same
+		// answer each time. The sample is the first value seen and stays that way:
+		// it is there so an operator can tell a real finding from a false positive,
+		// and the first one does that as well as the last.
+		if into[at].Sample == "" {
+			into[at].Sample = finding.Sample
+		}
+	}
+	return into
+}
+
 // scrubDecision applies the content scanner to the free text in a record.
 //
 // The export is one of the ways text leaves this deployment — alongside the
@@ -220,17 +329,10 @@ func (e WithheldError) Error() string {
 // same record left three times.
 func scrubDecision(settings dlp.Settings, record store.DecisionRecord) (store.DecisionRecord, dlp.Result) {
 	scan := dlp.Result{}
-	for _, field := range []struct {
-		read  func() string
-		write func(string)
-	}{
-		{func() string { return record.Scenario }, func(v string) { record.Scenario = v }},
-		{func() string { return record.Reasoning }, func(v string) { record.Reasoning = v }},
-		{func() string { return record.SourceURL }, func(v string) { record.SourceURL = v }},
-	} {
-		result := dlp.Scan(settings, field.read())
-		field.write(result.Text)
-		scan.Findings = append(scan.Findings, result.Findings...)
+	for _, field := range decisionWords {
+		result := dlp.Scan(settings, field.read(&record))
+		field.write(&record, result.Text)
+		scan.Findings = mergeFindings(scan.Findings, result.Findings)
 		scan.Blocked = scan.Blocked || result.Blocked
 		scan.Truncated = scan.Truncated || result.Truncated
 	}
