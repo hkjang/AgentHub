@@ -14,7 +14,7 @@
 [![MCP Ready](https://img.shields.io/badge/MCP-Streamable%20HTTP-FF6B6B?style=flat)](https://modelcontextprotocol.io)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-[🌐 웹 쇼케이스 둘러보기](docs/index.html) · [📘 공식 사용자 가이드 (PDF)](docs/AgentHub_User_Guide.pdf) · [📗 CRU 매뉴얼 (PDF)](docs/AgentHub_CRU_Operations_Manual.pdf) · [📙 아키텍처 백서 (PDF)](docs/AgentHub_Architecture_and_MCP_Whitepaper.pdf)
+[🌐 웹 쇼케이스 둘러보기](docs/index.html) · [📘 사용자 가이드 (PDF)](docs/USER_GUIDE.pdf) · [📕 관리자 가이드 (PDF)](docs/ADMIN_GUIDE.pdf) · [📗 CRU 매뉴얼 (PDF)](docs/AgentHub_CRU_Operations_Manual.pdf) · [📙 아키텍처 백서 (PDF)](docs/AgentHub_Architecture_and_MCP_Whitepaper.pdf)
 
 </div>
 
@@ -100,7 +100,7 @@ https://github.com/user-attachments/assets/agenthub_demo.mp4
 | **MCP Fabric 도구 카탈로그 & 번들** | **운영 센터 실시간 감사 로그** |
 | ![MCP 도구 카탈로그](docs/screenshots/09_mcp_fabric.png) | ![운영 콘솔](docs/screenshots/11_admin_operations.png) |
 
-> 📌 **전체 33개 스크린샷과 상세 설명은 [사용자 가이드](docs/user-guide.md) 및 [인터랙티브 쇼케이스 페이지](docs/index.html)에서 확인하실 수 있습니다.**
+> 📌 **화면별 상세 설명은 [사용자 가이드](docs/USER_GUIDE.md)와 [관리자 가이드](docs/ADMIN_GUIDE.md), 그리고 [인터랙티브 쇼케이스 페이지](docs/index.html)에서 확인하실 수 있습니다.**
 
 ---
 
@@ -183,7 +183,8 @@ kubectl get pods -n agent-platform-system
 
 ## 📚 상세 문서 모음
 
-- 📖 **[사용자 & 관리자 매뉴얼](docs/user-guide.md)**: 33개 스크린샷 기반의 전 메뉴 상세 기능 가이드
+- 📖 **[사용자 가이드](docs/USER_GUIDE.md)**: 화면을 쓰는 사람을 위한 전 메뉴 상세 기능 가이드 ([PDF](docs/USER_GUIDE.pdf))
+- 🛠 **[관리자 가이드](docs/ADMIN_GUIDE.md)**: 설치·설정·운영·장애 대응 ([PDF](docs/ADMIN_GUIDE.pdf))
 - 🚀 **[CRU 실전 운영 워크스루](docs/cru-walkthrough.md)**: Workspace, Agent, Workflow 생성/수정 10단계 튜토리얼
 - 🌐 **[인터랙티브 웹 쇼케이스](docs/index.html)**: 반응형 다크 테마 기반의 프로젝트 홍보 랜딩 페이지
 - 📐 **[시스템 아키텍처 상세](docs/architecture.md)**: 보안 경계, 세션 게이트웨이, 어댑터 명세
