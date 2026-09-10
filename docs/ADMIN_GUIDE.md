@@ -194,8 +194,8 @@ Runtime 수·CPU·메모리·저장소와 함께 **토큰 예산과 금액**을 
 | 확인할 것 | 어디서 |
 | --- | --- |
 | 전체 요약(실행·지출·사용자) | 콘솔 `관리자 ▸ 운영 현황`, `GET /api/v1/admin/overview?days=7` |
-| 준비 상태(의존 구성 요소) | `GET /api/v1/admin/readiness` |
-| 쿠버네티스 연결 | `GET /api/v1/admin/kubernetes/health`, `…/check` |
+| 준비 상태(의존 구성 요소) | `POST /api/v1/admin/readiness` — 물어보는 동작이라 POST 입니다 |
+| 쿠버네티스 연결 | 마지막 결과만 보려면 `GET /api/v1/admin/kubernetes/health`, 지금 다시 물어보려면 `POST /api/v1/admin/kubernetes/check` |
 | 워커가 살아 있는지 | `GET /api/v1/admin/workers` |
 | 모델 엔드포인트 응답 | `관리자 ▸ 모델 엔드포인트` 의 검사 버튼(마지막 결과와 시각이 행에 남습니다) |
 | 빌드 버전 | `docker compose exec agenthub /app/agenthub version --json` |

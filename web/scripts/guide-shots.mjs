@@ -10,8 +10,17 @@
 // figure is published and a real name, a real host or a real secret published in
 // a PDF cannot be taken back.
 //
-//   AGENTHUB_TEST_URL=http://127.0.0.1:8080 \
-//   AGENTHUB_TEST_USER=admin AGENTHUB_TEST_PASSWORD=… \
+// This script writes. It fills the deployment with demo agents and keys, and it
+// replaces three settings that are global to the whole platform — the policy
+// document, the content-inspection rules and the session gateway. So it refuses
+// to guess its target: there is no default URL, the variables are its own rather
+// than the AGENTHUB_TEST_* pair the e2e scripts share, and it will not start
+// without being told in writing that the deployment is disposable. It also puts
+// the three global settings back the way it found them on the way out.
+//
+//   AGENTHUB_GUIDE_URL=http://127.0.0.1:8080 \
+//   AGENTHUB_GUIDE_USER=admin AGENTHUB_GUIDE_PASSWORD=… \
+//   AGENTHUB_GUIDE_DISPOSABLE=yes \
 //   node scripts/guide-shots.mjs
 import { chromium } from 'playwright-core'
 import { mkdirSync } from 'node:fs'
@@ -19,9 +28,19 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromiumPath } from './browser.mjs'
 
-const baseURL = process.env.AGENTHUB_TEST_URL ?? 'http://localhost:18080'
-const username = process.env.AGENTHUB_TEST_USER ?? 'admin'
-const password = process.env.AGENTHUB_TEST_PASSWORD ?? 'local-development-password'
+const baseURL = (process.env.AGENTHUB_GUIDE_URL ?? '').replace(/\/$/, '')
+const username = process.env.AGENTHUB_GUIDE_USER ?? ''
+const password = process.env.AGENTHUB_GUIDE_PASSWORD ?? ''
+if (!baseURL || !username || !password) {
+  console.error('AGENTHUB_GUIDE_URL, AGENTHUB_GUIDE_USER, AGENTHUB_GUIDE_PASSWORD 이 모두 필요합니다.')
+  console.error('이 스크립트는 정책·내용 검사·세션 게이트웨이를 덮어씁니다. 대상을 짐작하지 않습니다.')
+  process.exit(2)
+}
+if (process.env.AGENTHUB_GUIDE_DISPOSABLE !== 'yes') {
+  console.error(`${baseURL} 의 전역 설정(정책·내용 검사·세션 게이트웨이)을 덮어씁니다.`)
+  console.error('버려도 되는 배포가 맞으면 AGENTHUB_GUIDE_DISPOSABLE=yes 를 주고 다시 실행하세요.')
+  process.exit(2)
+}
 const here = dirname(fileURLToPath(import.meta.url))
 const shotDir = process.env.GUIDE_SHOT_DIR ?? join(here, '..', '..', 'docs', 'screenshots', 'guide')
 mkdirSync(shotDir, { recursive: true })
@@ -64,11 +83,36 @@ try {
   const put = (path, body) => call('PUT', path, body)
   const ok = (response) => response.status >= 200 && response.status < 300
 
-  // GUIDE_SKIP_SEED re-photographs a deployment that already holds the demo
-  // data — reshooting after a console change should not need a second copy of
-  // every agent and task.
-  if (process.env.GUIDE_SKIP_SEED !== '1') await seed({ get, post, put, ok })
-  await capture(page)
+  // The three settings seed() replaces are global to the platform, so they are
+  // read first and put back on the way out — the same shape policy-e2e.mjs and
+  // dlp-e2e.mjs use. Without it one run leaves the deployment holding this
+  // script's demo policy instead of its own.
+  const globals = [
+    ['/api/v1/admin/policy', (body) => body?.document ?? { rules: [] }],
+    ['/api/v1/admin/dlp', (body) => body?.document ?? body ?? {}],
+    ['/api/v1/admin/settings/sessionGateway', (body) => ({ value: body?.value ?? body ?? null })],
+  ]
+  const before = []
+  if (process.env.GUIDE_SKIP_SEED !== '1') {
+    for (const [path, read] of globals) {
+      const current = await get(path)
+      if (!ok(current)) { note(`복원용 읽기 ${path}`, false, `HTTP ${current.status}`); continue }
+      before.push([path, read(current.body)])
+    }
+  }
+
+  try {
+    // GUIDE_SKIP_SEED re-photographs a deployment that already holds the demo
+    // data — reshooting after a console change should not need a second copy of
+    // every agent and task.
+    if (process.env.GUIDE_SKIP_SEED !== '1') await seed({ get, post, put, ok })
+    await capture(page)
+  } finally {
+    for (const [path, value] of before) {
+      const restored = await put(path, value)
+      note(`복원 ${path}`, ok(restored), `HTTP ${restored.status}`)
+    }
+  }
 
   if (problems.length) {
     console.log(`\n${problems.length}건이 계획대로 되지 않았습니다:`)
