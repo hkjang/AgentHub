@@ -281,6 +281,47 @@ func mcpGatewayWith(upstreams []mcpUpstream, auditor func(entry map[string]any),
 			writeRPCError(w, request.ID, -32601, message)
 			return
 		}
+		// The arguments are scanned before the call leaves the Pod. A tool call
+		// never passes through the control plane, so this is the only place a
+		// customer record on its way into a ticket can be caught.
+		//
+		// And before the approval gate below, because asking a person is itself a
+		// way out of the Pod: the gate POSTs the arguments to the control plane,
+		// which stores them on the approval row and shows them in the queue. Ask
+		// first and a value the scanner was configured to block was copied into
+		// the control plane's database — permanently, and in front of every
+		// reviewer — by the call that was about to be refused for carrying it. The
+		// setting said the value must not leave; it left, and the trail recorded a
+		// block. Scanning first closes that and keeps what the old order was for:
+		// a call the scanner refuses still never becomes an approval request, so
+		// nobody is asked to decide about a call that cannot happen either way.
+		if request.Method == "tools/call" && len(request.Params.Arguments) > 0 {
+			replacement, found := inspect.inspect(r.Context(), name, request.Params.Name, "요청", string(request.Params.Arguments))
+			if found != nil {
+				auditor(map[string]any{"server": name, "tool": request.Params.Name,
+					"decision": scanDecision(found), "dlp": found.Summary()})
+				if found.Blocked {
+					writeRPCError(w, request.ID, -32006, found.Reason+" (도구 "+request.Params.Name+")")
+					return
+				}
+				// The whole body is rewritten rather than just the arguments: the
+				// upstream reads the body, not our parsed copy of it.
+				rewritten, err := replaceArguments(body, replacement)
+				if err == nil {
+					body = rewritten
+				} else {
+					// A body we cannot rewrite is a body we cannot redact, and sending
+					// it unchanged would be the one outcome the setting forbids.
+					writeRPCError(w, request.ID, -32006, "민감정보를 제거할 수 없어 호출을 차단했습니다.")
+					return
+				}
+				// The parsed copy is rewritten too, because it is what the gate
+				// below sends to the reviewer. Leaving it alone would redact the
+				// call and hand the original to the approval queue, which is the
+				// leak this ordering exists to close.
+				request.Params.Arguments = json.RawMessage(replacement)
+			}
+		}
 		if request.Method == "tools/call" && upstream.needsApproval(request.Params.Name) {
 			if gate == nil {
 				// Configured to need a decision with no way to ask for one: refuse.
@@ -307,31 +348,6 @@ func mcpGatewayWith(upstreams []mcpUpstream, auditor func(entry map[string]any),
 			default:
 				writeRPCError(w, request.ID, -32003, fmt.Sprintf("도구 %q 실행 승인을 요청할 수 없어 호출을 차단했습니다.", request.Params.Name))
 				return
-			}
-		}
-		// The arguments are scanned before the call leaves the Pod. A tool call
-		// never passes through the control plane, so this is the only place a
-		// customer record on its way into a ticket can be caught.
-		if request.Method == "tools/call" && len(request.Params.Arguments) > 0 {
-			replacement, found := inspect.inspect(r.Context(), name, request.Params.Name, "요청", string(request.Params.Arguments))
-			if found != nil {
-				auditor(map[string]any{"server": name, "tool": request.Params.Name,
-					"decision": scanDecision(found), "dlp": found.Summary()})
-				if found.Blocked {
-					writeRPCError(w, request.ID, -32006, found.Reason+" (도구 "+request.Params.Name+")")
-					return
-				}
-				// The whole body is rewritten rather than just the arguments: the
-				// upstream reads the body, not our parsed copy of it.
-				rewritten, err := replaceArguments(body, replacement)
-				if err == nil {
-					body = rewritten
-				} else {
-					// A body we cannot rewrite is a body we cannot redact, and sending
-					// it unchanged would be the one outcome the setting forbids.
-					writeRPCError(w, request.ID, -32006, "민감정보를 제거할 수 없어 호출을 차단했습니다.")
-					return
-				}
 			}
 		}
 		if request.Method == "tools/call" {
