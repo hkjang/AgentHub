@@ -116,12 +116,15 @@ const (
 // 가리고 전송 was reading an empty page about them. Redaction was just as quiet:
 // the text was rewritten on its way out and nothing said so.
 //
-// Nothing is recorded when the scan found nothing, which is almost every send.
-// What is recorded is what the scanner reports and never the value itself, for
-// the reason the scanner masks it in the first place.
+// Nothing is recorded when the scan found nothing and read all of it, which is
+// almost every send. A payload that ran past the scan limit is recorded even
+// with no findings: the scanner read its beginning and nothing else, and an
+// operator who is told nothing reads that as text that was examined and came
+// back clean. What is recorded is what the scanner reports and never the value
+// itself, for the reason the scanner masks it in the first place.
 func recordContentScan(ctx context.Context, db *store.Store, logger *slog.Logger, event, agentID string, outcome ContentOutcome, details map[string]any) {
 	result := outcome.Scan
-	if db == nil || len(result.Findings) == 0 {
+	if db == nil || !result.Reportable() {
 		return
 	}
 	// policyRule beside the findings, the way the model boundary records it: a
@@ -139,7 +142,12 @@ func recordContentScan(ctx context.Context, db *store.Store, logger *slog.Logger
 	defer cancel()
 	db.Audit(record, nil, event, "agent", agentID, outcome.Outcome(), "", entry)
 	if logger != nil {
-		logger.Warn("sensitive data found leaving the platform",
+		// An entry with no findings says where the scan stopped, not what it found.
+		message := "sensitive data found leaving the platform"
+		if result.Incomplete() {
+			message = "text longer than the scan limit left the platform with its tail uninspected"
+		}
+		logger.Warn(message,
 			"boundary", event, "agent", agentID, "outcome", outcome.Outcome(),
 			"classes", result.Summary(), "truncated", result.Truncated,
 			"policyRule", outcome.Decision.RuleID)

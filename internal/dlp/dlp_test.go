@@ -153,6 +153,50 @@ func TestScanIsBounded(t *testing.T) {
 	}
 }
 
+// "A clean result is not mistaken for a complete one" is what Truncated is
+// documented as being for, and for as long as every boundary returned the moment
+// the findings were empty it was a flag nobody could ever read: the payload the
+// scanner is least sure about produced no log line and no audit entry, which is
+// exactly what a payload it read to the end and found nothing in produces.
+//
+// So the result has to say so itself, in the word the trail files it under.
+func TestAPayloadTheScanCouldNotFinishIsNotACleanOne(t *testing.T) {
+	settings := Settings{Enabled: true, Classes: map[string]string{"rrn": Block}, MaxBytes: 64}
+
+	// Nothing sensitive anywhere in it — the tail is simply longer than the limit.
+	cut := Scan(settings, strings.Repeat("x", 400))
+	if !cut.Truncated || len(cut.Findings) != 0 {
+		t.Fatalf("this payload is meant to be long and clean: %+v", cut)
+	}
+	if !cut.Incomplete() {
+		t.Error("a scan that stopped at the limit reports itself as having read the whole payload")
+	}
+	if !cut.Reportable() {
+		t.Error("the one payload the scanner cannot vouch for is the one it tells nobody about")
+	}
+	if cut.Outcome() != OutcomeUnscanned {
+		t.Errorf("the trail files a partly read payload as %q", cut.Outcome())
+	}
+
+	// Read to the end and clean is the ordinary send, and it must stay silent:
+	// an entry per model call would bury the findings among them.
+	whole := Scan(settings, "보고서 초안입니다")
+	if whole.Reportable() || whole.Incomplete() {
+		t.Errorf("a payload read to its end and found clean has something to report: %+v", whole)
+	}
+
+	// A truncated payload that did carry something is reported as what was done
+	// about it. That fact is the more urgent of the two and was never the silent
+	// one; the truncation rides along on the entry.
+	found := Scan(settings, "주민번호 900101-1234568 입니다 "+strings.Repeat("x", 400))
+	if !found.Truncated || !found.Blocked {
+		t.Fatalf("this payload is meant to be long and blocked: %+v", found)
+	}
+	if found.Incomplete() || found.Outcome() != OutcomeBlocked {
+		t.Errorf("a refusal was filed as %q because the payload was also long", found.Outcome())
+	}
+}
+
 // The byte the limit lands on is an arbitrary place to stop looking, and a value
 // sliced in half matches nothing.
 func TestScanFinishesAValueTheLimitSplits(t *testing.T) {

@@ -144,6 +144,15 @@ func (m *Model) inspect(ctx context.Context, step workflow.Step, text, direction
 	settings, document := m.config(ctx)
 	result := dlp.Scan(settings, text)
 	if len(result.Findings) == 0 {
+		// Nothing was found — but a payload longer than the limit was only read as
+		// far as the limit, and saying nothing about that is saying the text was
+		// clean. It was not examined. The policy is deliberately not asked: there
+		// are no classes to decide about, and a rule with no data class selector
+		// would start refusing every oversized prompt on a deployment that wrote it
+		// about something else.
+		if result.Truncated {
+			m.record(ctx, step, result, policy.Decision{}, direction, false)
+		}
 		return text, nil
 	}
 
@@ -269,7 +278,14 @@ func (m *Model) record(ctx context.Context, step workflow.Step, result dlp.Resul
 		"direction": direction, "agent": step.AgentName, "step": step.ID, "findings": findings,
 		"policyRule": decision.RuleID, "truncated": result.Truncated,
 	})
-	m.logger.Warn("sensitive data found leaving the platform",
+	// An entry with no findings is the scan saying where it stopped, not what it
+	// found, and a line reading "sensitive data found" with nothing after it is
+	// the wrong thing to page somebody about.
+	message := "sensitive data found leaving the platform"
+	if result.Incomplete() {
+		message = "text longer than the scan limit left the platform with its tail uninspected"
+	}
+	m.logger.Warn(message,
 		"boundary", m.subjectName(),
 		"agent", step.AgentName, "step", step.ID, "direction", direction, "outcome", outcome,
 		"classes", result.Summary(), "policyRule", decision.RuleID)

@@ -93,7 +93,7 @@ export function AdminDLP() {
         <label className="toggle-row"><span>응답도 검사</span><input type="checkbox" checked={Boolean(settings.scanResponses)} onChange={(e) => change({ ...settings, scanResponses: e.target.checked })} /><i /></label>
         <label><span>검사 크기 상한 (바이트)</span>
           <input type="number" min={0} max={4194304} value={settings.maxBytes ?? 0} onChange={(e) => change({ ...settings, maxBytes: Number(e.target.value) })} />
-          <small>0이면 기본값 {loaded.defaultMaxBytes.toLocaleString('ko-KR')} 바이트</small>
+          <small>0이면 기본값 {loaded.defaultMaxBytes.toLocaleString('ko-KR')} 바이트. 상한을 넘은 내용은 앞부분만 검사하며, 그런 호출은 발견된 것이 없어도 <code>일부 미검사</code>로 감사에 남습니다.</small>
         </label>
       </div>
       <p className="field-hint">응답 검사는 모델·도구가 되돌려 준 내용까지 확인합니다. 비용이 큰 쪽이라 기본은 꺼져 있습니다.</p>

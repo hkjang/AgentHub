@@ -164,8 +164,12 @@ func (s *Server) reportDLPEvent(w http.ResponseWriter, r *http.Request) {
 		findings = findings[:maxReportedFindings]
 	}
 	// What the gateway did to the call, not what it might have done: a class set
-	// to 기록만 leaves the tool call exactly as the agent wrote it.
-	outcome := dlp.Result{Blocked: input.Event.Blocked, Findings: input.Event.Findings}.Outcome()
+	// to 기록만 leaves the tool call exactly as the agent wrote it, and a report
+	// carrying no findings at all is the gateway saying it read the beginning of an
+	// oversized payload and nothing more.
+	outcome := dlp.Result{
+		Blocked: input.Event.Blocked, Findings: input.Event.Findings, Truncated: input.Event.Truncated,
+	}.Outcome()
 	details := map[string]any{
 		"server": input.Event.Server, "tool": input.Event.Tool, "direction": input.Event.Direction,
 		"truncated": input.Event.Truncated, "findings": findings, "runtimeId": runtime.ID,
@@ -179,7 +183,11 @@ func (s *Server) reportDLPEvent(w http.ResponseWriter, r *http.Request) {
 		actor = &owner
 	}
 	s.store.Audit(r.Context(), actor, "dlp.tool", "agent", runtime.AgentID, outcome, clientIP(r), details)
-	s.logger.Warn("sensitive data found on a tool call", "runtime", runtime.ID, "agent", runtime.AgentID,
+	message := "sensitive data found on a tool call"
+	if outcome == dlp.OutcomeUnscanned {
+		message = "a tool call longer than the scan limit was inspected only as far as the limit"
+	}
+	s.logger.Warn(message, "runtime", runtime.ID, "agent", runtime.AgentID,
 		"server", input.Event.Server, "tool", input.Event.Tool, "outcome", outcome, "findings", len(findings))
 	writeJSON(w, http.StatusAccepted, map[string]any{"recorded": true})
 }
