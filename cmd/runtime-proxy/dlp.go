@@ -68,6 +68,14 @@ func (s *scanner) inspect(ctx context.Context, server, tool, direction, text str
 	}
 	result := dlp.Scan(s.settings, text)
 	if len(result.Findings) == 0 {
+		// A tool result is the payload most likely to run past the limit — bounding
+		// them is what the limit is for — and one the scanner only read the
+		// beginning of is not one it can call clean. Reported, and nothing else:
+		// the call itself is untouched, so the caller is handed the same nil it
+		// would have been handed before and the body is not rewritten.
+		if result.Truncated {
+			s.record(ctx, server, tool, direction, result)
+		}
 		return text, nil
 	}
 	dlp.SortFindings(result.Findings)

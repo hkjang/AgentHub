@@ -102,6 +102,71 @@ func TestWhatTheScanFoundComesBackFromEveryBoundary(t *testing.T) {
 	}
 }
 
+// A payload longer than the scan limit is read as far as the limit and no
+// further. When the part that was read carries nothing, the send used to come
+// back looking exactly like a payload that had been examined end to end and
+// found clean — same empty findings, same silence — and a deployment that
+// lowered the limit to keep large exports cheap made that the ordinary case.
+//
+// What comes back now says which of the two it was, in the word the trail files
+// it under.
+func TestALongCleanPayloadSaysHowMuchOfItWasRead(t *testing.T) {
+	// Nothing sensitive in any of it; there is simply more of it than the limit.
+	long := strings.Repeat("점검 항목을 확인했습니다. ", 40)
+	// Small enough that the fixture does not have to be a megabyte, and a limit an
+	// operator can really set: Validate accepts anything from 0 to 4 MB.
+	bounded := dlp.Settings{Enabled: true, Classes: map[string]string{"rrn": dlp.Block}, MaxBytes: 128}
+
+	sink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer sink.Close()
+	forge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer forge.Close()
+	connection := store.SCMConnection{Kind: "gitea", Host: strings.TrimPrefix(forge.URL, "http://"), APIBase: forge.URL + "/api/v1"}
+
+	for _, boundary := range []struct {
+		name string
+		send func(string) (ContentOutcome, error)
+	}{
+		{"결정 기록", func(text string) (ContentOutcome, error) {
+			return SendDecision(context.Background(), store.ProvenanceSettings{Endpoint: sink.URL},
+				ContentGuard{Scan: bounded}, store.DecisionRecord{TaskID: "t1", Scenario: text})
+		}},
+		{"리뷰 코멘트", func(text string) (ContentOutcome, error) {
+			return PostReviewComment(context.Background(), forge.Client(), connection, "s3cret",
+				forge.URL+"/acme/store/pulls/1", text, ContentGuard{Scan: bounded})
+		}},
+	} {
+		t.Run(boundary.name, func(t *testing.T) {
+			outcome, err := boundary.send(long)
+			if err != nil {
+				t.Fatalf("a long clean send failed: %v", err)
+			}
+			if !outcome.Scan.Truncated {
+				t.Fatal("this payload is meant to be longer than the limit")
+			}
+			if outcome.Refused() {
+				t.Error("a payload the scanner found nothing in was held back for being long")
+			}
+			if outcome.Outcome() != dlp.OutcomeUnscanned {
+				t.Errorf("text that was read only as far as the limit is recorded as %q", outcome.Outcome())
+			}
+
+			// The other half of the sentence: a send that fits is still silent, or
+			// the trail fills with entries about ordinary traffic and the findings
+			// are lost among them.
+			short, err := boundary.send("점검 항목을 확인했습니다.")
+			if err != nil {
+				t.Fatalf("a short clean send failed: %v", err)
+			}
+			if short.Scan.Reportable() {
+				t.Errorf("a payload read to its end and found clean has something to record: %+v", short.Scan)
+			}
+		})
+	}
+}
+
 // The result coming back is only half of it: the caller holding the database has
 // to write it down, and only once the send settled. A sink that answered with an
 // error is retried by the dispatcher, and an entry per attempt would count one

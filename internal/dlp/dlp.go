@@ -209,6 +209,11 @@ const (
 	// OutcomeAudited is a finding that was recorded and nothing else: the payload
 	// went out exactly as the agent wrote it.
 	OutcomeAudited = "audited"
+	// OutcomeUnscanned is a payload the scanner could not vouch for: it was longer
+	// than the limit, and the part that was read carried nothing. It is not
+	// "clean", and a trail that files it as clean is a trail that answers a
+	// question it was never asked.
+	OutcomeUnscanned = "unscanned"
 )
 
 // Outcome is what actually happened to the text.
@@ -223,6 +228,9 @@ const (
 //
 // A class can be redacted and another only recorded in the same payload, and
 // then the text did change, so one Redact finding is enough to say so.
+//
+// A payload nothing was found in still has something to report when the scan
+// stopped short of its end — see Incomplete.
 func (r Result) Outcome() string {
 	if r.Blocked {
 		return OutcomeBlocked
@@ -232,8 +240,33 @@ func (r Result) Outcome() string {
 			return OutcomeRedacted
 		}
 	}
+	if r.Incomplete() {
+		return OutcomeUnscanned
+	}
 	return OutcomeAudited
 }
+
+// Incomplete reports a scan that ran out of payload before it ran out of text:
+// the limit was reached and nothing was found in the part that was read.
+//
+// Truncated is documented as existing "so a clean result is not mistaken for a
+// complete one", and every boundary threw exactly that result away — each of
+// them returns the moment the findings are empty, so the one payload the scanner
+// cannot vouch for is the one that leaves no log line and no audit entry. To the
+// operator it is indistinguishable from "we looked at all of it and it was
+// clean", which is the opposite of what happened, and a deployment that lowered
+// MaxBytes to keep large tool results cheap made it the ordinary case.
+//
+// A truncated payload that did carry a finding is reported as what was done to
+// it — blocked, redacted, recorded — with the truncation on the entry beside it.
+// That is the more urgent fact of the two, and it was never the silent one.
+func (r Result) Incomplete() bool { return r.Truncated && len(r.Findings) == 0 }
+
+// Reportable reports whether a scan has anything to tell the operator: something
+// was found, or part of the payload was never read. It is what a boundary asks
+// before it writes its trail, so that "nothing found" and "nothing found in the
+// part we read" stop being the same silence.
+func (r Result) Reportable() bool { return len(r.Findings) > 0 || r.Truncated }
 
 // Classes lists what was found, for a policy decision.
 func (r Result) Classes() []string {
