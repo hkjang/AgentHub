@@ -35,7 +35,9 @@
     "test:viewmode": "node scripts/viewmode-e2e.mjs",
     "test:quota": "node scripts/quota-e2e.mjs",
     "test:screens": "node scripts/screens-e2e.mjs",
-    "test:runs": "node scripts/runs-e2e.mjs"
+    "test:runs": "node scripts/runs-e2e.mjs",
+    "shots:guide": "node scripts/guide-shots.mjs",
+    "shots:guide:model": "node scripts/guide-model-stub.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",

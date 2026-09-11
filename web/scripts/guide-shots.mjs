@@ -22,6 +22,15 @@
 //   AGENTHUB_GUIDE_USER=admin AGENTHUB_GUIDE_PASSWORD=… \
 //   AGENTHUB_GUIDE_DISPOSABLE=yes \
 //   node scripts/guide-shots.mjs
+//
+// The run history and the task queue are photographed with work in them when a
+// worker is attached to the same database and AGENTHUB_GUIDE_MODEL_URL names a
+// model endpoint it can reach — scripts/guide-model-stub.mjs answers the seeded
+// tasks in the shape the worker expects. The seeded models point there while the
+// tasks execute and are moved back to their display address before the first
+// picture, so the runs are the worker's own and the figures still show the
+// in-house hostname a reader would see. Without it the tasks stay queued and
+// those two screens are photographed empty, as they were.
 import { chromium } from 'playwright-core'
 import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -43,6 +52,11 @@ if (process.env.AGENTHUB_GUIDE_DISPOSABLE !== 'yes') {
 }
 const here = dirname(fileURLToPath(import.meta.url))
 const shotDir = process.env.GUIDE_SHOT_DIR ?? join(here, '..', '..', 'docs', 'screenshots', 'guide')
+// Where the worker finds a model while the seeded tasks execute; empty means no
+// worker is attached and the tasks are left queued.
+const modelURL = (process.env.AGENTHUB_GUIDE_MODEL_URL ?? '').replace(/\/$/, '')
+// The address the figures show. It is a hostname, not a place, on purpose.
+const displayModelURL = 'https://llm.example.internal/v1'
 mkdirSync(shotDir, { recursive: true })
 
 const problems = []
@@ -87,17 +101,25 @@ try {
   // read first and put back on the way out — the same shape policy-e2e.mjs and
   // dlp-e2e.mjs use. Without it one run leaves the deployment holding this
   // script's demo policy instead of its own.
+  // Each entry names where the value is read, where it is written back, and how
+  // the read body becomes the write body — the three differ. GET /admin/dlp wraps
+  // the settings with the detector list, and there is no GET per setting key:
+  // /admin/settings/{key} only answers PUT, so the gateway is read out of the
+  // whole settings map. A deployment that never set it is left as the seed left
+  // it, because there is no call that deletes a setting.
   const globals = [
-    ['/api/v1/admin/policy', (body) => body?.document ?? { rules: [] }],
-    ['/api/v1/admin/dlp', (body) => body?.document ?? body ?? {}],
-    ['/api/v1/admin/settings/sessionGateway', (body) => ({ value: body?.value ?? body ?? null })],
+    ['/api/v1/admin/policy', '/api/v1/admin/policy', (body) => body?.document ?? { rules: [] }],
+    ['/api/v1/admin/dlp', '/api/v1/admin/dlp', (body) => body?.settings ?? null],
+    ['/api/v1/admin/settings', '/api/v1/admin/settings/sessionGateway', (body) => body?.sessionGateway ? { value: body.sessionGateway } : null],
   ]
   const before = []
   if (process.env.GUIDE_SKIP_SEED !== '1') {
-    for (const [path, read] of globals) {
-      const current = await get(path)
-      if (!ok(current)) { note(`복원용 읽기 ${path}`, false, `HTTP ${current.status}`); continue }
-      before.push([path, read(current.body)])
+    for (const [readPath, writePath, read] of globals) {
+      const current = await get(readPath)
+      if (!ok(current)) { note(`복원용 읽기 ${readPath}`, false, `HTTP ${current.status}`); continue }
+      const value = read(current.body)
+      if (value === null) { note(`복원용 읽기 ${writePath}`, true, '이전 값 없음 — 복원 생략'); continue }
+      before.push([writePath, value])
     }
   }
 
@@ -151,14 +173,18 @@ async function visit(page, route, name, label, prepare) {
 /** seed writes the demo deployment every figure is taken against. */
 async function seed({ get, post, put, ok }) {
   const models = [
-    { name: '사내 LLM 게이트웨이', provider: 'openai', baseUrl: 'https://llm.example.internal/v1', defaultModel: 'gpt-oss-120b', enabled: true, inputPricePerMTok: 900, outputPricePerMTok: 2700, currency: 'KRW' },
-    { name: '요약 전용 소형 모델', provider: 'openai', baseUrl: 'https://llm.example.internal/v1', defaultModel: 'qwen3-8b', enabled: true, inputPricePerMTok: 120, outputPricePerMTok: 360, currency: 'KRW' },
+    { name: '사내 LLM 게이트웨이', provider: 'openai', baseUrl: modelURL || displayModelURL, defaultModel: 'gpt-oss-120b', enabled: true, inputPricePerMTok: 900, outputPricePerMTok: 2700, currency: 'KRW' },
+    { name: '요약 전용 소형 모델', provider: 'openai', baseUrl: modelURL || displayModelURL, defaultModel: 'qwen3-8b', enabled: true, inputPricePerMTok: 120, outputPricePerMTok: 360, currency: 'KRW' },
   ]
   const modelIds = []
+  const savedModels = []
   for (const model of models) {
     const created = await post('/api/v1/admin/models', model)
     note(`모델 등록 ${model.name}`, ok(created), `HTTP ${created.status}`)
-    if (created.body?.id) modelIds.push(created.body.id)
+    if (created.body?.id) {
+      modelIds.push(created.body.id)
+      savedModels.push(created.body)
+    }
   }
 
   const servers = [
@@ -194,7 +220,7 @@ async function seed({ get, post, put, ok }) {
   // invented a fourth way would be photographing a product that does not exist.
   // A demo deployment gets its extra members by signing them in through SSO.
   const members = (await get('/api/v1/admin/users')).body?.items ?? []
-  note('사용자 목록에 사람이 있음', members.length > 1, `${members.length}명`)
+  note('사용자 목록', true, `${members.length}명 — 부트스트랩 관리자만 있는 배포는 1명이 정상`)
 
   const workspaces = [
     { name: '결제서비스-정비', type: 'empty', sizeGb: 20 },
@@ -259,6 +285,20 @@ async function seed({ get, post, put, ok }) {
     note(`작업 등록 ${task.title}`, ok(created), `HTTP ${created.status} ${created.body?.error?.message ?? ''}`)
   }
 
+  if (modelURL) {
+    // The worker executes the seeded tasks against the stub. What the figures
+    // then show — runs, steps, an artifact, a handoff — is the worker's own
+    // record; only the model's words were scripted.
+    const settled = await settle(get, 180000)
+    note('작업이 워커에서 끝남', settled.done, settled.detail)
+    // Back to the address the figures show, id kept so the record is updated
+    // rather than duplicated.
+    for (const model of savedModels) {
+      const moved = await post('/api/v1/admin/models', { ...model, baseUrl: displayModelURL })
+      note(`모델 주소 복원 ${model.name}`, ok(moved), `HTTP ${moved.status}`)
+    }
+  }
+
   const testSet = await post('/api/v1/evaluation/test-sets', {
     name: '배포 전 필수 점검', description: '에이전트가 운영에 나가기 전에 갖춰야 할 것', passThreshold: 100,
     cases: [
@@ -305,6 +345,22 @@ async function seed({ get, post, put, ok }) {
   note('세션 게이트웨이 설정', ok(gateway), `HTTP ${gateway.status}`)
 }
 
+/** settle waits until no seeded task is still queued or running. */
+async function settle(get, timeoutMs) {
+  const busy = new Set(['queued', 'running', 'retrying'])
+  const deadline = Date.now() + timeoutMs
+  let statuses = []
+  while (Date.now() < deadline) {
+    const tasks = (await get('/api/v1/tasks')).body?.items ?? []
+    statuses = tasks.map((task) => task.status)
+    if (statuses.length && !statuses.some((status) => busy.has(status))) {
+      return { done: true, detail: statuses.join(', ') }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000))
+  }
+  return { done: false, detail: `${timeoutMs / 1000}초 안에 끝나지 않음 — 워커가 이 데이터베이스에 붙어 있고 AGENTHUB_GUIDE_MODEL_URL 에 닿는지 확인 (${statuses.join(', ')})` }
+}
+
 /** capture photographs every screen the two guides refer to. */
 async function capture(page) {
   const screens = [
@@ -343,5 +399,16 @@ async function capture(page) {
   ]
   for (const [route, name, label] of screens) {
     await visit(page, route, name, label)
+  }
+  // One run opened: the steps, the artifact and the usage a reader is told to
+  // look for live in the drawer, not in the list.
+  await page.goto(`${baseURL}/runs`, { waitUntil: 'networkidle' })
+  const rows = page.locator('tbody tr.clickable')
+  if (await rows.count()) {
+    await rows.first().click()
+    await page.getByRole('dialog').waitFor({ timeout: 10000 })
+    await shoot(page, 'runs-detail', '실행 기록 · 상세')
+  } else {
+    note('실행 기록 · 상세 → runs-detail.png', false, '실행 기록이 없음 — 워커와 AGENTHUB_GUIDE_MODEL_URL 없이 찍은 배포')
   }
 }
