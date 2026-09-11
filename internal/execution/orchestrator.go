@@ -128,23 +128,7 @@ func (o *Orchestrator) Execute(ctx context.Context, task store.AgentTask, traceI
 
 	outcome := o.run(ctx, &run, task, agent, goal, resume)
 	run.DurationMs = time.Since(started).Milliseconds()
-	switch {
-	case errors.Is(outcome.parked, ErrRuntimeQuota):
-		// The attempt did nothing and will be made again, so recording it as
-		// completed work would put a run in the history that never ran.
-		run.Status = "cancelled"
-	case errors.Is(outcome.parked, ErrAwaitingApproval):
-		// The run ends here but the task has not: a new run is created when the
-		// reviewer decides, so this one is recorded as completed work rather than
-		// a failure.
-		run.Status = "completed"
-	case outcome.Status == store.TaskCompleted:
-		run.Status = "completed"
-	case errors.Is(ctx.Err(), context.Canceled):
-		run.Status = "cancelled"
-	default:
-		run.Status = "failed"
-	}
+	run.Status = runStatus(outcome, ctx.Err())
 	run.Result, run.FailureReason = outcome.Result, outcome.Failure
 	if run.Metering == "" {
 		// Nothing claimed the accounting. On the platform's own reasoning loop that
@@ -392,6 +376,34 @@ func (o *Orchestrator) resolveModel(ctx context.Context, agent store.Agent) (res
 		return resolvedModel{}, errors.New("연결된 Model Endpoint에 Base URL 또는 Model 이름이 없습니다.")
 	}
 	return resolvedModel{BaseURL: endpoint.BaseURL, ModelName: endpoint.DefaultModel, APIKey: key}, nil
+}
+
+// runStatus files one attempt the way the history should read it.
+//
+// A parked task is not a failed run. An approval and a handoff both end the run
+// with the work unfinished and a person about to continue it — a reviewer in the
+// queue, or the owner in the runtime — and the task itself already says so. The
+// run that got the work that far is completed work. Before the handoff was
+// listed here it fell through to "failed" with no reason, and the history showed
+// the very outcome the task queue calls a wait as a failure with "이유 없음".
+func runStatus(outcome Outcome, ctxErr error) string {
+	switch {
+	case errors.Is(outcome.parked, ErrRuntimeQuota):
+		// The attempt did nothing and will be made again, so recording it as
+		// completed work would put a run in the history that never ran.
+		return "cancelled"
+	case errors.Is(outcome.parked, ErrAwaitingApproval), errors.Is(outcome.parked, ErrHandedOff):
+		// The run ends here but the task has not: a new run is created when the
+		// reviewer decides or the owner resolves the handoff, so this one is
+		// recorded as completed work rather than a failure.
+		return "completed"
+	case outcome.Status == store.TaskCompleted:
+		return "completed"
+	case errors.Is(ctxErr, context.Canceled):
+		return "cancelled"
+	default:
+		return "failed"
+	}
 }
 
 // think drives the agent toward its goal, one reasoning step at a time, until it
