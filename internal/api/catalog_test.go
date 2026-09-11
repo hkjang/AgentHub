@@ -30,6 +30,7 @@ var uncatalogued = map[string]string{
 	"POST /api/v1/runtime-gateway/dlp-events":         "the same gateway reporting what its content scanner found",
 	"POST /api/v1/runtime-gateway/config-report":      "a runtime initialiser reporting the configuration it wrote, authenticated by the runtime token",
 	"GET /api/v1/me":                                  "identifies the caller, session or key, and grants nothing",
+	"POST /api/v1/tracking/csp-report":                "a browser reporting what the page policy blocked; no session, and nothing is kept unless visitor tracking is on",
 }
 
 func walkAPI(t *testing.T) map[string]bool {

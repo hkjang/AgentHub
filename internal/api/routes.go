@@ -25,6 +25,7 @@ import (
 	"github.com/hkjang/AgentHub/internal/runtimetype"
 	"github.com/hkjang/AgentHub/internal/store"
 	"github.com/hkjang/AgentHub/internal/telemetry"
+	"github.com/hkjang/AgentHub/internal/tracking"
 )
 
 func (s *Server) models(w http.ResponseWriter, r *http.Request) {
@@ -1518,7 +1519,7 @@ func (s *Server) secretConfigured(r *http.Request, key string) bool {
 func (s *Server) putAdminSetting(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	key := chi.URLParam(r, "key")
-	allowed := map[string]bool{"general": true, "authentication": true, "kubernetes": true, "sessionGateway": true, "governance": true, "logging": true, "release": true, runtimeenv.SettingKey: true, runtimetype.SettingKey: true, telemetry.SettingKey: true}
+	allowed := map[string]bool{"general": true, "authentication": true, "kubernetes": true, "sessionGateway": true, "governance": true, "logging": true, "release": true, runtimeenv.SettingKey: true, runtimetype.SettingKey: true, telemetry.SettingKey: true, tracking.SettingKey: true}
 	if !allowed[key] {
 		writeError(w, 404, "setting_not_found", "지원하지 않는 설정입니다.")
 		return
@@ -1540,6 +1541,9 @@ func (s *Server) putAdminSetting(w http.ResponseWriter, r *http.Request) {
 	}
 	if key == "sessionGateway" {
 		s.invalidateSessionGatewaySettings()
+	}
+	if key == tracking.SettingKey {
+		s.invalidateTrackingSettings()
 	}
 	response := map[string]any{"saved": true}
 	if key == runtimeenv.SettingKey {
@@ -1678,6 +1682,15 @@ func (s *Server) validateSetting(r *http.Request, key string, value map[string]a
 		return settings.Validate()
 	case runtimetype.SettingKey:
 		settings, err := decodeRuntimeAgentSettings(value)
+		if err != nil {
+			return err
+		}
+		return settings.Validate()
+	case tracking.SettingKey:
+		// A snippet that cannot work — a provider with no id, a pasted block past
+		// the size limit — is refused here, where the form can say so, rather
+		// than stored and discovered as an empty dashboard.
+		settings, err := decodeTrackingSettings(value)
 		if err != nil {
 			return err
 		}

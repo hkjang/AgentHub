@@ -23,6 +23,7 @@ import (
 	"github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/store"
 	"github.com/hkjang/AgentHub/internal/telemetry"
+	"github.com/hkjang/AgentHub/internal/tracking"
 )
 
 const (
@@ -49,10 +50,17 @@ type Server struct {
 	sessionSettingsMu    sync.RWMutex
 	sessionSettings      sessionGatewaySettings
 	sessionSettingsUntil time.Time
+
+	// Visitor tracking: the settings, cached the same way, and what browsers
+	// reported the policy blocked while it was on.
+	trackingMu       sync.RWMutex
+	trackingSettings tracking.Settings
+	trackingUntil    time.Time
+	violations       *tracking.Recorder
 }
 
 func New(db *store.Store, cipher *cryptox.Cipher, logger *slog.Logger, logs *appLog.Ring, spawner runtime.Spawner, static fs.FS) *Server {
-	return &Server{store: db, cipher: cipher, logger: logger, logs: logs, spawner: spawner, version: buildinfo.Current(), static: static, logins: newLoginThrottle()}
+	return &Server{store: db, cipher: cipher, logger: logger, logs: logs, spawner: spawner, version: buildinfo.Current(), static: static, logins: newLoginThrottle(), violations: tracking.NewRecorder()}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -101,6 +109,10 @@ func (s *Server) Handler() http.Handler {
 		// is the only thing that can answer that honestly, and the runtime token is
 		// the only credential it has.
 		r.Post("/runtime-gateway/config-report", s.reportRuntimeConfig)
+		// Browsers post here what the page policy refused, with no session and no
+		// CSRF token: the address is only written into the policy while visitor
+		// tracking is on, and the handler keeps nothing otherwise.
+		r.Post(strings.TrimPrefix(tracking.ReportPath, "/api/v1"), s.receiveCSPReport)
 		r.Group(func(r chi.Router) {
 			r.Use(s.authentication)
 			r.Get("/me", s.me)
@@ -114,6 +126,11 @@ func (s *Server) Handler() http.Handler {
 		})
 	})
 	r.Post("/mcp", s.mcp)
+	// The Momento collector, reached through this origin so its address never
+	// has to be in the page policy. Answers 404 unless tracking is configured
+	// that way.
+	r.HandleFunc(tracking.ProxyPath, s.momentoProxy)
+	r.HandleFunc(tracking.ProxyPath+"/*", s.momentoProxy)
 	r.NotFound(s.spa)
 	return r
 }
@@ -147,7 +164,14 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+		// Pages get the base policy; a page with tracking on replaces it with one
+		// carrying that response's nonce (serveIndex). Data endpoints get a
+		// policy that allows nothing, because nothing in them is a page.
+		if isAPIPath(r.URL.Path) {
+			w.Header().Set("Content-Security-Policy", apiPolicy)
+		} else {
+			w.Header().Set("Content-Security-Policy", basePagePolicy)
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -206,10 +230,17 @@ func (s *Server) spa(w http.ResponseWriter, r *http.Request) {
 	if requested == "." || requested == "" {
 		requested = "index.html"
 	}
+	if requested == "index.html" {
+		s.serveIndex(w, r, r.URL.Path)
+		return
+	}
 	if info, err := fs.Stat(s.static, requested); err == nil && !info.IsDir() {
 		http.ServeFileFS(w, r, s.static, requested)
 		return
 	}
+	// A console route: the shell is served for it, and the path it was asked
+	// for is what decides whether tracking belongs on the page.
+	pagePath := r.URL.Path
 	r.URL.Path = "/"
-	http.ServeFileFS(w, r, s.static, "index.html")
+	s.serveIndex(w, r, pagePath)
 }

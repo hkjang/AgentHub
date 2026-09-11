@@ -257,6 +257,9 @@ func (s *Server) apiRoutes() []Route {
 		// --- Administration ---
 		admin(http.MethodGet, "/admin/settings", "Administration", "Read platform settings", s.adminSettings),
 		admin(http.MethodPut, "/admin/settings/{key}", "Administration", "Save one platform setting", s.putAdminSetting),
+		admin(http.MethodGet, "/admin/tracking/violations", "Administration", "Which origins the page policy blocked while visitor tracking was on", s.trackingViolations),
+		admin(http.MethodDelete, "/admin/tracking/violations", "Administration", "Forget the recorded policy violations", s.clearTrackingViolations),
+		admin(http.MethodPost, "/admin/tracking/violations/allow", "Administration", "Add one blocked origin to the tracking allow list", s.allowTrackingOrigin),
 		admin(http.MethodGet, "/admin/overview", "Administration", "Platform health, spend and backlog for one window", s.adminOverview),
 		admin(http.MethodGet, "/admin/usage", "Administration", "Token spend broken down by user, agent and model", s.adminSpend),
 		admin(http.MethodGet, "/admin/usage/export", "Administration", "Download the spend breakdown as CSV", s.adminSpendExport),
