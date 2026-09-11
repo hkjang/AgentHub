@@ -1,13 +1,13 @@
 import { FormEvent, useEffect, useState } from 'react'
-import { Activity, Bot, Boxes, ExternalLink, FileCog, KeyRound, Network, Plus, Save, Settings, ShieldCheck, Trash2 } from 'lucide-react'
+import { Activity, BarChart3, Bot, Boxes, ExternalLink, FileCog, KeyRound, Network, Plus, Save, Settings, ShieldCheck, Trash2 } from 'lucide-react'
 import { subject } from '../korean'
 import { api } from '../api'
 import { ErrorBanner, Loading, PageHeader, SuccessBanner } from '../components/UI'
 import { runtimeDescriptors, runtimeLogoClass, setRuntimeAvailability } from '../runtime'
 
 type SettingsMap=Record<string,Record<string,unknown>>
-const tabs=[{id:'general',label:'General',icon:Settings},{id:'authentication',label:'Authentication',icon:KeyRound},{id:'kubernetes',label:'Kubernetes',icon:Boxes},{id:'runtimeAgents',label:'Runtime Agents',icon:Bot},{id:'runtimeEnvironment',label:'Runtime Environment',icon:FileCog},{id:'sessionGateway',label:'Session Gateway',icon:ExternalLink},{id:'governance',label:'Governance',icon:ShieldCheck},{id:'logging',label:'Logging',icon:Network},{id:'observability',label:'Observability',icon:Activity},{id:'release',label:'Offline & Release',icon:Save}]
-export function AdminSettings(){const [settings,setSettings]=useState<SettingsMap>(),[tab,setTab]=useState('general'),[error,setError]=useState(''),[notice,setNotice]=useState(''),[secret,setSecret]=useState('');useEffect(()=>{api.get<SettingsMap>('/api/v1/admin/settings').then(setSettings).catch(e=>setError(e.message))},[]);if(!settings)return <Loading/>;const value=settings[tab]??{};const save=async(e:FormEvent)=>{e.preventDefault();setError('');setNotice('');try{const result=await api.put<{runtimeEnvironment?:{message:string}}>(`/api/v1/admin/settings/${tab}`,{value,secret:secret||undefined});if(tab==='runtimeAgents'){const disabled=Array.isArray(value.disabledTypes)?value.disabledTypes.filter((item):item is string=>typeof item==='string'):[];setRuntimeAvailability(disabled)}const savedNotice=tab==='runtimeAgents'?'설정을 저장했습니다. 카탈로그와 신규 에이전트 생성에 바로 적용됩니다.':tab==='kubernetes'?'설정을 저장했습니다. hostNetwork 변경은 새로 만들거나 다음에 시작·재시작하는 Runtime부터 적용됩니다.':'설정을 저장했습니다. 새 Runtime과 다음 로그인부터 적용됩니다.';setNotice(result?.runtimeEnvironment?.message??savedNotice);setSecret('')}catch(err){setError(err instanceof Error?err.message:'설정을 저장하지 못했습니다.')}};const update=(key:string,next:unknown)=>setSettings(current=>({...current!,[tab]:{...current![tab],[key]:next}}));return <div className="page"><PageHeader eyebrow="관리자" title="시스템 설정" description="배포 후 운영 설정은 환경변수가 아닌 이 화면에서 안전하게 관리합니다."/>{error&&<ErrorBanner message={error}/>} {notice&&<SuccessBanner message={notice}/>}<div className="settings-layout"><nav className="settings-nav">{tabs.map(({id,label,icon:Icon})=><button type="button" className={tab===id?'active':''} onClick={()=>{setTab(id);setNotice('');setSecret('')}} key={id}><Icon size={17}/>{label}</button>)}</nav><form className="settings-panel" onSubmit={save}><SettingsForm tab={tab} value={value} update={update} secret={secret} setSecret={setSecret}/><footer><span>비밀값은 저장 후 마스킹되며 API 응답으로 반환되지 않습니다.</span><button className="button primary"><Save size={16}/>변경사항 저장</button></footer></form></div></div>}
+const tabs=[{id:'general',label:'General',icon:Settings},{id:'authentication',label:'Authentication',icon:KeyRound},{id:'kubernetes',label:'Kubernetes',icon:Boxes},{id:'runtimeAgents',label:'Runtime Agents',icon:Bot},{id:'runtimeEnvironment',label:'Runtime Environment',icon:FileCog},{id:'sessionGateway',label:'Session Gateway',icon:ExternalLink},{id:'governance',label:'Governance',icon:ShieldCheck},{id:'logging',label:'Logging',icon:Network},{id:'observability',label:'Observability',icon:Activity},{id:'tracking',label:'Tracking',icon:BarChart3},{id:'release',label:'Offline & Release',icon:Save}]
+export function AdminSettings(){const [settings,setSettings]=useState<SettingsMap>(),[tab,setTab]=useState('general'),[error,setError]=useState(''),[notice,setNotice]=useState(''),[secret,setSecret]=useState('');useEffect(()=>{api.get<SettingsMap>('/api/v1/admin/settings').then(setSettings).catch(e=>setError(e.message))},[]);if(!settings)return <Loading/>;const value=settings[tab]??{};const save=async(e:FormEvent)=>{e.preventDefault();setError('');setNotice('');try{const result=await api.put<{runtimeEnvironment?:{message:string}}>(`/api/v1/admin/settings/${tab}`,{value,secret:secret||undefined});if(tab==='runtimeAgents'){const disabled=Array.isArray(value.disabledTypes)?value.disabledTypes.filter((item):item is string=>typeof item==='string'):[];setRuntimeAvailability(disabled)}const savedNotice=tab==='runtimeAgents'?'설정을 저장했습니다. 카탈로그와 신규 에이전트 생성에 바로 적용됩니다.':tab==='tracking'?'설정을 저장했습니다. 다음 페이지 로드부터 적용됩니다 — 화면을 새로 고쳐 확인하세요.':tab==='kubernetes'?'설정을 저장했습니다. hostNetwork 변경은 새로 만들거나 다음에 시작·재시작하는 Runtime부터 적용됩니다.':'설정을 저장했습니다. 새 Runtime과 다음 로그인부터 적용됩니다.';setNotice(result?.runtimeEnvironment?.message??savedNotice);setSecret('')}catch(err){setError(err instanceof Error?err.message:'설정을 저장하지 못했습니다.')}};const update=(key:string,next:unknown)=>setSettings(current=>({...current!,[tab]:{...current![tab],[key]:next}}));return <div className="page"><PageHeader eyebrow="관리자" title="시스템 설정" description="배포 후 운영 설정은 환경변수가 아닌 이 화면에서 안전하게 관리합니다."/>{error&&<ErrorBanner message={error}/>} {notice&&<SuccessBanner message={notice}/>}<div className="settings-layout"><nav className="settings-nav">{tabs.map(({id,label,icon:Icon})=><button type="button" className={tab===id?'active':''} onClick={()=>{setTab(id);setNotice('');setSecret('')}} key={id}><Icon size={17}/>{label}</button>)}</nav><form className="settings-panel" onSubmit={save}><SettingsForm tab={tab} value={value} update={update} secret={secret} setSecret={setSecret}/><footer><span>비밀값은 저장 후 마스킹되며 API 응답으로 반환되지 않습니다.</span><button className="button primary"><Save size={16}/>변경사항 저장</button></footer></form></div></div>}
 
 function SettingsForm({tab,value,update,secret,setSecret}:{tab:string;value:Record<string,unknown>;update:(key:string,v:unknown)=>void;secret:string;setSecret:(v:string)=>void}){
   if(tab==='general')return <><Section title="서비스" description="사용자에게 표시되는 기본 정보입니다."><Field label="서비스 이름"><input value={String(value.serviceName??'AgentHub')} onChange={e=>update('serviceName',e.target.value)}/></Field><Field label="Public URL" hint="OIDC Callback URL 생성에 사용합니다."><input type="url" value={String(value.publicUrl??'')} onChange={e=>update('publicUrl',e.target.value)} placeholder="https://agenthub.company.local"/></Field><div className="form-grid"><Field label="기본 언어"><select value={String(value.defaultLocale??'ko')} onChange={e=>update('defaultLocale',e.target.value)}><option value="ko">한국어</option><option value="en">English</option></select></Field><Field label="시간대"><input value={String(value.timezone??'Asia/Seoul')} onChange={e=>update('timezone',e.target.value)}/></Field></div></Section></>
@@ -38,6 +38,7 @@ function SettingsForm({tab,value,update,secret,setSecret}:{tab:string;value:Reco
     </div>
     <div className="info-box"><Activity size={17}/><div><strong>수집기가 없으면 아무 비용도 들지 않습니다</strong><p>주소를 비워 두면 추적이 꺼진 상태로 동작하며 스팬을 만들지도, 버퍼에 쌓지도 않습니다. 설정은 <b>API와 워커를 재시작한 뒤</b> 적용되고, 적용되면 화면·로그·실행 기록에 표시되는 Trace ID로 수집기에서 같은 실행을 찾을 수 있습니다.</p></div></div>
   </Section>
+  if(tab==='tracking')return <TrackingForm value={value} update={update}/>
   if(tab==='logging')return <Section title="로그 및 감사" description="서버 로그는 Control Center에서 검색하고 Runtime 로그와 구분해 확인할 수 있습니다."><Field label="로그 레벨"><select value={String(value.level??'info')} onChange={e=>update('level',e.target.value)}><option value="debug">Debug</option><option value="info">Info</option><option value="warn">Warn</option><option value="error">Error</option></select></Field><div className="info-box"><Network size={17}/><div><strong>보관 기간은 실행 제어에서 정합니다</strong><p>감사·실행·이벤트 기록의 보관 기간과 정리 실행은 <b>관리자 ▸ 실행 제어 ▸ 보관 정책</b> 한 곳에서 관리합니다. 같은 값을 두 화면에서 따로 정할 수 있게 두면 어느 쪽이 실제로 적용되는지 알 수 없습니다.</p></div></div><Toggle label="Runtime 로그 조회 사용" checked={value.includeRuntimeLogs!==false} change={v=>update('includeRuntimeLogs',v)}/></Section>
   return <Section title="Offline 운영" description="이 배포는 실행 중 외부로 나가지 않습니다. 켜고 끄는 설정이 아니라 빌드된 방식입니다."><div className="info-box"><ShieldCheck size={17}/><div><strong>업데이트 확인도, CDN도 없습니다</strong><p>컨트롤 플레인은 자기 버전을 확인하러 나가지 않고, 콘솔은 폰트·스크립트를 모두 이미지 안에서 불러옵니다. 예전에는 이 자리에 스위치가 두 개 있었지만 아무 동작도 바꾸지 않았습니다 — 끌 것이 없어서입니다. 런타임이 밖으로 나가는 범위는 <b>Network Profile</b> 로 정하고, 그 정책이 이 클러스터에서 실제로 적용되는지는 <b>보안 · 네트워크</b> 화면에서 확인할 수 있습니다.</p></div></div><div className="info-box"><Boxes size={17}/><div><strong>검증 가능한 Release 묶음</strong><p>컨트롤 플레인과 각 런타임 이미지는 독립 버전으로 게시됩니다. Release의 오프라인 매니페스트가 선택한 런타임에 필요한 아카이브·분할 조각·원본 Release·크기·SHA-256을 한 번에 안내하며, PostgreSQL 이미지는 포함하지 않습니다.</p></div></div><div className="info-box"><ShieldCheck size={17}/><div><strong>외부 PostgreSQL이 필수입니다</strong><p>PostgreSQL은 별도로 운영하고 <code>AGENTHUB_POSTGRES_DSN</code>으로 연결하세요. 인증·TLS·백업·모니터링·업그레이드와 API·워커의 네트워크 접근은 운영 환경에서 준비해야 합니다.</p></div></div></Section>
 }
@@ -126,6 +127,99 @@ function RuntimeEnvironmentForm({value,update}:{value:Record<string,unknown>;upd
     </Section>
   </>
 }
+const TRACKING_PROVIDERS=[{id:'momento',label:'Momento (사내 수집기)'},{id:'ga4',label:'Google Analytics 4'},{id:'gtm',label:'Google Tag Manager'},{id:'matomo',label:'Matomo'},{id:'custom',label:'직접 붙여 넣기'}]
+const TRACKING_SNIPPET_LIMIT=8*1024
+
+// 방문 추적 스니펫. 어려운 쪽은 <script> 삽입이 아니라 콘텐츠 보안 정책이다 — 콘솔은
+// 자기 출처의 스크립트만 허용하므로, 서버가 요청마다 nonce 를 만들어 스니펫의 모든
+// script 태그와 정책 헤더에 같이 넣고, 스니펫이 부르는 출처를 정책에 더한다.
+// 'unsafe-inline' 으로 정책을 푸는 길은 없다.
+function TrackingForm({value,update}:{value:Record<string,unknown>;update:(key:string,v:unknown)=>void}){
+  const provider=String(value.provider??'momento')
+  const proxy=value.momentoProxy!==false
+  const snippet=String(value.customSnippet??'')
+  const snippetBytes=new TextEncoder().encode(snippet).length
+  return <>
+    <Section title="방문 추적" description="관리자가 붙인 추적 스크립트를 콘솔의 모든 화면에 싣습니다. 기본은 꺼짐이며, 켜기 전까지 어떤 페이지도 달라지지 않습니다.">
+      <Toggle label="방문 추적 사용" checked={Boolean(value.enabled)} change={v=>update('enabled',v)}/>
+      <div className="form-grid">
+        <Field label="제공자" hint="Momento 는 사내 자체 호스팅 수집기라 데이터가 밖으로 나가지 않는 유일한 선택지입니다.">
+          <select value={provider} onChange={e=>update('provider',e.target.value)}>{TRACKING_PROVIDERS.map(item=><option key={item.id} value={item.id}>{item.label}</option>)}</select>
+        </Field>
+        <Field label="삽입 위치"><select value={String(value.placement??'head')} onChange={e=>update('placement',e.target.value)}><option value="head">&lt;head&gt; 끝</option><option value="body">&lt;body&gt; 끝</option></select></Field>
+      </div>
+      {provider==='momento'&&<>
+        <div className="form-grid">
+          <Field label="Momento 수집기 주소"><input type="url" value={String(value.momentoUrl??'')} onChange={e=>update('momentoUrl',e.target.value)} placeholder="https://momento.company.local"/></Field>
+          <Field label="사이트 id"><input value={String(value.momentoSiteId??'')} onChange={e=>update('momentoSiteId',e.target.value)} placeholder="agenthub"/></Field>
+        </div>
+        <div className="form-grid">
+          <Field label="환경 이름" hint="수집기가 방문을 분류하는 이름입니다. 기본 prd."><input value={String(value.momentoEnvironment??'prd')} onChange={e=>update('momentoEnvironment',e.target.value)} placeholder="prd"/></Field>
+        </div>
+        <Toggle label="같은 오리진 프록시 사용 (권장)" checked={proxy} change={v=>update('momentoProxy',v)}/>
+        <div className="info-box"><ShieldCheck size={17}/><div><strong>{proxy?'외부 출처가 정책에 등장하지 않습니다':'수집기 주소가 정책에 추가됩니다'}</strong><p>{proxy?<>콘솔이 <code>/momento/*</code> 를 수집기로 넘기고 스니펫은 <code>data-endpoint="/momento"</code> 로 이 오리진에 보고합니다. 브라우저는 콘솔 외의 어떤 주소에도 연결하지 않으므로 콘텐츠 보안 정책을 바꿀 필요가 없습니다. 콘솔의 세션 쿠키는 수집기로 전달되지 않습니다.</>:<>브라우저가 수집기에 직접 연결합니다. 수집기 주소가 <code>script-src</code> · <code>connect-src</code> · <code>img-src</code> 에 더해지며, 추적을 끄면 정책은 원래대로 좁아집니다.</>}</p></div></div>
+      </>}
+      {(provider==='ga4'||provider==='gtm')&&<Field label="Measurement / Container ID"><input value={String(value.measurementId??'')} onChange={e=>update('measurementId',e.target.value)} placeholder={provider==='ga4'?'G-XXXXXXXXXX':'GTM-XXXXXXX'}/></Field>}
+      {provider==='matomo'&&<div className="form-grid">
+        <Field label="Matomo 주소"><input type="url" value={String(value.matomoUrl??'')} onChange={e=>update('matomoUrl',e.target.value)} placeholder="https://matomo.company.local"/></Field>
+        <Field label="사이트 id"><input value={String(value.matomoSiteId??'')} onChange={e=>update('matomoSiteId',e.target.value)} placeholder="1"/></Field>
+      </div>}
+      {provider==='custom'&&<Field label="추적 코드" hint={`추적 도구가 준 <script> 블록을 그대로 붙여 넣으세요. ${snippetBytes.toLocaleString('ko-KR')} / ${TRACKING_SNIPPET_LIMIT.toLocaleString('ko-KR')} 바이트. 코드 안의 http(s) 주소는 자동으로 정책에 더해집니다.`}>
+        <textarea rows={8} value={snippet} onChange={e=>update('customSnippet',e.target.value)} placeholder={'<script async src="https://tracker.company.local/t.js" data-site="…"></script>'} spellCheck={false}/>
+      </Field>}
+      <Field label="추가 허용 출처" hint="스니펫에서 자동으로 읽지 못한 출처를 한 줄에 하나씩 https://호스트 형태로 적습니다. 아래 '차단된 출처' 에서 한 번에 넣을 수도 있습니다.">
+        <textarea rows={3} value={String(value.allowedHosts??'')} onChange={e=>update('allowedHosts',e.target.value)} placeholder="https://pixel.company.local" spellCheck={false}/>
+      </Field>
+      <Toggle label="관리 화면에서도 추적" checked={Boolean(value.includeAdmin)} change={v=>update('includeAdmin',v)}/>
+      <div className="info-box"><BarChart3 size={17}/><div><strong>콘텐츠 보안 정책은 풀지 않습니다</strong><p>콘솔은 <code>script-src 'self'</code> 로 잠겨 있어 스니펫을 그냥 붙이면 브라우저가 조용히 막습니다. 켜면 서버가 페이지 요청마다 nonce 를 만들어 스니펫의 모든 <code>&lt;script&gt;</code> 와 정책 헤더에 같이 싣고, 스니펫이 부르는 출처를 <code>script-src</code> · <code>connect-src</code> · <code>img-src</code> 에 더합니다. <code>'unsafe-inline'</code> 은 쓰지 않습니다 — 한 번 풀면 추적을 끈 뒤에도 느슨한 채 남기 때문입니다. API 경로에는 스니펫이 붙지 않고 정책도 더 좁습니다.</p></div></div>
+    </Section>
+    <BlockedOrigins enabled={Boolean(value.enabled)} allowedHosts={String(value.allowedHosts??'')} update={update}/>
+  </>
+}
+
+type BlockedOrigin={origin:string;directive:string;page:string;count:number;lastSeen:string;allowed:boolean}
+
+/**
+ * 브라우저가 정책 때문에 막은 출처. 추적이 켜져 있는 동안 정책에 report-uri 가 들어가고,
+ * 그 신고가 여기에 모인다. 같은 차단은 페이지마다 반복되므로 횟수가 아니라 서로 다른
+ * 출처를 보여 준다 — 관리자는 한 번 눌러 허용 목록에 넣는다.
+ */
+function BlockedOrigins({enabled,allowedHosts,update}:{enabled:boolean;allowedHosts:string;update:(key:string,v:unknown)=>void}){
+  const [items,setItems]=useState<BlockedOrigin[]>()
+  const [error,setError]=useState('')
+  const [busy,setBusy]=useState('')
+  const load=()=>api.get<{items:BlockedOrigin[]}>('/api/v1/admin/tracking/violations').then(r=>setItems(r.items??[])).catch(e=>setError(e instanceof Error?e.message:'차단 기록을 읽지 못했습니다.'))
+  useEffect(()=>{void load()},[])
+  const allow=async(origin:string)=>{
+    setBusy(origin);setError('')
+    try{
+      const result=await api.post<{allowedHosts:string}>('/api/v1/admin/tracking/violations/allow',{origin})
+      update('allowedHosts',result.allowedHosts)
+      await load()
+    }catch(e){setError(e instanceof Error?e.message:'허용 목록에 넣지 못했습니다.')}
+    finally{setBusy('')}
+  }
+  const clear=async()=>{
+    setBusy('*');setError('')
+    try{await api.delete('/api/v1/admin/tracking/violations');await load()}
+    catch(e){setError(e instanceof Error?e.message:'비우지 못했습니다.')}
+    finally{setBusy('')}
+  }
+  const listed=(allowedHosts||'').toLowerCase()
+  return <Section title="차단된 출처" description="추적이 켜져 있는 동안 브라우저가 정책 때문에 막은 주소입니다. 대시보드가 비어 있으면 먼저 여기를 보세요.">
+    {error&&<ErrorBanner message={error}/>}
+    {!enabled&&<p className="empty-compact">추적이 꺼져 있으면 브라우저가 신고하지 않습니다. 켜고 화면을 몇 번 연 뒤 다시 보세요.</p>}
+    {items===undefined?<Loading/>:items.length===0?<p className="empty-compact">막힌 출처가 없습니다.</p>:<div className="violation-list">
+      {items.map(item=>{const known=item.allowed||listed.includes(item.origin.toLowerCase());return <div className={`violation-row${known?' allowed':''}`} key={item.directive+' '+item.origin}>
+        <div><strong>{item.origin}</strong><small><code>{item.directive}</code> · {item.count}회 · {item.page||'—'} · 마지막 {new Date(item.lastSeen).toLocaleString('ko-KR')}</small></div>
+        {known?<em>허용됨 — 저장하면 다음 로드부터 통과합니다</em>:<button type="button" className="button ghost" disabled={busy!==''} onClick={()=>void allow(item.origin)}><Plus size={14}/>{busy===item.origin?'넣는 중…':'허용 목록에 넣기'}</button>}
+      </div>})}
+    </div>}
+    <div className="provisioning-actions"><button type="button" className="button ghost" disabled={busy!==''||!items||items.length===0} onClick={()=>void clear()}><Trash2 size={14}/>기록 비우기</button><button type="button" className="button ghost" disabled={busy!==''} onClick={()=>void load()}><Activity size={14}/>다시 읽기</button></div>
+    <div className="info-box"><ShieldCheck size={17}/><div><strong>허용 목록은 저장과 함께 적용됩니다</strong><p>'허용 목록에 넣기' 는 서버에 바로 저장되고 위 '추가 허용 출처' 칸에도 반영됩니다. 기록은 메모리에만 두며(최대 100개 출처) 재시작하면 비워집니다 — 감사 기록이 아니라 스니펫을 고치는 사람을 위한 안내입니다.</p></div></div>
+  </Section>
+}
+
 function Section({title,description='',children}:{title:string;description?:string;children:React.ReactNode}){return <section className="settings-section"><header><h2>{title}</h2><p>{description}</p></header><div className="settings-fields">{children}</div></section>}
 function Field({label,hint,children}:{label:string;hint?:string;children:React.ReactNode}){return <label><span>{label}</span>{children}{hint&&<small>{hint}</small>}</label>}
 function Toggle({label,checked,change}:{label:string;checked:boolean;change:(v:boolean)=>void}){return <label className="toggle-row"><span>{label}</span><input type="checkbox" checked={checked} onChange={e=>change(e.target.checked)}/><i/></label>}
