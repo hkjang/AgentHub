@@ -127,7 +127,7 @@ function RuntimeEnvironmentForm({value,update}:{value:Record<string,unknown>;upd
     </Section>
   </>
 }
-const TRACKING_PROVIDERS=[{id:'momento',label:'Momento (사내 수집기)'},{id:'ga4',label:'Google Analytics 4'},{id:'gtm',label:'Google Tag Manager'},{id:'matomo',label:'Matomo'},{id:'custom',label:'직접 붙여 넣기'}]
+const TRACKING_PROVIDERS=[{id:'none',label:'선택 안 함'},{id:'momento',label:'Momento (사내 수집기)'},{id:'ga4',label:'Google Analytics 4'},{id:'gtm',label:'Google Tag Manager'},{id:'matomo',label:'Matomo'},{id:'custom',label:'직접 붙여 넣기'}]
 const TRACKING_SNIPPET_LIMIT=8*1024
 
 // 방문 추적 스니펫. 어려운 쪽은 <script> 삽입이 아니라 콘텐츠 보안 정책이다 — 콘솔은
@@ -135,7 +135,10 @@ const TRACKING_SNIPPET_LIMIT=8*1024
 // script 태그와 정책 헤더에 같이 넣고, 스니펫이 부르는 출처를 정책에 더한다.
 // 'unsafe-inline' 으로 정책을 푸는 길은 없다.
 function TrackingForm({value,update}:{value:Record<string,unknown>;update:(key:string,v:unknown)=>void}){
-  const provider=String(value.provider??'momento')
+  // 서버 기본값은 tracking.Defaults() 의 'none' 이다. 여기서 'momento' 를 기본으로
+  // 보이면 새로 설치한 곳의 관리자는 고르지도 않은 제공자가 선택된 화면을 보고,
+  // 다른 설정만 만지고 저장해도 제공자가 바뀐다.
+  const provider=String(value.provider??'none')
   const proxy=value.momentoProxy!==false
   const snippet=String(value.customSnippet??'')
   const snippetBytes=new TextEncoder().encode(snippet).length
