@@ -1,6 +1,7 @@
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useState } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { api, UNAUTHORIZED_EVENT } from './api'
+import { beginSilentSso, clearSilentSsoState, markSignedOut, shouldAttemptSilentSso, type AuthMethods } from './silentSso'
 import { setViewModeScope } from './viewmode'
 import { setRunnerExperience, setRuntimeDescriptors, type RunnerExperience, type RuntimeDescriptor } from './runtime'
 import type { User, Version } from './types'
@@ -41,7 +42,7 @@ const Workflows = lazy(() => import('./pages/Workflows').then((m) => ({ default:
 const Workspaces = lazy(() => import('./pages/Workspaces').then((m) => ({ default: m.Workspaces })))
 
 export type Capabilities = { teamApprovalEnabled: boolean; highRiskToolApproval: boolean; kubernetesEnabled: boolean; mcpProtocolVersion: string; executionPaused?: boolean; executionPausedReason?: string }
-type AuthContextValue = { user: User; version: Version; capabilities: Capabilities; refresh: () => Promise<void>; logout: () => Promise<void> }
+type AuthContextValue = { user: User; version: Version; capabilities: Capabilities; refresh: () => Promise<boolean>; logout: () => Promise<void> }
 const AuthContext = createContext<AuthContextValue | null>(null)
 export function useAuth() { const value = useContext(AuthContext); if (!value) throw new Error('AuthContext missing'); return value }
 
@@ -56,10 +57,17 @@ export function App() {
   // number: it exists to re-render what was drawn from the seed.
   const [, setDescribed] = useState(0)
 
-  const refresh = useCallback(async () => {
+  // Answers whether a session exists. On "no" it leaves the user state alone:
+  // at boot the shell still has to decide whether to try signing in silently
+  // before it draws the login screen, and an expired session mid-use is
+  // already reported through UNAUTHORIZED_EVENT.
+  const refresh = useCallback(async (): Promise<boolean> => {
     try {
       const result = await api.get<{ user: User; version: Version }>('/api/v1/me')
       setUser(result.user); setVersion(result.version)
+      // A session exists again, so a sign-out or a refused silent attempt
+      // earlier in this tab no longer has to hold the next one back.
+      clearSilentSsoState()
       // The reading preference belongs to the person, not the browser: a shared
       // machine must not hand one person's console to whoever signs in next.
       setViewModeScope(result.user.id)
@@ -72,12 +80,25 @@ export function App() {
         // it. The counter is what carries the platform's answer to it.
         .then((value) => { setRuntimeDescriptors(value.items); setRunnerExperience(value.runners); setDescribed((n) => n + 1) })
         .catch(() => undefined)
-    } catch { setUser(null); setViewModeScope('') }
+      return true
+    } catch { setViewModeScope(''); return false }
   }, [])
 
   useEffect(() => {
     api.get<Version>('/api/v1/version').then(setVersion).catch(() => undefined)
-    void refresh()
+    void (async () => {
+      if (await refresh()) return
+      // No session here — but the identity provider may still hold one. One
+      // silent attempt, as a top-level move, before the login screen is drawn;
+      // the rules in silentSso.ts are what keep it from becoming a loop.
+      const methods = await api.get<AuthMethods>('/api/v1/auth/methods').catch(() => undefined)
+      if (methods && shouldAttemptSilentSso(methods, window.location)) {
+        // The boot screen stays up while the browser leaves.
+        beginSilentSso(window.location.pathname + window.location.search + window.location.hash)
+        return
+      }
+      setUser(null)
+    })()
   }, [refresh])
 
   // An expired session takes the user back to the sign-in page instead of leaving
@@ -88,7 +109,9 @@ export function App() {
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, listener)
   }, [])
 
-  const logout = async () => { await api.post('/api/v1/auth/logout'); setUser(null) }
+  // Marked before the request: a person who signed out on purpose must not be
+  // signed straight back in by the silent attempt, or sign-out looks broken.
+  const logout = async () => { markSignedOut(); await api.post('/api/v1/auth/logout'); setUser(null) }
   if (user === undefined) return <div className="boot"><img src="/logo.svg" alt="AgentHub Logo" className="brand-logo-img large" /><span>AgentHub를 준비하고 있습니다</span></div>
   if (!user) return <Login version={version} onLogin={refresh} />
 
