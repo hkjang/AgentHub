@@ -33,6 +33,12 @@ type authSettings struct {
 	UsernameClaim     string   `json:"usernameClaim"`
 	GroupsClaim       string   `json:"groupsClaim"`
 	AdminGroups       []string `json:"adminGroups"`
+	// AutoLogin lets the console sign a visitor in without a login screen when
+	// the identity provider still holds their session (OIDC prompt=none). Off by
+	// default: the start route turns a silent request into an ordinary one
+	// unless an administrator switched this on, so nobody can change the flow
+	// by appending ?prompt=none to a link.
+	AutoLogin bool `json:"autoLogin"`
 }
 
 type generalSettings struct {
@@ -93,7 +99,9 @@ func (s *Server) csrfProtection(next http.Handler) http.Handler {
 func (s *Server) authMethods(w http.ResponseWriter, r *http.Request) {
 	settings := authSettings{LocalLoginEnabled: true}
 	_ = s.store.Setting(r.Context(), "authentication", &settings)
-	writeJSON(w, http.StatusOK, map[string]any{"local": settings.LocalLoginEnabled, "oidc": settings.OIDCEnabled, "oidcLabel": "Keycloak SSO"})
+	// autoLogin is published so the browser knows whether to try a silent
+	// sign-in before it draws the login screen.
+	writeJSON(w, http.StatusOK, map[string]any{"local": settings.LocalLoginEnabled, "oidc": settings.OIDCEnabled, "oidcLabel": "Keycloak SSO", "autoLogin": settings.OIDCEnabled && settings.AutoLogin})
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
@@ -254,15 +262,95 @@ func (s *Server) oidcStart(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	verifier := oauth2.GenerateVerifier()
-	payload, _ := json.Marshal(map[string]any{"state": state, "verifier": verifier, "expires": time.Now().Add(10 * time.Minute).Unix()})
+	// prompt=none asks the provider to answer from an existing session only. It
+	// never draws a screen: either a code comes straight back, or an error such
+	// as login_required does. The request is honoured only while the
+	// administrator has auto-login on; otherwise it is quietly the ordinary
+	// login, so the redirect surface stays tied to the setting.
+	silent := silentLoginRequested(r) && settings.AutoLogin
+	returnTo := r.URL.Query().Get("return_to")
+	if !safeReturnTo(returnTo) {
+		returnTo = "/"
+	}
+	pending := oidcState{State: state, Verifier: oauth2.GenerateVerifier(), Expires: time.Now().Add(10 * time.Minute).Unix(), Silent: silent, ReturnTo: returnTo}
+	payload, _ := json.Marshal(pending)
 	encrypted, err := s.cipher.Encrypt(payload, "oidc-state")
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: oidcCookie, Value: encrypted, Path: "/api/v1/auth/oidc/callback", HttpOnly: true, Secure: strings.HasPrefix(settings.PublicURL, "https://") || r.TLS != nil, SameSite: http.SameSiteLaxMode, MaxAge: 600})
-	http.Redirect(w, r, oauthConfig.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier)), http.StatusFound)
+	options := []oauth2.AuthCodeOption{oauth2.S256ChallengeOption(pending.Verifier)}
+	if silent {
+		options = append(options, oauth2.SetAuthURLParam("prompt", "none"))
+	}
+	http.Redirect(w, r, oauthConfig.AuthCodeURL(state, options...), http.StatusFound)
+}
+
+// oidcState is what the start leg remembers about a login until the provider
+// sends the browser back. It travels in an encrypted cookie scoped to the
+// callback path, so there is no row to expire.
+type oidcState struct {
+	State    string `json:"state"`
+	Verifier string `json:"verifier"`
+	Expires  int64  `json:"expires"`
+	// Silent records that the attempt was prompt=none, which is what decides
+	// whether a provider error is the ordinary "no session" answer or a fault.
+	Silent bool `json:"silent,omitempty"`
+	// ReturnTo is where the person was going before the login got in the way.
+	ReturnTo string `json:"returnTo,omitempty"`
+}
+
+// silentLoginRequested reports whether the browser asked for a prompt=none
+// attempt. Asking is not the same as getting one: the start route also needs
+// the administrator's setting.
+func silentLoginRequested(r *http.Request) bool {
+	return r.URL.Query().Get("prompt") == "none"
+}
+
+// silentRefusalPath is where a refused silent attempt lands. The marker in the
+// query is the third of the browser's three guards against retrying: it
+// survives a cleared sessionStorage, because it is in the address.
+const silentRefusalPath = "/login?sso=none"
+
+// providerErrorPath is where any other provider error lands — a cancelled
+// login, a misconfigured client — so the person sees the login screen with a
+// note rather than a JSON body.
+const providerErrorPath = "/login?sso=error"
+
+// safeReturnTo accepts only a path on this origin. Anything that a browser
+// could read as another host — a scheme, a protocol-relative "//", or the
+// backslash some browsers normalise into a slash — is refused, because a login
+// flow that forwards wherever it is told is a way out of the building.
+func safeReturnTo(value string) bool {
+	if value == "" || !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") || strings.ContainsAny(value, "\\\r\n") {
+		return false
+	}
+	parsed, err := url.Parse(value)
+	return err == nil && !parsed.IsAbs() && parsed.Host == ""
+}
+
+// pendingOIDCState reads the start leg's cookie back. A missing, undecryptable,
+// or mismatched state answers false, and the caller treats the callback as one
+// it did not begin.
+func (s *Server) pendingOIDCState(r *http.Request) (oidcState, bool) {
+	cookie, err := r.Cookie(oidcCookie)
+	if err != nil {
+		return oidcState{}, false
+	}
+	plain, err := s.cipher.Decrypt(cookie.Value, "oidc-state")
+	if err != nil {
+		return oidcState{}, false
+	}
+	var state oidcState
+	if json.Unmarshal(plain, &state) != nil || state.State == "" || state.State != r.URL.Query().Get("state") || time.Now().Unix() > state.Expires {
+		return oidcState{}, false
+	}
+	return state, true
+}
+
+func (s *Server) clearOIDCState(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{Name: oidcCookie, Value: "", Path: "/api/v1/auth/oidc/callback", HttpOnly: true, Expires: time.Unix(1, 0), MaxAge: -1})
 }
 
 type oidcCombinedSettings struct {
@@ -300,30 +388,36 @@ func (s *Server) oidcConfig(ctx context.Context) (oidcCombinedSettings, *oauth2.
 }
 
 func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
+	// The provider reports a refusal as an error parameter rather than a code.
+	// prompt=none produces login_required here whenever there is no session,
+	// which is an ordinary answer and must not look like a failure — and must
+	// not be retried, or the browser bounces between the two sites for ever.
+	if providerError := r.URL.Query().Get("error"); providerError != "" {
+		pending, known := s.pendingOIDCState(r)
+		s.clearOIDCState(w)
+		if known && pending.Silent {
+			http.Redirect(w, r, silentRefusalPath, http.StatusFound)
+			return
+		}
+		s.logger.Warn("OIDC provider returned an error", "error", providerError, "description", r.URL.Query().Get("error_description"))
+		http.Redirect(w, r, providerErrorPath, http.StatusFound)
+		return
+	}
 	settings, oauthConfig, provider, err := s.oidcConfig(r.Context())
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "oidc_unavailable", "SSO 설정을 확인해 주세요.")
 		return
 	}
-	cookie, err := r.Cookie(oidcCookie)
-	if err != nil {
+	if _, err := r.Cookie(oidcCookie); err != nil {
 		writeError(w, http.StatusBadRequest, "oidc_state_missing", "SSO 요청이 만료되었습니다.")
 		return
 	}
-	plain, err := s.cipher.Decrypt(cookie.Value, "oidc-state")
-	if err != nil {
+	state, ok := s.pendingOIDCState(r)
+	if !ok {
 		writeError(w, http.StatusBadRequest, "oidc_state_invalid", "SSO 요청 검증에 실패했습니다.")
 		return
 	}
-	var state struct {
-		State    string `json:"state"`
-		Verifier string `json:"verifier"`
-		Expires  int64  `json:"expires"`
-	}
-	if json.Unmarshal(plain, &state) != nil || state.State != r.URL.Query().Get("state") || time.Now().Unix() > state.Expires {
-		writeError(w, http.StatusBadRequest, "oidc_state_invalid", "SSO 요청 검증에 실패했습니다.")
-		return
-	}
+	s.clearOIDCState(w)
 	token, err := oauthConfig.Exchange(r.Context(), r.URL.Query().Get("code"), oauth2.VerifierOption(state.Verifier))
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "oidc_exchange_failed", "Keycloak 인증 코드를 확인하지 못했습니다.")
@@ -380,8 +474,16 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	secure := strings.HasPrefix(settings.PublicURL, "https://") || r.TLS != nil
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: tokenValue, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, Expires: expires})
 	http.SetCookie(w, &http.Cookie{Name: csrfCookie, Value: csrf, Path: "/", HttpOnly: false, Secure: secure, SameSite: http.SameSiteLaxMode, Expires: expires})
-	s.store.Audit(r.Context(), &user, "auth.oidc_login", "user", user.ID, "success", clientIP(r), map[string]any{"issuer": settings.IssuerURL})
-	http.Redirect(w, r, "/", http.StatusFound)
+	s.store.Audit(r.Context(), &user, "auth.oidc_login", "user", user.ID, "success", clientIP(r), map[string]any{"issuer": settings.IssuerURL, "silent": state.Silent})
+	// Somebody who arrived by a deep link goes back to it, not to the front page.
+	// Checked again here: the value was validated when it was stored, and a
+	// cookie this server did not encrypt cannot be read, but a redirect is the
+	// one place where a second look costs nothing.
+	returnTo := state.ReturnTo
+	if !safeReturnTo(returnTo) {
+		returnTo = "/"
+	}
+	http.Redirect(w, r, returnTo, http.StatusFound)
 }
 
 func toStrings(value any) []string {
