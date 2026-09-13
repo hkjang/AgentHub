@@ -27,6 +27,7 @@ var sweptDirectly = map[string]bool{
 	"agent_tasks": true, "agent_runs": true, "platform_events": true,
 	"audit_events": true, "notifications": true, "workflow_runs": true,
 	"webhook_deliveries": true, "approvals": true, "runtime_launch_tickets": true,
+	"mail_deliveries": true,
 }
 
 // configuration is what a deployment is, rather than what it did. None of it

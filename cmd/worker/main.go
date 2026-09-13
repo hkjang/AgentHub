@@ -21,6 +21,7 @@ import (
 	"github.com/hkjang/AgentHub/internal/cryptox"
 	"github.com/hkjang/AgentHub/internal/execution"
 	"github.com/hkjang/AgentHub/internal/guard"
+	"github.com/hkjang/AgentHub/internal/mail"
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/runtimespec"
 	"github.com/hkjang/AgentHub/internal/store"
@@ -106,9 +107,13 @@ func run(logger *slog.Logger) error {
 	completion := workflow.NewModelCompletion().WithInspector(guard.NewModel(db, logger))
 	// A flow runs inside the runtime, so its input and its answer are the only
 	// two places the platform can inspect. Same detectors, same policy.
-	orchestrator := execution.New(db, spawner, completion, logger, workerID).WithFlowInspector(guard.NewFlow(db, logger))
+	// Notices that people wait on — an approval, a task that stopped — are queued
+	// for mail here and sent by the control plane; this process never opens a
+	// connection to the relay.
+	mailer := mail.NewService(db, logger)
+	orchestrator := execution.New(db, spawner, completion, logger, workerID).WithFlowInspector(guard.NewFlow(db, logger)).WithMailer(mailer)
 
-	worker := execution.NewWorker(db, orchestrator, logger, workerID)
+	worker := execution.NewWorker(db, orchestrator, logger, workerID).WithMailer(mailer)
 	worker.Hostname, worker.Version = hostname, buildinfo.Version
 	if value := os.Getenv(envConcurrency); value != "" {
 		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 && parsed <= 32 {
@@ -152,7 +157,7 @@ func run(logger *slog.Logger) error {
 	// when somebody pressed a button and then kept forever, which made a machine
 	// verified in March look like one verified an hour ago — to the console, and
 	// to placement, which prefers a healthy server over an unchecked one.
-	watch := execution.NewDependencyWatch(db, logger)
+	watch := execution.NewDependencyWatch(db, logger).WithMailer(mailer)
 	go func() { errs <- watch.Run(ctx) }()
 
 	// The runtime warm pool claims each runtime before starting it, so several

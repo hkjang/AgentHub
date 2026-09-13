@@ -17,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/hkjang/AgentHub/internal/mail"
 	"github.com/hkjang/AgentHub/internal/policy"
 	"github.com/hkjang/AgentHub/internal/quota"
 	"github.com/hkjang/AgentHub/internal/runtime"
@@ -205,9 +206,10 @@ func (s *Server) spawnAgent(w http.ResponseWriter, r *http.Request) {
 			u.DisplayName+" 사용자가 "+agent.Name+" Runtime 실행 승인을 요청했습니다.")
 		if notifyErr != nil {
 			s.logger.Warn("approval reviewers could not be notified", "approval", approval.ID, "error", notifyErr)
-		} else if told == 0 {
+		} else if len(told) == 0 {
 			s.logger.Error("nobody was told about an approval request", "approval", approval.ID, "agent", agent.ID)
 		}
+		s.mailer.Notify(r.Context(), mail.Notice{Event: mail.EventApprovalRequested, Subject: "승인 요청: " + agent.Name + " Runtime 실행", Path: "/reviews"}, u.ID, told)
 		writeJSON(w, 202, map[string]any{"approvalRequired": true, "approval": approval})
 		return
 	}
@@ -1507,6 +1509,11 @@ func (s *Server) adminSettings(w http.ResponseWriter, r *http.Request) {
 			if key == "authentication" {
 				obj["clientSecretConfigured"] = s.secretConfigured(r, key)
 			}
+			// The SMTP password is the row's secret and never comes back; the
+			// screen only learns that one is set.
+			if key == mail.SettingKey {
+				obj["passwordConfigured"] = s.secretConfigured(r, key)
+			}
 			items[key], _ = json.Marshal(obj)
 		}
 	}
@@ -1519,7 +1526,7 @@ func (s *Server) secretConfigured(r *http.Request, key string) bool {
 func (s *Server) putAdminSetting(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	key := chi.URLParam(r, "key")
-	allowed := map[string]bool{"general": true, "authentication": true, "kubernetes": true, "sessionGateway": true, "governance": true, "logging": true, "release": true, runtimeenv.SettingKey: true, runtimetype.SettingKey: true, telemetry.SettingKey: true, tracking.SettingKey: true}
+	allowed := map[string]bool{"general": true, "authentication": true, "kubernetes": true, "sessionGateway": true, "governance": true, "logging": true, "release": true, runtimeenv.SettingKey: true, runtimetype.SettingKey: true, telemetry.SettingKey: true, tracking.SettingKey: true, mail.SettingKey: true}
 	if !allowed[key] {
 		writeError(w, 404, "setting_not_found", "지원하지 않는 설정입니다.")
 		return
@@ -1695,6 +1702,14 @@ func (s *Server) validateSetting(r *http.Request, key string, value map[string]a
 			return err
 		}
 		return settings.Validate()
+	case mail.SettingKey:
+		// A relay these settings cannot reach is refused at the form rather than
+		// discovered as a list of failed deliveries.
+		settings, err := decodeMailSettings(value)
+		if err != nil {
+			return err
+		}
+		return settings.Validate()
 	}
 	return nil
 }
@@ -1847,6 +1862,9 @@ func (s *Server) decideApproval(decision string) http.HandlerFunc {
 			Payload: approvalEventPayload(item, decision),
 		})
 		_ = s.store.CreateNotification(r.Context(), item.RequesterID, "approval", "승인 요청 "+decision, item.Reason, resourceURL)
+		// The requester has been waiting on this. The decider is the actor, so a
+		// person who approved their own request is not mailed about it.
+		s.mailer.Notify(r.Context(), mail.Notice{Event: mail.EventApprovalDecided, Subject: decisionWord(decision) + ": " + item.Reason, Path: resourceURL}, u.ID, []string{item.RequesterID})
 		writeJSON(w, 200, item)
 	}
 }

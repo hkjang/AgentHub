@@ -18,6 +18,7 @@ import (
 	"github.com/hkjang/AgentHub/internal/config"
 	"github.com/hkjang/AgentHub/internal/cryptox"
 	appLog "github.com/hkjang/AgentHub/internal/logging"
+	"github.com/hkjang/AgentHub/internal/mail"
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/store"
 	"github.com/hkjang/AgentHub/internal/telemetry"
@@ -117,7 +118,9 @@ func run() error {
 	defer func() { _ = tracing.Shutdown(context.WithoutCancel(ctx)) }()
 
 	spawner := appRuntime.NewKubernetesSpawner(db).WithLogger(logger)
-	apiServer := api.New(db, cipher, logger, ring, spawner, os.DirFS("web/dist"))
+	// Mail notices: queued by whichever process raises the event, delivered by
+	// this one in the background. Off until an administrator turns it on.
+	apiServer := api.New(db, cipher, logger, ring, spawner, os.DirFS("web/dist")).WithMailer(mail.NewService(db, logger))
 	apiServer.RunBackground(ctx)
 	handler := apiServer.Handler()
 	server := &http.Server{Addr: cfg.ListenAddress, Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 5 * time.Minute, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20}

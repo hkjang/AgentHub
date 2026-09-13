@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/hkjang/AgentHub/internal/mail"
 	"github.com/hkjang/AgentHub/internal/policy"
 	"github.com/hkjang/AgentHub/internal/store"
 )
@@ -57,6 +58,16 @@ type Worker struct {
 	PollInterval time.Duration
 	// Lease is how long a claim is held before another worker may take over.
 	Lease time.Duration
+
+	// mailer carries a stopped task's notice to its owner's inbox. Nil means the
+	// bell only.
+	mailer *mail.Service
+}
+
+// WithMailer installs the mail service for the notices an owner waits on.
+func (w *Worker) WithMailer(mailer *mail.Service) *Worker {
+	w.mailer = mailer
+	return w
 }
 
 func NewWorker(db *store.Store, orchestrator *Orchestrator, logger *slog.Logger, id string) *Worker {
@@ -230,6 +241,7 @@ func (w *Worker) execute(ctx context.Context, task store.AgentTask) {
 	}
 	if errors.Is(outcome.parked, ErrHandedOff) {
 		w.notify(finish, task, "런타임에서 이어받아야 하는 작업입니다", task.Title+" — "+outcome.Note)
+		w.mail(finish, task, mail.EventTaskHandoff, "런타임에서 이어받아야 하는 작업: "+task.Title)
 		w.publish(finish, task, store.EventTaskHandoff, map[string]any{"title": task.Title, "agentId": task.AgentID, "note": outcome.Note})
 		logger.Info("task handed off to a person in the runtime", "note", outcome.Note)
 		return
@@ -270,6 +282,7 @@ func (w *Worker) execute(ctx context.Context, task store.AgentTask) {
 		logger.Error("task failure not recorded", "error", err)
 	}
 	w.notify(finish, task, "작업이 실패했습니다", task.Title+" — "+outcome.Failure)
+	w.mail(finish, task, mail.EventTaskFailed, "작업 실패: "+task.Title)
 	eventType := store.EventTaskFailed
 	if status == store.TaskDeadLetter {
 		eventType = store.EventTaskDeadLettered
@@ -392,6 +405,7 @@ func (w *Worker) permittedByPolicy(ctx context.Context, task store.AgentTask, lo
 	w.store.Audit(finish, &owner, "policy."+policy.ActionTaskCreate, "policy", decision.RuleID, "denied", "",
 		map[string]any{"effect": decision.Effect, "agent": agent.Name, "taskId": task.ID, "source": task.Source})
 	w.notify(finish, task, "정책이 실행을 막았습니다", task.Title+" — "+reason)
+	w.mail(finish, task, mail.EventTaskFailed, "정책이 실행을 막은 작업: "+task.Title)
 	logger.Warn("task blocked by policy", "rule", decision.RuleID, "effect", decision.Effect, "source", task.Source)
 	return false
 }
@@ -469,6 +483,7 @@ func (w *Worker) withinQuota(ctx context.Context, task store.AgentTask, logger *
 			logger.Error("task failure not recorded", "error", err)
 		}
 		w.notify(finish, task, "예산을 초과해 작업을 실행하지 않았습니다", task.Title+" — "+decision.Reason)
+		w.mail(finish, task, mail.EventTaskFailed, "예산을 초과해 실행하지 않은 작업: "+task.Title)
 		w.publish(finish, task, store.EventTaskFailed, map[string]any{"title": task.Title, "agentId": task.AgentID, "reason": decision.Reason, "quota": true})
 		logger.Warn("task refused by a quota", "reason", decision.Reason)
 		return false
@@ -485,6 +500,19 @@ func (w *Worker) notify(ctx context.Context, task store.AgentTask, title, messag
 	if err := w.store.CreateNotification(ctx, task.OwnerID, "task", title, message, "/tasks"); err != nil {
 		w.logger.Warn("task notification not delivered", "task", task.ID, "error", err)
 	}
+}
+
+// mail carries the notice out of the building as well, for the outcomes an
+// owner cannot do anything about from the bell they are not looking at: the
+// task stopped and will not resume on its own. A completed task is not mailed
+// — the result is in the console, and a mail per success is the noise that gets
+// a rule written against the whole sender.
+//
+// The subject names the task and nothing else. The failure reason is the
+// model's or the tool's text and can carry anything the run saw; it stays in
+// the bell and the run record, which the link leads to.
+func (w *Worker) mail(ctx context.Context, task store.AgentTask, event, subject string) {
+	w.mailer.Notify(ctx, mail.Notice{Event: event, Subject: subject, Path: "/tasks"}, "", []string{task.OwnerID})
 }
 
 // publish records what happened so event triggers can react to it. The task has
