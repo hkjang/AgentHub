@@ -95,6 +95,7 @@ try {
   const get = (path) => call('GET', path)
   const post = (path, body) => call('POST', path, body)
   const put = (path, body) => call('PUT', path, body)
+  const del = (path) => call('DELETE', path)
   const ok = (response) => response.status >= 200 && response.status < 300
 
   // The three settings seed() replaces are global to the platform, so they are
@@ -111,6 +112,7 @@ try {
     ['/api/v1/admin/policy', '/api/v1/admin/policy', (body) => body?.document ?? { rules: [] }],
     ['/api/v1/admin/dlp', '/api/v1/admin/dlp', (body) => body?.settings ?? null],
     ['/api/v1/admin/settings', '/api/v1/admin/settings/sessionGateway', (body) => body?.sessionGateway ? { value: body.sessionGateway } : null],
+    ['/api/v1/admin/settings', '/api/v1/admin/settings/tracking', (body) => body?.tracking ? { value: body.tracking } : null],
   ]
   const before = []
   if (process.env.GUIDE_SKIP_SEED !== '1') {
@@ -129,6 +131,7 @@ try {
     // every agent and task.
     if (process.env.GUIDE_SKIP_SEED !== '1') await seed({ get, post, put, ok })
     await capture(page)
+    if (process.env.GUIDE_SKIP_SEED !== '1') await captureTracking(page, { put, del, ok })
   } finally {
     for (const [path, value] of before) {
       const restored = await put(path, value)
@@ -410,5 +413,40 @@ async function capture(page) {
     await shoot(page, 'runs-detail', '실행 기록 · 상세')
   } else {
     note('실행 기록 · 상세 → runs-detail.png', false, '실행 기록이 없음 — 워커와 AGENTHUB_GUIDE_MODEL_URL 없이 찍은 배포')
+  }
+}
+
+/**
+ * captureTracking photographs the visitor-tracking tab with Momento configured
+ * through the same-origin proxy and one blocked origin on the list. It runs
+ * last and switches tracking off again on the way out: while it is on every
+ * page carries the snippet, and the tracker it points at does not exist here.
+ * The generic restore then puts back whatever the deployment held before.
+ */
+async function captureTracking(page, { put, del, ok }) {
+  const settings = { enabled: true, provider: 'momento', momentoUrl: 'https://momento.example.internal', momentoSiteId: 'agenthub', momentoProxy: true, momentoEnvironment: 'prd', placement: 'head', includeAdmin: false, allowedHosts: '', customSnippet: '' }
+  const saved = await put('/api/v1/admin/settings/tracking', { value: settings })
+  note('방문 추적 설정', ok(saved), `HTTP ${saved.status}`)
+  // What a browser posts when the policy refuses a request — here a pixel the
+  // snippet did not name, which is the case the list exists for.
+  const report = await page.evaluate(async () => {
+    const response = await fetch('/api/v1/tracking/csp-report', { method: 'POST', headers: { 'Content-Type': 'application/csp-report' },
+      body: JSON.stringify({ 'csp-report': { 'document-uri': `${location.origin}/runs`, 'blocked-uri': 'https://pixel.example.internal/p.gif', 'effective-directive': 'img-src', 'violated-directive': "img-src 'self' data:" } }) })
+    return response.status
+  })
+  note('정책 위반 신고', report === 204, `HTTP ${report}`)
+  try {
+    await visit(page, '/admin/settings', 'admin-settings-tracking', '관리자 · 전역 설정 · 방문 추적', async (page) => {
+      await page.getByRole('button', { name: 'Tracking' }).click()
+      await page.locator('.violation-row').first().waitFor({ timeout: 10000 })
+    })
+    // The blocked-origin list sits below the form; the reader is sent to it.
+    await page.locator('.violation-list').scrollIntoViewIfNeeded()
+    await shoot(page, 'admin-settings-tracking-blocked', '관리자 · 전역 설정 · 방문 추적 · 차단된 출처')
+  } finally {
+    const off = await put('/api/v1/admin/settings/tracking', { value: { ...settings, enabled: false } })
+    note('방문 추적 끄기', ok(off), `HTTP ${off.status}`)
+    // The report above is this script's, not the deployment's.
+    await del('/api/v1/admin/tracking/violations')
   }
 }
