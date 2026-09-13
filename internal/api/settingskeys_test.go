@@ -29,8 +29,11 @@ func TestEverySettingTheConsoleSavesIsReadSomewhere(t *testing.T) {
 	}
 	keys := map[string]bool{}
 	for _, pattern := range []*regexp.Regexp{
-		regexp.MustCompile(`update\('([a-zA-Z]+)'`),
-		regexp.MustCompile(`name="([a-zA-Z]+)"`),
+		// Underscores too: the mail keys follow the company standard's spelling
+		// (smtp_host), and a pattern that stopped at letters skipped every one
+		// of them without saying so.
+		regexp.MustCompile(`update\('([a-zA-Z_]+)'`),
+		regexp.MustCompile(`name="([a-zA-Z_]+)"`),
 	} {
 		for _, match := range pattern.FindAllStringSubmatch(string(console), -1) {
 			keys[match[1]] = true

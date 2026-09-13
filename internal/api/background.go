@@ -10,6 +10,9 @@ import (
 )
 
 func (s *Server) RunBackground(ctx context.Context) {
+	// Queued mail is delivered from here rather than from the request that
+	// raised it, which is what keeps a dead relay from slowing anything down.
+	go s.mailer.Run(ctx)
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()

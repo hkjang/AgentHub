@@ -341,6 +341,54 @@ Keycloak 에 이미 로그인한 사람이 AgentHub 를 열면 **로그인 화�
 
 ![관리자 · 런타임 이미지 — 유형별로 승인된 이미지 버전](screenshots/guide/admin-runtime-images.png)
 
+### 5.7 메일 알림 (사내 SMTP 릴레이)
+
+`관리자 ▸ 시스템 설정 ▸ Mail` 에서 사람이 기다리는 일을 사내 SMTP 릴레이로 보냅니다.
+**기본은 꺼짐**이며, 새로 설치한 곳에서는 아무것도 나가지 않습니다. 콘솔의 종(알림)은 그대로
+있고, 메일은 같은 알림 중 **오지 않으면 누군가 손해를 보거나 화면을 계속 새로고침하는 것**만
+밖으로 내보내는 두 번째 길입니다. 설정 키 이름은 사내 표준(kanpic 과 같은 이름)을 그대로 씁니다.
+
+| 키 | 기본값 | 뜻 |
+| --- | --- | --- |
+| `mail.enabled` | `false` | 꺼짐이 기본. 관리자가 켭니다 |
+| `mail.smtp_host` | — | 사내 릴레이 주소. 폐쇄망에서는 사내 메일 서비스(`postra`)를 가리키면 알림이 밖으로 나가지 않습니다 |
+| `mail.smtp_port` | `25` | 사내 릴레이는 대개 25. `465` 는 자동으로 `tls` 로 봅니다 |
+| `mail.security` | `auto` | `auto` · `none` · `starttls` · `tls`. `auto` 는 서버가 STARTTLS 를 알리면 쓰고 아니면 평문 |
+| `mail.skip_tls_verify` | `false` | 사내 인증서가 사설일 때만 |
+| `mail.username` · `mail.password` | 빈 값 | 인증 없는 릴레이가 흔하므로 **선택 사항**. 비밀번호는 다른 비밀값처럼 `secret` 으로만 올라가고, 설정 API 는 `passwordConfigured: true` 만 돌려줍니다. 평문 연결에서는 PLAIN 인증을 하지 않으므로 인증이 필요한 릴레이는 `starttls`·`tls` 를 쓰세요 |
+| `mail.from_address` · `mail.from_name` | — · `AgentHub` | 보내는 사람. 이름은 제목 앞의 `[AgentHub]` 이기도 합니다 |
+| `mail.base_url` | — | 메일 속 링크가 가리킬 이 앱의 주소. 비우면 General 의 Public URL |
+| `mail.timeout_seconds` | `10` | 연결·전송 시간 제한 |
+| `mail.notify_approval` | `true` | 승인 요청(검토자에게)과 결정(요청자에게) |
+| `mail.notify_handoff` | `true` | 런타임 인계 — 사람이 이어받아야 작업이 끝날 때, 소유자에게 |
+| `mail.notify_task_failed` | `true` | 실패·재시도 소진·정책 차단·예산 초과로 멈춘 작업, 소유자에게 |
+| `mail.notify_dependency` | `true` | 모델 엔드포인트·MCP 서버의 장애와 복구, 관리자에게 |
+
+**어떻게 나가는가.** 이벤트는 `mail_deliveries` 에 한 줄을 남기고 바로 돌아옵니다 — 릴레이가
+느리거나 죽어 있어도 승인·작업 처리는 평소처럼 끝납니다. 컨트롤 플레인(`agenthub`)이 15초마다
+큐를 쓸어 보내며, 워커는 릴레이에 연결하지 않습니다. 같은 사람에게 같은 시각에 생긴 알림은
+**한 통으로 묶고**, 자기가 한 일(내가 승인한 내 요청)은 자기에게 보내지 않으며, 완료된 작업은
+메일하지 않습니다. 연결 실패는 1분 뒤 한 번 더 시도하고, 설정이 모자라면(호스트 없음 등)
+시도하지 않고 그 이유를 기록에 남깁니다. 하루 안에 보내지 못한 것은 포기하고 그렇게 적습니다.
+
+**시험 발송.** 같은 화면의 **시험 발송** 단추가 **저장한 설정**으로 실제 한 통을 보내고 결과를
+그 자리에서 보여 줍니다(받는 사람을 비우면 내 계정 주소). 릴레이 설정은 한 번에 맞는 일이
+드뭅니다 — 켠 뒤 반드시 한 번 보내 보세요. 시도는 감사에 `mail.test` 로, 발송 기록에 `test`
+이벤트로 남습니다.
+
+**발송 기록.** 화면 아래 **발송 기록**은 시도마다 한 줄입니다 — 언제, 어떤 이벤트로, 누구에게,
+제목이 무엇이었고, 되었는지(보냄·실패·대기)와 실패 이유. **본문은 기록하지 않습니다** — 제목과
+수신자면 "안 왔다" 는 문의에 답할 수 있고, 본문까지 남기면 기록 자체가 유출 경로가 됩니다.
+기록은 알림과 같은 보관 기간(§5.3)으로 정리됩니다.
+
+| 확인할 것 | 어디서 |
+| --- | --- |
+| 설정 읽기(비밀번호는 `passwordConfigured` 만) | `GET /api/v1/admin/settings` 의 `mail` |
+| 설정 저장 | `PUT /api/v1/admin/settings/mail` `{"value":{"enabled":true,"smtp_host":"…",…},"secret":"<비밀번호>"}` |
+| 시험 발송 | `POST /api/v1/admin/mail/test` `{"recipient":"me@company.local"}` |
+| 발송 기록 | `GET /api/v1/admin/mail/deliveries?status=failed&limit=50` |
+| 릴레이가 응답하는지 | 준비 상태(`POST /api/v1/admin/readiness`, §5.1)의 **메일 · SMTP 릴레이** 행 — 켜져 있을 때만 나타나고, 인사만 하고 보내지는 않습니다 |
+
 ---
 
 ## 6. 장애 대응

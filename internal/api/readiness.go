@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sort"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/hkjang/AgentHub/internal/agentserver"
 	"github.com/hkjang/AgentHub/internal/dlp"
+	"github.com/hkjang/AgentHub/internal/mail"
 	"github.com/hkjang/AgentHub/internal/modelprobe"
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/runtimetype"
@@ -89,6 +91,28 @@ func (s *Server) readiness(w http.ResponseWriter, r *http.Request) {
 				Verdict: "unknown", Detail: "한 번도 확인되지 않았습니다. 토큰을 다시 저장하면 그 자리에서 확인합니다.",
 				Fix: "/developer"})
 		}
+	})
+
+	// The mail relay, only while notices are meant to leave by it. A handshake
+	// and nothing sent: a test mail in somebody's inbox per check would be its
+	// own kind of noise. Off means no row — a deployment that does not mail has
+	// nothing here to be broken.
+	run(func() {
+		if s.mailer == nil {
+			return
+		}
+		config, err := s.mailer.Config(r.Context())
+		if err != nil || !config.Enabled {
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), config.Timeout+5*time.Second)
+		defer cancel()
+		if err := mail.Verify(ctx, config); err != nil {
+			add(readinessItem{Area: "메일", Name: "SMTP 릴레이", Verdict: "unreachable",
+				Detail: shortError(err.Error()) + " — 알림 메일이 큐에 쌓이고 있습니다.", Fix: "/admin/settings"})
+			return
+		}
+		add(readinessItem{Area: "메일", Name: "SMTP 릴레이", Verdict: "ok", Detail: config.Describe(), Fix: "/admin/settings"})
 	})
 
 	// The cluster. Without it nothing runs at all, so it is first in the list

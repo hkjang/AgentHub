@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hkjang/AgentHub/internal/agentserver"
+	"github.com/hkjang/AgentHub/internal/mail"
 	"github.com/hkjang/AgentHub/internal/modelprobe"
 	"github.com/hkjang/AgentHub/internal/store"
 )
@@ -28,10 +29,19 @@ type DependencyWatch struct {
 	// Timeout bounds one server's answer, so a machine that accepts connections
 	// and never replies cannot hold up the rest of the sweep.
 	Timeout time.Duration
+	// mailer carries a change to the administrators' inboxes. Nil means the
+	// bell only.
+	mailer *mail.Service
 }
 
 func NewDependencyWatch(db *store.Store, logger *slog.Logger) *DependencyWatch {
 	return &DependencyWatch{store: db, logger: logger, Interval: 5 * time.Minute, Timeout: 10 * time.Second}
+}
+
+// WithMailer installs the mail service.
+func (w *DependencyWatch) WithMailer(mailer *mail.Service) *DependencyWatch {
+	w.mailer = mailer
+	return w
 }
 
 // Run refreshes what is known until the context ends.
@@ -195,6 +205,11 @@ func (w *DependencyWatch) announce(ctx context.Context, change dependencyChange)
 			w.logger.Warn("a dependency change could not be announced", "to", admin, "error", err)
 		}
 	}
+	// The same notice by mail: this is the change that is found at two in the
+	// morning as a failed task otherwise. One event switch covers both
+	// directions, because the recovery is what makes the outage notice
+	// trustworthy.
+	w.mailer.Notify(ctx, mail.Notice{Event: mail.EventDependency, Subject: title, Path: change.Where}, "", admins)
 }
 
 // worthAnnouncing keeps the first sweep from reading like an incident.

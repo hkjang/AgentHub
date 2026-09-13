@@ -20,6 +20,7 @@ import (
 	"github.com/hkjang/AgentHub/internal/buildinfo"
 	"github.com/hkjang/AgentHub/internal/cryptox"
 	appLog "github.com/hkjang/AgentHub/internal/logging"
+	"github.com/hkjang/AgentHub/internal/mail"
 	"github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/store"
 	"github.com/hkjang/AgentHub/internal/telemetry"
@@ -57,6 +58,16 @@ type Server struct {
 	trackingSettings tracking.Settings
 	trackingUntil    time.Time
 	violations       *tracking.Recorder
+
+	// mailer carries notices out of the building over the company relay, and
+	// this process is the one that runs its sender. Nil means the bell only.
+	mailer *mail.Service
+}
+
+// WithMailer installs the mail service. RunBackground runs its sender.
+func (s *Server) WithMailer(mailer *mail.Service) *Server {
+	s.mailer = mailer
+	return s
 }
 
 func New(db *store.Store, cipher *cryptox.Cipher, logger *slog.Logger, logs *appLog.Ring, spawner runtime.Spawner, static fs.FS) *Server {

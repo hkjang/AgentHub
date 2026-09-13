@@ -1,13 +1,13 @@
 import { FormEvent, useEffect, useState } from 'react'
-import { Activity, BarChart3, Bot, Boxes, ExternalLink, FileCog, KeyRound, Network, Plus, Save, Settings, ShieldCheck, Trash2 } from 'lucide-react'
+import { Activity, BarChart3, Bot, Boxes, ExternalLink, FileCog, KeyRound, Mail, Network, Plus, Save, Settings, ShieldCheck, Trash2 } from 'lucide-react'
 import { subject } from '../korean'
 import { api } from '../api'
 import { ErrorBanner, Loading, PageHeader, SuccessBanner } from '../components/UI'
 import { runtimeDescriptors, runtimeLogoClass, setRuntimeAvailability } from '../runtime'
 
 type SettingsMap=Record<string,Record<string,unknown>>
-const tabs=[{id:'general',label:'General',icon:Settings},{id:'authentication',label:'Authentication',icon:KeyRound},{id:'kubernetes',label:'Kubernetes',icon:Boxes},{id:'runtimeAgents',label:'Runtime Agents',icon:Bot},{id:'runtimeEnvironment',label:'Runtime Environment',icon:FileCog},{id:'sessionGateway',label:'Session Gateway',icon:ExternalLink},{id:'governance',label:'Governance',icon:ShieldCheck},{id:'logging',label:'Logging',icon:Network},{id:'observability',label:'Observability',icon:Activity},{id:'tracking',label:'Tracking',icon:BarChart3},{id:'release',label:'Offline & Release',icon:Save}]
-export function AdminSettings(){const [settings,setSettings]=useState<SettingsMap>(),[tab,setTab]=useState('general'),[error,setError]=useState(''),[notice,setNotice]=useState(''),[secret,setSecret]=useState('');useEffect(()=>{api.get<SettingsMap>('/api/v1/admin/settings').then(setSettings).catch(e=>setError(e.message))},[]);if(!settings)return <Loading/>;const value=settings[tab]??{};const save=async(e:FormEvent)=>{e.preventDefault();setError('');setNotice('');try{const result=await api.put<{runtimeEnvironment?:{message:string}}>(`/api/v1/admin/settings/${tab}`,{value,secret:secret||undefined});if(tab==='runtimeAgents'){const disabled=Array.isArray(value.disabledTypes)?value.disabledTypes.filter((item):item is string=>typeof item==='string'):[];setRuntimeAvailability(disabled)}const savedNotice=tab==='runtimeAgents'?'설정을 저장했습니다. 카탈로그와 신규 에이전트 생성에 바로 적용됩니다.':tab==='tracking'?'설정을 저장했습니다. 다음 페이지 로드부터 적용됩니다 — 화면을 새로 고쳐 확인하세요.':tab==='kubernetes'?'설정을 저장했습니다. hostNetwork 변경은 새로 만들거나 다음에 시작·재시작하는 Runtime부터 적용됩니다.':'설정을 저장했습니다. 새 Runtime과 다음 로그인부터 적용됩니다.';setNotice(result?.runtimeEnvironment?.message??savedNotice);setSecret('')}catch(err){setError(err instanceof Error?err.message:'설정을 저장하지 못했습니다.')}};const update=(key:string,next:unknown)=>setSettings(current=>({...current!,[tab]:{...current![tab],[key]:next}}));return <div className="page"><PageHeader eyebrow="관리자" title="시스템 설정" description="배포 후 운영 설정은 환경변수가 아닌 이 화면에서 안전하게 관리합니다."/>{error&&<ErrorBanner message={error}/>} {notice&&<SuccessBanner message={notice}/>}<div className="settings-layout"><nav className="settings-nav">{tabs.map(({id,label,icon:Icon})=><button type="button" className={tab===id?'active':''} onClick={()=>{setTab(id);setNotice('');setSecret('')}} key={id}><Icon size={17}/>{label}</button>)}</nav><form className="settings-panel" onSubmit={save}><SettingsForm tab={tab} value={value} update={update} secret={secret} setSecret={setSecret}/><footer><span>비밀값은 저장 후 마스킹되며 API 응답으로 반환되지 않습니다.</span><button className="button primary"><Save size={16}/>변경사항 저장</button></footer></form></div></div>}
+const tabs=[{id:'general',label:'General',icon:Settings},{id:'authentication',label:'Authentication',icon:KeyRound},{id:'kubernetes',label:'Kubernetes',icon:Boxes},{id:'runtimeAgents',label:'Runtime Agents',icon:Bot},{id:'runtimeEnvironment',label:'Runtime Environment',icon:FileCog},{id:'sessionGateway',label:'Session Gateway',icon:ExternalLink},{id:'governance',label:'Governance',icon:ShieldCheck},{id:'logging',label:'Logging',icon:Network},{id:'observability',label:'Observability',icon:Activity},{id:'tracking',label:'Tracking',icon:BarChart3},{id:'mail',label:'Mail',icon:Mail},{id:'release',label:'Offline & Release',icon:Save}]
+export function AdminSettings(){const [settings,setSettings]=useState<SettingsMap>(),[tab,setTab]=useState('general'),[error,setError]=useState(''),[notice,setNotice]=useState(''),[secret,setSecret]=useState('');useEffect(()=>{api.get<SettingsMap>('/api/v1/admin/settings').then(setSettings).catch(e=>setError(e.message))},[]);if(!settings)return <Loading/>;const value=settings[tab]??{};const save=async(e:FormEvent)=>{e.preventDefault();setError('');setNotice('');try{const result=await api.put<{runtimeEnvironment?:{message:string}}>(`/api/v1/admin/settings/${tab}`,{value,secret:secret||undefined});if(tab==='runtimeAgents'){const disabled=Array.isArray(value.disabledTypes)?value.disabledTypes.filter((item):item is string=>typeof item==='string'):[];setRuntimeAvailability(disabled)}const savedNotice=tab==='runtimeAgents'?'설정을 저장했습니다. 카탈로그와 신규 에이전트 생성에 바로 적용됩니다.':tab==='tracking'?'설정을 저장했습니다. 다음 페이지 로드부터 적용됩니다 — 화면을 새로 고쳐 확인하세요.':tab==='mail'?'설정을 저장했습니다. 아래 시험 발송으로 릴레이가 실제로 받는지 확인하세요.':tab==='kubernetes'?'설정을 저장했습니다. hostNetwork 변경은 새로 만들거나 다음에 시작·재시작하는 Runtime부터 적용됩니다.':'설정을 저장했습니다. 새 Runtime과 다음 로그인부터 적용됩니다.';setNotice(result?.runtimeEnvironment?.message??savedNotice);setSecret('')}catch(err){setError(err instanceof Error?err.message:'설정을 저장하지 못했습니다.')}};const update=(key:string,next:unknown)=>setSettings(current=>({...current!,[tab]:{...current![tab],[key]:next}}));return <div className="page"><PageHeader eyebrow="관리자" title="시스템 설정" description="배포 후 운영 설정은 환경변수가 아닌 이 화면에서 안전하게 관리합니다."/>{error&&<ErrorBanner message={error}/>} {notice&&<SuccessBanner message={notice}/>}<div className="settings-layout"><nav className="settings-nav">{tabs.map(({id,label,icon:Icon})=><button type="button" className={tab===id?'active':''} onClick={()=>{setTab(id);setNotice('');setSecret('')}} key={id}><Icon size={17}/>{label}</button>)}</nav><form className="settings-panel" onSubmit={save}><SettingsForm tab={tab} value={value} update={update} secret={secret} setSecret={setSecret}/><footer><span>비밀값은 저장 후 마스킹되며 API 응답으로 반환되지 않습니다.</span><button className="button primary"><Save size={16}/>변경사항 저장</button></footer></form></div></div>}
 
 function SettingsForm({tab,value,update,secret,setSecret}:{tab:string;value:Record<string,unknown>;update:(key:string,v:unknown)=>void;secret:string;setSecret:(v:string)=>void}){
   if(tab==='general')return <><Section title="서비스" description="사용자에게 표시되는 기본 정보입니다."><Field label="서비스 이름"><input value={String(value.serviceName??'AgentHub')} onChange={e=>update('serviceName',e.target.value)}/></Field><Field label="Public URL" hint="OIDC Callback URL 생성에 사용합니다."><input type="url" value={String(value.publicUrl??'')} onChange={e=>update('publicUrl',e.target.value)} placeholder="https://agenthub.company.local"/></Field><div className="form-grid"><Field label="기본 언어"><select value={String(value.defaultLocale??'ko')} onChange={e=>update('defaultLocale',e.target.value)}><option value="ko">한국어</option><option value="en">English</option></select></Field><Field label="시간대"><input value={String(value.timezone??'Asia/Seoul')} onChange={e=>update('timezone',e.target.value)}/></Field></div></Section></>
@@ -39,6 +39,7 @@ function SettingsForm({tab,value,update,secret,setSecret}:{tab:string;value:Reco
     <div className="info-box"><Activity size={17}/><div><strong>수집기가 없으면 아무 비용도 들지 않습니다</strong><p>주소를 비워 두면 추적이 꺼진 상태로 동작하며 스팬을 만들지도, 버퍼에 쌓지도 않습니다. 설정은 <b>API와 워커를 재시작한 뒤</b> 적용되고, 적용되면 화면·로그·실행 기록에 표시되는 Trace ID로 수집기에서 같은 실행을 찾을 수 있습니다.</p></div></div>
   </Section>
   if(tab==='tracking')return <TrackingForm value={value} update={update}/>
+  if(tab==='mail')return <MailForm value={value} update={update} secret={secret} setSecret={setSecret}/>
   if(tab==='logging')return <Section title="로그 및 감사" description="서버 로그는 Control Center에서 검색하고 Runtime 로그와 구분해 확인할 수 있습니다."><Field label="로그 레벨"><select value={String(value.level??'info')} onChange={e=>update('level',e.target.value)}><option value="debug">Debug</option><option value="info">Info</option><option value="warn">Warn</option><option value="error">Error</option></select></Field><div className="info-box"><Network size={17}/><div><strong>보관 기간은 실행 제어에서 정합니다</strong><p>감사·실행·이벤트 기록의 보관 기간과 정리 실행은 <b>관리자 ▸ 실행 제어 ▸ 보관 정책</b> 한 곳에서 관리합니다. 같은 값을 두 화면에서 따로 정할 수 있게 두면 어느 쪽이 실제로 적용되는지 알 수 없습니다.</p></div></div><Toggle label="Runtime 로그 조회 사용" checked={value.includeRuntimeLogs!==false} change={v=>update('includeRuntimeLogs',v)}/></Section>
   return <Section title="Offline 운영" description="이 배포는 실행 중 외부로 나가지 않습니다. 켜고 끄는 설정이 아니라 빌드된 방식입니다."><div className="info-box"><ShieldCheck size={17}/><div><strong>업데이트 확인도, CDN도 없습니다</strong><p>컨트롤 플레인은 자기 버전을 확인하러 나가지 않고, 콘솔은 폰트·스크립트를 모두 이미지 안에서 불러옵니다. 예전에는 이 자리에 스위치가 두 개 있었지만 아무 동작도 바꾸지 않았습니다 — 끌 것이 없어서입니다. 런타임이 밖으로 나가는 범위는 <b>Network Profile</b> 로 정하고, 그 정책이 이 클러스터에서 실제로 적용되는지는 <b>보안 · 네트워크</b> 화면에서 확인할 수 있습니다.</p></div></div><div className="info-box"><Boxes size={17}/><div><strong>검증 가능한 Release 묶음</strong><p>컨트롤 플레인과 각 런타임 이미지는 독립 버전으로 게시됩니다. Release의 오프라인 매니페스트가 선택한 런타임에 필요한 아카이브·분할 조각·원본 Release·크기·SHA-256을 한 번에 안내하며, PostgreSQL 이미지는 포함하지 않습니다.</p></div></div><div className="info-box"><ShieldCheck size={17}/><div><strong>외부 PostgreSQL이 필수입니다</strong><p>PostgreSQL은 별도로 운영하고 <code>AGENTHUB_POSTGRES_DSN</code>으로 연결하세요. 인증·TLS·백업·모니터링·업그레이드와 API·워커의 네트워크 접근은 운영 환경에서 준비해야 합니다.</p></div></div></Section>
 }
@@ -220,6 +221,98 @@ function BlockedOrigins({enabled,allowedHosts,update}:{enabled:boolean;allowedHo
     </div>}
     <div className="provisioning-actions"><button type="button" className="button ghost" disabled={busy!==''||!items||items.length===0} onClick={()=>void clear()}><Trash2 size={14}/>기록 비우기</button><button type="button" className="button ghost" disabled={busy!==''} onClick={()=>void load()}><Activity size={14}/>다시 읽기</button></div>
     <div className="info-box"><ShieldCheck size={17}/><div><strong>허용 목록은 저장과 함께 적용됩니다</strong><p>'허용 목록에 넣기' 는 서버에 바로 저장되고 위 '추가 허용 출처' 칸에도 반영됩니다. 기록은 메모리에만 두며(최대 100개 출처) 재시작하면 비워집니다 — 감사 기록이 아니라 스니펫을 고치는 사람을 위한 안내입니다.</p></div></div>
+  </Section>
+}
+
+/**
+ * 메일 알림. 설정 키 이름은 사내 표준(mail.enabled, mail.smtp_host, …)을 그대로 쓴다 —
+ * 앱마다 이름이 다르면 운영자가 스무 번 다르게 배운다. 비밀번호는 다른 비밀값과 같이
+ * secret 으로만 올라가고, 서버는 '설정됨' 만 돌려준다.
+ */
+function MailForm({value,update,secret,setSecret}:{value:Record<string,unknown>;update:(key:string,v:unknown)=>void;secret:string;setSecret:(v:string)=>void}){
+  const enabled=Boolean(value.enabled)
+  const on=(key:string)=>value[key]!==false
+  return <>
+    <Section title="메일 알림" description="사람이 기다리는 일 — 승인 요청, 실패로 멈춘 작업, 이어받아야 하는 작업, 의존성 장애 — 을 사내 SMTP 릴레이로 보냅니다. 기본은 꺼짐이며, 켜기 전까지 아무것도 나가지 않습니다.">
+      <Toggle label="메일 알림 사용 (mail.enabled)" checked={enabled} change={v=>update('enabled',v)}/>
+      <div className="form-grid">
+        <Field label="SMTP 릴레이 주소 (mail.smtp_host)"><input value={String(value.smtp_host??'')} onChange={e=>update('smtp_host',e.target.value)} placeholder="relay.company.local"/></Field>
+        <Field label="포트 (mail.smtp_port)" hint="사내 릴레이는 대개 25. 465 는 자동으로 TLS 로 봅니다."><input type="number" min={1} max={65535} value={Number(value.smtp_port??25)} onChange={e=>update('smtp_port',Number(e.target.value))}/></Field>
+      </div>
+      <div className="form-grid">
+        <Field label="보안 (mail.security)" hint="auto 는 서버가 STARTTLS 를 알리면 쓰고 아니면 평문으로 보냅니다."><select value={String(value.security??'auto')} onChange={e=>update('security',e.target.value)}><option value="auto">auto — 서버가 알리는 대로</option><option value="none">none — 암호화 없음</option><option value="starttls">starttls — 반드시 STARTTLS</option><option value="tls">tls — 처음부터 TLS (465)</option></select></Field>
+        <Field label="시간 제한, 초 (mail.timeout_seconds)"><input type="number" min={1} max={120} value={Number(value.timeout_seconds??10)} onChange={e=>update('timeout_seconds',Number(e.target.value))}/></Field>
+      </div>
+      <Toggle label="인증서 검증 건너뛰기 (mail.skip_tls_verify)" checked={Boolean(value.skip_tls_verify)} change={v=>update('skip_tls_verify',v)}/>
+      <div className="form-grid">
+        <Field label="사용자 이름 (mail.username)" hint="인증 없는 릴레이가 흔합니다. 비워 두면 인증하지 않습니다."><input value={String(value.username??'')} onChange={e=>update('username',e.target.value)} autoComplete="off"/></Field>
+        <Field label="비밀번호 (mail.password)" hint={value.passwordConfigured?'현재 비밀번호가 설정되어 있습니다. 바꿀 때만 입력하세요.':'인증이 필요할 때만 입력하세요.'}><input type="password" autoComplete="new-password" value={secret} onChange={e=>setSecret(e.target.value)} placeholder={value.passwordConfigured?'••••••••':''}/></Field>
+      </div>
+      <div className="form-grid">
+        <Field label="보내는 주소 (mail.from_address)"><input value={String(value.from_address??'')} onChange={e=>update('from_address',e.target.value)} placeholder="agenthub@company.local"/></Field>
+        <Field label="보내는 이름 (mail.from_name)" hint="제목 앞의 [이름] 이기도 합니다."><input value={String(value.from_name??'AgentHub')} onChange={e=>update('from_name',e.target.value)}/></Field>
+      </div>
+      <Field label="메일 속 링크 주소 (mail.base_url)" hint="비워 두면 General 의 Public URL 을 씁니다."><input type="url" value={String(value.base_url??'')} onChange={e=>update('base_url',e.target.value)} placeholder="https://agenthub.company.local"/></Field>
+    </Section>
+    <Section title="보낼 이벤트" description="종류별로 끌 수 있습니다. 자기가 한 일은 자기에게 보내지 않고, 한 사람에게 같은 시각에 생긴 알림은 한 통으로 묶습니다.">
+      <Toggle label="승인 요청과 결정 (mail.notify_approval) — 검토자에게 요청을, 요청자에게 결정을" checked={on('notify_approval')} change={v=>update('notify_approval',v)}/>
+      <Toggle label="런타임 인계 (mail.notify_handoff) — 사람이 이어받아야 작업이 끝날 때" checked={on('notify_handoff')} change={v=>update('notify_handoff',v)}/>
+      <Toggle label="실패로 멈춘 작업 (mail.notify_task_failed) — 실패·정책 차단·예산 초과" checked={on('notify_task_failed')} change={v=>update('notify_task_failed',v)}/>
+      <Toggle label="의존성 장애와 복구 (mail.notify_dependency) — 모델 엔드포인트·MCP 서버, 관리자에게" checked={on('notify_dependency')} change={v=>update('notify_dependency',v)}/>
+      <div className="info-box"><Mail size={17}/><div><strong>완료된 작업은 메일하지 않습니다</strong><p>결과는 콘솔에 있고, 성공마다 오는 메일은 발신자 전체를 버리는 규칙을 만들게 합니다. 여기 있는 넷은 오지 않으면 누군가 화면을 계속 새로고침하거나 손해를 보는 일입니다. 메일은 배경에서 나가므로 릴레이가 죽어 있어도 승인·작업 처리는 평소처럼 끝납니다.</p></div></div>
+    </Section>
+    <MailTest enabled={enabled}/>
+    <MailDeliveries/>
+  </>
+}
+
+/** 저장한 설정으로 실제 한 통을 보내고 결과를 그 자리에서 보여 준다. 릴레이 설정은 한 번에 맞는 일이 드물다. */
+function MailTest({enabled}:{enabled:boolean}){
+  const [recipient,setRecipient]=useState('')
+  const [answer,setAnswer]=useState<{sent:boolean;recipient?:string;error?:string}>()
+  const [busy,setBusy]=useState(false)
+  const send=async()=>{
+    setBusy(true)
+    try{setAnswer(await api.post<{sent:boolean;recipient:string}>('/api/v1/admin/mail/test',{recipient}))}
+    catch(e){setAnswer({sent:false,error:e instanceof Error?e.message:'보내지 못했습니다.'})}
+    finally{setBusy(false)}
+  }
+  const tone=!answer?'':answer.sent?'ok':'danger'
+  return <div className={`cluster-check ${tone}`}>
+    <div>
+      <strong>시험 발송 — 저장한 설정으로 실제 한 통을 보냅니다</strong>
+      <p><b>저장된 설정</b> 기준이므로 방금 입력한 값은 먼저 저장한 뒤 보내세요. 받는 사람을 비우면 내 계정의 메일 주소로 보냅니다. 결과는 아래 발송 기록에도 남습니다.</p>
+      <Field label="받는 사람"><input value={recipient} onChange={e=>setRecipient(e.target.value)} placeholder="me@company.local"/></Field>
+      {answer&&<p className="cluster-check-detail">{answer.sent?`보냈습니다 → ${answer.recipient}. 받은 편지함(과 스팸함)을 확인하세요.`:`보내지 못했습니다: ${answer.error}`}</p>}
+      {!enabled&&<p className="cluster-check-note">메일 알림이 꺼져 있으면 시험 발송도 거절됩니다.</p>}
+    </div>
+    <button type="button" className="button ghost" disabled={busy} onClick={()=>void send()}><Mail size={16}/>{busy?'보내는 중…':'시험 발송'}</button>
+  </div>
+}
+
+type MailDelivery={id:string;event:string;recipient:string;subject:string;status:string;attempts:number;errorMessage?:string;createdAt:string;updatedAt:string}
+const MAIL_STATUS:Record<string,string>={queued:'대기',sending:'보내는 중',sent:'보냄',failed:'실패'}
+
+/** 무엇이 건물 밖으로 나갔는지. 실패만 남기면 '안 왔다' 는 문의에 답할 수 없다. 본문은 담지 않는다. */
+function MailDeliveries(){
+  const [page,setPage]=useState<{items:MailDelivery[];summary:{total:number;status:Record<string,number>}}>()
+  const [status,setStatus]=useState('')
+  const [error,setError]=useState('')
+  const load=(filter:string)=>api.get<{items:MailDelivery[];summary:{total:number;status:Record<string,number>}}>(`/api/v1/admin/mail/deliveries?limit=50${filter?`&status=${filter}`:''}`).then(setPage).catch(e=>setError(e instanceof Error?e.message:'발송 기록을 읽지 못했습니다.'))
+  useEffect(()=>{void load(status)},[status])
+  const summary=page?.summary.status??{}
+  return <Section title="발송 기록" description="시도마다 한 줄입니다 — 언제, 어떤 이벤트로, 누구에게, 제목이 무엇이었고, 되었는지. 본문은 기록하지 않습니다.">
+    {error&&<ErrorBanner message={error}/>}
+    <div className="runtime-agent-controls">
+      <strong>{page?`전체 ${page.summary.total}건 · 보냄 ${summary.sent??0} · 실패 ${summary.failed??0} · 대기 ${(summary.queued??0)+(summary.sending??0)}`:'읽는 중…'}</strong>
+      <div><select value={status} onChange={e=>setStatus(e.target.value)}><option value="">전체</option><option value="sent">보냄</option><option value="failed">실패</option><option value="queued">대기</option></select><button type="button" className="button ghost" onClick={()=>void load(status)}><Activity size={14}/>다시 읽기</button></div>
+    </div>
+    {page===undefined?<Loading/>:page.items.length===0?<p className="empty-compact">아직 보낸 메일이 없습니다.</p>:<div className="violation-list">
+      {page.items.map(item=><div className={`violation-row${item.status==='sent'?' allowed':''}`} key={item.id}>
+        <div><strong>{item.subject}</strong><small><code>{item.event}</code> · {item.recipient} · {new Date(item.createdAt).toLocaleString('ko-KR')} · {item.attempts}회{item.errorMessage?` · ${item.errorMessage}`:''}</small></div>
+        <em>{MAIL_STATUS[item.status]??item.status}</em>
+      </div>)}
+    </div>}
   </Section>
 }
 

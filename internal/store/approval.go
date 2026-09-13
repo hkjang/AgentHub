@@ -45,38 +45,38 @@ func (s *Store) CreateApproval(ctx context.Context, requesterID, resourceType, r
 // only an administrator could see and only if they thought to look.
 //
 // An unassigned approval can be decided by an administrator — DecideApproval says
-// so — so an administrator is who hears about it. Returning the count is what lets
-// the caller notice it told nobody, which is the state this function exists to
-// stop being silent.
-func (s *Store) NotifyApprovers(ctx context.Context, approval Approval, title, message string) (int, error) {
+// so — so an administrator is who hears about it. Returning who was told is what
+// lets the caller notice it told nobody, which is the state this function exists
+// to stop being silent — and lets the mailer reach the same people.
+func (s *Store) NotifyApprovers(ctx context.Context, approval Approval, title, message string) ([]string, error) {
 	if approval.ReviewerID != nil && *approval.ReviewerID != "" {
 		if err := s.CreateNotification(ctx, *approval.ReviewerID, "approval", title, message, "/reviews"); err != nil {
-			return 0, err
+			return nil, err
 		}
-		return 1, nil
+		return []string{*approval.ReviewerID}, nil
 	}
 	rows, err := s.pool.Query(ctx, `SELECT id FROM users WHERE role='admin' AND status='active'`)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer rows.Close()
 	admins := []string{}
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			return 0, err
+			return nil, err
 		}
 		admins = append(admins, id)
 	}
 	if err := rows.Err(); err != nil {
-		return 0, err
+		return nil, err
 	}
-	told := 0
+	told := []string{}
 	for _, id := range admins {
 		if err := s.CreateNotification(ctx, id, "approval", title, message, "/reviews"); err != nil {
 			return told, err
 		}
-		told++
+		told = append(told, id)
 	}
 	return told, nil
 }

@@ -336,6 +336,11 @@ func (s *Store) Cleanup(ctx context.Context, policy RetentionPolicy, dryRun bool
 		{name: "notifications", days: policy.NotificationDays,
 			count:  `SELECT count(*) FROM notifications WHERE read_at IS NOT NULL AND read_at < $1`,
 			delete: `DELETE FROM notifications WHERE read_at IS NOT NULL AND read_at < $1`},
+		// A mail delivery is a notice that left the building, kept on the same
+		// clock as the bell. Only settled rows go: a queued one is still work.
+		{name: "mail-deliveries", days: policy.NotificationDays,
+			count:  `SELECT count(*) FROM mail_deliveries WHERE status IN ('sent','failed') AND updated_at < $1`,
+			delete: `DELETE FROM mail_deliveries WHERE status IN ('sent','failed') AND updated_at < $1`},
 		// A workflow run is a run. It was never swept and cascades from nothing that
 		// is, so on a deployment that runs workflows this table grew for as long as
 		// the deployment lived — while the screen said history was kept for thirty

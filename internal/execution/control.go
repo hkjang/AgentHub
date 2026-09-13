@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hkjang/AgentHub/internal/mail"
 	"github.com/hkjang/AgentHub/internal/store"
 	"github.com/hkjang/AgentHub/internal/workflow"
 )
@@ -168,11 +169,15 @@ func (o *Orchestrator) requestApproval(ctx context.Context, run store.AgentRun, 
 		task.Title+" 작업이 상태 변경 작업 승인을 기다리고 있습니다: "+summary)
 	if notifyErr != nil {
 		o.logger.Warn("approval reviewers could not be notified", "approval", approval.ID, "error", notifyErr)
-	} else if told == 0 {
+	} else if len(told) == 0 {
 		// Nobody can answer this. Said out loud, because the task is now waiting on
 		// a person who does not exist.
 		o.logger.Error("nobody was told about an approval request", "approval", approval.ID, "task", task.ID)
 	}
+	// The reviewer is rarely looking at the console when an agent stops at a
+	// gate, and the task waits until they are. The owner is the actor: their
+	// task asked, and an owner who is also the reviewer already knows.
+	o.mailer.Notify(ctx, mail.Notice{Event: mail.EventApprovalRequested, Subject: "승인 요청: " + task.Title, Path: "/reviews"}, task.OwnerID, told)
 	// The owner is told too: their task has stopped and they should know why.
 	_ = o.store.CreateNotification(ctx, task.OwnerID, "approval", "작업이 승인을 기다립니다",
 		task.Title+" — "+summary, "/tasks")

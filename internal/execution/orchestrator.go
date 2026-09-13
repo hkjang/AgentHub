@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
+	"github.com/hkjang/AgentHub/internal/mail"
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
 	"github.com/hkjang/AgentHub/internal/runtimespec"
 	"github.com/hkjang/AgentHub/internal/runtimetype"
@@ -48,6 +49,17 @@ type Orchestrator struct {
 	workerID   string
 	// flowInspector scans text entering and leaving a runtime's own flow engine.
 	flowInspector FlowInspector
+	// mailer carries the notices people wait on out of the building. Nil means
+	// the bell only.
+	mailer *mail.Service
+}
+
+// WithMailer installs the mail service. Without one the orchestrator still
+// notifies through the bell; with one, an approval request also reaches the
+// reviewer's inbox.
+func (o *Orchestrator) WithMailer(mailer *mail.Service) *Orchestrator {
+	o.mailer = mailer
+	return o
 }
 
 func New(db *store.Store, spawner appRuntime.Spawner, completion Completion, logger *slog.Logger, workerID string) *Orchestrator {

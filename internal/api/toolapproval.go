@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/hkjang/AgentHub/internal/mail"
 	"github.com/hkjang/AgentHub/internal/store"
 )
 
@@ -92,6 +93,9 @@ func (s *Server) requestToolApproval(w http.ResponseWriter, r *http.Request) {
 		"도구 실행 승인이 필요합니다", reason, "/reviews"); err != nil {
 		s.logger.Warn("tool approval notification not delivered", "runtime", runtime.ID, "error", err)
 	}
+	// And by mail: the agent asked, not the person, so there is no actor to
+	// leave out — the owner is exactly who is waiting to be asked.
+	s.mailer.Notify(r.Context(), mail.Notice{Event: mail.EventApprovalRequested, Subject: "도구 실행 승인 요청: " + agent.Name + " · " + tool, Path: "/reviews"}, "", []string{runtime.OwnerID})
 	s.store.Audit(r.Context(), nil, "tool.approval.request", "runtime", runtime.ID, "pending", clientIP(r),
 		map[string]any{"server": server, "tool": tool, "agentId": agent.ID, "approvalId": saved.ApprovalID})
 	s.logger.Info("tool call is waiting for approval", "runtime", runtime.ID, "agent", agent.ID, "server", server, "tool", tool, "approval", saved.ApprovalID)
