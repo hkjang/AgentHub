@@ -26,7 +26,9 @@ jobs:
       # -race, because the engine runs a level's steps in parallel and a race in
       # that path would otherwise only show up as a flaky production run.
       - run: go test -race ./cmd/... ./internal/...
-      - run: npm ci && npm run lint && npm run build
+      # test:sso runs the silent sign-in rules under Node; they are the guards
+      # against a redirect loop and have no server to be exercised against.
+      - run: npm ci && npm run lint && npm run test:sso && npm run build
         working-directory: web
       # The release refuses an image whose sources changed under a version that
       # says they did not. That check used to run only after a tag was pushed,
