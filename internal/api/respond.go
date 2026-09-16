@@ -77,9 +77,30 @@ func writeStoreError(w http.ResponseWriter, err error) {
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	return decodeBody(w, r, dst, true)
+}
+
+// decodePodReport reads what a runtime Pod sends, keeping the fields it knows
+// and passing over the rest.
+//
+// A Pod is built from the runtime base image and the control plane from this
+// repository, and the two are versioned apart (BASE_VERSION, VERSION): the
+// fleet a control plane serves was built before it, or after it, and never
+// exactly with it. A decoder that refuses a key it does not know refuses the
+// whole report over it — and a Pod's report is best effort by design, so the
+// refusal is a 400 nobody reads. The gateway's DLP report carried its log
+// line's discriminator, "event": "dlp", from the day the scanner shipped, and
+// every one of them was refused over that key.
+func decodePodReport(w http.ResponseWriter, r *http.Request, dst any) bool {
+	return decodeBody(w, r, dst, false)
+}
+
+func decodeBody(w http.ResponseWriter, r *http.Request, dst any, strict bool) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
+	if strict {
+		decoder.DisallowUnknownFields()
+	}
 	if err := decoder.Decode(dst); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", decodeComplaint(err))
 		return false

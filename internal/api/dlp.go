@@ -128,6 +128,31 @@ func (s *Server) scanSample(w http.ResponseWriter, r *http.Request) {
 // in one payload has found the same handful a thousand times.
 const maxReportedFindings = 32
 
+// dlpReport is what the gateway posts: the entry it writes to its own log, under
+// the runtime id it believes it has. The log entry carries a discriminator
+// ("event": "dlp") this has no field for, which is why it is decoded as a Pod
+// report rather than strictly — see decodePodReport.
+type dlpReport struct {
+	RuntimeID string `json:"runtimeId"`
+	Event     struct {
+		Server    string        `json:"server"`
+		Tool      string        `json:"tool"`
+		Direction string        `json:"direction"`
+		Blocked   bool          `json:"blocked"`
+		Truncated bool          `json:"truncated"`
+		Findings  []dlp.Finding `json:"findings"`
+	} `json:"event"`
+}
+
+// result is the scan as the gateway described it, so the trail files it under
+// what the gateway did rather than what it might have done: a class set to
+// 기록만 leaves the tool call exactly as the agent wrote it, and a report carrying
+// no findings at all is the gateway saying it read the beginning of an oversized
+// payload and nothing more.
+func (report dlpReport) result() dlp.Result {
+	return dlp.Result{Blocked: report.Event.Blocked, Findings: report.Event.Findings, Truncated: report.Event.Truncated}
+}
+
 // reportDLPEvent receives a finding from an in-Pod gateway.
 //
 // Tool calls never pass through the control plane, so without this the scanning
@@ -140,18 +165,8 @@ func (s *Server) reportDLPEvent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Runtime 토큰을 확인할 수 없습니다.")
 		return
 	}
-	var input struct {
-		RuntimeID string `json:"runtimeId"`
-		Event     struct {
-			Server    string        `json:"server"`
-			Tool      string        `json:"tool"`
-			Direction string        `json:"direction"`
-			Blocked   bool          `json:"blocked"`
-			Truncated bool          `json:"truncated"`
-			Findings  []dlp.Finding `json:"findings"`
-		} `json:"event"`
-	}
-	if !decodeJSON(w, r, &input) {
+	var input dlpReport
+	if !decodePodReport(w, r, &input) {
 		return
 	}
 	// The body's runtime id is a cross-check, never the authority: the token is.
@@ -159,17 +174,20 @@ func (s *Server) reportDLPEvent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "runtime_mismatch", "다른 Runtime의 기록을 보고할 수 없습니다.")
 		return
 	}
-	findings := input.Event.Findings
+	result := input.result()
+	// A report of nothing is not an event. The gateway never sends one — it
+	// reports what it found, or that it could not read to the end — and filing
+	// one anyway would put an "audited" entry in the trail, which claims a finding
+	// nobody made under an agent that did nothing.
+	if !result.Reportable() {
+		writeError(w, http.StatusBadRequest, "nothing_to_report", "발견도 없고 잘리지도 않은 검사는 기록할 내용이 없습니다.")
+		return
+	}
+	findings := result.Findings
 	if len(findings) > maxReportedFindings {
 		findings = findings[:maxReportedFindings]
 	}
-	// What the gateway did to the call, not what it might have done: a class set
-	// to 기록만 leaves the tool call exactly as the agent wrote it, and a report
-	// carrying no findings at all is the gateway saying it read the beginning of an
-	// oversized payload and nothing more.
-	outcome := dlp.Result{
-		Blocked: input.Event.Blocked, Findings: input.Event.Findings, Truncated: input.Event.Truncated,
-	}.Outcome()
+	outcome := result.Outcome()
 	details := map[string]any{
 		"server": input.Event.Server, "tool": input.Event.Tool, "direction": input.Event.Direction,
 		"truncated": input.Event.Truncated, "findings": findings, "runtimeId": runtime.ID,
