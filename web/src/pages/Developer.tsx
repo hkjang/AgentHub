@@ -51,7 +51,8 @@ export function Developer() {
     [drawer, setDrawer] = useState(false),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
-    [token, setToken] = useState("");
+    [token, setToken] = useState(""),
+    [mcpSso, setMcpSso] = useState(false);
   const load = () =>
     Promise.all([
       api
@@ -66,6 +67,12 @@ export function Developer() {
     ]);
   useEffect(() => {
     void load();
+    // Whether this deployment also opens /mcp with a Keycloak token, so the
+    // card below can say "no key needed" only where that is true.
+    api
+      .get<{ mcpSso?: boolean }>("/api/v1/auth/methods")
+      .then((v) => setMcpSso(Boolean(v.mcpSso)))
+      .catch(() => setMcpSso(false));
   }, []);
   const rotate = async () => {
     if (
@@ -141,9 +148,13 @@ export function Developer() {
           <ShieldCheck />
           <span>
             <strong>MCP Streamable HTTP</strong>
-            <small>POST /mcp · Bearer mcp:read</small>
+            <small>
+              {mcpSso
+                ? "POST /mcp · API Key 또는 Keycloak SSO — 키 없이 이 주소만 넣으면 클라이언트가 스스로 로그인합니다"
+                : "POST /mcp · Bearer mcp:read"}
+            </small>
           </span>
-          <code>/mcp</code>
+          <code>{`${window.location.origin}/mcp`}</code>
         </div>
       </section>
       {error && <ErrorBanner message={error} onClose={() => setError("")} />}{" "}

@@ -62,6 +62,10 @@ type Server struct {
 	// mailer carries notices out of the building over the company relay, and
 	// this process is the one that runs its sender. Nil means the bell only.
 	mailer *mail.Service
+
+	// oauth holds the discovered identity provider that verifies SSO access
+	// tokens presented to /mcp (mcpoauth.go).
+	oauth oauthProviders
 }
 
 // WithMailer installs the mail service. RunBackground runs its sender.
@@ -137,6 +141,10 @@ func (s *Server) Handler() http.Handler {
 		})
 	})
 	r.Post("/mcp", s.mcp)
+	// RFC 9728: where an MCP client refused at /mcp goes to learn which
+	// authorization server to sign in with. Answers 404 unless MCP SSO is on.
+	r.Get("/.well-known/oauth-protected-resource", s.protectedResourceMetadata)
+	r.Get("/.well-known/oauth-protected-resource/mcp", s.protectedResourceMetadata)
 	// The Momento collector, reached through this origin so its address never
 	// has to be in the page policy. Answers 404 unless tracking is configured
 	// that way.

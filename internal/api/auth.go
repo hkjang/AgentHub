@@ -101,7 +101,9 @@ func (s *Server) authMethods(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.Setting(r.Context(), "authentication", &settings)
 	// autoLogin is published so the browser knows whether to try a silent
 	// sign-in before it draws the login screen.
-	writeJSON(w, http.StatusOK, map[string]any{"local": settings.LocalLoginEnabled, "oidc": settings.OIDCEnabled, "oidcLabel": "Keycloak SSO", "autoLogin": settings.OIDCEnabled && settings.AutoLogin})
+	// mcpSso is published so the API-key page can say that /mcp also opens
+	// with a Keycloak token — only where an administrator has switched it on.
+	writeJSON(w, http.StatusOK, map[string]any{"local": settings.LocalLoginEnabled, "oidc": settings.OIDCEnabled, "oidcLabel": "Keycloak SSO", "autoLogin": settings.OIDCEnabled && settings.AutoLogin, "mcpSso": s.mcpOAuthConfig(r.Context()).Enabled})
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {

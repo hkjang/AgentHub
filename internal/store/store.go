@@ -309,6 +309,20 @@ func (s *Store) CreateSession(ctx context.Context, userID, ip, agent string) (to
 	return
 }
 
+// ActiveUserForSSOSubject is the lookup half of UpsertOIDCUser without the
+// provisioning half: the account the identity provider's subject already
+// names, and only while it is active.
+//
+// It exists for a machine presenting an access token. That is not the moment to
+// decide who somebody is — signing in to the web once is what registers a
+// person — so this finds and never creates, and a disabled account stays
+// disabled however valid the token. The subject is the only link, as it is for
+// the web sign-in: a username claim is not matched against local accounts,
+// because the web never links that way either.
+func (s *Store) ActiveUserForSSOSubject(ctx context.Context, subject string) (User, error) {
+	return scanUser(s.pool.QueryRow(ctx, `SELECT `+userColumns+` FROM users WHERE oidc_subject=$1 AND status='active'`, subject))
+}
+
 func (s *Store) SessionUser(ctx context.Context, token string) (User, error) {
 	return scanUser(s.pool.QueryRow(ctx, `SELECT `+prefixColumns("u", userColumns)+` FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id_hash=$1 AND s.expires_at>now() AND u.status='active'`, cryptox.TokenHash(token)))
 }

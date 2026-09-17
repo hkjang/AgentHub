@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -1526,7 +1527,7 @@ func (s *Server) secretConfigured(r *http.Request, key string) bool {
 func (s *Server) putAdminSetting(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	key := chi.URLParam(r, "key")
-	allowed := map[string]bool{"general": true, "authentication": true, "kubernetes": true, "sessionGateway": true, "governance": true, "logging": true, "release": true, runtimeenv.SettingKey: true, runtimetype.SettingKey: true, telemetry.SettingKey: true, tracking.SettingKey: true, mail.SettingKey: true}
+	allowed := map[string]bool{"general": true, "authentication": true, "kubernetes": true, "sessionGateway": true, "governance": true, "logging": true, "release": true, runtimeenv.SettingKey: true, runtimetype.SettingKey: true, telemetry.SettingKey: true, tracking.SettingKey: true, mail.SettingKey: true, mcpOAuthSettingKey: true}
 	if !allowed[key] {
 		writeError(w, 404, "setting_not_found", "지원하지 않는 설정입니다.")
 		return
@@ -1670,6 +1671,37 @@ func (s *Server) validateSetting(r *http.Request, key string, value map[string]a
 	case "release":
 		if boolValue("offlineMode") && boolValue("updateCheckEnabled") {
 			return errors.New("Offline Mode에서는 외부 업데이트 확인을 사용할 수 없습니다")
+		}
+	case mcpOAuthSettingKey:
+		// Refused at save time rather than logged at request time: a switch that
+		// is on while the deployment cannot honour it is a client sent into a
+		// login loop, and this form is where the administrator can see why.
+		if raw := stringValue("resource"); raw != "" && (!validHTTPS(raw) || !strings.HasSuffix(strings.TrimRight(raw, "/"), "/mcp")) {
+			return errors.New("리소스 식별자는 HTTPS 주소에 /mcp 로 끝나야 합니다 (예: https://agenthub.company.local/mcp)")
+		}
+		for _, name := range []string{"audience", "scopes"} {
+			if raw, present := value[name]; present {
+				if _, ok := raw.(string); !ok {
+					return errors.New("허용 대상과 범위는 공백으로 구분한 문자열이어야 합니다")
+				}
+			}
+		}
+		for _, scope := range strings.Fields(stringValue("scopes")) {
+			if !slices.Contains(APIKeyScopes, scope) {
+				return fmt.Errorf("알 수 없는 범위 %q — 쓸 수 있는 값: %s", scope, strings.Join(APIKeyScopes, " "))
+			}
+		}
+		if boolValue("enabled") {
+			var auth authSettings
+			_ = s.store.Setting(r.Context(), "authentication", &auth)
+			if !auth.OIDCEnabled || strings.TrimSpace(auth.IssuerURL) == "" {
+				return errors.New("MCP SSO 를 켜려면 Authentication 에서 Keycloak OIDC 가 먼저 설정돼 있어야 합니다")
+			}
+			var general generalSettings
+			_ = s.store.Setting(r.Context(), "general", &general)
+			if stringValue("resource") == "" && strings.TrimSpace(general.PublicURL) == "" {
+				return errors.New("리소스 식별자를 적거나 General 의 Public URL 을 설정해 주세요 — 토큰의 대상(aud)과 비교할 공개 주소가 필요합니다")
+			}
 		}
 	case telemetry.SettingKey:
 		// Checked here rather than at startup, where a bad endpoint would only show

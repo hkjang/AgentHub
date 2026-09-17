@@ -41,15 +41,32 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("MCP-Protocol-Version", currentMCPVersion)
 	value := strings.TrimSpace(r.Header.Get("Authorization"))
 	if !strings.HasPrefix(strings.ToLower(value), "bearer ") {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="agenthub-mcp", scope="mcp:read"`)
+		s.mcpChallenge(w, r, false)
 		writeError(w, http.StatusUnauthorized, "unauthorized", "MCP API Key가 필요합니다.")
 		return
 	}
-	user, scopes, err := s.store.UserAndScopesByAPIKey(r.Context(), strings.TrimSpace(value[7:]))
-	if err != nil {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="agenthub-mcp", error="invalid_token"`)
-		writeError(w, http.StatusUnauthorized, "invalid_token", "API Key가 유효하지 않습니다.")
-		return
+	// One header, two kinds of credential: a key this platform issued, or an
+	// access token Keycloak issued for it. The shape decides which is looked
+	// up; anything that is neither is refused as a bad key, as it always was.
+	bearer := strings.TrimSpace(value[7:])
+	var user store.User
+	var scopes []string
+	if looksLikeJWT(bearer) {
+		var refusal *mcpRefusal
+		user, scopes, refusal = s.oauthPrincipal(r.Context(), r, bearer)
+		if refusal != nil {
+			s.mcpChallenge(w, r, true)
+			writeError(w, http.StatusUnauthorized, refusal.code, refusal.message)
+			return
+		}
+	} else {
+		var err error
+		user, scopes, err = s.store.UserAndScopesByAPIKey(r.Context(), bearer)
+		if err != nil {
+			s.mcpChallenge(w, r, true)
+			writeError(w, http.StatusUnauthorized, "invalid_token", "API Key가 유효하지 않습니다.")
+			return
+		}
 	}
 	var request rpcRequest
 	if !decodeJSON(w, r, &request) {
