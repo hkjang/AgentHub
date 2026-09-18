@@ -444,3 +444,64 @@ func TestTheOutcomeNamesWhatHappenedToTheText(t *testing.T) {
 		})
 	}
 }
+
+// A finding somebody else reported is filed as this scanner would have filed
+// it, and a finding this scanner really made is filed exactly as it was.
+//
+// The gateway in the Pod reports the sample its scanner masked, and the control
+// plane cannot tell that sample from one an agent wrote in its place under the
+// Pod's token. So it masks again — and that has to be a no-op on the real
+// thing, for every detector, or the trail would show a different sample from
+// the Pod log for the same finding.
+func TestAReportedFindingIsFiledAsTheScannerWouldHaveFiledIt(t *testing.T) {
+	values := map[string]string{
+		"rrn": "900101-1234568", "card": "4111-1111-1111-1111", "business": "220-81-62517",
+		"phone": "010-1234-5678", "account": "123456-01-123456", "passport": "M12345678",
+		"email": "hong@example.co.kr", "secret": "sk-abcdefghijklmnop1234",
+	}
+	for _, detector := range detectors {
+		value, ok := values[detector.Class]
+		if !ok {
+			t.Fatalf("no value for %s; every detector has to be covered here", detector.Class)
+		}
+		t.Run(detector.Class, func(t *testing.T) {
+			result := Scan(all(detector.Class, Audit), value)
+			if len(result.Findings) != 1 || result.Findings[0].Class != detector.Class {
+				t.Fatalf("%q was not found as %s: %+v", value, detector.Class, result.Findings)
+			}
+			genuine := result.Findings[0]
+			if filed := Reported(genuine); filed != genuine {
+				t.Errorf("the scanner's own finding %+v is filed as %+v", genuine, filed)
+			}
+			// The value itself, sent in the sample's place, comes out as the
+			// scanner's sample — not something else masked, the same thing.
+			forged := Finding{Class: detector.Class, Label: "이 값을 트레일에 " + value, Count: 1, Action: Audit, Sample: value}
+			filed := Reported(forged)
+			if filed.Sample != genuine.Sample {
+				t.Errorf("the value in the sample's place is filed as %q, not the scanner's %q", filed.Sample, genuine.Sample)
+			}
+			if filed.Label != detector.Label {
+				t.Errorf("the label is filed as sent: %q", filed.Label)
+			}
+		})
+	}
+}
+
+// A class this build does not know has no rule that keeps anything, and a
+// sample long past anything a detector matches is cut before it is filed.
+func TestAReportedFindingOfNoKnownClassKeepsNothing(t *testing.T) {
+	filed := Reported(Finding{Class: "novel", Label: "값 900101-1234568", Sample: " 900101-1234568 "})
+	if filed.Sample != "**************" {
+		t.Errorf("a sample under an unknown class kept something: %q", filed.Sample)
+	}
+	if filed.Label != "novel" {
+		t.Errorf("the label of an unknown class is filed as sent: %q", filed.Label)
+	}
+	long := Reported(Finding{Class: "secret", Sample: "sk-" + strings.Repeat("a", 500)})
+	if runes := []rune(long.Sample); len(runes) != maxReportedSampleRunes || string(runes[:4]) != "sk-a" || strings.Trim(string(runes[4:]), "*") != "" {
+		t.Errorf("a long sample is filed as %q", long.Sample)
+	}
+	if again := Reported(long); again != long {
+		t.Errorf("filing a filed finding changes it: %+v -> %+v", long, again)
+	}
+}

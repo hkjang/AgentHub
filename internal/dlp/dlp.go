@@ -479,6 +479,43 @@ func (c claim) take(start, end int) {
 // tool and the person reading the transcript can all tell why the text changed.
 func marker(detector Detector) string { return "[" + detector.Label + " 삭제됨]" }
 
+// maxReportedSampleRunes bounds a sample this scanner did not produce. Its own
+// samples are one matched value each, and a value long enough to reach this is
+// masked to a prefix and stars long before it — a sample arriving from outside
+// that is longer is not one of those.
+const maxReportedSampleRunes = 64
+
+// Reported returns a finding somebody else reported as this scanner would have
+// filed it: the class's own label, and the sample masked under the class's own
+// rule.
+//
+// The in-Pod gateway reports the sample its scanner masked — this same code, in
+// a Pod the agent also lives in, sending under a token that Pod holds. The trail
+// is the control plane's word, though, and a trail that files what the Pod said
+// is a trail anything holding the Pod's token can write a value into, under the
+// one field the DLP screen promises is masked. So the sample is masked again
+// here, and the label is looked up rather than copied. On a finding the scanner
+// really made this changes nothing: mask keeps the same leading characters and
+// stars the rest, which are stars already. A class this build does not know has
+// no rule that keeps anything, so nothing is kept, and no label of its own, so
+// the class stands for it.
+func Reported(finding Finding) Finding {
+	runes := []rune(strings.TrimSpace(finding.Sample))
+	if len(runes) > maxReportedSampleRunes {
+		runes = runes[:maxReportedSampleRunes]
+	}
+	for _, detector := range detectors {
+		if detector.Class == finding.Class {
+			finding.Label = detector.Label
+			finding.Sample = mask(string(runes), detector.keep)
+			return finding
+		}
+	}
+	finding.Label = finding.Class
+	finding.Sample = strings.Repeat("*", len(runes))
+	return finding
+}
+
 // mask keeps a short prefix and hides the rest, which is enough to recognise a
 // value without disclosing it.
 func mask(value string, keep int) string {

@@ -153,6 +153,28 @@ func (report dlpReport) result() dlp.Result {
 	return dlp.Result{Blocked: report.Event.Blocked, Findings: report.Event.Findings, Truncated: report.Event.Truncated}
 }
 
+// findings is what the trail may hold of the report: at most maxReportedFindings
+// of them, each as the control plane's own scanner would have filed it.
+//
+// The gateway masks the sample before it leaves the Pod, and the handler used to
+// file that sample as sent. But the gateway is code in a Pod the agent runs in,
+// reporting under a token that Pod holds, and the audit trail is exported as it
+// is stored — so the one field the DLP screen promises is "a masked example"
+// was whatever the Pod put in it. The trail's word is the control plane's, and
+// it masks the sample again with the class's own rule; a sample the scanner
+// really produced comes through unchanged.
+func (report dlpReport) findings() []dlp.Finding {
+	findings := report.Event.Findings
+	if len(findings) > maxReportedFindings {
+		findings = findings[:maxReportedFindings]
+	}
+	filed := make([]dlp.Finding, 0, len(findings))
+	for _, finding := range findings {
+		filed = append(filed, dlp.Reported(finding))
+	}
+	return filed
+}
+
 // reportDLPEvent receives a finding from an in-Pod gateway.
 //
 // Tool calls never pass through the control plane, so without this the scanning
@@ -183,10 +205,7 @@ func (s *Server) reportDLPEvent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "nothing_to_report", "발견도 없고 잘리지도 않은 검사는 기록할 내용이 없습니다.")
 		return
 	}
-	findings := result.Findings
-	if len(findings) > maxReportedFindings {
-		findings = findings[:maxReportedFindings]
-	}
+	findings := input.findings()
 	outcome := result.Outcome()
 	details := map[string]any{
 		"server": input.Event.Server, "tool": input.Event.Tool, "direction": input.Event.Direction,

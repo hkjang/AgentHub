@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -74,5 +75,43 @@ func TestAReportIsFiledUnderWhatTheGatewayDid(t *testing.T) {
 				t.Errorf("filed as %q, want %q", result.Outcome(), tc.outcome)
 			}
 		})
+	}
+}
+
+// What the trail holds of a finding is the control plane's masking, not the
+// Pod's word.
+//
+// The gateway masks the sample before it leaves the Pod, but the gateway is code
+// in a Pod the agent runs in, reporting under a token that Pod holds — and the
+// trail is exported as stored. A value sent in the sample's place, or in the
+// label's, is filed as the scanner would have filed the finding; the report the
+// real gateway makes is filed exactly as sent.
+func TestTheTrailHoldsTheControlPlanesMaskingNotThePods(t *testing.T) {
+	genuine := dlp.Scan(dlp.Settings{Enabled: true, Classes: map[string]string{"rrn": dlp.Audit}}, "주민번호 900101-1234568").Findings
+	if len(genuine) != 1 {
+		t.Fatalf("the scanner found %d findings in a line with one value", len(genuine))
+	}
+	var report dlpReport
+	report.Event.Findings = genuine
+	if filed := report.findings(); len(filed) != 1 || filed[0] != genuine[0] {
+		t.Errorf("the gateway's own finding %+v is filed as %+v", genuine, filed)
+	}
+
+	report.Event.Findings = []dlp.Finding{{Class: "rrn", Label: "주민등록번호 900101-1234568", Count: 1, Action: dlp.Audit, Sample: "900101-1234568"}}
+	filed := report.findings()
+	if len(filed) != 1 {
+		t.Fatalf("%d findings filed for one reported", len(filed))
+	}
+	if filed[0].Sample != genuine[0].Sample || filed[0].Label != genuine[0].Label {
+		t.Errorf("the value the Pod put in the report is filed as sent: %+v", filed[0])
+	}
+	if raw := fmt.Sprintf("%+v", filed); strings.Contains(raw, "1234568") {
+		t.Errorf("the value reaches the trail: %s", raw)
+	}
+
+	// The bound on one report is still the bound.
+	report.Event.Findings = make([]dlp.Finding, maxReportedFindings+5)
+	if filed := report.findings(); len(filed) != maxReportedFindings {
+		t.Errorf("%d findings filed of a report carrying %d", len(filed), maxReportedFindings+5)
 	}
 }
