@@ -2,6 +2,7 @@ package api
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -68,5 +69,28 @@ func TestEveryToolDeclaresItsArguments(t *testing.T) {
 		if _, hasDescription := tool["description"].(string); !hasDescription {
 			t.Errorf("%s has no description", name)
 		}
+	}
+}
+
+// The trail entry for a tool call names the door it came through and, for
+// SSO, the client that presented the token — and nothing else. The client is
+// the IdP's word, so it is trimmed and cut, and an absent one is absent rather
+// than an empty key.
+func TestAToolCallEntryNamesTheDoorAndTheClient(t *testing.T) {
+	byKey := mcpCallDetails("agenthub_list_agents", mcpPrincipal{auth: mcpAuthKey})
+	if byKey["tool"] != "agenthub_list_agents" || byKey["auth"] != "key" || len(byKey) != 2 {
+		t.Errorf("a call under a key: %v", byKey)
+	}
+	bySSO := mcpCallDetails("agenthub_list_agents", mcpPrincipal{auth: mcpAuthOAuth, client: " claude-mcp "})
+	if bySSO["auth"] != "oauth" || bySSO["client"] != "claude-mcp" || len(bySSO) != 3 {
+		t.Errorf("a call under an SSO token: %v", bySSO)
+	}
+	noAZP := mcpCallDetails("agenthub_list_agents", mcpPrincipal{auth: mcpAuthOAuth, client: "  "})
+	if _, present := noAZP["client"]; present || noAZP["auth"] != "oauth" {
+		t.Errorf("a token without azp: %v", noAZP)
+	}
+	long := mcpCallDetails("agenthub_list_agents", mcpPrincipal{auth: mcpAuthOAuth, client: strings.Repeat("c", 500)})
+	if client, _ := long["client"].(string); len(client) != mcpClientIDLimit {
+		t.Errorf("an oversized client id is stored at %d runes, want %d", len(client), mcpClientIDLimit)
 	}
 }

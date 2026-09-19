@@ -261,11 +261,30 @@ func grantedScopes(ceiling []string, tokenScope string) []string {
 	return granted
 }
 
+// mcpPrincipal is who is calling /mcp and through which door. Both doors —
+// the key this platform issued and the token Keycloak issued — resolve to
+// this one value, so everything after the bearer check reads the same thing.
+type mcpPrincipal struct {
+	user   store.User
+	scopes []string
+	// auth is mcpAuthKey or mcpAuthOAuth: which credential opened the door.
+	auth string
+	// client is the OAuth client that presented the token (azp), empty under a
+	// key or a token minted without one. A public identifier — the value an
+	// administrator writes in the audience list — never the token itself.
+	client string
+}
+
+const (
+	mcpAuthKey   = "key"
+	mcpAuthOAuth = "oauth"
+)
+
 // oauthPrincipal turns a bearer access token into a user and scopes, or says
 // exactly why it will not. The message is for the operator reading the
 // client's error: a refused audience names what the token carried and what
 // to write, because that one line is the whole configuration.
-func (s *Server) oauthPrincipal(ctx context.Context, r *http.Request, token string) (store.User, []string, *mcpRefusal) {
+func (s *Server) oauthPrincipal(ctx context.Context, r *http.Request, token string) (mcpPrincipal, *mcpRefusal) {
 	config := s.mcpOAuthConfig(ctx)
 	if !config.Enabled {
 		if config.Reason != "mcp.oauth.enabled is off" {
@@ -273,12 +292,12 @@ func (s *Server) oauthPrincipal(ctx context.Context, r *http.Request, token stri
 		}
 		// The same words a bad key gets: a deployment with SSO off says nothing
 		// about doors it does not have.
-		return store.User{}, nil, &mcpRefusal{"invalid_token", "API Key가 유효하지 않습니다."}
+		return mcpPrincipal{}, &mcpRefusal{"invalid_token", "API Key가 유효하지 않습니다."}
 	}
 	provider, err := s.oauthProvider(ctx, config.Issuer)
 	if err != nil {
 		s.logger.Warn("mcp oauth discovery", "issuer", config.Issuer, "error", err)
-		return store.User{}, nil, &mcpRefusal{"invalid_token", "Keycloak 발급자 정보를 읽지 못해 SSO 토큰을 확인할 수 없습니다. 잠시 후 다시 시도하거나 관리자에게 알리세요."}
+		return mcpPrincipal{}, &mcpRefusal{"invalid_token", "Keycloak 발급자 정보를 읽지 못해 SSO 토큰을 확인할 수 없습니다. 잠시 후 다시 시도하거나 관리자에게 알리세요."}
 	}
 	// Signature, issuer and expiry. Only asymmetric algorithms: a token signed
 	// with a shared secret (HS*) or not at all is refused before its claims are
@@ -290,35 +309,35 @@ func (s *Server) oauthPrincipal(ctx context.Context, r *http.Request, token stri
 	}).Verify(ctx, token)
 	if err != nil {
 		s.logger.Info("mcp oauth token refused", "error", err)
-		return store.User{}, nil, &mcpRefusal{"invalid_token", "SSO 액세스 토큰이 유효하지 않습니다(서명·발급자·만료). 클라이언트에서 다시 로그인하세요."}
+		return mcpPrincipal{}, &mcpRefusal{"invalid_token", "SSO 액세스 토큰이 유효하지 않습니다(서명·발급자·만료). 클라이언트에서 다시 로그인하세요."}
 	}
 	var claims oauthAccessClaims
 	if err := verified.Claims(&claims); err != nil {
-		return store.User{}, nil, &mcpRefusal{"invalid_token", "SSO 토큰의 내용을 읽을 수 없습니다."}
+		return mcpPrincipal{}, &mcpRefusal{"invalid_token", "SSO 토큰의 내용을 읽을 수 없습니다."}
 	}
 	if refusal := refuseAccessClaims(claims, time.Now()); refusal != nil {
-		return store.User{}, nil, refusal
+		return mcpPrincipal{}, refusal
 	}
 	resource := config.mcpResource(r)
 	if !acceptedAudience(resource, config.Audiences, verified.Audience, claims.AZP) {
-		return store.User{}, nil, &mcpRefusal{"invalid_token", fmt.Sprintf(
+		return mcpPrincipal{}, &mcpRefusal{"invalid_token", fmt.Sprintf(
 			"SSO 토큰이 이 서버를 위해 발급된 것이 아닙니다(aud=%v, azp=%q). 관리자가 MCP SSO 설정의 허용 대상에 %q 를 더하거나, Keycloak 클라이언트에 Audience 매퍼로 %q 를 넣어야 합니다.",
 			verified.Audience, claims.AZP, firstNonEmpty(claims.AZP, "<클라이언트 ID>"), resource)}
 	}
 	subject := strings.TrimSpace(verified.Subject)
 	if subject == "" {
-		return store.User{}, nil, &mcpRefusal{"invalid_token", "SSO 토큰에 사용자 식별자(sub)가 없습니다."}
+		return mcpPrincipal{}, &mcpRefusal{"invalid_token", "SSO 토큰에 사용자 식별자(sub)가 없습니다."}
 	}
 	// The same link the web sign-in made, without the provisioning half.
 	user, err := s.store.ActiveUserForSSOSubject(ctx, subject)
 	if errors.Is(err, store.ErrNotFound) {
-		return store.User{}, nil, &mcpRefusal{"invalid_token", "이 SSO 계정은 AgentHub 에 등록되지 않았거나 비활성입니다. 먼저 웹으로 한 번 로그인하세요."}
+		return mcpPrincipal{}, &mcpRefusal{"invalid_token", "이 SSO 계정은 AgentHub 에 등록되지 않았거나 비활성입니다. 먼저 웹으로 한 번 로그인하세요."}
 	}
 	if err != nil {
 		s.logger.Error("mcp oauth account lookup", "error", err)
-		return store.User{}, nil, &mcpRefusal{"invalid_token", "SSO 계정을 확인하지 못했습니다. 잠시 후 다시 시도하세요."}
+		return mcpPrincipal{}, &mcpRefusal{"invalid_token", "SSO 계정을 확인하지 못했습니다. 잠시 후 다시 시도하세요."}
 	}
-	return user, grantedScopes(config.Scopes, claims.Scope), nil
+	return mcpPrincipal{user: user, scopes: grantedScopes(config.Scopes, claims.Scope), auth: mcpAuthOAuth, client: strings.TrimSpace(claims.AZP)}, nil
 }
 
 // mcpChallenge writes the WWW-Authenticate header that turns a 401 into an

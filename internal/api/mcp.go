@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	appRuntime "github.com/hkjang/AgentHub/internal/runtime"
-	"github.com/hkjang/AgentHub/internal/store"
 )
 
 const currentMCPVersion = "2026-07-28"
@@ -49,25 +48,25 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 	// access token Keycloak issued for it. The shape decides which is looked
 	// up; anything that is neither is refused as a bad key, as it always was.
 	bearer := strings.TrimSpace(value[7:])
-	var user store.User
-	var scopes []string
+	var principal mcpPrincipal
 	if looksLikeJWT(bearer) {
 		var refusal *mcpRefusal
-		user, scopes, refusal = s.oauthPrincipal(r.Context(), r, bearer)
+		principal, refusal = s.oauthPrincipal(r.Context(), r, bearer)
 		if refusal != nil {
 			s.mcpChallenge(w, r, true)
 			writeError(w, http.StatusUnauthorized, refusal.code, refusal.message)
 			return
 		}
 	} else {
-		var err error
-		user, scopes, err = s.store.UserAndScopesByAPIKey(r.Context(), bearer)
+		user, scopes, err := s.store.UserAndScopesByAPIKey(r.Context(), bearer)
 		if err != nil {
 			s.mcpChallenge(w, r, true)
 			writeError(w, http.StatusUnauthorized, "invalid_token", "API Key가 유효하지 않습니다.")
 			return
 		}
+		principal = mcpPrincipal{user: user, scopes: scopes, auth: mcpAuthKey}
 	}
+	scopes := principal.scopes
 	var request rpcRequest
 	if !decodeJSON(w, r, &request) {
 		return
@@ -131,7 +130,7 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 			s.rpcResult(w, request.ID, result)
 		}
 	case "tools/call":
-		s.mcpCall(w, r, request, user, scopes, modern)
+		s.mcpCall(w, r, request, principal, modern)
 	default:
 		status := http.StatusOK
 		if modern {
@@ -212,7 +211,29 @@ func mcpTools(scopes []string) []map[string]any {
 	return tools
 }
 
-func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, request rpcRequest, user store.User, scopes []string, modern bool) {
+// mcpClientIDLimit is how much of a token's azp the trail keeps. The value is
+// the IdP's word, not this platform's, so it is cut rather than trusted.
+const mcpClientIDLimit = 200
+
+// mcpCallDetails is the one place a tool call's trail entry is shaped, for
+// both doors: the tool, which credential opened the door, and for SSO the
+// client that presented the token. A client that was not named is not a key
+// with nothing in it — it is no key, so filtering on the field means what it
+// says. Never the credential, its hash, or the subject: details are exported
+// as they are stored.
+func mcpCallDetails(tool string, principal mcpPrincipal) map[string]any {
+	details := map[string]any{"tool": tool, "auth": principal.auth}
+	if client := strings.TrimSpace(principal.client); client != "" {
+		if runes := []rune(client); len(runes) > mcpClientIDLimit {
+			client = string(runes[:mcpClientIDLimit])
+		}
+		details["client"] = client
+	}
+	return details
+}
+
+func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, request rpcRequest, principal mcpPrincipal, modern bool) {
+	user, scopes := principal.user, principal.scopes
 	var params struct {
 		Name      string         `json:"name"`
 		Arguments map[string]any `json:"arguments"`
@@ -344,7 +365,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, request rpcRequ
 		return
 	}
 	raw, _ := json.Marshal(value)
-	s.store.Audit(r.Context(), &user, "mcp.tool_call", "mcp-tool", params.Name, "success", clientIP(r), map[string]any{"tool": params.Name})
+	s.store.Audit(r.Context(), &user, "mcp.tool_call", "mcp-tool", params.Name, "success", clientIP(r), mcpCallDetails(params.Name, principal))
 	result := map[string]any{"content": []map[string]string{{"type": "text", "text": string(raw)}}, "structuredContent": value, "isError": false}
 	if modern {
 		s.rpcResultModern(w, request.ID, result)
