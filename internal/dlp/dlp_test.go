@@ -1,6 +1,7 @@
 package dlp
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -487,21 +488,60 @@ func TestAReportedFindingIsFiledAsTheScannerWouldHaveFiledIt(t *testing.T) {
 	}
 }
 
-// A class this build does not know has no rule that keeps anything, and a
-// sample long past anything a detector matches is cut before it is filed.
+// A finding of a class this build does not know is filed under a fixed name
+// with no sample: none of the strings the Pod sent reach the trail. The class
+// itself was the last field a value could be written into — filing it as the
+// label of an unknown class put it in the same JSON blob the sample was kept
+// out of.
 func TestAReportedFindingOfNoKnownClassKeepsNothing(t *testing.T) {
-	filed := Reported(Finding{Class: "novel", Label: "값 900101-1234568", Sample: " 900101-1234568 "})
-	if filed.Sample != "**************" {
+	forged := Finding{Class: "900101-1234568", Label: "값 900101-1234568", Count: 1, Action: "값 900101-1234568", Sample: " 900101-1234568 "}
+	filed := Reported(forged)
+	if filed.Class != UnknownClass || filed.Label != unknownLabel {
+		t.Errorf("an unknown class is filed as sent: %+v", filed)
+	}
+	if filed.Sample != "" {
 		t.Errorf("a sample under an unknown class kept something: %q", filed.Sample)
 	}
-	if filed.Label != "novel" {
-		t.Errorf("the label of an unknown class is filed as sent: %q", filed.Label)
+	if !contains(Actions, filed.Action) {
+		t.Errorf("an action this build does not know is filed as sent: %q", filed.Action)
 	}
-	long := Reported(Finding{Class: "secret", Sample: "sk-" + strings.Repeat("a", 500)})
-	if runes := []rune(long.Sample); len(runes) != maxReportedSampleRunes || string(runes[:4]) != "sk-a" || strings.Trim(string(runes[4:]), "*") != "" {
-		t.Errorf("a long sample is filed as %q", long.Sample)
+	if filed.Count != 1 {
+		t.Errorf("the count was not kept: %d", filed.Count)
 	}
-	if again := Reported(long); again != long {
-		t.Errorf("filing a filed finding changes it: %+v -> %+v", long, again)
+	if raw := fmt.Sprintf("%+v", filed); strings.Contains(raw, "1234568") {
+		t.Errorf("the value reaches the trail: %s", raw)
+	}
+	if again := Reported(filed); again != filed {
+		t.Errorf("filing a filed finding changes it: %+v -> %+v", filed, again)
+	}
+}
+
+// The secret and email shapes have no upper length, so the scanner's own sample
+// can be as long as the value was. Masking again has to be a no-op on those
+// too, or the trail would show a different sample from the Pod log for the
+// same finding — a bound on the sample's length is exactly where that breaks.
+func TestAReportedFindingIsFiledUnchangedHoweverLongTheValue(t *testing.T) {
+	values := map[string]string{
+		"secret": "sk-" + strings.Repeat("abcdefghij", 8),
+		"email":  strings.Repeat("hong.gildong", 10) + "@" + strings.Repeat("mail.", 10) + "example.co.kr",
+	}
+	for class, value := range values {
+		t.Run(class, func(t *testing.T) {
+			result := Scan(all(class, Audit), value)
+			if len(result.Findings) != 1 || result.Findings[0].Class != class {
+				t.Fatalf("%q was not found as %s: %+v", value, class, result.Findings)
+			}
+			genuine := result.Findings[0]
+			if runes := []rune(genuine.Sample); len(runes) != len([]rune(value)) {
+				t.Fatalf("the scanner's own sample is %d runes for a %d-rune value", len(runes), len([]rune(value)))
+			}
+			if filed := Reported(genuine); filed != genuine {
+				t.Errorf("the scanner's own finding %+v is filed as %+v", genuine, filed)
+			}
+			forged := Finding{Class: class, Label: genuine.Label, Count: 1, Action: Audit, Sample: value}
+			if filed := Reported(forged); filed.Sample != genuine.Sample {
+				t.Errorf("the value in the sample's place is filed as %q, not the scanner's %q", filed.Sample, genuine.Sample)
+			}
+		})
 	}
 }

@@ -109,6 +109,17 @@ func TestTheTrailHoldsTheControlPlanesMaskingNotThePods(t *testing.T) {
 		t.Errorf("the value reaches the trail: %s", raw)
 	}
 
+	// The class is the Pod's word too: a value sent there is not filed as the
+	// class, nor as the label of a class nobody knows.
+	report.Event.Findings = []dlp.Finding{{Class: "900101-1234568", Label: "900101-1234568", Count: 1, Action: dlp.Audit, Sample: "900101-1234568"}}
+	filed = report.findings()
+	if len(filed) != 1 || filed[0].Class != dlp.UnknownClass {
+		t.Errorf("a finding of a class this build does not know is filed as %+v", filed)
+	}
+	if raw := fmt.Sprintf("%+v", filed); strings.Contains(raw, "1234568") {
+		t.Errorf("the value in the class's place reaches the trail: %s", raw)
+	}
+
 	// The bound on one report is still the bound.
 	report.Event.Findings = make([]dlp.Finding, maxReportedFindings+5)
 	if filed := report.findings(); len(filed) != maxReportedFindings {
