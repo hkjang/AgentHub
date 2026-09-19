@@ -1,6 +1,7 @@
 package dlp
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -440,6 +441,106 @@ func TestTheOutcomeNamesWhatHappenedToTheText(t *testing.T) {
 			// so every other outcome has to leave it as the agent wrote it.
 			if (result.Text == text) != (outcome != OutcomeRedacted) {
 				t.Fatalf("outcome %q does not describe the text: %q", outcome, result.Text)
+			}
+		})
+	}
+}
+
+// A finding somebody else reported is filed as this scanner would have filed
+// it, and a finding this scanner really made is filed exactly as it was.
+//
+// The gateway in the Pod reports the sample its scanner masked, and the control
+// plane cannot tell that sample from one an agent wrote in its place under the
+// Pod's token. So it masks again — and that has to be a no-op on the real
+// thing, for every detector, or the trail would show a different sample from
+// the Pod log for the same finding.
+func TestAReportedFindingIsFiledAsTheScannerWouldHaveFiledIt(t *testing.T) {
+	values := map[string]string{
+		"rrn": "900101-1234568", "card": "4111-1111-1111-1111", "business": "220-81-62517",
+		"phone": "010-1234-5678", "account": "123456-01-123456", "passport": "M12345678",
+		"email": "hong@example.co.kr", "secret": "sk-abcdefghijklmnop1234",
+	}
+	for _, detector := range detectors {
+		value, ok := values[detector.Class]
+		if !ok {
+			t.Fatalf("no value for %s; every detector has to be covered here", detector.Class)
+		}
+		t.Run(detector.Class, func(t *testing.T) {
+			result := Scan(all(detector.Class, Audit), value)
+			if len(result.Findings) != 1 || result.Findings[0].Class != detector.Class {
+				t.Fatalf("%q was not found as %s: %+v", value, detector.Class, result.Findings)
+			}
+			genuine := result.Findings[0]
+			if filed := Reported(genuine); filed != genuine {
+				t.Errorf("the scanner's own finding %+v is filed as %+v", genuine, filed)
+			}
+			// The value itself, sent in the sample's place, comes out as the
+			// scanner's sample — not something else masked, the same thing.
+			forged := Finding{Class: detector.Class, Label: "이 값을 트레일에 " + value, Count: 1, Action: Audit, Sample: value}
+			filed := Reported(forged)
+			if filed.Sample != genuine.Sample {
+				t.Errorf("the value in the sample's place is filed as %q, not the scanner's %q", filed.Sample, genuine.Sample)
+			}
+			if filed.Label != detector.Label {
+				t.Errorf("the label is filed as sent: %q", filed.Label)
+			}
+		})
+	}
+}
+
+// A finding of a class this build does not know is filed under a fixed name
+// with no sample: none of the strings the Pod sent reach the trail. The class
+// itself was the last field a value could be written into — filing it as the
+// label of an unknown class put it in the same JSON blob the sample was kept
+// out of.
+func TestAReportedFindingOfNoKnownClassKeepsNothing(t *testing.T) {
+	forged := Finding{Class: "900101-1234568", Label: "값 900101-1234568", Count: 1, Action: "값 900101-1234568", Sample: " 900101-1234568 "}
+	filed := Reported(forged)
+	if filed.Class != UnknownClass || filed.Label != unknownLabel {
+		t.Errorf("an unknown class is filed as sent: %+v", filed)
+	}
+	if filed.Sample != "" {
+		t.Errorf("a sample under an unknown class kept something: %q", filed.Sample)
+	}
+	if !contains(Actions, filed.Action) {
+		t.Errorf("an action this build does not know is filed as sent: %q", filed.Action)
+	}
+	if filed.Count != 1 {
+		t.Errorf("the count was not kept: %d", filed.Count)
+	}
+	if raw := fmt.Sprintf("%+v", filed); strings.Contains(raw, "1234568") {
+		t.Errorf("the value reaches the trail: %s", raw)
+	}
+	if again := Reported(filed); again != filed {
+		t.Errorf("filing a filed finding changes it: %+v -> %+v", filed, again)
+	}
+}
+
+// The secret and email shapes have no upper length, so the scanner's own sample
+// can be as long as the value was. Masking again has to be a no-op on those
+// too, or the trail would show a different sample from the Pod log for the
+// same finding — a bound on the sample's length is exactly where that breaks.
+func TestAReportedFindingIsFiledUnchangedHoweverLongTheValue(t *testing.T) {
+	values := map[string]string{
+		"secret": "sk-" + strings.Repeat("abcdefghij", 8),
+		"email":  strings.Repeat("hong.gildong", 10) + "@" + strings.Repeat("mail.", 10) + "example.co.kr",
+	}
+	for class, value := range values {
+		t.Run(class, func(t *testing.T) {
+			result := Scan(all(class, Audit), value)
+			if len(result.Findings) != 1 || result.Findings[0].Class != class {
+				t.Fatalf("%q was not found as %s: %+v", value, class, result.Findings)
+			}
+			genuine := result.Findings[0]
+			if runes := []rune(genuine.Sample); len(runes) != len([]rune(value)) {
+				t.Fatalf("the scanner's own sample is %d runes for a %d-rune value", len(runes), len([]rune(value)))
+			}
+			if filed := Reported(genuine); filed != genuine {
+				t.Errorf("the scanner's own finding %+v is filed as %+v", genuine, filed)
+			}
+			forged := Finding{Class: class, Label: genuine.Label, Count: 1, Action: Audit, Sample: value}
+			if filed := Reported(forged); filed.Sample != genuine.Sample {
+				t.Errorf("the value in the sample's place is filed as %q, not the scanner's %q", filed.Sample, genuine.Sample)
 			}
 		})
 	}

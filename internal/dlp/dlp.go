@@ -479,6 +479,49 @@ func (c claim) take(start, end int) {
 // tool and the person reading the transcript can all tell why the text changed.
 func marker(detector Detector) string { return "[" + detector.Label + " 삭제됨]" }
 
+// UnknownClass is what a reported finding of a class this build does not know
+// is filed under, and unknownLabel is what a person reads of it. The class is
+// the Pod's word like the sample is, so it is not copied into the trail either.
+const (
+	UnknownClass = "unknown"
+	unknownLabel = "알 수 없는 등급"
+)
+
+// Reported returns a finding somebody else reported as this scanner would have
+// filed it: a class and an action this build knows, the class's own label, and
+// the sample masked under the class's own rule.
+//
+// The in-Pod gateway reports the sample its scanner masked — this same code, in
+// a Pod the agent also lives in, sending under a token that Pod holds. The trail
+// is the control plane's word, though, and a trail that files what the Pod said
+// is a trail anything holding the Pod's token can write a value into, under the
+// one field the DLP screen promises is masked. So the sample is masked again
+// here, and the label is looked up rather than copied. On a finding the scanner
+// really made this changes nothing, however long the value was: mask keeps the
+// same leading characters and stars the rest, which are stars already, and the
+// secret and email shapes put no upper length on a value, so no length is cut
+// here either — the request body's limit bounds the sample as it bounds the
+// rest of the report.
+//
+// A class this build does not know is filed under UnknownClass with no sample:
+// it has no rule that keeps anything and no label of its own, and the class
+// string is as much the Pod's to write as the sample was. An action this build
+// does not know is filed as Audit, the one that claims the least.
+func Reported(finding Finding) Finding {
+	if !contains(Actions, finding.Action) {
+		finding.Action = Audit
+	}
+	for _, detector := range detectors {
+		if detector.Class == finding.Class {
+			finding.Label = detector.Label
+			finding.Sample = mask(finding.Sample, detector.keep)
+			return finding
+		}
+	}
+	finding.Class, finding.Label, finding.Sample = UnknownClass, unknownLabel, ""
+	return finding
+}
+
 // mask keeps a short prefix and hides the rest, which is enough to recognise a
 // value without disclosing it.
 func mask(value string, keep int) string {

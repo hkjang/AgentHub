@@ -48,7 +48,13 @@ func TestAGatewaysFindingReachesTheTrail(t *testing.T) {
 			},
 		}
 	}
-	found := []dlp.Finding{{Class: "rrn", Label: "주민등록번호", Count: 1, Action: dlp.Audit, Sample: "900101-*******"}}
+	// The finding as the gateway's scanner really makes it — the same package,
+	// so the sample is exactly what a Pod log would show.
+	found := dlp.Scan(dlp.Settings{Enabled: true, Classes: map[string]string{"rrn": dlp.Audit}}, "주민번호 900101-1234568").Findings
+	if len(found) != 1 {
+		t.Fatalf("the scanner found %d findings in a line with one value", len(found))
+	}
+	masked := found[0].Sample
 
 	t.Run("기록만 하는 발견", func(t *testing.T) {
 		runtime, token := gatewayRuntime(ctx, t, db, owner)
@@ -67,14 +73,34 @@ func TestAGatewaysFindingReachesTheTrail(t *testing.T) {
 		if details["tool"] != "create_issue" || details["server"] != "jira" {
 			t.Errorf("the entry does not say which call it was about: %v", details)
 		}
-		if raw, _ := json.Marshal(details["findings"]); !strings.Contains(string(raw), "900101-*******") {
+		if raw, _ := json.Marshal(details["findings"]); !strings.Contains(string(raw), masked) {
 			t.Errorf("the masked sample did not make it into the trail: %s", raw)
+		}
+	})
+
+	// The gateway masks the sample before it leaves the Pod, but the gateway is
+	// code in a Pod the agent runs in, reporting under a token that Pod holds,
+	// and the trail is exported as stored. A value sent in the sample's place
+	// reaches the trail as the scanner's own sample, and nowhere else.
+	t.Run("원문을 실은 보고", func(t *testing.T) {
+		runtime, token := gatewayRuntime(ctx, t, db, owner)
+		forged := []dlp.Finding{{Class: "rrn", Label: "주민등록번호 900101-1234568", Count: 1, Action: dlp.Audit, Sample: "900101-1234568"}}
+		if response := post(handler, token, report(runtime, false, false, forged)); response.Code != http.StatusAccepted {
+			t.Fatalf("the report was refused with %d: %s", response.Code, response.Body)
+		}
+		entry := trailEntry(ctx, t, db, runtime.AgentID)
+		raw, _ := json.Marshal(entry)
+		if strings.Contains(string(raw), "1234568") {
+			t.Errorf("the value the Pod put in the report is in the trail: %s", raw)
+		}
+		if !strings.Contains(string(raw), masked) {
+			t.Errorf("the finding was not filed under the scanner's own sample %q: %s", masked, raw)
 		}
 	})
 
 	t.Run("거절된 호출", func(t *testing.T) {
 		runtime, token := gatewayRuntime(ctx, t, db, owner)
-		blocked := []dlp.Finding{{Class: "rrn", Label: "주민등록번호", Count: 1, Action: dlp.Block, Sample: "900101-*******"}}
+		blocked := dlp.Scan(dlp.Settings{Enabled: true, Classes: map[string]string{"rrn": dlp.Block}}, "주민번호 900101-1234568").Findings
 		if response := post(handler, token, report(runtime, true, false, blocked)); response.Code != http.StatusAccepted {
 			t.Fatalf("the gateway's report was refused with %d: %s", response.Code, response.Body)
 		}
