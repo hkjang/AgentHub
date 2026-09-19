@@ -113,7 +113,11 @@ func registeredMember(t *testing.T, db *store.Store, status string) store.User {
 }
 
 func callMCP(handler http.Handler, bearer string) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(mcpListTools))
+	return callMCPWith(handler, bearer, mcpListTools)
+}
+
+func callMCPWith(handler http.Handler, bearer, body string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	request.Host = "localhost:8080"
 	if bearer != "" {
@@ -407,6 +411,85 @@ func TestMCPSSOSettingsAreRefusedWhenTheyCannotWork(t *testing.T) {
 	var saved mcpOAuthSettings
 	if err := db.Setting(ctx, mcpOAuthSettingKey, &saved); err != nil || !saved.Enabled || saved.Audience != "claude-mcp" {
 		t.Errorf("the row did not land as written: %+v %v", saved, err)
+	}
+}
+
+// Two doors into the same room leave the same kind of entry, and the trail
+// says which door: a call under a key is filed auth=key, a call under an SSO
+// token auth=oauth with the client (azp) that presented it. The entries are
+// read back from audit_events, because what an operator filters is what the
+// store wrote, not what the handler meant to write.
+func TestTheTrailSaysWhichDoorAToolCallCameThrough(t *testing.T) {
+	handler, db, provider := mcpSSODeployment(t, mcpOAuthSettings{Enabled: true, Audience: "claude-mcp"})
+	ctx := context.Background()
+	member := registeredMember(t, db, "active")
+	const listAgents = `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"agenthub_list_agents","arguments":{}}}`
+
+	// The newest mcp.tool_call entry for this tool — the one the call just made.
+	newest := func(t *testing.T) map[string]any {
+		t.Helper()
+		page, err := db.AuditTrail(ctx, store.AuditFilter{Action: "mcp.tool_call", ResourceID: "agenthub_list_agents", Limit: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page.Items) == 0 {
+			t.Fatal("the call left no mcp.tool_call entry")
+		}
+		entry := page.Items[0]
+		if entry["actor"] != member.Username {
+			t.Fatalf("the newest entry is somebody else's (%q, want %q)", entry["actor"], member.Username)
+		}
+		details, _ := entry["details"].(map[string]any)
+		return details
+	}
+
+	_, key, err := db.CreateAPIKey(ctx, member.ID, "trail", []string{ScopeMCP}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := callMCPWith(handler, key, listAgents); got.Code != http.StatusOK || strings.Contains(got.Body.String(), `"isError":true`) {
+		t.Fatalf("the call under a key failed: %d %s", got.Code, got.Body.String())
+	}
+	byKey := newest(t)
+	if byKey["tool"] != "agenthub_list_agents" || byKey["auth"] != "key" {
+		t.Errorf("a call under a key is filed as %v; want tool=agenthub_list_agents auth=key", byKey)
+	}
+	if _, present := byKey["client"]; present {
+		t.Errorf("a call under a key names a client: %v", byKey)
+	}
+
+	// As a real Keycloak 26 mints it: aud=["account"], the client in azp.
+	viaClient := provider.accessToken(t, "agenthub-mcp-sso-test:active", "account", map[string]any{"azp": "claude-mcp"})
+	if got := callMCPWith(handler, viaClient, listAgents); got.Code != http.StatusOK || strings.Contains(got.Body.String(), `"isError":true`) {
+		t.Fatalf("the call under an SSO token failed: %d %s", got.Code, got.Body.String())
+	}
+	bySSO := newest(t)
+	if bySSO["tool"] != "agenthub_list_agents" || bySSO["auth"] != "oauth" || bySSO["client"] != "claude-mcp" {
+		t.Errorf("a call under an SSO token is filed as %v; want auth=oauth client=claude-mcp", bySSO)
+	}
+
+	// The mapper path carries no azp: the door is still named, the client is not
+	// invented — no empty "client" key.
+	viaMapper := provider.accessToken(t, "agenthub-mcp-sso-test:active", "http://localhost:8080/mcp", nil)
+	if got := callMCPWith(handler, viaMapper, listAgents); got.Code != http.StatusOK || strings.Contains(got.Body.String(), `"isError":true`) {
+		t.Fatalf("the call under a mapper token failed: %d %s", got.Code, got.Body.String())
+	}
+	byMapper := newest(t)
+	if byMapper["auth"] != "oauth" {
+		t.Errorf("a call under a mapper token is filed as %v; want auth=oauth", byMapper)
+	}
+	if _, present := byMapper["client"]; present {
+		t.Errorf("a token without azp is filed with a client: %v", byMapper)
+	}
+
+	// Nothing that could identify the token itself is in the entry.
+	for _, entry := range []map[string]any{byKey, bySSO, byMapper} {
+		raw, _ := json.Marshal(entry)
+		for _, secret := range []string{key, viaClient, viaMapper, "agenthub-mcp-sso-test:active"} {
+			if strings.Contains(string(raw), secret) {
+				t.Errorf("the entry carries the credential or subject: %s", raw)
+			}
+		}
 	}
 }
 
