@@ -9,6 +9,7 @@
 // in the morning is the outcome this run exists to prevent.
 import { chromium } from 'playwright-core'
 import { chromiumPath } from './browser.mjs'
+import { withSessionGateway } from './session-gateway-check.mjs'
 
 const baseURL = process.env.AGENTHUB_TEST_URL ?? 'http://localhost:18080'
 const executablePath = chromiumPath()
@@ -39,8 +40,9 @@ try {
       const response = await fetch(path, { method, credentials: 'include', headers, body: body === null ? undefined : JSON.stringify(body) })
       const text = await response.text()
       let parsed = null
-      try { parsed = text ? JSON.parse(text) : null } catch { parsed = { raw: text } }
-      return { status: response.status, body: parsed }
+      let parseError = false
+      try { parsed = text ? JSON.parse(text) : null } catch { parsed = { raw: text }; parseError = true }
+      return { status: response.status, body: parsed, parseError }
     }, [method, path, body ?? null])
   const get = (path) => call('GET', path)
   const post = (path, body) => call('POST', path, body)
@@ -166,8 +168,7 @@ try {
     if (!ready) {
       console.log('  --   Ready 상태의 Langflow Runtime이 없어 세션 열기 검사는 건너뜁니다')
     } else {
-      const gateway = (await get('/api/v1/admin/settings/sessionGateway')).body?.value ?? {}
-      try {
+      const result = await withSessionGateway(call, async ({ gateway, setGateway }) => {
         // The gateway settings are cached for a few seconds on purpose — every
         // request reads them — so each change needs the cache to turn over before
         // the behaviour it causes can be observed.
@@ -175,19 +176,18 @@ try {
         // A site without a Runtime Base Domain is one with the host gateway off;
         // the setting refuses an enabled gateway with no domain, which is the
         // same statement said twice.
-        await put('/api/v1/admin/settings/sessionGateway', { value: { ...gateway, enabled: false, baseDomain: '' } })
+        await setGateway({ ...gateway, enabled: false, baseDomain: '' })
         await settle()
         const refused = await post(`/api/v1/runtimes/${ready.id}/launch`, {})
         check('전용 도메인 없이 Langflow 세션 열기 거절', refused.status === 409 && refused.body?.error?.code === 'runtime_base_domain_required',
           `HTTP ${refused.status} ${JSON.stringify(refused.body?.error?.code ?? refused.body)}`)
-        await put('/api/v1/admin/settings/sessionGateway', { value: { ...gateway, enabled: true, scheme: 'https', baseDomain: 'rt.e2e.internal', sessionHours: 8 } })
+        await setGateway({ ...gateway, enabled: true, scheme: 'https', baseDomain: 'rt.e2e.internal', sessionHours: 8 })
         await settle()
         const opened = await post(`/api/v1/runtimes/${ready.id}/launch`, {})
         check('전용 도메인이 있으면 자체 오리진으로 열림', opened.status === 201 && opened.body?.mode === 'host',
           `HTTP ${opened.status} ${opened.body?.mode ?? ''}`)
-      } finally {
-        await put('/api/v1/admin/settings/sessionGateway', { value: gateway })
-      }
+      })
+      if (result.skipped) console.log(`  --   ${result.reason}`)
     }
 
     // --- the console ---------------------------------------------------------
