@@ -10,6 +10,7 @@
 import { chromium } from 'playwright-core'
 import { chromiumPath } from './browser.mjs'
 import { withSessionGateway } from './session-gateway-check.mjs'
+import { withRuntimeSettings } from './runtime-settings-check.mjs'
 
 const baseURL = process.env.AGENTHUB_TEST_URL ?? 'http://localhost:18080'
 const executablePath = chromiumPath()
@@ -138,9 +139,7 @@ try {
     }
 
     // --- settings injection for a runtime with no configuration file ---------
-    const before = (await get('/api/v1/admin/runtime-settings')).body ?? {}
-    const restore = { profiles: before.profiles ?? [] }
-    try {
+    await withRuntimeSettings(call, async () => {
       const withConfig = await put('/api/v1/admin/runtime-settings', { profiles: [{ runtimeType: 'langflow', config: { theme: 'dark' } }] })
       check('설정 파일이 없는 런타임의 config 오버레이 거절', withConfig.status === 400,
         `HTTP ${withConfig.status} ${JSON.stringify(withConfig.body?.error?.message ?? '')}`)
@@ -154,9 +153,7 @@ try {
       check('설정 파일 없는 런타임에는 파일 설정을 제안하지 않음', suggestions.length > 0 && suggestions.every((item) => item.target !== 'config'),
         `${suggestions.length} suggestions, ${suggestions.filter((item) => item.target === 'config').length} config`)
       check('확인된 Langflow 변수 제안 포함', suggestions.some((item) => item.key === 'LANGFLOW_LOG_LEVEL' && item.verified === true))
-    } finally {
-      await put('/api/v1/admin/runtime-settings', restore)
-    }
+    })
 
     // --- opening the editor needs an origin of its own -----------------------
     // Only checkable when a Langflow runtime is actually Ready, which needs a

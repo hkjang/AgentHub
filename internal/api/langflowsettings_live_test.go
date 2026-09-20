@@ -210,3 +210,177 @@ if (config.scenario === 'unauthorized') {
   assert.deepEqual(after.body.sessionGateway, config.original)
 }
 `
+
+// Runtime settings use a different GET envelope and PUT document.
+func TestLangflowRuntimeSettings(t *testing.T) {
+	dsn := os.Getenv("AGENTHUB_TEST_DSN")
+	if dsn == "" {
+		t.Skip("AGENTHUB_TEST_DSN is required for the live settings check")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatal("Node is required for the live settings check")
+	}
+	key, err := base64.StdEncoding.DecodeString(os.Getenv("AGENTHUB_ENCRYPTION_KEY"))
+	if err != nil {
+		t.Fatal("invalid test encryption key")
+	}
+	cipher, err := cryptox.New(key)
+	if err != nil {
+		t.Fatal("a valid test encryption key is required")
+	}
+	ctx := context.Background()
+	db, err := store.Open(ctx, dsn, cipher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	admin, err := db.UpsertOIDCUser(ctx, "langflow-settings-test:admin", "langflow-settings-admin", "", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if admin.Role != roleAdmin {
+		t.Fatal("test account must be an administrator")
+	}
+	session, csrf, _, err := db.CreateSession(ctx, admin.ID, "127.0.0.1", "langflow-settings-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Preserve any previous row, including absence, for repeatable live runs.
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close(ctx) })
+	previous, err := db.Settings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clear := func() {
+		t.Helper()
+		if _, err := conn.Exec(ctx, `DELETE FROM system_settings WHERE key='runtimeSettings'`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		if value, exists := previous["runtimeSettings"]; exists {
+			if err := db.PutSetting(ctx, "runtimeSettings", value, nil, admin.ID); err != nil {
+				t.Error(err)
+			}
+		} else {
+			clear()
+		}
+	})
+	server := New(db, cipher, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})), appLog.NewRing(8), nil, nil)
+	handler := server.Handler()
+	var writes atomic.Int32
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && r.URL.Path == "/api/v1/admin/runtime-settings" {
+			writes.Add(1)
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(endpoint.Close)
+	module, err := filepath.Abs("../../web/scripts/runtime-settings-check.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := map[string]any{"profiles": []any{
+		map[string]any{"runtimeType": "opencode", "config": map[string]any{"theme": map[string]any{"palette": []any{"dark", float64(7)}, "contrast": false}}, "env": map[string]any{"TZ": "UTC"}, "description": "original editor", "enabled": false},
+		map[string]any{"runtimeType": "langflow", "env": map[string]any{"LANGFLOW_LOG_LEVEL": "debug"}, "description": "original flows", "enabled": true},
+	}}
+	for _, scenario := range []string{"success", "check throws", "partial PUT failure", "unauthorized", "empty"} {
+		t.Run(scenario, func(t *testing.T) {
+			value := original
+			if scenario == "empty" {
+				value = map[string]any{"profiles": []any{}}
+			}
+			if err := db.PutSetting(ctx, "runtimeSettings", value, nil, admin.ID); err != nil {
+				t.Fatal(err)
+			}
+			writes.Store(0)
+			input, err := json.Marshal(map[string]any{
+				"url": endpoint.URL, "module": module, "session": session, "csrf": csrf,
+				"scenario": scenario, "original": value,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			commandCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(commandCtx, node, "--input-type=module", "--eval", langflowRuntimeSettingsCheck)
+			cmd.Stdin = bytes.NewReader(input)
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("shared settings check failed: %v\n%s", err, output)
+			}
+			wantWrites := int32(0)
+			if scenario != "unauthorized" {
+				wantWrites = 5
+			}
+			if writes.Load() != wantWrites {
+				t.Fatalf("got %d PUT requests, want %d", writes.Load(), wantWrites)
+			}
+			var restored map[string]any
+			if err := db.Setting(ctx, "runtimeSettings", &restored); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(restored, value) {
+				t.Error("the database did not retain the complete original setting")
+			}
+		})
+	}
+}
+
+const langflowRuntimeSettingsCheck = `
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
+const config = JSON.parse(readFileSync(0, 'utf8'))
+const { withRuntimeSettings } = await import(pathToFileURL(config.module))
+const call = async (method, path, body) => {
+  const headers = { 'Content-Type': 'application/json' }
+  if (config.scenario !== 'unauthorized') {
+    headers.Cookie = 'agenthub_session=' + config.session
+    headers['X-CSRF-Token'] = config.csrf
+  }
+  const response = await fetch(config.url + path, { method, headers,
+    body: body === undefined ? undefined : JSON.stringify(body) })
+  const text = await response.text()
+  let parsed = null
+  let parseError = false
+  try { parsed = text ? JSON.parse(text) : null } catch { parseError = true }
+  return { status: response.status, body: parsed, parseError }
+}
+let checks = 0
+const path = '/api/v1/admin/runtime-settings'
+const run = withRuntimeSettings(call, async () => {
+  checks++
+  for (const profile of [
+    { runtimeType: 'langflow', config: { theme: 'dark' } },
+    { runtimeType: 'langflow', env: { LANGFLOW_AUTO_LOGIN: 'false' } },
+  ]) assert.equal((await call('PUT', path, { profiles: [profile] })).status, 400)
+  const temporary = { profiles: [{ runtimeType: 'langflow', env: { LANGFLOW_LOG_LEVEL: 'info', TZ: 'Asia/Seoul' } }] }
+  assert.equal((await call('PUT', path, temporary)).status, 200)
+  assert.deepEqual((await call('GET', path)).body.settings, temporary)
+  const last = await call('PUT', path, config.scenario === 'partial PUT failure'
+    ? { profiles: [{ runtimeType: 'unknown-runtime' }] } : temporary)
+  if (last.status !== 200) throw new Error('temporary PUT failed: HTTP ' + last.status)
+  if (config.scenario === 'check throws') throw new Error('runtime check failed')
+})
+if (config.scenario === 'unauthorized') {
+  await assert.rejects(run, /backup.*HTTP 401/)
+  assert.equal(checks, 0)
+} else {
+  if (config.scenario === 'check throws') await assert.rejects(run, /runtime check failed/)
+  else if (config.scenario === 'partial PUT failure') await assert.rejects(run, /temporary PUT failed: HTTP 400/)
+  else await run
+  assert.equal(checks, 1)
+  const after = await call('GET', path)
+  assert.equal(after.status, 200)
+  assert.deepEqual(after.body.settings, config.original)
+}
+`
