@@ -11,12 +11,12 @@
 // a PDF cannot be taken back.
 //
 // This script writes. It fills the deployment with demo agents and keys, and it
-// replaces three settings that are global to the whole platform — the policy
-// document, the content-inspection rules and the session gateway. So it refuses
-// to guess its target: there is no default URL, the variables are its own rather
+// replaces four settings that are global to the whole platform — the policy
+// document, the content-inspection rules, the session gateway and tracking.
+// So it refuses to guess its target: there is no default URL, the variables are its own rather
 // than the AGENTHUB_TEST_* pair the e2e scripts share, and it will not start
 // without being told in writing that the deployment is disposable. It also puts
-// the three global settings back the way it found them on the way out.
+// the four global settings back the way it found them on the way out.
 //
 //   AGENTHUB_GUIDE_URL=http://127.0.0.1:8080 \
 //   AGENTHUB_GUIDE_USER=admin AGENTHUB_GUIDE_PASSWORD=… \
@@ -36,17 +36,18 @@ import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromiumPath } from './browser.mjs'
+import { withGuideSettings } from './guide-settings-check.mjs'
 
 const baseURL = (process.env.AGENTHUB_GUIDE_URL ?? '').replace(/\/$/, '')
 const username = process.env.AGENTHUB_GUIDE_USER ?? ''
 const password = process.env.AGENTHUB_GUIDE_PASSWORD ?? ''
 if (!baseURL || !username || !password) {
   console.error('AGENTHUB_GUIDE_URL, AGENTHUB_GUIDE_USER, AGENTHUB_GUIDE_PASSWORD 이 모두 필요합니다.')
-  console.error('이 스크립트는 정책·내용 검사·세션 게이트웨이를 덮어씁니다. 대상을 짐작하지 않습니다.')
+  console.error('이 스크립트는 정책·내용 검사·세션 게이트웨이·방문 추적을 덮어씁니다. 대상을 짐작하지 않습니다.')
   process.exit(2)
 }
 if (process.env.AGENTHUB_GUIDE_DISPOSABLE !== 'yes') {
-  console.error(`${baseURL} 의 전역 설정(정책·내용 검사·세션 게이트웨이)을 덮어씁니다.`)
+  console.error(`${baseURL} 의 전역 설정(정책·내용 검사·세션 게이트웨이·방문 추적)을 덮어씁니다.`)
   console.error('버려도 되는 배포가 맞으면 AGENTHUB_GUIDE_DISPOSABLE=yes 를 주고 다시 실행하세요.')
   process.exit(2)
 }
@@ -89,8 +90,9 @@ try {
       const response = await fetch(path, { method, credentials: 'include', headers, body: body === null ? undefined : JSON.stringify(body) })
       const text = await response.text()
       let parsed = null
-      try { parsed = text ? JSON.parse(text) : null } catch { parsed = { raw: text } }
-      return { status: response.status, body: parsed }
+      let parseError = false
+      try { parsed = text ? JSON.parse(text) : null } catch { parseError = true }
+      return { status: response.status, body: parsed, parseError }
     }, [method, path, body ?? null])
   const get = (path) => call('GET', path)
   const post = (path, body) => call('POST', path, body)
@@ -98,46 +100,15 @@ try {
   const del = (path) => call('DELETE', path)
   const ok = (response) => response.status >= 200 && response.status < 300
 
-  // The three settings seed() replaces are global to the platform, so they are
-  // read first and put back on the way out — the same shape policy-e2e.mjs and
-  // dlp-e2e.mjs use. Without it one run leaves the deployment holding this
-  // script's demo policy instead of its own.
-  // Each entry names where the value is read, where it is written back, and how
-  // the read body becomes the write body — the three differ. GET /admin/dlp wraps
-  // the settings with the detector list, and there is no GET per setting key:
-  // /admin/settings/{key} only answers PUT, so the gateway is read out of the
-  // whole settings map. A deployment that never set it is left as the seed left
-  // it, because there is no call that deletes a setting.
-  const globals = [
-    ['/api/v1/admin/policy', '/api/v1/admin/policy', (body) => body?.document ?? { rules: [] }],
-    ['/api/v1/admin/dlp', '/api/v1/admin/dlp', (body) => body?.settings ?? null],
-    ['/api/v1/admin/settings', '/api/v1/admin/settings/sessionGateway', (body) => body?.sessionGateway ? { value: body.sessionGateway } : null],
-    ['/api/v1/admin/settings', '/api/v1/admin/settings/tracking', (body) => body?.tracking ? { value: body.tracking } : null],
-  ]
-  const before = []
-  if (process.env.GUIDE_SKIP_SEED !== '1') {
-    for (const [readPath, writePath, read] of globals) {
-      const current = await get(readPath)
-      if (!ok(current)) { note(`복원용 읽기 ${readPath}`, false, `HTTP ${current.status}`); continue }
-      const value = read(current.body)
-      if (value === null) { note(`복원용 읽기 ${writePath}`, true, '이전 값 없음 — 복원 생략'); continue }
-      before.push([writePath, value])
-    }
-  }
-
-  try {
-    // GUIDE_SKIP_SEED re-photographs a deployment that already holds the demo
-    // data — reshooting after a console change should not need a second copy of
-    // every agent and task.
-    if (process.env.GUIDE_SKIP_SEED !== '1') await seed({ get, post, put, ok })
-    await capture(page)
-    if (process.env.GUIDE_SKIP_SEED !== '1') await captureTracking(page, { put, del, ok })
-  } finally {
-    for (const [path, value] of before) {
-      const restored = await put(path, value)
-      note(`복원 ${path}`, ok(restored), `HTTP ${restored.status}`)
-    }
-  }
+  // Back up all four global settings before seed or tracking can write.
+  // GUIDE_SKIP_SEED only re-photographs the existing deployment.
+  await withGuideSettings(call, {
+    skipSeed: process.env.GUIDE_SKIP_SEED === '1',
+    seed: () => seed({ get, post, put, ok }),
+    capture: () => capture(page),
+    captureTracking: () => captureTracking(page, { put, del, ok }),
+    note,
+  })
 
   if (problems.length) {
     console.log(`\n${problems.length}건이 계획대로 되지 않았습니다:`)
