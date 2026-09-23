@@ -16,7 +16,7 @@ function originals() {
     { sessionGateway: { enabled: false, extra: { list: ['original'] } }, tracking: { enabled: false, extra: { list: ['original'] } } },
   ]
 }
-async function run({ bodies = originals(), failPath, failAt, failure, skip, callbackError } = {}) {
+async function run({ bodies = originals(), failPath, failAt, failure, failWrite, failWriteAt, writeFailure, skip, callbackError } = {}) {
   const requests = [], callbacks = [], notes = []
   const context = {
     ...helper, structuredClone,
@@ -25,7 +25,12 @@ async function run({ bodies = originals(), failPath, failAt, failure, skip, call
     page: { evaluate: (fn, args) => fn(args) },
     fetch: async (path, options) => {
       requests.push({ path, method: options.method, body: options.body && JSON.parse(options.body) })
-      if (options.method !== 'GET') return { status: 200, text: async () => '{}' }
+      if (options.method !== 'GET') {
+        const writes = requests.filter(r => r.method !== 'GET').length
+        const broken = (failWrite === undefined || path === failWrite) && (failWriteAt === undefined || writes === failWriteAt)
+        if (broken && writeFailure === 'network') throw new Error('write disconnected')
+        return { status: broken && writeFailure === 'http' ? 503 : 200, text: async () => '{}' }
+      }
       const fails = path === failPath && (failAt === undefined || requests.length === failAt)
       if (fails && failure === 'network') throw new Error('network disconnected')
       return { status: fails && failure === 'http' ? 503 : 200,
@@ -89,6 +94,47 @@ for (const callbackError of [undefined, 'seed', 'capture', 'tracking']) {
     ])
     if (!callbackError) assert.deepEqual(result.callbacks, ['seed', 'capture', 'tracking'])
   })
+}
+function restorations(bodies) {
+  return [
+    { method: 'PUT', path: paths[0], body: bodies[0].document },
+    { method: 'PUT', path: paths[1], body: bodies[1].settings },
+    { method: 'PUT', path: `${paths[2]}/sessionGateway`, body: { value: bodies[2].sessionGateway } },
+    { method: 'PUT', path: `${paths[2]}/tracking`, body: { value: bodies[2].tracking } },
+  ]
+}
+const failedNotes = result => result.notes.filter(([, ok]) => !ok).map(([label]) => label)
+for (const writeFailure of ['network', 'http']) {
+  test(`a ${writeFailure} failure on the first restoration still restores the other three`, async () => {
+    const bodies = originals()
+    const result = await run({ bodies, failWrite: paths[0], writeFailure })
+    assert.deepEqual(result.requests.filter(r => r.method !== 'GET'), restorations(bodies))
+    assert.deepEqual(failedNotes(result), [`복원 ${paths[0]}`])
+    assert.match(result.error.message, new RegExp(`복원 실패.*${paths[0]}`))
+  })
+  test(`a ${writeFailure} failure on the third restoration still restores the fourth`, async () => {
+    const bodies = originals()
+    const result = await run({ bodies, failWrite: `${paths[2]}/sessionGateway`, writeFailure })
+    assert.deepEqual(result.requests.filter(r => r.method !== 'GET'), restorations(bodies))
+    assert.deepEqual(failedNotes(result), [`복원 ${paths[2]}/sessionGateway`])
+    assert.match(result.error.message, /복원 실패.*sessionGateway/)
+  })
+  test(`every restoration failing (${writeFailure}) is attempted and reported`, async () => {
+    const bodies = originals()
+    const result = await run({ bodies, writeFailure })
+    assert.deepEqual(result.requests.filter(r => r.method !== 'GET'), restorations(bodies))
+    assert.deepEqual(failedNotes(result), restorations(bodies).map(w => `복원 ${w.path}`))
+    assert.deepEqual(result.callbacks, ['seed', 'capture', 'tracking'])
+  })
+  for (const callbackError of ['seed', 'capture', 'tracking']) {
+    test(`${callbackError} failure is thrown, not the ${writeFailure} restoration failure`, async () => {
+      const bodies = originals()
+      const result = await run({ bodies, callbackError, failWrite: paths[1], writeFailure })
+      assert.equal(result.error?.message, `${callbackError} failed`)
+      assert.deepEqual(result.requests.filter(r => r.method !== 'GET'), restorations(bodies))
+      assert.deepEqual(failedNotes(result), [`복원 ${paths[1]}`])
+    })
+  }
 }
 test('optional DLP classes and empty setting objects are valid', async () => {
   const result = await run({ bodies: [{ document: { rules: [] } }, { settings: { enabled: false } }, { sessionGateway: {}, tracking: {} }] })

@@ -16,7 +16,8 @@
 // So it refuses to guess its target: there is no default URL, the variables are its own rather
 // than the AGENTHUB_TEST_* pair the e2e scripts share, and it will not start
 // without being told in writing that the deployment is disposable. It also puts
-// the four global settings back the way it found them on the way out.
+// the four global settings back the way it found them on the way out, and one
+// restoration that fails is reported rather than abandoning the other three.
 //
 //   AGENTHUB_GUIDE_URL=http://127.0.0.1:8080 \
 //   AGENTHUB_GUIDE_USER=admin AGENTHUB_GUIDE_PASSWORD=… \
