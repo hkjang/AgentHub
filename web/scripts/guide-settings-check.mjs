@@ -33,17 +33,35 @@ export async function withGuideSettings(call, { seed, capture, captureTracking, 
       : [readPath, value])
   }
 
+  let failedWork = false
   try {
     await seed()
     await capture()
     await captureTracking()
+  } catch (error) {
+    failedWork = true
+    throw error
   } finally {
     // A failed write may already have reached the server. Keep all work inside
     // this restoration boundary, but never enter it with an incomplete backup.
+    // One call that rejects — a restarted control plane, a closed page — must
+    // not leave the settings behind it on the demo values, so every restoration
+    // is attempted and its failure recorded rather than thrown from the loop.
+    const failed = []
     for (const [path, value] of before) {
-      const restored = await call('PUT', path, value)
-      const ok = restored.status >= 200 && restored.status < 300
-      note(`복원 ${path}`, ok, `HTTP ${restored.status}`)
+      let ok = false, detail
+      try {
+        const restored = await call('PUT', path, value)
+        ok = restored.status >= 200 && restored.status < 300
+        detail = `HTTP ${restored.status}`
+      } catch (cause) {
+        detail = cause.message
+      }
+      note(`복원 ${path}`, ok, detail)
+      if (!ok) failed.push(`${path} (${detail})`)
     }
+    // What the run was doing when it broke matters more than the way out, so a
+    // failure here is only raised when the work itself got through.
+    if (failed.length && !failedWork) throw new Error(`복원 실패: ${failed.join(', ')}`)
   }
 }
