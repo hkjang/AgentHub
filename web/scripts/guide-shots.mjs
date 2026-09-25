@@ -18,6 +18,9 @@
 // without being told in writing that the deployment is disposable. It also puts
 // the four global settings back the way it found them on the way out, and one
 // restoration that fails is reported rather than abandoning the other three.
+// Every REST call it makes carries a deadline — AGENTHUB_GUIDE_REQUEST_TIMEOUT_MS,
+// 30000 by default — so a control plane that stops answering ends the run
+// through that restoration instead of holding it open forever.
 //
 //   AGENTHUB_GUIDE_URL=http://127.0.0.1:8080 \
 //   AGENTHUB_GUIDE_USER=admin AGENTHUB_GUIDE_PASSWORD=… \
@@ -83,18 +86,39 @@ try {
   await page.getByRole('button', { name: '로그인', exact: true }).click()
   await page.getByRole('heading', { name: new RegExp(`${username}님`) }).waitFor({ timeout: 30000 })
 
-  const call = (method, path, body) =>
-    page.evaluate(async ([method, path, body]) => {
+  // A control plane that accepts the connection but never answers would own the
+  // whole shoot: fetch has no deadline of its own and neither has page.evaluate,
+  // so one stalled request would strand the run inside withGuideSettings with
+  // the four global settings left on the demo values. Every call here is a
+  // single admin REST request — the long waits of a shoot belong to page.goto,
+  // shoot and settle, not to these — so thirty seconds is already generous.
+  const requestTimeoutMs = Number(process.env.AGENTHUB_GUIDE_REQUEST_TIMEOUT_MS) || 30000
+  const call = async (method, path, body) => {
+    // page.evaluate serialises this function into the browser, so the deadline
+    // travels in the argument array rather than as a closure variable.
+    const result = await page.evaluate(async ([method, path, body, timeoutMs]) => {
       const csrf = document.cookie.split('; ').find((c) => c.startsWith('agenthub_csrf='))
       const headers = { 'Content-Type': 'application/json' }
       if (csrf) headers['X-CSRF-Token'] = decodeURIComponent(csrf.split('=').slice(1).join('='))
-      const response = await fetch(path, { method, credentials: 'include', headers, body: body === null ? undefined : JSON.stringify(body) })
-      const text = await response.text()
-      let parsed = null
-      let parseError = false
-      try { parsed = text ? JSON.parse(text) : null } catch { parseError = true }
-      return { status: response.status, body: parsed, parseError }
-    }, [method, path, body ?? null])
+      try {
+        const response = await fetch(path, { method, credentials: 'include', headers, body: body === null ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) })
+        const text = await response.text()
+        let parsed = null
+        let parseError = false
+        try { parsed = text ? JSON.parse(text) : null } catch { parseError = true }
+        return { status: response.status, body: parsed, parseError }
+      } catch (error) {
+        // The abort is a DOMException in here. Name it where it is still one,
+        // rather than reading a serialised message on the other side.
+        if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return { timedOut: true }
+        throw error
+      }
+    }, [method, path, body ?? null, requestTimeoutMs])
+    // Which call was cut matters as much as the fact, because this one is read
+    // in a log after the run gave up.
+    if (result.timedOut) throw new Error(`${method} ${path} 가 ${requestTimeoutMs}ms 안에 응답하지 않음`)
+    return result
+  }
   const get = (path) => call('GET', path)
   const post = (path, body) => call('POST', path, body)
   const put = (path, body) => call('PUT', path, body)
@@ -326,10 +350,16 @@ async function settle(get, timeoutMs) {
   const deadline = Date.now() + timeoutMs
   let statuses = []
   while (Date.now() < deadline) {
-    const tasks = (await get('/api/v1/tasks')).body?.items ?? []
-    statuses = tasks.map((task) => task.status)
-    if (statuses.length && !statuses.some((status) => busy.has(status))) {
-      return { done: true, detail: statuses.join(', ') }
+    try {
+      const tasks = (await get('/api/v1/tasks')).body?.items ?? []
+      statuses = tasks.map((task) => task.status)
+      if (statuses.length && !statuses.some((status) => busy.has(status))) {
+        return { done: true, detail: statuses.join(', ') }
+      }
+    } catch {
+      // A poll that times out or disconnects says nothing about the queue. Keep
+      // the last statuses and let the deadline below decide, so that the wait a
+      // detached worker already ends in stays this function's own to spend.
     }
     await new Promise((resolve) => setTimeout(resolve, 2000))
   }
