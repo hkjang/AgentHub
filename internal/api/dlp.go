@@ -128,6 +128,51 @@ func (s *Server) scanSample(w http.ResponseWriter, r *http.Request) {
 // in one payload has found the same handful a thousand times.
 const maxReportedFindings = 32
 
+// maxReportedTextLen bounds one string out of a report.
+//
+// The gateway's token lives inside the Pod the agent's own code runs in, so
+// every string in a report is input from outside the trust boundary, and the
+// only bound on it was the 1MiB body reader — enough for one tool call to put
+// most of a megabyte of whatever it liked into an audit row and an operator's
+// log. It is deliberately larger than mcpClientIDLimit's 200: an IdP's client id
+// is only ever matched against, while a server name, a tool name and a masked
+// sample are read by a person deciding whether a finding is real, and a sample
+// cut too short is a finding nobody can judge.
+const maxReportedTextLen = 512
+
+// clampReported cuts at a rune boundary, the same way mcpCallDetails cuts a
+// token's azp: a label the platform ships is Korean, and half a character in an
+// audit row is worse than a short one.
+func clampReported(text string) string {
+	if runes := []rune(text); len(runes) > maxReportedTextLen {
+		return string(runes[:maxReportedTextLen])
+	}
+	return text
+}
+
+// clampReportedFindings is the findings as the trail will keep them.
+//
+// It copies rather than cutting in place, and that is the whole point: the slice
+// it is handed is the same one dlp.Result holds, and Result.Outcome() decides
+// 가리고 전송 by comparing a finding's Action against dlp.Redact. Shortening an
+// Action where the scanner can see it would let the size of a Pod's string
+// change what the trail says the Pod did. A nil slice stays nil so a report the
+// gateway sent no findings array for is still stored as one that had none.
+func clampReportedFindings(findings []dlp.Finding) []dlp.Finding {
+	if findings == nil {
+		return nil
+	}
+	clamped := make([]dlp.Finding, 0, len(findings))
+	for _, finding := range findings {
+		finding.Class = clampReported(finding.Class)
+		finding.Label = clampReported(finding.Label)
+		finding.Action = clampReported(finding.Action)
+		finding.Sample = clampReported(finding.Sample)
+		clamped = append(clamped, finding)
+	}
+	return clamped
+}
+
 // dlpReport is what the gateway posts: the entry it writes to its own log, under
 // the runtime id it believes it has. The log entry carries a discriminator
 // ("event": "dlp") this has no field for, which is why it is decoded as a Pod
@@ -188,9 +233,15 @@ func (s *Server) reportDLPEvent(w http.ResponseWriter, r *http.Request) {
 		findings = findings[:maxReportedFindings]
 	}
 	outcome := result.Outcome()
+	// Everything below this line is the report cut down to what the trail keeps,
+	// and it is deliberately below the outcome: the classification is the gateway's
+	// word about what it did, so it is read off the report as sent. The server and
+	// the tool are cut once and read twice — the audit row and the log line — so
+	// the two cannot describe the same call differently.
+	server, tool := clampReported(input.Event.Server), clampReported(input.Event.Tool)
 	details := map[string]any{
-		"server": input.Event.Server, "tool": input.Event.Tool, "direction": input.Event.Direction,
-		"truncated": input.Event.Truncated, "findings": findings, "runtimeId": runtime.ID,
+		"server": server, "tool": tool, "direction": clampReported(input.Event.Direction),
+		"truncated": input.Event.Truncated, "findings": clampReportedFindings(findings), "runtimeId": runtime.ID,
 	}
 	// The actor is the agent's owner: the finding is about their agent's traffic,
 	// and an audit trail whose actor is always "system" cannot be filtered by the
@@ -206,7 +257,7 @@ func (s *Server) reportDLPEvent(w http.ResponseWriter, r *http.Request) {
 		message = "a tool call longer than the scan limit was inspected only as far as the limit"
 	}
 	s.logger.Warn(message, "runtime", runtime.ID, "agent", runtime.AgentID,
-		"server", input.Event.Server, "tool", input.Event.Tool, "outcome", outcome, "findings", len(findings))
+		"server", server, "tool", tool, "outcome", outcome, "findings", len(findings))
 	writeJSON(w, http.StatusAccepted, map[string]any{"recorded": true})
 }
 
