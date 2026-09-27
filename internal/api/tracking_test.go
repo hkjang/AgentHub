@@ -9,6 +9,7 @@ import (
 	"testing"
 	"testing/fstest"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hkjang/AgentHub/internal/tracking"
 )
@@ -248,6 +249,42 @@ func TestPolicyViolationsAreRecordedByOrigin(t *testing.T) {
 	}
 	if len(off.violations.List(tracking.Defaults())) != 0 {
 		t.Error("a report was kept while tracking was off")
+	}
+}
+
+// The report address takes no session and no token, so a report that arrives
+// with a host and a directive of its own choosing must not decide how much of
+// the administration screen it fills, and a Korean address must come back out
+// whole.
+func TestAReportedViolationDoesNotChooseHowLongTheListedStringsAre(t *testing.T) {
+	settings := tracking.Settings{Enabled: true, Provider: tracking.ProviderCustom, CustomSnippet: `<script src="https://t.corp.example/t.js"></script>`}
+	server := trackingServer(t, settings)
+	host := strings.Repeat("a", 4000)
+	body := `{"csp-report":{"document-uri":"https://console.corp.example/runs/` + strings.Repeat("가", 1000) +
+		`","blocked-uri":"https://` + host + `.example/v1/events","effective-directive":"connect-src` + strings.Repeat("x", 3000) + `"}}`
+	for range 2 {
+		request := httptest.NewRequest(http.MethodPost, tracking.ReportPath, strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/csp-report")
+		recorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusNoContent {
+			t.Fatalf("the report was answered %d", recorder.Code)
+		}
+	}
+	items := server.violations.List(settings)
+	if len(items) != 1 || items[0].Count != 2 {
+		t.Fatalf("the same oversized report was not folded: %d entries %+v", len(items), items)
+	}
+	for name, value := range map[string]string{"origin": items[0].Origin, "directive": items[0].Directive, "page": items[0].Page} {
+		if count := utf8.RuneCountInString(value); count > 300 {
+			t.Errorf("%s kept %d runes of what the report sent", name, count)
+		}
+		if !utf8.ValidString(value) {
+			t.Errorf("%s is not valid UTF-8 after being cut: %q", name, value)
+		}
+	}
+	if !strings.HasSuffix(items[0].Page, "가") {
+		t.Errorf("the page was cut inside a letter: %q", items[0].Page)
 	}
 }
 

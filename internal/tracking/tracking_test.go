@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // A fresh deployment has nothing switched on, and nothing in the policy.
@@ -216,6 +217,76 @@ func TestRecorderIsBounded(t *testing.T) {
 		if strings.HasSuffix(item.Origin, ":0") || strings.HasSuffix(item.Origin, ":9") {
 			t.Fatalf("the oldest entries were kept: %s", item.Origin)
 		}
+	}
+}
+
+// A violation report arrives without a session, so the size of what the
+// administration screen lists has to be decided here rather than by whatever
+// posted the report.
+func TestARecordedReportDoesNotChooseHowLongItsStringsAre(t *testing.T) {
+	recorder := NewRecorder()
+	huge := strings.Repeat("a", 16*1024)
+	recorder.Record("https://"+huge+".example/collect", huge, "https://console.corp.example/"+huge)
+	items := recorder.List(Settings{})
+	if len(items) != 1 {
+		t.Fatalf("expected one entry, got %+v", items)
+	}
+	for name, pair := range map[string]struct {
+		value string
+		limit int
+	}{
+		"origin":    {items[0].Origin, maxOriginRunes},
+		"directive": {items[0].Directive, maxDirectiveRunes},
+		"page":      {items[0].Page, maxPageRunes},
+	} {
+		if count := utf8.RuneCountInString(pair.value); count > pair.limit {
+			t.Errorf("%s kept %d runes of what the report sent, over the %d allowed", name, count, pair.limit)
+		}
+		if !utf8.ValidString(pair.value) {
+			t.Errorf("%s is not valid UTF-8 after being cut: %q", name, pair.value)
+		}
+	}
+	// A cut origin is no longer the origin anybody allowed, so it stays blocked
+	// rather than being marked as already permitted.
+	if items := recorder.List(Settings{AllowedHosts: "https://" + huge + ".example"}); items[0].Allowed {
+		t.Error("a cut origin was marked as allowed")
+	}
+}
+
+// The page a report names can be a Korean address, and cutting it on a byte
+// boundary would leave half of the last letter behind for the JSON response to
+// turn into a replacement character.
+func TestACutPageKeepsWholeLetters(t *testing.T) {
+	recorder := NewRecorder()
+	page := "https://console.corp.example/runs/" + strings.Repeat("가", 300)
+	recorder.Record("https://collect.corp.example/v1/events", "connect-src", page)
+	items := recorder.List(Settings{})
+	if len(items) != 1 {
+		t.Fatalf("expected one entry, got %+v", items)
+	}
+	if count := utf8.RuneCountInString(items[0].Page); count != maxPageRunes {
+		t.Errorf("the page was cut to %d runes, not %d", count, maxPageRunes)
+	}
+	if !utf8.ValidString(items[0].Page) {
+		t.Errorf("the page was cut inside a letter: %q", items[0].Page)
+	}
+	if want := page[:len("https://console.corp.example/runs/")+(maxPageRunes-len("https://console.corp.example/runs/"))*3]; items[0].Page != want {
+		t.Errorf("page = %q", items[0].Page)
+	}
+}
+
+// Cutting has to happen before the map key is built. Two reports the screen
+// cannot tell apart — they differ only past the limit — have to be one entry
+// with a count of two; keying on the full strings would list the same origin
+// twice and neither row would ever count up.
+func TestReportsThatDifferOnlyPastTheLimitAreOneEntry(t *testing.T) {
+	recorder := NewRecorder()
+	huge := strings.Repeat("b", 16*1024)
+	recorder.Record("https://"+huge+".example/collect", "connect-src"+huge, "/")
+	recorder.Record("https://"+huge+".other/collect", "connect-src"+huge+huge, "/")
+	items := recorder.List(Settings{})
+	if len(items) != 1 || items[0].Count != 2 {
+		t.Fatalf("reports the screen cannot tell apart were not folded: %d entries %+v", len(items), items)
 	}
 }
 

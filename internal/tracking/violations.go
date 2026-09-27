@@ -12,6 +12,39 @@ import (
 // buffer of distinct origins is enough to fix a snippet.
 const MaxViolations = 100
 
+// The upper bounds on the strings a report brings in. A report is posted
+// without a session — the policy names the address and the browser, or anything
+// else inside a pod, posts to it — so the only thing between the report and the
+// administration screen is this file, and the size has to be decided here.
+// An origin is a scheme and a host, so 300 runes leaves room above the 253
+// characters a DNS name can hold and cuts nothing anybody would want to allow
+// with one click. A directive is a single policy keyword, where 64 runes is
+// generous enough that a future one still arrives whole. A page was already
+// being cut at 200, so that number stays and only its unit changes.
+const (
+	maxOriginRunes    = 300
+	maxDirectiveRunes = 64
+	maxPageRunes      = 200
+)
+
+// cutRunes shortens a string to at most limit runes, on a letter boundary.
+// Cutting by byte would leave a fragment of the last letter of a Korean
+// address behind, and the JSON response would carry it out as a replacement
+// character.
+func cutRunes(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	seen := 0
+	for index := range text {
+		if seen == limit {
+			return text[:index]
+		}
+		seen++
+	}
+	return text
+}
+
 // Violation is one origin the content security policy refused, kept with the
 // directive that refused it so the console can say what to allow.
 type Violation struct {
@@ -58,9 +91,12 @@ func (r *Recorder) Record(blockedURI, directive, page string) {
 	if directive == "" {
 		directive = "connect-src"
 	}
-	if len(page) > 200 {
-		page = page[:200]
-	}
+	// Cut before the key is built: a key made from the full strings would give
+	// the same oversized report a different entry every time the report grew by
+	// a letter, and the repeat count administrators read would never rise.
+	origin = cutRunes(origin, maxOriginRunes)
+	directive = cutRunes(directive, maxDirectiveRunes)
+	page = cutRunes(page, maxPageRunes)
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 	key := directive + " " + strings.ToLower(origin)
