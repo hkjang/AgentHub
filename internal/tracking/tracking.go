@@ -20,6 +20,7 @@ import (
 	"html"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 )
 
 // SettingKey is the system_settings row these settings live in.
@@ -41,6 +42,17 @@ var Providers = []string{ProviderNone, ProviderMomento, ProviderGA4, ProviderGTM
 // MaxSnippetBytes bounds a pasted snippet. A loader is a few hundred bytes; a
 // snippet past this size is a page, not a tracker.
 const MaxSnippetBytes = 8 * 1024
+
+// MaxAllowedHostRunes bounds one entry of the allow list. Whatever an
+// administrator writes there is joined into the Content-Security-Policy header
+// of every page as its own source, without passing through originOf as the
+// provider addresses do, so its size is the size of a header everybody's
+// browser then has to read. An origin is a scheme, a host and perhaps a port:
+// 300 runes leaves room above the 253 characters a DNS name can hold — the same
+// number, for the same reason, as the origin limit in violations.go — and cuts
+// nothing anybody would want to allow. It is counted in runes because an
+// address can be written in Korean.
+const MaxAllowedHostRunes = 300
 
 // ProxyPath is where the console forwards Momento's tracker and collector, so
 // a browser talks to the collector through the console's own origin.
@@ -124,9 +136,24 @@ func (s Settings) Validate() error {
 	if len(s.MomentoEnvironment) > 32 || strings.ContainsAny(s.MomentoEnvironment, "\"'<>&") {
 		return errors.New("Momento 환경 이름을 확인해 주세요 (32자 이하, 따옴표·꺾쇠 없이)")
 	}
+	// Each entry here becomes a source in the policy header of every page as it
+	// was typed — the provider addresses go through originOf, these do not — so
+	// the two characters a source must not contain are checked where the entry
+	// is written rather than where the header is built: a semicolon would close
+	// the directive the entry sits in and open one of the writer's choosing for
+	// the whole console, and there is nothing to stop a pasted line from being
+	// as long as the paste was. Entries already stored are refused rather than
+	// rewritten, because an origin an administrator reads back has to be the one
+	// they allowed.
 	for _, host := range splitHosts(s.AllowedHosts) {
 		if originOf(host) == "" || !strings.HasPrefix(strings.ToLower(host), "http") {
 			return fmt.Errorf("허용 출처 %q 는 https://호스트 형태여야 합니다", host)
+		}
+		if strings.ContainsRune(host, ';') {
+			return fmt.Errorf("허용 출처 %q 에는 세미콜론을 쓸 수 없습니다 — 정책 지시문이 거기서 끝납니다", host)
+		}
+		if count := utf8.RuneCountInString(host); count > MaxAllowedHostRunes {
+			return fmt.Errorf("허용 출처 %q 는 %d자를 넘을 수 없습니다 (%d자)", cutRunes(host, MaxAllowedHostRunes), MaxAllowedHostRunes, count)
 		}
 	}
 	if !s.Enabled {
