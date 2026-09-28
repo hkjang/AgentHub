@@ -137,6 +137,76 @@ func TestValidationRefusesWhatCannotWork(t *testing.T) {
 	}
 }
 
+// An allow-list entry is written into the policy header of every page exactly
+// as it was typed, so an entry carrying a semicolon would end the directive it
+// sits in and open one of its own choosing for the whole console. It is refused
+// where it is typed rather than rewritten, because an entry that was already
+// stored has to keep meaning what it meant.
+func TestAnAllowedHostCannotOpenAPolicyDirectiveOfItsOwn(t *testing.T) {
+	refused := map[string]string{
+		"a semicolon opens a new directive": "https://a.corp.example/;script-src-elem",
+		"a semicolon after a good entry":    "https://a.corp.example\nhttps://b.corp.example/;object-src",
+		"a semicolon at the end":            "https://a.corp.example/x;",
+		"longer than any host can be":       "https://" + strings.Repeat("a", MaxAllowedHostRunes) + ".corp.example",
+		"long with nothing to break it up":  strings.Repeat("https://a.corp.example/", 20),
+	}
+	for name, hosts := range refused {
+		err := (Settings{Provider: ProviderNone, AllowedHosts: hosts}).Validate()
+		if err == nil {
+			t.Errorf("%s was accepted: %q", name, hosts)
+			continue
+		}
+		if !strings.HasPrefix(err.Error(), "허용 출처 ") {
+			t.Errorf("%s: the message does not say which entry is wrong: %v", name, err)
+		}
+	}
+
+	// What already worked keeps working: a wildcard host, a port, a trailing
+	// slash, and the comma-and-newline mixture the console's textarea produces.
+	accepted := map[string]string{
+		"wildcard":         "https://*.corp.example",
+		"port":             "https://b.corp.example:8443",
+		"trailing slash":   "https://other.corp.example/",
+		"mixed separators": "https://a.corp.example, https://b.corp.example:8443\nhttps://*.corp.example\r\nhttps://c.corp.example/",
+		// The limit counts letters, not bytes: this is 223 runes and 623 bytes,
+		// and a Korean address must not be refused for being written in Korean.
+		"korean path": "https://a.corp.example/" + strings.Repeat("가", 200),
+	}
+	for name, hosts := range accepted {
+		if err := (Settings{Provider: ProviderNone, AllowedHosts: hosts}).Validate(); err != nil {
+			t.Errorf("%s was refused: %v", name, err)
+		}
+	}
+
+	// The limit is on one entry, not on the list: an administrator with many
+	// origins is not asked to choose between them.
+	var many []string
+	for range 40 {
+		many = append(many, "https://"+strings.Repeat("a", 60)+".corp.example")
+	}
+	if err := (Settings{Provider: ProviderNone, AllowedHosts: strings.Join(many, "\n")}).Validate(); err != nil {
+		t.Errorf("a long list of short entries was refused: %v", err)
+	}
+
+	// And what the console offers to allow with one click still goes in. A
+	// listed origin is originOf's output cut at the same number of runes, so the
+	// button beside a report can never produce an entry this refuses — which
+	// would be a refusal the administrator has no way to act on.
+	recorder := NewRecorder()
+	recorder.Record("https://"+strings.Repeat("b", 16*1024)+".example/collect;script-src", "connect-src", "/")
+	recorder.Record("https://pixel.corp.example:8443/p.gif", "img-src", "/")
+	listed := recorder.List(Settings{})
+	if len(listed) != 2 {
+		t.Fatalf("expected two reported origins, got %+v", listed)
+	}
+	for _, item := range listed {
+		hosts := AddAllowedHost("https://a.corp.example", item.Origin)
+		if err := (Settings{Provider: ProviderNone, AllowedHosts: hosts}).Validate(); err != nil {
+			t.Errorf("allowing the reported origin %q is refused: %v", item.Origin, err)
+		}
+	}
+}
+
 // The administration screens are left alone unless asked for.
 func TestAdministrationPagesAreExcludedUnlessAsked(t *testing.T) {
 	settings := Settings{Enabled: true, Provider: ProviderMomento, MomentoURL: "https://m.corp.example", MomentoSiteID: "x"}
