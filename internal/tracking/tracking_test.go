@@ -207,6 +207,83 @@ func TestAnAllowedHostCannotOpenAPolicyDirectiveOfItsOwn(t *testing.T) {
 	}
 }
 
+// allowList writes count entries of exactly size runes each, so a test can sit
+// on either side of a limit on purpose. The filler is ASCII unless a rune wider
+// than a byte is asked for, which is how the same list can be produced short in
+// runes and long in bytes.
+func allowList(count, size int, filler rune) string {
+	const prefix, suffix = "https://", ".corp.example"
+	entries := make([]string, 0, count)
+	for range count {
+		entries = append(entries, prefix+strings.Repeat(string(filler), size-utf8.RuneCountInString(prefix)-utf8.RuneCountInString(suffix))+suffix)
+	}
+	return strings.Join(entries, "\n")
+}
+
+// The limit on one entry does not bound the allow list, and the list is what
+// ends up in the header: every entry is written into three directives, so a list
+// of n runes costs 3n in the header of every page. Without a limit on the list
+// itself an administrator — or a settings document filled to the body limit —
+// can produce a header no proxy or browser will carry, which takes the console
+// down rather than the tracking. Both halves of the list are bounded here, its
+// entry count and its total length, and both are refused rather than trimmed for
+// the same reason one entry is: an origin read back has to be the one that was
+// allowed.
+func TestTheAllowListAsAWholeIsBoundedAndNotJustItsEntries(t *testing.T) {
+	const size = MaxAllowedHostsTotalRunes / MaxAllowedHostEntries
+
+	// The largest list there is: the entry count at its limit and the total
+	// exactly on its limit. This one has to keep working, because a limit that
+	// refuses what it says it allows is a limit nobody can plan around.
+	full := allowList(MaxAllowedHostEntries, size, 'a')
+	if err := (Settings{Provider: ProviderNone, AllowedHosts: full}).Validate(); err != nil {
+		t.Fatalf("the largest list the limits describe is refused: %v", err)
+	}
+
+	refused := map[string]string{
+		// 63 entries at the limit's width plus one a rune wider: the count is
+		// within its limit, the total is one rune past it.
+		"one rune past the total": allowList(MaxAllowedHostEntries-1, size, 'a') + "\n" + allowList(1, size+1, 'a'),
+		// Narrower entries, so the total stays inside its limit and only the
+		// count is past it.
+		"one entry too many": allowList(MaxAllowedHostEntries+1, size-1, 'a'),
+		// Written in Korean, one rune per entry past the width the total allows.
+		// The refusal has to come from the runes, not from the bytes.
+		"korean, one rune per entry past the total": allowList(MaxAllowedHostEntries, size+1, '가'),
+	}
+	for name, hosts := range refused {
+		err := (Settings{Provider: ProviderNone, AllowedHosts: hosts}).Validate()
+		if err == nil {
+			t.Errorf("%s was accepted: %d entries, %d runes", name, len(splitHosts(hosts)), utf8.RuneCountInString(hosts))
+			continue
+		}
+		if !strings.HasPrefix(err.Error(), "허용 출처 목록") {
+			t.Errorf("%s: the message does not say the list is what is wrong: %v", name, err)
+		}
+	}
+
+	// And the counting is in runes in the accepting direction too: this list is
+	// on the total's limit in runes and nearly three times it in bytes.
+	korean := allowList(MaxAllowedHostEntries, size, '가')
+	if utf8.RuneCountInString(korean) >= len(korean) {
+		t.Fatal("the korean list is not wider in bytes than in runes")
+	}
+	if err := (Settings{Provider: ProviderNone, AllowedHosts: korean}).Validate(); err != nil {
+		t.Errorf("a list of korean addresses within the limit was refused: %v", err)
+	}
+
+	// The one-click button beside a report must not offer what the settings then
+	// refuse, so a list already at the limit answers the click with the list
+	// limit rather than with something about the origin.
+	clicked := AddAllowedHost(full, "https://pixel.corp.example")
+	err := (Settings{Provider: ProviderNone, AllowedHosts: clicked}).Validate()
+	if err == nil {
+		t.Error("one more click past a full list was accepted")
+	} else if !strings.HasPrefix(err.Error(), "허용 출처 목록") {
+		t.Errorf("a click past a full list blames the origin, not the list: %v", err)
+	}
+}
+
 // The administration screens are left alone unless asked for.
 func TestAdministrationPagesAreExcludedUnlessAsked(t *testing.T) {
 	settings := Settings{Enabled: true, Provider: ProviderMomento, MomentoURL: "https://m.corp.example", MomentoSiteID: "x"}

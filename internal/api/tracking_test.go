@@ -288,6 +288,50 @@ func TestAReportedViolationDoesNotChooseHowLongTheListedStringsAre(t *testing.T)
 	}
 }
 
+// The allow list is the only administrator-written value that becomes a
+// response header, and pagePolicy writes every entry of it into three
+// directives, so the header grows by three runes for every rune of the list. A
+// limit on one entry therefore says nothing about the size of the header: the
+// header is as big as the list is long. This measures the header the largest
+// accepted list produces, and shows that entries each inside the per-entry limit
+// still build a header no proxy would carry unless the list itself is bounded.
+func TestThePagePolicyHeaderIsBoundedByTheAllowListLimit(t *testing.T) {
+	// The eight kilobytes a reverse proxy commonly reserves for a response's
+	// headers is the number that matters; this leaves the tripled list, the base
+	// policy and the rest of the response's headers inside a doubled buffer.
+	const carried = 13 * 1024
+	const nonce = "MDEyMzQ1Njc4OWFiY2RlZg=="
+	list := func(count, size int) string {
+		const prefix, suffix = "https://", ".corp.example"
+		entries := make([]string, 0, count)
+		for range count {
+			entries = append(entries, prefix+strings.Repeat("a", size-len(prefix)-len(suffix))+suffix)
+		}
+		return strings.Join(entries, "\n")
+	}
+
+	base := len(pagePolicy(tracking.Settings{Provider: tracking.ProviderNone}, nonce))
+	full := tracking.Settings{Provider: tracking.ProviderNone, AllowedHosts: list(tracking.MaxAllowedHostEntries, tracking.MaxAllowedHostsTotalRunes/tracking.MaxAllowedHostEntries)}
+	if err := full.Validate(); err != nil {
+		t.Fatalf("the largest list the limits describe is refused: %v", err)
+	}
+	header := pagePolicy(full, nonce)
+	// Three directives, each entry preceded by the space that separates sources.
+	if grown, want := len(header)-base, 3*(tracking.MaxAllowedHostsTotalRunes+tracking.MaxAllowedHostEntries); grown != want {
+		t.Errorf("the largest accepted list grew the header by %d bytes, not the %d the limits account for", grown, want)
+	}
+	if len(header) > carried {
+		t.Errorf("the largest accepted list builds a %d byte policy header, past the %d a proxy will carry", len(header), carried)
+	}
+
+	// Every entry of this one is inside MaxAllowedHostRunes and none of them
+	// carries a semicolon, so nothing the per-entry checks look at objects to it.
+	wide := tracking.Settings{Provider: tracking.ProviderNone, AllowedHosts: list(400, tracking.MaxAllowedHostRunes)}
+	if err := wide.Validate(); err == nil {
+		t.Errorf("a list of 400 entries of %d runes each is accepted, and the policy header it builds is %d bytes", tracking.MaxAllowedHostRunes, len(pagePolicy(wide, nonce)))
+	}
+}
+
 // The setting is validated on the way in like every other one.
 func TestTrackingSettingIsValidatedOnTheWayIn(t *testing.T) {
 	server := &Server{}
