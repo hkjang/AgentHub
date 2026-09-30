@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -197,6 +198,70 @@ func TestAnAllowedOriginCannotReachThePolicyHeaderUnchecked(t *testing.T) {
 		}
 		if policy := policyHeader(); !strings.Contains(policy, "https://*.corp.example") || !strings.Contains(policy, "https://pixel.corp.example:8443") {
 			t.Errorf("an allowed origin is not in the page policy: %s", policy)
+		}
+	})
+
+	// The list as a whole, on both routes. Every entry here is an ordinary origin
+	// that each per-entry check accepts, so what refuses these is the limit on the
+	// list — and it has to hold on the one-click route too, or an administrator
+	// clicking "allow" beside one report after another walks the header past what
+	// a proxy will carry one origin at a time.
+	t.Run("the list as a whole stops at its limit on both routes", func(t *testing.T) {
+		const size = tracking.MaxAllowedHostsTotalRunes / tracking.MaxAllowedHostEntries
+		// Distinct origins of exactly the width the limits divide into, so the
+		// list sits on its total the moment it holds MaxAllowedHostEntries of them.
+		entry := func(n int) string {
+			const prefix, suffix = "https://", ".corp.example"
+			return prefix + fmt.Sprintf("%03d", n) + strings.Repeat("a", size-len(prefix)-len(suffix)-3) + suffix
+		}
+		var seeded []string
+		for n := range tracking.MaxAllowedHostEntries - 1 {
+			seeded = append(seeded, entry(n))
+		}
+		stored := strings.Join(seeded, "\n")
+		if err := db.PutSetting(ctx, tracking.SettingKey, document(stored), nil, admin.ID); err != nil {
+			t.Fatal(err)
+		}
+
+		// The settings form, with two more entries than the list holds.
+		response := request(http.MethodPut, "/api/v1/admin/settings/"+tracking.SettingKey, map[string]any{"value": document(stored + "\n" + entry(100) + "\n" + entry(101))})
+		if response.Code != http.StatusBadRequest {
+			t.Errorf("the settings form answered %d: %s", response.Code, response.Body.String())
+		}
+		if text := message(response); !strings.HasPrefix(text, "허용 출처 목록") {
+			t.Errorf("the settings form did not say the list is what is wrong: %q", text)
+		}
+		if hosts := storedHosts(); hosts != stored {
+			t.Errorf("the settings form wrote a list of %d entries over the stored %d", len(strings.Split(hosts, "\n")), len(seeded))
+		}
+
+		// One click fits, the one after it does not, and clicking again does not
+		// get past it.
+		if response := request(http.MethodPost, "/api/v1/admin/tracking/violations/allow", map[string]any{"origin": entry(200)}); response.Code != http.StatusOK {
+			t.Fatalf("the click that fills the list answered %d: %s", response.Code, response.Body.String())
+		}
+		full := stored + "\n" + entry(200)
+		if hosts := storedHosts(); hosts != full {
+			t.Fatalf("the click that fills the list stored something else: %d entries", len(strings.Split(hosts, "\n")))
+		}
+		for attempt := range 3 {
+			response := request(http.MethodPost, "/api/v1/admin/tracking/violations/allow", map[string]any{"origin": entry(201 + attempt)})
+			if response.Code != http.StatusBadRequest {
+				t.Errorf("click %d past a full list answered %d: %s", attempt+1, response.Code, response.Body.String())
+			}
+			if text := message(response); !strings.HasPrefix(text, "허용 출처 목록") {
+				t.Errorf("click %d past a full list blames the origin, not the list: %q", attempt+1, text)
+			}
+			if hosts := storedHosts(); hosts != full {
+				t.Errorf("click %d past a full list wrote %d entries", attempt+1, len(strings.Split(hosts, "\n")))
+			}
+		}
+
+		// And the header the console actually serves from the full list is one a
+		// proxy will carry: the tripled list, the base policy and the snippet's own
+		// origin together, rather than however much a settings body can hold.
+		if policy := policyHeader(); len(policy) > 16*1024 {
+			t.Errorf("the full list serves a %d byte policy header", len(policy))
 		}
 	})
 }

@@ -54,6 +54,31 @@ const MaxSnippetBytes = 8 * 1024
 // address can be written in Korean.
 const MaxAllowedHostRunes = 300
 
+// MaxAllowedHostEntries and MaxAllowedHostsTotalRunes bound the allow list
+// itself, which the limit on one entry does not. PolicySources writes every
+// entry into img-src, connect-src and script-src alike, so a list of n runes
+// arrives in the header as 3n plus a space before each source, and nothing else
+// stands between a settings document and that header: filled to the body limit
+// the settings route accepts, the console would answer every page with a header
+// of several megabytes, which a reverse proxy or a browser refuses — taking the
+// console down rather than the tracking.
+//
+// 4096 runes across at most 64 entries holds the tripled list to a little under
+// 12.5 kilobytes, where the reserve a reverse proxy commonly keeps for a
+// response's headers is eight. Neither number is a measurement of anybody's
+// allow list, so both are set well past use: 64 origins is more than a console
+// injecting one snippet plausibly needs, 4096 runes is some 130 origins of the
+// length origins really run to, and the longest list this package's tests fix as
+// acceptable — forty entries of eighty-one runes — sits comfortably inside both,
+// so switching these on refuses nothing that was working. Both count the way the
+// per-entry limit counts, in runes over the entries as they are stored, because
+// an address can be written in Korean; and both refuse rather than trim, since
+// an origin an administrator reads back has to be the one they allowed.
+const (
+	MaxAllowedHostEntries     = 64
+	MaxAllowedHostsTotalRunes = 4096
+)
+
 // ProxyPath is where the console forwards Momento's tracker and collector, so
 // a browser talks to the collector through the console's own origin.
 const ProxyPath = "/momento"
@@ -145,7 +170,8 @@ func (s Settings) Validate() error {
 	// as long as the paste was. Entries already stored are refused rather than
 	// rewritten, because an origin an administrator reads back has to be the one
 	// they allowed.
-	for _, host := range splitHosts(s.AllowedHosts) {
+	hosts := splitHosts(s.AllowedHosts)
+	for _, host := range hosts {
 		if originOf(host) == "" || !strings.HasPrefix(strings.ToLower(host), "http") {
 			return fmt.Errorf("허용 출처 %q 는 https://호스트 형태여야 합니다", host)
 		}
@@ -155,6 +181,21 @@ func (s Settings) Validate() error {
 		if count := utf8.RuneCountInString(host); count > MaxAllowedHostRunes {
 			return fmt.Errorf("허용 출처 %q 는 %d자를 넘을 수 없습니다 (%d자)", cutRunes(host, MaxAllowedHostRunes), MaxAllowedHostRunes, count)
 		}
+	}
+	// Each entry being an origin and no longer than one says nothing about how
+	// many of them there are, and it is the whole list that is written into three
+	// directives of the header every page carries. The list is measured after its
+	// entries are checked so that a list with a bad entry in it still names the
+	// entry, which is the message an administrator can act on.
+	if len(hosts) > MaxAllowedHostEntries {
+		return fmt.Errorf("허용 출처 목록에는 %d개까지만 넣을 수 있습니다 (%d개)", MaxAllowedHostEntries, len(hosts))
+	}
+	total := 0
+	for _, host := range hosts {
+		total += utf8.RuneCountInString(host)
+	}
+	if total > MaxAllowedHostsTotalRunes {
+		return fmt.Errorf("허용 출처 목록 전체는 %d자를 넘을 수 없습니다 (%d자)", MaxAllowedHostsTotalRunes, total)
 	}
 	if !s.Enabled {
 		return nil
