@@ -259,9 +259,16 @@ func (s *Server) allowTrackingOrigin(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	origin := strings.TrimSpace(input.Origin)
-	if origin == "" || !strings.HasPrefix(strings.ToLower(origin), "http") {
-		writeError(w, http.StatusBadRequest, "invalid_origin", "허용할 출처는 https://호스트 형태여야 합니다.")
+	// One origin, and the one the list will hold. The allow list is stored as a
+	// single string that every reader splits on a comma, a space, a tab or a
+	// newline, so a value with any of those in it is a list and not the one entry
+	// this route offers to add: appended as it arrived it became two entries,
+	// which is a second origin in the policy header of every page that nobody
+	// clicked for. The settings form is the route for a list and is left to take
+	// one; tracking.SingleHost is asked here and nowhere else.
+	origin, single := tracking.SingleHost(input.Origin)
+	if !single || !strings.HasPrefix(strings.ToLower(origin), "http") {
+		writeError(w, http.StatusBadRequest, "invalid_origin", "허용할 출처는 https://호스트 형태여야 하며, 한 번에 한 곳만 더할 수 있습니다.")
 		return
 	}
 	settings := tracking.Defaults()
@@ -270,7 +277,18 @@ func (s *Server) allowTrackingOrigin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	settings = settings.Normalized()
-	settings.AllowedHosts = tracking.AddAllowedHost(settings.AllowedHosts, origin)
+	// An origin the list already holds leaves it exactly as it was — AddAllowedHost
+	// matches case-insensitively and hands back what it was given. The response
+	// stays a 200 carrying the list, because the console's screen reads it to
+	// refresh and a click on an origin somebody else already allowed is not an
+	// error. The trail, though, has to tell the two apart: without this flag every
+	// click left an identical "success" row whether or not the list grew, so the
+	// trail could not answer when the list last changed. The row is still written
+	// in the unchanged case rather than dropped, since what an administrator did
+	// is worth recording even when it turned out to be a no-op.
+	updated := tracking.AddAllowedHost(settings.AllowedHosts, origin)
+	added := updated != settings.AllowedHosts
+	settings.AllowedHosts = updated
 	if err := settings.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_setting", err.Error())
 		return
@@ -280,6 +298,9 @@ func (s *Server) allowTrackingOrigin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.invalidateTrackingSettings()
-	s.store.Audit(r.Context(), &u, "settings.update", "setting", tracking.SettingKey, "success", clientIP(r), map[string]any{"keys": []string{"allowedHosts"}, "origin": origin})
+	// origin is what SingleHost read out of the request, which is the entry as the
+	// list stores it — trimmed, without a trailing slash — so the row can be read
+	// against the list rather than against whatever the console happened to post.
+	s.store.Audit(r.Context(), &u, "settings.update", "setting", tracking.SettingKey, "success", clientIP(r), map[string]any{"keys": []string{"allowedHosts"}, "origin": origin, "added": added})
 	writeJSON(w, http.StatusOK, map[string]any{"allowedHosts": settings.AllowedHosts})
 }

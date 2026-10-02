@@ -134,6 +134,24 @@ func TestAnAllowedOriginCannotReachThePolicyHeaderUnchecked(t *testing.T) {
 		}
 		return body.Error.Message
 	}
+	// The details of the newest trail row about this settings key, read back
+	// through the store the audit screen reads. Each use follows the request that
+	// wrote the row, so the newest one is that request's.
+	newestTrailDetails := func(t *testing.T) map[string]any {
+		t.Helper()
+		page, err := db.AuditTrail(ctx, store.AuditFilter{Action: "settings.update", ResourceType: "setting", ResourceID: tracking.SettingKey, Limit: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page.Items) == 0 {
+			t.Fatal("the write left no audit row")
+		}
+		details, _ := page.Items[0]["details"].(map[string]any)
+		if details == nil {
+			t.Fatalf("the newest trail row carries no details: %v", page.Items[0])
+		}
+		return details
+	}
 
 	const settled = "https://a.corp.example"
 	if err := db.PutSetting(ctx, tracking.SettingKey, document(settled), nil, admin.ID); err != nil {
@@ -264,4 +282,97 @@ func TestAnAllowedOriginCannotReachThePolicyHeaderUnchecked(t *testing.T) {
 			t.Errorf("the full list serves a %d byte policy header", len(policy))
 		}
 	})
+
+	// The one-click route answers for one origin — the one a report named — and
+	// its trail row has to say what the list now holds. Neither was true. The
+	// handler checked for an "http" prefix and appended the string as it arrived,
+	// while splitHosts, which every reader of the list goes through, separates on
+	// a comma, a space, a tab and a newline alike: one click could store two
+	// entries, and the row named the string that arrived rather than the entry
+	// that was stored, so the trail could not be read against the list. A click
+	// that changes nothing was recorded exactly like one that added an origin.
+	//
+	// The settings form is where a list belongs and is exercised alongside, with
+	// the very value the one click refuses, because the two routes read the same
+	// stored string and only one of them is being narrowed here.
+	t.Run("one click adds one origin and the trail names what was stored", func(t *testing.T) {
+		seed := func() {
+			t.Helper()
+			if err := db.PutSetting(ctx, tracking.SettingKey, document(settled), nil, admin.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		seed()
+		for name, pair := range map[string]string{
+			"separated by a comma":   "https://a.corp.example,https://evil.corp.example",
+			"separated by a space":   "https://a.corp.example https://evil.corp.example",
+			"separated by a newline": "https://a.corp.example\nhttps://evil.corp.example",
+			"separated by a tab":     "https://a.corp.example\thttps://evil.corp.example",
+		} {
+			response := request(http.MethodPost, "/api/v1/admin/tracking/violations/allow", map[string]any{"origin": pair})
+			if response.Code != http.StatusBadRequest {
+				t.Errorf("%s: the one-click allow answered %d: %s", name, response.Code, response.Body.String())
+			}
+			if code := errorCode(t, response); code != "invalid_origin" {
+				t.Errorf("%s: the refusal came back as %q, not invalid_origin", name, code)
+			}
+			if hosts := storedHosts(); hosts != settled {
+				t.Errorf("%s: one click stored %q", name, hosts)
+			}
+		}
+		// What the one click refuses, the settings form still takes: a list in one
+		// box is that route's whole purpose.
+		if response := request(http.MethodPut, "/api/v1/admin/settings/"+tracking.SettingKey, map[string]any{"value": document(settled + ",https://b.corp.example")}); response.Code != http.StatusOK {
+			t.Fatalf("the settings form no longer takes a list: %d %s", response.Code, response.Body.String())
+		}
+		if hosts := storedHosts(); hosts != settled+",https://b.corp.example" {
+			t.Fatalf("the settings form stored %q", hosts)
+		}
+
+		// A trailing slash and the space around a pasted address are not part of
+		// the entry, so the row has to name the entry without them — an auditor who
+		// cannot match the row against the list learns nothing from it.
+		seed()
+		const added = "https://pixel.corp.example"
+		if response := request(http.MethodPost, "/api/v1/admin/tracking/violations/allow", map[string]any{"origin": "  " + added + "/  "}); response.Code != http.StatusOK {
+			t.Fatalf("one ordinary origin was refused: %d %s", response.Code, response.Body.String())
+		}
+		if hosts := storedHosts(); hosts != settled+"\n"+added {
+			t.Fatalf("stored %q", hosts)
+		}
+		details := newestTrailDetails(t)
+		if details["origin"] != added {
+			t.Errorf("the trail says %#v, the list holds %q", details["origin"], added)
+		}
+		if details["added"] != true {
+			t.Errorf("the trail does not record that the list grew: %v", details)
+		}
+
+		// And the click that changes nothing. The console still gets its list back,
+		// so the screen keeps working, but the row says the list did not grow.
+		if response := request(http.MethodPost, "/api/v1/admin/tracking/violations/allow", map[string]any{"origin": added + "/"}); response.Code != http.StatusOK {
+			t.Fatalf("allowing an origin already in the list answered %d: %s", response.Code, response.Body.String())
+		}
+		if hosts := storedHosts(); hosts != settled+"\n"+added {
+			t.Fatalf("a repeated click rewrote the list: %q", hosts)
+		}
+		details = newestTrailDetails(t)
+		if details["origin"] != added {
+			t.Errorf("the repeated click's row says %#v", details["origin"])
+		}
+		if details["added"] != false {
+			t.Errorf("a click that changed nothing is recorded like one that did: %v", details)
+		}
+	})
+}
+
+// errorCode reads the machine-readable half of an error body, which is what the
+// console branches on and what a refusal has to keep stable.
+func errorCode(t *testing.T, recorder *httptest.ResponseRecorder) string {
+	t.Helper()
+	var body errorBody
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("the refusal is not an error body: %s", recorder.Body.String())
+	}
+	return body.Error.Code
 }
