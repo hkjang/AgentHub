@@ -441,6 +441,30 @@ func splitHosts(list string) []string {
 	return hosts
 }
 
+// SingleHost reads a value that is meant to name one origin and nothing else,
+// returning the entry as the list will hold it.
+//
+// The allow list is stored as one string and read back everywhere through
+// splitHosts, which separates on a comma, a space, a tab and a newline alike.
+// That is right for the settings form, where an administrator pastes a whole
+// list into one box, and wrong for the one-click "allow" beside a reported
+// violation, which offers to add the one origin a browser said it blocked:
+// appended as it arrived, a value with a separator in it becomes two entries,
+// and the route that promised one has no way to say in an audit row what it
+// actually stored. So that route asks here first, and is handed the entry
+// exactly as splitHosts will read it back — the same string AddAllowedHost
+// appends, which is therefore the one to name in the trail.
+//
+// Nothing else calls this, and in particular the settings form must not: a
+// check for one entry there would refuse the lists that route exists to accept.
+func SingleHost(raw string) (string, bool) {
+	hosts := splitHosts(raw)
+	if len(hosts) != 1 {
+		return "", false
+	}
+	return hosts[0], true
+}
+
 // AddAllowedHost appends an origin to the allow list, leaving the existing
 // entries and their order alone.
 func AddAllowedHost(existing, origin string) string {

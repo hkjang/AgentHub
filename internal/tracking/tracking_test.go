@@ -303,6 +303,95 @@ func TestAdministrationPagesAreExcludedUnlessAsked(t *testing.T) {
 	}
 }
 
+// SingleHost is what the one-click "allow" route asks before it appends, and
+// what it names in its audit row. Two things have to hold: a value carrying any
+// separator splitHosts recognises is refused rather than silently stored as
+// several entries, and an accepted value comes back as the entry the list will
+// actually hold, so the row and the list say the same thing.
+func TestSingleHostTakesOneEntryAndReturnsItAsStored(t *testing.T) {
+	accepted := map[string]string{
+		"an ordinary origin":      "https://a.corp.example",
+		"with a port":             "https://a.corp.example:8443",
+		"a trailing slash":        "https://a.corp.example/",
+		"surrounded by space":     "  https://a.corp.example  ",
+		"both at once":            "\n https://a.corp.example/ \t",
+		"a wildcard host":         "https://*.corp.example",
+		"written in korean":       "https://사내추적.example",
+		"not an origin at all":    "nonsense",
+		"keeps its own case":      "HTTPS://A.corp.example",
+		"a path, not a separator": "https://a.corp.example/collect",
+	}
+	for name, raw := range accepted {
+		host, single := SingleHost(raw)
+		if !single {
+			t.Errorf("%s: %q was refused", name, raw)
+			continue
+		}
+		// The point of the helper: the caller may store this and report it as the
+		// stored entry, so it must be what AddAllowedHost appends and what
+		// splitHosts reads back out again.
+		if appended := AddAllowedHost("", host); appended != host {
+			t.Errorf("%s: AddAllowedHost stored %q, not the %q it was handed", name, appended, host)
+		}
+		if read := splitHosts(host); len(read) != 1 || read[0] != host {
+			t.Errorf("%s: the list reads %q back as %q", name, host, read)
+		}
+	}
+	if host, _ := SingleHost(" https://a.corp.example/ "); host != "https://a.corp.example" {
+		t.Errorf("the space and the trailing slash are still on the entry: %q", host)
+	}
+
+	refused := map[string]string{
+		"empty":                  "",
+		"only space":             "   \n\t",
+		"only a separator":       ",",
+		"two, comma":             "https://a.corp.example,https://evil.corp.example",
+		"two, space":             "https://a.corp.example https://evil.corp.example",
+		"two, newline":           "https://a.corp.example\nhttps://evil.corp.example",
+		"two, carriage return":   "https://a.corp.example\rhttps://evil.corp.example",
+		"two, tab":               "https://a.corp.example\thttps://evil.corp.example",
+		"two, comma and space":   "https://a.corp.example, https://evil.corp.example",
+		"one entry and a stray":  "https://a.corp.example,x",
+		"a whole pasted list":    allowList(3, 40, 'a'),
+		"an origin and a policy": "https://a.corp.example https://evil.corp.example;script-src-elem",
+	}
+	for name, raw := range refused {
+		if host, single := SingleHost(raw); single {
+			t.Errorf("%s: %q was read as the single entry %q", name, raw, host)
+		}
+	}
+
+	// And the settings form is untouched by any of this: splitHosts still reads a
+	// pasted list as the several entries that route exists to store.
+	if hosts := splitHosts("https://a.corp.example,https://b.corp.example"); len(hosts) != 2 {
+		t.Errorf("a pasted list no longer reads as a list: %q", hosts)
+	}
+
+	// What the console actually offers to allow is a reported origin, so this must
+	// not refuse one — a button that produces a refusal the administrator cannot
+	// act on is worse than the button not being there. The exception is the only
+	// separator a reported origin can carry: a comma survives url.Parse inside an
+	// authority, where it is not a host any browser resolved, and appended as one
+	// entry it would become two sources in the policy header. Refusing it is the
+	// point.
+	recorder := NewRecorder()
+	recorder.Record("https://pixel.corp.example:8443/p.gif", "img-src", "/")
+	recorder.Record("https://사내추적.example/collect?v=1", "connect-src", "/")
+	recorder.Record("https://a,b.corp.example/p.gif", "img-src", "/")
+	for _, item := range recorder.List(Settings{}) {
+		host, single := SingleHost(item.Origin)
+		if strings.ContainsRune(item.Origin, ',') {
+			if single {
+				t.Errorf("a reported authority with a comma in it was read as the single entry %q", host)
+			}
+			continue
+		}
+		if !single {
+			t.Errorf("the one-click button offers %q, which this refuses", item.Origin)
+		}
+	}
+}
+
 func TestAddAllowedHostKeepsTheListAsWritten(t *testing.T) {
 	list := AddAllowedHost("", "https://a.corp.example/")
 	list = AddAllowedHost(list, "https://b.corp.example")
