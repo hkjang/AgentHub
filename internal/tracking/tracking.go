@@ -93,9 +93,17 @@ const (
 //
 // 1024 runes across at most 32 entries holds that tripled at a little over
 // three kilobytes, which added to the tripled allow list and the base policy
-// leaves the worst case a settings document can build at 15921 bytes,
-// measured, inside the sixteen kilobytes internal/api's tests name as the
-// budget for the whole header. Both numbers are set well past use for the same
+// leaves these two settings at 15921 bytes together, measured, inside the
+// sixteen kilobytes internal/api's tests name as the budget. That is the worst
+// case these two limits bound and not the worst case a settings document can
+// build: a provider's address reaches the same three directives through
+// originOf, and no limit here or in Validate measures its length, so
+// Provider=matomo with an eight thousand rune MatomoURL — or that address as
+// MomentoURL with the proxy off — is accepted and builds a 24339 byte header,
+// measured, the same order as the snippet this limit refuses. Whoever bounds
+// those addresses has the rest of the budget to fit them in; until then the
+// header as a whole is not bounded, only these two settings are. Both numbers
+// here are set well past use for the same
 // reason the list's are: a loader names the script it fetches, the endpoint it
 // posts to and perhaps a pixel, so two to five origins is what a real snippet
 // comes with, and 1024 runes is some thirty origins of the length origins

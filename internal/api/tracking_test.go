@@ -289,15 +289,23 @@ func TestAReportedViolationDoesNotChooseHowLongTheListedStringsAre(t *testing.T)
 	}
 }
 
-// carried is the whole budget for the policy header of a page: the eight
-// kilobytes a reverse proxy commonly reserves for a response's headers,
-// doubled, which is where this console's header has to stay whatever the
-// administrator stored. Two settings reach it and their costs add — the allow
-// list, tripled at 3*(4096+64) ≈ 12.2 KiB, and the origins read out of a
-// pasted snippet, tripled at 3*(1024+32) ≈ 3.1 KiB — so the worst case a
-// settings document can produce is a little under 16 KiB together with the
-// base policy. Both tests below measure against this one number so that the
-// budget is stated in one place rather than per setting.
+// carried is the budget for the policy header of a page: the eight kilobytes a
+// reverse proxy commonly reserves for a response's headers, doubled. Two of the
+// settings that reach the header are bounded against it and their costs add —
+// the allow list, tripled at 3*(4096+64) ≈ 12.2 KiB, and the origins read out
+// of a pasted snippet, tripled at 3*(1024+32) ≈ 3.1 KiB — which is a little
+// under 16 KiB together with the base policy, and the two tests below measure
+// that against this one number so the budget is stated in one place rather than
+// per setting.
+//
+// It is not yet where the header stays whatever the administrator stored. A
+// provider's address goes into the same three directives and nothing measures
+// its length: Settings{Enabled: true, Provider: matomo, MatomoURL: "https://" +
+// 8000 runes + ".corp.example", MatomoSiteID: "1"} passes Validate and makes
+// pagePolicy write 24339 bytes, as does the same address as MomentoURL with
+// MomentoProxy off. Whoever bounds those two addresses closes the gap, and this
+// number is the budget they have to fit inside; read the limits below as
+// covering the list and the snippet, not the whole header.
 const carried = 16 * 1024
 
 // pagePolicy writes every entry of the allow list into three directives, so
@@ -361,8 +369,8 @@ func snippetOf(count, size int) string {
 // that parse, eight kilobytes of snippet name hundreds of them and the header
 // leaves the budget far behind, so the snippet's origins need the same pair of
 // limits the list has. This measures what an unbounded snippet costs, and then
-// measures the worst case the two settings can build together, which is what
-// the budget actually has to hold.
+// measures the worst case the two of them can build together, which is as much
+// of the header as these limits account for — see carried for what they do not.
 func TestThePagePolicyHeaderIsBoundedByTheSnippetOriginLimitAsWell(t *testing.T) {
 	const nonce = "MDEyMzQ1Njc4OWFiY2RlZg=="
 
@@ -388,9 +396,9 @@ func TestThePagePolicyHeaderIsBoundedByTheSnippetOriginLimitAsWell(t *testing.T)
 		t.Errorf("a snippet naming %d origins is accepted, and the policy header it builds is %d bytes", named, unbounded)
 	}
 
-	// The worst case a settings document can produce: the largest accepted
-	// snippet and the largest accepted list at once. Their costs add, because
-	// PolicySources appends both to the same three directives.
+	// The worst case these two limits bound: the largest accepted snippet and
+	// the largest accepted list at once. Their costs add, because PolicySources
+	// appends both to the same three directives.
 	const snippetSize = tracking.MaxSnippetOriginsTotalRunes / tracking.MaxSnippetOriginEntries
 	const listSize = tracking.MaxAllowedHostsTotalRunes / tracking.MaxAllowedHostEntries
 	both := tracking.Settings{
