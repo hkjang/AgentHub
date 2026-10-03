@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -288,18 +289,42 @@ func TestAReportedViolationDoesNotChooseHowLongTheListedStringsAre(t *testing.T)
 	}
 }
 
-// The allow list is the only administrator-written value that becomes a
-// response header, and pagePolicy writes every entry of it into three
-// directives, so the header grows by three runes for every rune of the list. A
-// limit on one entry therefore says nothing about the size of the header: the
-// header is as big as the list is long. This measures the header the largest
-// accepted list produces, and shows that entries each inside the per-entry limit
-// still build a header no proxy would carry unless the list itself is bounded.
+// carried is the budget for the policy header of a page: the eight kilobytes a
+// reverse proxy commonly reserves for a response's headers, doubled. Two of the
+// settings that reach the header are bounded against it and their costs add —
+// the allow list, tripled at 3*(4096+64) = 12480, and the origins read out of a
+// pasted snippet, tripled at 3*(1024+32) = 3168 — which with the base policy is
+// 15921 of the header, measured, a little under 16 KiB. The two tests below
+// measure that against this one number so the budget is stated in one place
+// rather than per setting.
+//
+// Those 15921 are runes, though, and a proxy counts bytes. Both limits count
+// runes, so the same worst case measures 15921 bytes with the addresses written
+// in ASCII, 33513 with them in Korean and 42309 with letters that take four
+// bytes each — all three measured, all three accepted by Validate. What the two
+// limits hold under this number is therefore the runes they contribute and not
+// the bytes, and the second test below measures every one of those scripts to
+// say so: the rune count is the same for all of them, which is the bound, and
+// the byte count is not.
+//
+// Nor is it yet where the header stays whatever the administrator stored. A
+// provider's address goes into the same three directives and nothing measures
+// its length: Settings{Enabled: true, Provider: matomo, MatomoURL: "https://" +
+// 8000 runes + ".corp.example", MatomoSiteID: "1"} passes Validate and makes
+// pagePolicy write 24339 bytes, as does the same address as MomentoURL with
+// MomentoProxy off. Bounding the header in bytes means bounding those two
+// addresses and spending this budget in bytes everywhere, and this number is
+// what there is to spend; read the limits below as covering the runes the list
+// and the snippet contribute, not the bytes and not the whole header.
+const carried = 16 * 1024
+
+// pagePolicy writes every entry of the allow list into three directives, so
+// the header grows by three runes for every rune of the list. A limit on one
+// entry therefore says nothing about the size of the header: the header is as
+// big as the list is long. This measures the header the largest accepted list
+// produces, and shows that entries each inside the per-entry limit still build
+// a header no proxy would carry unless the list itself is bounded.
 func TestThePagePolicyHeaderIsBoundedByTheAllowListLimit(t *testing.T) {
-	// The eight kilobytes a reverse proxy commonly reserves for a response's
-	// headers is the number that matters; this leaves the tripled list, the base
-	// policy and the rest of the response's headers inside a doubled buffer.
-	const carried = 13 * 1024
 	const nonce = "MDEyMzQ1Njc4OWFiY2RlZg=="
 	list := func(count, size int) string {
 		const prefix, suffix = "https://", ".corp.example"
@@ -329,6 +354,119 @@ func TestThePagePolicyHeaderIsBoundedByTheAllowListLimit(t *testing.T) {
 	wide := tracking.Settings{Provider: tracking.ProviderNone, AllowedHosts: list(400, tracking.MaxAllowedHostRunes)}
 	if err := wide.Validate(); err == nil {
 		t.Errorf("a list of 400 entries of %d runes each is accepted, and the policy header it builds is %d bytes", tracking.MaxAllowedHostRunes, len(pagePolicy(wide, nonce)))
+	}
+}
+
+// snippetOf writes count distinct origins of exactly size runes each, filled
+// with letter and spaced by the character isURLBoundary reads as the end of an
+// address, so a test can paste a snippet whose origins sit on either side of a
+// limit on purpose. The origins have to differ because SnippetOrigins lists
+// each one once. The filler is a parameter because the limits count runes and
+// the budget is in bytes: the same size in runes is a different size in the
+// header written in ASCII, in Korean, or in letters that take four bytes each,
+// and a caller measuring the budget has to be able to ask for each of them.
+func snippetOf(count, size int, letter string) string {
+	const prefix, suffix = "https://", ".corp.example"
+	entries := make([]string, 0, count)
+	for index := range count {
+		tag := fmt.Sprintf("%d", index)
+		fill := size - utf8.RuneCountInString(prefix+suffix+tag)
+		entries = append(entries, prefix+tag+strings.Repeat(letter, fill)+suffix)
+	}
+	return strings.Join(entries, " ")
+}
+
+// The allow list is not the only administrator-written value that becomes a
+// response header: PolicySources writes every origin read out of a pasted
+// snippet into the same three directives, and the only limit a snippet carried
+// was MaxSnippetBytes — a count of bytes of markup, which says nothing about
+// how many addresses are written in them. Filled with the shortest origins
+// that parse, eight kilobytes of snippet name hundreds of them and the header
+// leaves the budget far behind, so the snippet's origins need the same pair of
+// limits the list has. This measures what an unbounded snippet costs, and then
+// measures the worst case the two of them can build together in each of the
+// scripts an address can be written in, which is as many runes of the header as
+// these limits account for and, in anything but ASCII, more bytes of it than the
+// budget holds — see carried for what these limits do and do not bound.
+func TestThePagePolicyHeaderIsBoundedByTheSnippetOriginLimitAsWell(t *testing.T) {
+	const nonce = "MDEyMzQ1Njc4OWFiY2RlZg=="
+
+	// As many "http://aN.b" as fit inside the byte limit on a snippet: the
+	// cheapest origin there is, so this is the largest number of them a stored
+	// snippet can name.
+	var filler strings.Builder
+	for index := 1; ; index++ {
+		entry := fmt.Sprintf("http://a%d.b ", index)
+		if filler.Len()+len(entry) > tracking.MaxSnippetBytes {
+			break
+		}
+		filler.WriteString(entry)
+	}
+	filled := tracking.Settings{Enabled: true, Provider: tracking.ProviderCustom, CustomSnippet: filler.String()}
+	named := len(tracking.SnippetOrigins(filled.CustomSnippet))
+	unbounded := len(pagePolicy(filled, nonce))
+	t.Logf("a %d byte snippet names %d origins and builds a %d byte policy header", len(filled.CustomSnippet), named, unbounded)
+	if unbounded <= carried {
+		t.Fatalf("a snippet filled with %d origins builds a %d byte header, which is inside the %d byte budget — this test no longer measures anything", named, unbounded, carried)
+	}
+	if err := filled.Validate(); err == nil {
+		t.Errorf("a snippet naming %d origins is accepted, and the policy header it builds is %d bytes", named, unbounded)
+	}
+
+	// The worst case these two limits bound: the largest accepted snippet and
+	// the largest accepted list at once. Their costs add, because PolicySources
+	// appends both to the same three directives.
+	//
+	// Both limits count runes, so the worst case has to be built once per script
+	// to be measured at all. The rune count is what the limits hold and comes out
+	// the same for every script, which is asserted exactly; the byte count is
+	// what a proxy carries and does not, so only the ASCII case is inside the
+	// budget and the others are measured to say how far outside they reach. The
+	// multibyte cases are asserted to be outside it on purpose: bounding the
+	// header in bytes would bring them in, and this is what then fails and asks
+	// for carried's comment to be rewritten.
+	const snippetSize = tracking.MaxSnippetOriginsTotalRunes / tracking.MaxSnippetOriginEntries
+	const listSize = tracking.MaxAllowedHostsTotalRunes / tracking.MaxAllowedHostEntries
+	const bounded = 3*(tracking.MaxAllowedHostsTotalRunes+tracking.MaxAllowedHostEntries) + 3*(tracking.MaxSnippetOriginsTotalRunes+tracking.MaxSnippetOriginEntries)
+	base := utf8.RuneCountInString(pagePolicy(tracking.Settings{Provider: tracking.ProviderNone}, nonce))
+	for _, script := range []struct {
+		name   string
+		letter string
+		ascii  bool
+	}{
+		{name: "ASCII", letter: "a", ascii: true},
+		{name: "Korean", letter: "가"},
+		{name: "four-byte letters", letter: "😀"},
+	} {
+		both := tracking.Settings{
+			Enabled:       true,
+			Provider:      tracking.ProviderCustom,
+			CustomSnippet: snippetOf(tracking.MaxSnippetOriginEntries, snippetSize, script.letter),
+			AllowedHosts:  snippetOf(tracking.MaxAllowedHostEntries, listSize, script.letter),
+		}
+		if err := both.Validate(); err != nil {
+			t.Errorf("the largest snippet and list the limits describe are refused together in %s: %v", script.name, err)
+			continue
+		}
+		header := pagePolicy(both, nonce)
+		runes := utf8.RuneCountInString(header)
+		t.Logf("the largest accepted snippet and list in %s together build a policy header of %d bytes / %d runes", script.name, len(header), runes)
+		// Three directives, each source preceded by the space that separates them.
+		if grown := runes - base; grown != bounded {
+			t.Errorf("the largest accepted snippet and list in %s grew the header by %d runes, not the %d the limits account for", script.name, grown, bounded)
+		}
+		if runes > carried {
+			t.Errorf("the largest accepted snippet and list in %s build a policy header of %d runes, past the %d budgeted", script.name, runes, carried)
+		}
+		if script.ascii {
+			if len(header) > carried {
+				t.Errorf("the largest accepted snippet and list in %s build a %d byte policy header, past the %d a proxy will carry", script.name, len(header), carried)
+			}
+			continue
+		}
+		if len(header) <= carried {
+			t.Errorf("the largest accepted snippet and list in %s build a %d byte policy header, inside the %d a proxy will carry — the limits now bound the header in bytes and carried says they do not", script.name, len(header), carried)
+		}
 	}
 }
 
