@@ -63,12 +63,15 @@ const MaxAllowedHostRunes = 300
 // of several megabytes, which a reverse proxy or a browser refuses — taking the
 // console down rather than the tracking.
 //
-// 4096 runes across at most 64 entries holds the tripled list to a little under
-// 12.5 kilobytes, where the reserve a reverse proxy commonly keeps for a
-// response's headers is eight. Neither number is a measurement of anybody's
-// allow list, so both are set well past use: 64 origins is more than a console
-// injecting one snippet plausibly needs, 4096 runes is some 130 origins of the
-// length origins really run to, and the longest list this package's tests fix as
+// 4096 runes across at most 64 entries holds the tripled list to 12480 runes,
+// which is a little under 12.5 kilobytes while the entries are written in ASCII
+// and up to four times that when they are not — see MaxSnippetOriginEntries
+// below for what these limits do and do not hold in bytes — against the eight
+// kilobytes a reverse proxy commonly keeps in reserve for a response's headers.
+// Neither number is a measurement of anybody's allow list, so both are set well
+// past use: 64 origins is more than a console injecting one snippet plausibly
+// needs, 4096 runes is some 130 origins of the length origins really run to,
+// and the longest list this package's tests fix as
 // acceptable — forty entries of eighty-one runes — sits comfortably inside both,
 // so switching these on refuses nothing that was working. Both count the way the
 // per-entry limit counts, in runes over the entries as they are stored, because
@@ -91,28 +94,37 @@ const (
 // refusal by a reverse proxy — and the same console taken down rather than the
 // tracking — that the list's limits exist to prevent.
 //
-// 1024 runes across at most 32 entries holds that tripled at a little over
-// three kilobytes, which added to the tripled allow list and the base policy
-// leaves these two settings at 15921 bytes together, measured, inside the
-// sixteen kilobytes internal/api's tests name as the budget. That is the worst
-// case these two limits bound and not the worst case a settings document can
-// build: a provider's address reaches the same three directives through
-// originOf, and no limit here or in Validate measures its length, so
-// Provider=matomo with an eight thousand rune MatomoURL — or that address as
-// MomentoURL with the proxy off — is accepted and builds a 24339 byte header,
-// measured, the same order as the snippet this limit refuses. Whoever bounds
-// those addresses has the rest of the budget to fit them in; until then the
-// header as a whole is not bounded, only these two settings are. Both numbers
-// here are set well past use for the same
-// reason the list's are: a loader names the script it fetches, the endpoint it
-// posts to and perhaps a pixel, so two to five origins is what a real snippet
-// comes with, and 1024 runes is some thirty origins of the length origins
-// really run to. A single address is bounded by the total rather than by the
-// count, which is the half that matters — one origin of eight thousand runes
-// is one entry, and the count alone would wave it through.
-// Both count in runes, because an address can be written in Korean, and both
-// refuse rather than trim: a snippet an administrator reads back has to be the
-// one they pasted.
+// 1024 runes across at most 32 entries holds that tripled to 3168 runes,
+// which added to the tripled allow list and the base policy leaves these two
+// settings at 15921 runes of header together, measured, inside the sixteen
+// kilobytes internal/api's tests name as the budget — in runes, which is not
+// the unit that budget is about. A proxy counts the bytes it has to carry, and
+// these limits count runes for the reason the per-entry limit does, because an
+// address can be written in Korean: the same worst case of 15921 runes measures
+// 15921 bytes with the addresses in ASCII, 33513 with them in Korean and 42309
+// with letters that take four bytes each, all three measured and all three
+// accepted. So what these two limits hold under the budget is the runes they
+// contribute, and the byte figure follows the script an administrator writes
+// in, up to four times the runes.
+//
+// That rune bound is also only the worst case these two limits reach and not
+// the worst case a settings document can build: a provider's address reaches
+// the same three directives through originOf, and no limit here or in Validate
+// measures its length, so Provider=matomo with an eight thousand rune
+// MatomoURL — or that address as MomentoURL with the proxy off — is accepted
+// and builds a 24339 byte header, measured, the same order as the snippet this
+// limit refuses. Bounding the header in bytes means bounding those addresses
+// and spending the budget in bytes here too; until then what is bounded is the
+// runes these two settings contribute, and the header as a whole is not.
+//
+// Both numbers here are set well past use for the same reason the list's are:
+// a loader names the script it fetches, the endpoint it posts to and perhaps a
+// pixel, so two to five origins is what a real snippet comes with, and 1024
+// runes is some thirty origins of the length origins really run to. A single
+// address is bounded by the total rather than by the count, which is the half
+// that matters — one origin of eight thousand runes is one entry, and the count
+// alone would wave it through. Both refuse rather than trim: a snippet an
+// administrator reads back has to be the one they pasted.
 const (
 	MaxSnippetOriginEntries     = 32
 	MaxSnippetOriginsTotalRunes = 1024
