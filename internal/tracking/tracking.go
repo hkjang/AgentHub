@@ -79,6 +79,37 @@ const (
 	MaxAllowedHostsTotalRunes = 4096
 )
 
+// MaxSnippetOriginEntries and MaxSnippetOriginsTotalRunes bound the origins
+// read out of a pasted snippet, which the allow list's limits do not: the
+// ProviderCustom branch of PolicySources hands every address SnippetOrigins
+// found to the same three directives the list goes into, so a snippet's
+// addresses are tripled into the header exactly as an administrator's list is.
+// The only limit a snippet carried is MaxSnippetBytes, and a count of bytes of
+// markup says nothing about how many addresses are written in them: filled
+// with the cheapest origin that parses, 8180 bytes of snippet name 592 of them
+// and build a policy header of 24813 bytes, measured, which is the same
+// refusal by a reverse proxy — and the same console taken down rather than the
+// tracking — that the list's limits exist to prevent.
+//
+// 1024 runes across at most 32 entries holds that tripled at a little over
+// three kilobytes, which added to the tripled allow list and the base policy
+// leaves the worst case a settings document can build at 15921 bytes,
+// measured, inside the sixteen kilobytes internal/api's tests name as the
+// budget for the whole header. Both numbers are set well past use for the same
+// reason the list's are: a loader names the script it fetches, the endpoint it
+// posts to and perhaps a pixel, so two to five origins is what a real snippet
+// comes with, and 1024 runes is some thirty origins of the length origins
+// really run to. A single address is bounded by the total rather than by the
+// count, which is the half that matters — one origin of eight thousand runes
+// is one entry, and the count alone would wave it through.
+// Both count in runes, because an address can be written in Korean, and both
+// refuse rather than trim: a snippet an administrator reads back has to be the
+// one they pasted.
+const (
+	MaxSnippetOriginEntries     = 32
+	MaxSnippetOriginsTotalRunes = 1024
+)
+
 // ProxyPath is where the console forwards Momento's tracker and collector, so
 // a browser talks to the collector through the console's own origin.
 const ProxyPath = "/momento"
@@ -157,6 +188,24 @@ func (s Settings) Validate() error {
 	}
 	if len(s.CustomSnippet) > MaxSnippetBytes {
 		return fmt.Errorf("추적 코드는 %d바이트를 넘을 수 없습니다", MaxSnippetBytes)
+	}
+	// The addresses inside that markup are what reach the header, three times
+	// each, so they are measured here beside the limit on the markup rather than
+	// under the provider switch below: a snippet stored while the provider points
+	// somewhere else is a snippet a later write only has to flip the provider to
+	// serve, and a limit it escaped would refuse that write instead of this one.
+	// The message names what to shorten, because the administrator reading it has
+	// a snippet in front of them and no view of the header it builds.
+	origins := SnippetOrigins(s.CustomSnippet)
+	if len(origins) > MaxSnippetOriginEntries {
+		return fmt.Errorf("추적 코드가 명명한 출처는 %d개까지만 쓸 수 있습니다 (%d개) — 추적 코드의 주소 수를 줄여 주세요", MaxSnippetOriginEntries, len(origins))
+	}
+	originRunes := 0
+	for _, origin := range origins {
+		originRunes += utf8.RuneCountInString(origin)
+	}
+	if originRunes > MaxSnippetOriginsTotalRunes {
+		return fmt.Errorf("추적 코드가 명명한 출처 전체는 %d자를 넘을 수 없습니다 (%d자) — 추적 코드의 주소를 줄여 주세요", MaxSnippetOriginsTotalRunes, originRunes)
 	}
 	if len(s.MomentoEnvironment) > 32 || strings.ContainsAny(s.MomentoEnvironment, "\"'<>&") {
 		return errors.New("Momento 환경 이름을 확인해 주세요 (32자 이하, 따옴표·꺾쇠 없이)")

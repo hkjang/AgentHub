@@ -1,6 +1,7 @@
 package tracking
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -282,6 +283,119 @@ func TestTheAllowListAsAWholeIsBoundedAndNotJustItsEntries(t *testing.T) {
 	} else if !strings.HasPrefix(err.Error(), "허용 출처 목록") {
 		t.Errorf("a click past a full list blames the origin, not the list: %v", err)
 	}
+}
+
+// snippetList writes count distinct origins of exactly size runes each into a
+// snippet, separated by the space isURLBoundary reads as the end of an
+// address, so a test can sit on either side of a limit on purpose. The origins
+// have to differ because SnippetOrigins lists each one once, and the filler is
+// ASCII unless a rune wider than a byte is asked for, which is how the same
+// snippet can be produced short in runes and long in bytes.
+func snippetList(count, size int, filler rune) string {
+	const prefix, suffix = "https://", ".corp.example"
+	entries := make([]string, 0, count)
+	for index := range count {
+		tag := fmt.Sprintf("%d", index)
+		width := size - utf8.RuneCountInString(prefix) - utf8.RuneCountInString(suffix) - len(tag)
+		entries = append(entries, prefix+tag+strings.Repeat(string(filler), width)+suffix)
+	}
+	return strings.Join(entries, " ")
+}
+
+// MaxSnippetBytes bounds the markup of a pasted snippet and nothing else, and
+// it is the addresses written inside that markup which reach the header: the
+// ProviderCustom branch of PolicySources hands each one to img-src, connect-src
+// and script-src alike, exactly as an allow-list entry is handed to them. So
+// the snippet's origins carry the same pair of limits the list carries, their
+// count and their total length, and the pair is needed rather than either half
+// — a snippet naming hundreds of short origins is stopped by the count, and a
+// snippet naming one address eight thousand runes long is one entry and is
+// stopped only by the total. Both refuse rather than trim, for the reason the
+// list's do: a snippet read back has to be the one that was pasted.
+func TestTheOriginsReadOutOfASnippetAreBoundedToo(t *testing.T) {
+	const size = MaxSnippetOriginsTotalRunes / MaxSnippetOriginEntries
+
+	// The largest snippet there is: the origin count at its limit and the total
+	// exactly on its limit. This one has to keep working, because a limit that
+	// refuses what it says it allows is a limit nobody can plan around.
+	full := snippetList(MaxSnippetOriginEntries, size, 'a')
+	if origins := SnippetOrigins(full); len(origins) != MaxSnippetOriginEntries {
+		t.Fatalf("the largest snippet names %d origins, not %d", len(origins), MaxSnippetOriginEntries)
+	}
+	if err := (Settings{Enabled: true, Provider: ProviderCustom, CustomSnippet: full}).Validate(); err != nil {
+		t.Fatalf("the largest snippet the limits describe is refused: %v", err)
+	}
+
+	// One address with no boundary character in it: a single entry, so the count
+	// cannot object to it, and 8007 runes of it arrive three times over in the
+	// header. This is the case the total exists for.
+	long := "http://" + strings.Repeat("a", 8000)
+	if origins := SnippetOrigins(long); len(origins) != 1 {
+		t.Fatalf("the long address is read as %d origins, not one", len(origins))
+	}
+	if len(long) > MaxSnippetBytes {
+		t.Fatalf("the long address is %d bytes, which MaxSnippetBytes already refuses", len(long))
+	}
+
+	refused := map[string]string{
+		"one address longer than the whole total": long,
+		// 31 entries at the limit's width plus one a rune wider: the count is
+		// within its limit, the total is one rune past it.
+		"one rune past the total": snippetList(MaxSnippetOriginEntries-1, size, 'a') + " " + snippetList(1, size+1, 'b'),
+		// Narrower entries, so the total stays inside its limit and only the
+		// count is past it.
+		"one origin too many": snippetList(MaxSnippetOriginEntries+1, size-1, 'a'),
+		// Written in Korean, one rune per origin past the width the total allows.
+		// The refusal has to come from the runes, not from the bytes.
+		"korean, one rune per origin past the total": snippetList(MaxSnippetOriginEntries, size+1, '가'),
+	}
+	for name, snippet := range refused {
+		err := (Settings{Enabled: true, Provider: ProviderCustom, CustomSnippet: snippet}).Validate()
+		if err == nil {
+			t.Errorf("%s was accepted: %d origins, %d runes", name, len(SnippetOrigins(snippet)), snippetOriginRunes(snippet))
+			continue
+		}
+		if !strings.HasPrefix(err.Error(), "추적 코드가 명명한 출처") {
+			t.Errorf("%s: the message does not say the snippet's origins are what is wrong: %v", name, err)
+		}
+	}
+
+	// And the counting is in runes in the accepting direction too: these origins
+	// are on the total's limit in runes and nearly three times it in bytes.
+	korean := snippetList(MaxSnippetOriginEntries, size, '가')
+	if snippetOriginRunes(korean) >= len(korean) {
+		t.Fatal("the korean snippet is not wider in bytes than in runes")
+	}
+	if err := (Settings{Enabled: true, Provider: ProviderCustom, CustomSnippet: korean}).Validate(); err != nil {
+		t.Errorf("a snippet of korean addresses within the limit was refused: %v", err)
+	}
+
+	// The limits sit where MaxSnippetBytes sits, above the provider switch, for
+	// the reason that one does: a snippet stored while tracking points somewhere
+	// else is a snippet a later write only has to flip the provider to serve.
+	if err := (Settings{Provider: ProviderNone, CustomSnippet: long}).Validate(); err == nil {
+		t.Error("a snippet past the origin limits was stored because the provider was not custom")
+	}
+
+	// A real loader names a handful of addresses, and the message about the byte
+	// limit on the markup is still the one an oversized paste gets.
+	if err := (Settings{Enabled: true, Provider: ProviderCustom, CustomSnippet: `<script src="https://t.corp.example/t.js"></script>`}).Validate(); err != nil {
+		t.Errorf("an ordinary loader was refused: %v", err)
+	}
+	err := (Settings{Provider: ProviderNone, CustomSnippet: strings.Repeat("x", MaxSnippetBytes+1)}).Validate()
+	if err == nil || !strings.HasPrefix(err.Error(), "추적 코드는") {
+		t.Errorf("the byte limit on the markup no longer reports itself: %v", err)
+	}
+}
+
+// snippetOriginRunes is what the limit on the total counts, so a test can
+// report the number the refusal is about.
+func snippetOriginRunes(snippet string) int {
+	total := 0
+	for _, origin := range SnippetOrigins(snippet) {
+		total += utf8.RuneCountInString(origin)
+	}
+	return total
 }
 
 // The administration screens are left alone unless asked for.

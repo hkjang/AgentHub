@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -288,18 +289,24 @@ func TestAReportedViolationDoesNotChooseHowLongTheListedStringsAre(t *testing.T)
 	}
 }
 
-// The allow list is the only administrator-written value that becomes a
-// response header, and pagePolicy writes every entry of it into three
-// directives, so the header grows by three runes for every rune of the list. A
-// limit on one entry therefore says nothing about the size of the header: the
-// header is as big as the list is long. This measures the header the largest
-// accepted list produces, and shows that entries each inside the per-entry limit
-// still build a header no proxy would carry unless the list itself is bounded.
+// carried is the whole budget for the policy header of a page: the eight
+// kilobytes a reverse proxy commonly reserves for a response's headers,
+// doubled, which is where this console's header has to stay whatever the
+// administrator stored. Two settings reach it and their costs add — the allow
+// list, tripled at 3*(4096+64) ≈ 12.2 KiB, and the origins read out of a
+// pasted snippet, tripled at 3*(1024+32) ≈ 3.1 KiB — so the worst case a
+// settings document can produce is a little under 16 KiB together with the
+// base policy. Both tests below measure against this one number so that the
+// budget is stated in one place rather than per setting.
+const carried = 16 * 1024
+
+// pagePolicy writes every entry of the allow list into three directives, so
+// the header grows by three runes for every rune of the list. A limit on one
+// entry therefore says nothing about the size of the header: the header is as
+// big as the list is long. This measures the header the largest accepted list
+// produces, and shows that entries each inside the per-entry limit still build
+// a header no proxy would carry unless the list itself is bounded.
 func TestThePagePolicyHeaderIsBoundedByTheAllowListLimit(t *testing.T) {
-	// The eight kilobytes a reverse proxy commonly reserves for a response's
-	// headers is the number that matters; this leaves the tripled list, the base
-	// policy and the rest of the response's headers inside a doubled buffer.
-	const carried = 13 * 1024
 	const nonce = "MDEyMzQ1Njc4OWFiY2RlZg=="
 	list := func(count, size int) string {
 		const prefix, suffix = "https://", ".corp.example"
@@ -329,6 +336,76 @@ func TestThePagePolicyHeaderIsBoundedByTheAllowListLimit(t *testing.T) {
 	wide := tracking.Settings{Provider: tracking.ProviderNone, AllowedHosts: list(400, tracking.MaxAllowedHostRunes)}
 	if err := wide.Validate(); err == nil {
 		t.Errorf("a list of 400 entries of %d runes each is accepted, and the policy header it builds is %d bytes", tracking.MaxAllowedHostRunes, len(pagePolicy(wide, nonce)))
+	}
+}
+
+// snippetOf writes count distinct origins of exactly size runes each, spaced
+// by the character isURLBoundary reads as the end of an address, so a test can
+// paste a snippet whose origins sit on either side of a limit on purpose. The
+// origins have to differ because SnippetOrigins lists each one once.
+func snippetOf(count, size int) string {
+	const prefix, suffix = "https://", ".corp.example"
+	entries := make([]string, 0, count)
+	for index := range count {
+		tag := fmt.Sprintf("%d", index)
+		entries = append(entries, prefix+tag+strings.Repeat("a", size-len(prefix)-len(suffix)-len(tag))+suffix)
+	}
+	return strings.Join(entries, " ")
+}
+
+// The allow list is not the only administrator-written value that becomes a
+// response header: PolicySources writes every origin read out of a pasted
+// snippet into the same three directives, and the only limit a snippet carried
+// was MaxSnippetBytes — a count of bytes of markup, which says nothing about
+// how many addresses are written in them. Filled with the shortest origins
+// that parse, eight kilobytes of snippet name hundreds of them and the header
+// leaves the budget far behind, so the snippet's origins need the same pair of
+// limits the list has. This measures what an unbounded snippet costs, and then
+// measures the worst case the two settings can build together, which is what
+// the budget actually has to hold.
+func TestThePagePolicyHeaderIsBoundedByTheSnippetOriginLimitAsWell(t *testing.T) {
+	const nonce = "MDEyMzQ1Njc4OWFiY2RlZg=="
+
+	// As many "http://aN.b" as fit inside the byte limit on a snippet: the
+	// cheapest origin there is, so this is the largest number of them a stored
+	// snippet can name.
+	var filler strings.Builder
+	for index := 1; ; index++ {
+		entry := fmt.Sprintf("http://a%d.b ", index)
+		if filler.Len()+len(entry) > tracking.MaxSnippetBytes {
+			break
+		}
+		filler.WriteString(entry)
+	}
+	filled := tracking.Settings{Enabled: true, Provider: tracking.ProviderCustom, CustomSnippet: filler.String()}
+	named := len(tracking.SnippetOrigins(filled.CustomSnippet))
+	unbounded := len(pagePolicy(filled, nonce))
+	t.Logf("a %d byte snippet names %d origins and builds a %d byte policy header", len(filled.CustomSnippet), named, unbounded)
+	if unbounded <= carried {
+		t.Fatalf("a snippet filled with %d origins builds a %d byte header, which is inside the %d byte budget — this test no longer measures anything", named, unbounded, carried)
+	}
+	if err := filled.Validate(); err == nil {
+		t.Errorf("a snippet naming %d origins is accepted, and the policy header it builds is %d bytes", named, unbounded)
+	}
+
+	// The worst case a settings document can produce: the largest accepted
+	// snippet and the largest accepted list at once. Their costs add, because
+	// PolicySources appends both to the same three directives.
+	const snippetSize = tracking.MaxSnippetOriginsTotalRunes / tracking.MaxSnippetOriginEntries
+	const listSize = tracking.MaxAllowedHostsTotalRunes / tracking.MaxAllowedHostEntries
+	both := tracking.Settings{
+		Enabled:       true,
+		Provider:      tracking.ProviderCustom,
+		CustomSnippet: snippetOf(tracking.MaxSnippetOriginEntries, snippetSize),
+		AllowedHosts:  snippetOf(tracking.MaxAllowedHostEntries, listSize),
+	}
+	if err := both.Validate(); err != nil {
+		t.Fatalf("the largest snippet and list the limits describe are refused together: %v", err)
+	}
+	header := len(pagePolicy(both, nonce))
+	t.Logf("the largest accepted snippet and list together build a %d byte policy header", header)
+	if header > carried {
+		t.Errorf("the largest accepted snippet and list build a %d byte policy header, past the %d a proxy will carry", header, carried)
 	}
 }
 
