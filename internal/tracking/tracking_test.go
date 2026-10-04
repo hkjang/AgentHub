@@ -138,6 +138,94 @@ func TestValidationRefusesWhatCannotWork(t *testing.T) {
 	}
 }
 
+// Provider URLs contribute only their origins to the policy. The whole URL
+// may be long, and validation must neither trim it nor depend on its use today.
+func TestProviderOriginsAreBoundedInEveryMode(t *testing.T) {
+	for _, provider := range []struct{ name, value string }{
+		{"Momento", ProviderMomento}, {"Matomo", ProviderMatomo},
+	} {
+		for _, mode := range []string{"selected", "disabled", "none", "other provider", "proxy"} {
+			for _, fixture := range []struct {
+				name  string
+				url   string
+				count int
+			}{
+				{"ASCII boundary", allowList(1, 300, 'a'), 300},
+				{"ASCII overflow", allowList(1, 301, 'a'), 301},
+				{"Korean boundary", allowList(1, 300, '가'), 300},
+				{"Korean overflow", allowList(1, 301, '가'), 301},
+				{"normalized boundary", "  " + allowList(1, 300, 'a') + "/  ", 300},
+				{"long path and query", "https://collector.corp.example:8443/" + strings.Repeat("base/", 100) + "?key=value", 35},
+			} {
+				t.Run(provider.name+"/"+mode+"/"+fixture.name, func(t *testing.T) {
+					settings := Settings{Enabled: true, Provider: provider.value,
+						MomentoURL: "https://m.corp.example", MomentoSiteID: "x",
+						MatomoURL: "https://m.corp.example", MatomoSiteID: "1"}
+					if provider.value == ProviderMomento {
+						settings.MomentoURL = fixture.url
+					} else {
+						settings.MatomoURL = fixture.url
+					}
+					switch mode {
+					case "disabled":
+						settings.Enabled = false
+					case "none":
+						settings.Provider = ProviderNone
+					case "other provider":
+						settings.Provider = ProviderMomento
+						if provider.value == ProviderMomento {
+							settings.Provider = ProviderMatomo
+						}
+					case "proxy":
+						settings.Provider, settings.MomentoProxy = ProviderMomento, true
+					}
+					before := settings
+					err := settings.Validate()
+					if settings != before {
+						t.Error("validation rewrote the settings")
+					}
+					if fixture.count <= 300 {
+						if err != nil {
+							t.Fatalf("an allowed provider origin was refused: %v", err)
+						}
+						return
+					}
+					if err == nil {
+						t.Fatalf("%s origin of %d runes was accepted in %s mode", provider.name, fixture.count, mode)
+					}
+					for _, want := range []string{provider.name, "300자", "301자"} {
+						if !strings.Contains(err.Error(), want) {
+							t.Errorf("error does not identify the field and lengths (%s): %v", want, err)
+						}
+					}
+					if strings.Contains(err.Error(), fixture.url) {
+						t.Error("the error repeats the oversized URL")
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestProviderOriginLimitsLeaveIncompleteURLsToProviderValidation(t *testing.T) {
+	for _, provider := range []string{ProviderMomento, ProviderMatomo} {
+		for _, raw := range []string{"", "https://", strings.Repeat("a", 301), "https://[" + strings.Repeat("a", 301)} {
+			for _, mode := range []string{"selected", "disabled", "unselected"} {
+				t.Run(provider+"/"+mode+"/"+fmt.Sprint(len(raw)), func(t *testing.T) {
+					settings := Settings{Enabled: mode != "disabled", Provider: provider,
+						MomentoURL: raw, MomentoSiteID: "x", MatomoURL: raw, MatomoSiteID: "1"}
+					if mode == "unselected" {
+						settings.Provider = ProviderNone
+					}
+					if err := settings.Validate(); (err != nil) != (mode == "selected") {
+						t.Fatalf("incomplete URL validation changed: %v", err)
+					}
+				})
+			}
+		}
+	}
+}
+
 // An allow-list entry is written into the policy header of every page exactly
 // as it was typed, so an entry carrying a semicolon would end the directive it
 // sits in and open one of its own choosing for the whole console. It is refused
