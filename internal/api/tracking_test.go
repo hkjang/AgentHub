@@ -307,15 +307,11 @@ func TestAReportedViolationDoesNotChooseHowLongTheListedStringsAre(t *testing.T)
 // say so: the rune count is the same for all of them, which is the bound, and
 // the byte count is not.
 //
-// Nor is it yet where the header stays whatever the administrator stored. A
-// provider's address goes into the same three directives and nothing measures
-// its length: Settings{Enabled: true, Provider: matomo, MatomoURL: "https://" +
-// 8000 runes + ".corp.example", MatomoSiteID: "1"} passes Validate and makes
-// pagePolicy write 24339 bytes, as does the same address as MomentoURL with
-// MomentoProxy off. Bounding the header in bytes means bounding those two
-// addresses and spending this budget in bytes everywhere, and this number is
-// what there is to spend; read the limits below as covering the runes the list
-// and the snippet contribute, not the bytes and not the whole header.
+// Provider origins now have their own 300-rune limit and add at most
+// 3*(300+1) runes through these same directives. The provider regression below
+// measures that separately. These remain rune limits, not a byte budget for
+// the whole header, and new validation does not repair oversized settings that
+// were already stored. The multibyte list and snippet cases remain accepted.
 const carried = 16 * 1024
 
 // pagePolicy writes every entry of the allow list into three directives, so
@@ -466,6 +462,53 @@ func TestThePagePolicyHeaderIsBoundedByTheSnippetOriginLimitAsWell(t *testing.T)
 		}
 		if len(header) <= carried {
 			t.Errorf("the largest accepted snippet and list in %s build a %d byte policy header, inside the %d a proxy will carry — the limits now bound the header in bytes and carried says they do not", script.name, len(header), carried)
+		}
+	}
+}
+
+// Exercise the actual header builder and both validation entry points. This
+// calls the API validation function, not an HTTP write or a database save.
+func TestProviderOriginsCannotAmplifyThePagePolicyWithoutBound(t *testing.T) {
+	const nonce = "MDEyMzQ1Njc4OWFiY2RlZg=="
+	base := utf8.RuneCountInString(pagePolicy(tracking.Settings{Provider: tracking.ProviderNone}, nonce))
+	server := &Server{}
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings/"+tracking.SettingKey, nil)
+	for _, provider := range []string{tracking.ProviderMomento, tracking.ProviderMatomo} {
+		for _, fixture := range []struct {
+			name, origin string
+			refused      bool
+		}{
+			{"oversized", "https://" + strings.Repeat("a", 8000) + ".corp.example", true},
+			{"ASCII boundary", snippetOf(1, 300, "a"), false},
+			{"Korean boundary", snippetOf(1, 300, "가"), false},
+		} {
+			t.Run(provider+"/"+fixture.name, func(t *testing.T) {
+				value := map[string]any{"enabled": true, "provider": provider,
+					provider + "Url": fixture.origin, provider + "SiteId": "1", "momentoProxy": false}
+				settings, err := decodeTrackingSettings(value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				header := pagePolicy(settings, nonce)
+				grown := utf8.RuneCountInString(header) - base
+				want := 3 * (300 + 1)
+				if fixture.refused {
+					want = 3 * (utf8.RuneCountInString(fixture.origin) + 1)
+					if len(header) <= carried {
+						t.Fatalf("the oversized origin no longer exceeds the header budget: %d bytes", len(header))
+					}
+				}
+				if grown != want {
+					t.Errorf("provider origin grew the header by %d runes, want %d", grown, want)
+				}
+				t.Logf("%s: header %d bytes / %d runes, growth %d runes", provider, len(header), utf8.RuneCountInString(header), grown)
+				if err := settings.Validate(); (err != nil) != fixture.refused {
+					t.Errorf("Validate refused=%t, want %t (header %d bytes): %v", err != nil, fixture.refused, len(header), err)
+				}
+				if err := server.validateSetting(request, tracking.SettingKey, value, nil); (err != nil) != fixture.refused {
+					t.Errorf("API validation refused=%t, want %t (header %d bytes): %v", err != nil, fixture.refused, len(header), err)
+				}
+			})
 		}
 	}
 }

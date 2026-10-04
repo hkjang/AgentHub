@@ -54,6 +54,13 @@ const MaxSnippetBytes = 8 * 1024
 // address can be written in Korean.
 const MaxAllowedHostRunes = 300
 
+// MaxProviderOriginRunes uses the same 300-rune allowance as one allow-list
+// entry: a scheme, DNS name and optional port fit with room to spare, including
+// addresses written in Korean. A provider origin reaches the same three policy
+// directives, so it needs the same bound. Paths and queries do not reach the
+// header and are deliberately left outside this limit.
+const MaxProviderOriginRunes = 300
+
 // MaxAllowedHostEntries and MaxAllowedHostsTotalRunes bound the allow list
 // itself, which the limit on one entry does not. PolicySources writes every
 // entry into img-src, connect-src and script-src alike, so a list of n runes
@@ -107,15 +114,11 @@ const (
 // contribute, and the byte figure follows the script an administrator writes
 // in, up to four times the runes.
 //
-// That rune bound is also only the worst case these two limits reach and not
-// the worst case a settings document can build: a provider's address reaches
-// the same three directives through originOf, and no limit here or in Validate
-// measures its length, so Provider=matomo with an eight thousand rune
-// MatomoURL — or that address as MomentoURL with the proxy off — is accepted
-// and builds a 24339 byte header, measured, the same order as the snippet this
-// limit refuses. Bounding the header in bytes means bounding those addresses
-// and spending the budget in bytes here too; until then what is bounded is the
-// runes these two settings contribute, and the header as a whole is not.
+// These two limits bound only the list and snippet contributions. Provider
+// addresses have their own MaxProviderOriginRunes bound, also counted in runes.
+// None of these is a byte budget for the whole header: multibyte origins can
+// still take it past sixteen kilobytes. Validation applies on new writes, so
+// previously stored oversized provider addresses are not repaired on read.
 //
 // Both numbers here are set well past use for the same reason the list's are:
 // a loader names the script it fetches, the endpoint it posts to and perhaps a
@@ -265,6 +268,16 @@ func (s Settings) Validate() error {
 	}
 	if total > MaxAllowedHostsTotalRunes {
 		return fmt.Errorf("허용 출처 목록 전체는 %d자를 넘을 수 없습니다 (%d자)", MaxAllowedHostsTotalRunes, total)
+	}
+	// Bound both fields even when disabled, unselected or proxied, just as a
+	// stored snippet is bounded before it is used. An empty origin contributes
+	// no length; the existing provider checks below still decide URL validity.
+	for _, provider := range []struct{ name, address string }{
+		{"Momento", s.MomentoURL}, {"Matomo", s.MatomoURL},
+	} {
+		if count := utf8.RuneCountInString(originOf(provider.address)); count > MaxProviderOriginRunes {
+			return fmt.Errorf("%s 주소의 출처는 %d자를 넘을 수 없습니다 (%d자)", provider.name, MaxProviderOriginRunes, count)
+		}
 	}
 	if !s.Enabled {
 		return nil
