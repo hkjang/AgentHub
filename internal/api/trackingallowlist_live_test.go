@@ -283,6 +283,101 @@ func TestAnAllowedOriginCannotReachThePolicyHeaderUnchecked(t *testing.T) {
 		}
 	})
 
+	// The allow list reaches the policy header. What a provider branch renders —
+	// the three site and measurement ids, and the whole of the two collector
+	// addresses — reaches the body of every tracked page instead, through
+	// serveIndex and injectSnippet, and nothing bounded its size: validation asked
+	// only whether the field the chosen provider needs was filled in. The limits
+	// on them are exercised here through the real route with a real session,
+	// because a unit call to validateSetting is not proof that a write is refused,
+	// and the page is read back because the page is where the harm was.
+	t.Run("an oversized provider id or address never reaches a page", func(t *testing.T) {
+		providerDocument := func(fields map[string]any) map[string]any {
+			value := map[string]any{"enabled": true, "placement": "head"}
+			for key, item := range fields {
+				value[key] = item
+			}
+			return value
+		}
+		// The whole stored row, read back through the store rather than through the
+		// response the request wrote.
+		storedSettings := func() tracking.Settings {
+			t.Helper()
+			settings := tracking.Defaults()
+			if err := db.Setting(ctx, tracking.SettingKey, &settings); err != nil {
+				t.Fatal(err)
+			}
+			return settings
+		}
+		// The page the console would serve from whatever is in the row now,
+		// snippet included.
+		pageBody := func() string {
+			t.Helper()
+			server.invalidateTrackingSettings()
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/runs", nil))
+			return recorder.Body.String()
+		}
+
+		const settledID = "7"
+		settledDocument := providerDocument(map[string]any{"provider": tracking.ProviderMatomo,
+			"matomoUrl": "https://matomo.corp.example", "matomoSiteId": settledID})
+		if err := db.PutSetting(ctx, tracking.SettingKey, settledDocument, nil, admin.ID); err != nil {
+			t.Fatal(err)
+		}
+		// The control, so the refusals below are the limits talking and not the
+		// route: a provider configuration really does render its id and its address
+		// into the page.
+		if body := pageBody(); !strings.Contains(body, `_paq.push(['setSiteId','`+settledID+`'])`) || !strings.Contains(body, "https://matomo.corp.example") {
+			t.Fatalf("the stored provider configuration is not rendered into the page: %s", body)
+		}
+
+		oversizedID := strings.Repeat("7", tracking.MaxProviderIDRunes+1)
+		oversizedPath := strings.Repeat("p", tracking.MaxProviderURLRunes)
+		for name, pair := range map[string]struct {
+			value map[string]any
+			seen  string
+		}{
+			"a measurement id": {providerDocument(map[string]any{"provider": tracking.ProviderGA4,
+				"measurementId": "G-" + strings.Repeat("1", tracking.MaxProviderIDRunes)}), strings.Repeat("1", tracking.MaxProviderIDRunes)},
+			"a site id": {providerDocument(map[string]any{"provider": tracking.ProviderMatomo,
+				"matomoUrl": "https://matomo.corp.example", "matomoSiteId": oversizedID}), oversizedID},
+			"a collector address with a path on it": {providerDocument(map[string]any{"provider": tracking.ProviderMatomo,
+				"matomoUrl": "https://matomo.corp.example/" + oversizedPath, "matomoSiteId": settledID}), oversizedPath},
+			// Switched off and unselected, which is the write the limits have to
+			// refuse here rather than later: stored now, a second write that only
+			// flips the provider would serve it.
+			"a site id stored with tracking switched off": {providerDocument(map[string]any{"enabled": false,
+				"provider": tracking.ProviderNone, "momentoSiteId": oversizedID}), oversizedID},
+		} {
+			response := request(http.MethodPut, "/api/v1/admin/settings/"+tracking.SettingKey, map[string]any{"value": pair.value})
+			if response.Code != http.StatusBadRequest {
+				t.Errorf("%s: the settings form answered %d: %s", name, response.Code, response.Body.String())
+			}
+			if text := message(response); !strings.Contains(text, "넘을 수 없습니다") {
+				t.Errorf("%s: the refusal does not say what the limit is: %q", name, text)
+			}
+			if settings := storedSettings(); settings.MatomoSiteID != settledID || settings.MeasurementID != "" || settings.MomentoSiteID != "" || settings.MatomoURL != "https://matomo.corp.example" {
+				t.Errorf("%s: the settings form wrote over the stored configuration: %+v", name, settings)
+			}
+			if body := pageBody(); strings.Contains(body, pair.seen) {
+				t.Errorf("%s: the refused value is in the page body (%d bytes)", name, len(body))
+			}
+		}
+
+		// And the control again from the other side: a value on the limit is stored
+		// and served, so what the limits describe as allowed is allowed.
+		onTheLimit := providerDocument(map[string]any{"provider": tracking.ProviderMatomo,
+			"matomoUrl":    "https://matomo.corp.example/" + strings.Repeat("p", tracking.MaxProviderURLRunes-len("https://matomo.corp.example/")),
+			"matomoSiteId": strings.Repeat("7", tracking.MaxProviderIDRunes)})
+		if response := request(http.MethodPut, "/api/v1/admin/settings/"+tracking.SettingKey, map[string]any{"value": onTheLimit}); response.Code != http.StatusOK {
+			t.Fatalf("a provider configuration on the limits was refused: %d %s", response.Code, response.Body.String())
+		}
+		if body := pageBody(); !strings.Contains(body, strings.Repeat("7", tracking.MaxProviderIDRunes)) {
+			t.Errorf("a configuration on the limits is not served: %d bytes", len(body))
+		}
+	})
+
 	// The one-click route answers for one origin — the one a report named — and
 	// its trail row has to say what the list now holds. Neither was true. The
 	// handler checked for an "http" prefix and appended the string as it arrived,

@@ -58,8 +58,54 @@ const MaxAllowedHostRunes = 300
 // entry: a scheme, DNS name and optional port fit with room to spare, including
 // addresses written in Korean. A provider origin reaches the same three policy
 // directives, so it needs the same bound. Paths and queries do not reach the
-// header and are deliberately left outside this limit.
+// header and are deliberately left outside this limit; they reach the page, and
+// MaxProviderURLRunes below is what bounds them there.
 const MaxProviderOriginRunes = 300
+
+// MaxProviderIDRunes and MaxProviderURLRunes bound the rest of what a provider
+// branch of Snippet renders, which MaxProviderOriginRunes does not: that limit
+// sees the host of an address because the host is what reaches the policy
+// header, and these two see what reaches the page. Snippet writes
+// MomentoSiteID, MeasurementID and MatomoSiteID, and the whole of MomentoURL
+// and MatomoURL including path and query, into the markup injected into the body
+// of every tracked page; before these limits the only thing validation asked of
+// those five was whether the ones the chosen provider needs are filled in, so a
+// collector address with eight thousand runes of path on it, or a measurement id
+// a megabyte long, was stored and then served to every visitor. A pasted snippet
+// has had MaxSnippetBytes over it all along, and these two give the markup the
+// provider branches generate the same discipline, so both halves of one settings
+// document are bounded.
+//
+// 200 runes for an id is set well past use, as the limits above are: a GA4
+// measurement id is G- and ten characters, a GTM container id is GTM- and seven,
+// a Matomo site id is an integer, and a Momento site id is a short slug naming
+// the deployment — the longest this package's tests fix as acceptable are the
+// eight runes of "agenthub" and the three of "G-1". 1024 runes for a whole
+// address leaves a
+// collector reached through a path and a query plenty of room above the 300
+// runes of its origin, and holds the longest address the tests fix as
+// acceptable — an origin at MaxProviderOriginRunes, and a collector with a
+// hundred path segments on it — comfortably inside, so switching these on
+// refuses nothing that was working.
+//
+// Both count runes rather than bytes, for the reason every limit here does: an
+// address or a site name can be written in Korean, which is three bytes a rune,
+// and a limit in bytes would refuse a Korean id a third of the length of an
+// ASCII one it accepts. What arrives in the page is bytes, and these limits say
+// nothing about that number directly — the tests measure it, and it follows the
+// script the administrator writes in, up to four times the runes plus whatever
+// html.EscapeString adds — the largest markup these limits accept measures 1585
+// bytes with the id and address in ASCII, 3987 in Korean, 5188 in letters that
+// take four bytes each and 6389 when every letter is one the escaping expands,
+// all four measured by this package's tests and all four inside the eight
+// kilobytes MaxSnippetBytes allows a pasted snippet, which is the symmetry these
+// two limits exist for. Both refuse rather than trim, as everything else here
+// does: an id an administrator reads back has to be the one they entered, and a
+// trimmed collector address would point somewhere nobody chose.
+const (
+	MaxProviderIDRunes  = 200
+	MaxProviderURLRunes = 1024
+)
 
 // MaxAllowedHostEntries and MaxAllowedHostsTotalRunes bound the allow list
 // itself, which the limit on one entry does not. PolicySources writes every
@@ -277,6 +323,26 @@ func (s Settings) Validate() error {
 	} {
 		if count := utf8.RuneCountInString(originOf(provider.address)); count > MaxProviderOriginRunes {
 			return fmt.Errorf("%s 주소의 출처는 %d자를 넘을 수 없습니다 (%d자)", provider.name, MaxProviderOriginRunes, count)
+		}
+		// The origin is what reaches the header; the whole address, path and query
+		// included, is what Snippet writes into the page. So it is bounded too, and
+		// after the origin, which is the more specific thing to be told.
+		if count := utf8.RuneCountInString(provider.address); count > MaxProviderURLRunes {
+			return fmt.Errorf("%s 주소는 %d자를 넘을 수 없습니다 (%d자)", provider.name, MaxProviderURLRunes, count)
+		}
+	}
+	// The three ids reach nothing but the page, which is why they are measured
+	// here beside the addresses rather than under the provider switch: the checks
+	// below ask only whether the id the chosen provider needs is filled in, and an
+	// id stored while the provider points elsewhere is an id a later write only
+	// has to flip the provider to serve. The message names the field because the
+	// form holds three of them, and the length because a value this long was
+	// pasted rather than typed and its size is not on the screen.
+	for _, field := range []struct{ name, value string }{
+		{"Momento 사이트 id", s.MomentoSiteID}, {"measurement id", s.MeasurementID}, {"Matomo 사이트 id", s.MatomoSiteID},
+	} {
+		if count := utf8.RuneCountInString(field.value); count > MaxProviderIDRunes {
+			return fmt.Errorf("%s 는 %d자를 넘을 수 없습니다 (%d자)", field.name, MaxProviderIDRunes, count)
 		}
 	}
 	if !s.Enabled {
