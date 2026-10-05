@@ -116,6 +116,13 @@ func TestValidationRefusesWhatCannotWork(t *testing.T) {
 		"custom too large":    {Enabled: true, Provider: ProviderCustom, CustomSnippet: "<script>" + strings.Repeat("x", MaxSnippetBytes) + "</script>"},
 		"bad allowed host":    {Provider: ProviderNone, AllowedHosts: "momento.corp.example"},
 		"environment markup":  {Enabled: true, Provider: ProviderMomento, MomentoURL: "https://m.corp.example", MomentoSiteID: "x", MomentoEnvironment: `"><script>`},
+		"momento site id too long": {Enabled: true, Provider: ProviderMomento, MomentoURL: "https://m.corp.example",
+			MomentoSiteID: strings.Repeat("a", MaxProviderIDRunes+1)},
+		"measurement id too long": {Enabled: true, Provider: ProviderGA4, MeasurementID: "G-" + strings.Repeat("1", MaxProviderIDRunes)},
+		"matomo site id too long": {Enabled: true, Provider: ProviderMatomo, MatomoURL: "https://m.corp.example",
+			MatomoSiteID: strings.Repeat("1", MaxProviderIDRunes+1)},
+		"matomo url too long": {Enabled: true, Provider: ProviderMatomo, MatomoSiteID: "1",
+			MatomoURL: "https://m.corp.example/" + strings.Repeat("p", MaxProviderURLRunes)},
 	}
 	for name, settings := range cases {
 		if err := settings.Validate(); err == nil {
@@ -222,6 +229,148 @@ func TestProviderOriginLimitsLeaveIncompleteURLsToProviderValidation(t *testing.
 					}
 				})
 			}
+		}
+	}
+}
+
+// providerAddress writes an address of exactly size runes whose origin is well
+// inside MaxProviderOriginRunes, so a test can sit on either side of the limit
+// on the whole address without the origin limit answering first. The filler is
+// a parameter because the limit counts runes and the page carries bytes.
+func providerAddress(size int, letter string) string {
+	const prefix = "https://m.corp.example/"
+	return prefix + strings.Repeat(letter, size-utf8.RuneCountInString(prefix))
+}
+
+// providerID writes a value of exactly size runes, which is all a site or
+// measurement id has to be for the limit on it to be tested.
+func providerID(size int, letter string) string {
+	return strings.Repeat(letter, size)
+}
+
+// MaxProviderOriginRunes bounds the host of a provider address because the host
+// is what reaches the policy header. What reaches the page is more than that:
+// Snippet writes MomentoSiteID, MeasurementID and MatomoSiteID, and the whole of
+// MomentoURL and MatomoURL with their paths and queries, into the markup
+// injected into the body of every tracked page, and validation used to ask of
+// those five only whether the ones the chosen provider needs are filled in. So
+// each carries its own limit here, counted in runes because an id or an address
+// can be written in Korean, refused rather than trimmed because a value an
+// administrator reads back has to be the one they entered, and refused above the
+// provider switch so that a value stored while the provider points elsewhere is
+// not a value a later write only has to flip the provider to serve.
+func TestWhatTheProviderBranchesRenderIsBoundedInEveryMode(t *testing.T) {
+	for _, field := range []struct {
+		name  string
+		owner string
+		limit int
+		value func(size int, letter string) string
+		set   func(*Settings, string)
+	}{
+		{"Momento 사이트 id", ProviderMomento, MaxProviderIDRunes, providerID,
+			func(s *Settings, value string) { s.MomentoSiteID = value }},
+		{"measurement id", ProviderGA4, MaxProviderIDRunes, providerID,
+			func(s *Settings, value string) { s.MeasurementID = value }},
+		{"Matomo 사이트 id", ProviderMatomo, MaxProviderIDRunes, providerID,
+			func(s *Settings, value string) { s.MatomoSiteID = value }},
+		{"Momento 주소", ProviderMomento, MaxProviderURLRunes, providerAddress,
+			func(s *Settings, value string) { s.MomentoURL = value }},
+		{"Matomo 주소", ProviderMatomo, MaxProviderURLRunes, providerAddress,
+			func(s *Settings, value string) { s.MatomoURL = value }},
+	} {
+		for _, script := range []struct{ name, letter string }{{"ASCII", "a"}, {"Korean", "가"}} {
+			for _, size := range []int{field.limit, field.limit + 1} {
+				for _, mode := range []string{"selected", "disabled", "none", "other provider", "proxy"} {
+					t.Run(fmt.Sprintf("%s/%s/%d/%s", field.name, script.name, size, mode), func(t *testing.T) {
+						settings := Settings{Enabled: true, Provider: field.owner,
+							MomentoURL: "https://m.corp.example", MomentoSiteID: "x", MomentoEnvironment: "prd",
+							MeasurementID: "G-1",
+							MatomoURL:     "https://m.corp.example", MatomoSiteID: "1"}
+						value := field.value(size, script.letter)
+						field.set(&settings, value)
+						switch mode {
+						case "disabled":
+							settings.Enabled = false
+						case "none":
+							settings.Provider = ProviderNone
+						case "other provider":
+							settings.Provider = ProviderGA4
+							if field.owner == ProviderGA4 {
+								settings.Provider = ProviderMomento
+							}
+						case "proxy":
+							settings.Provider, settings.MomentoProxy = ProviderMomento, true
+						}
+						before := settings
+						err := settings.Validate()
+						if settings != before {
+							t.Error("validation rewrote the settings")
+						}
+						if size <= field.limit {
+							if err != nil {
+								t.Fatalf("a value on the limit was refused: %v", err)
+							}
+							return
+						}
+						if err == nil {
+							t.Fatalf("%s of %d runes was accepted in %s mode", field.name, size, mode)
+						}
+						// The administrator has the form in front of them and no view of
+						// the page the value is rendered into, so the message has to name
+						// the field and both lengths.
+						for _, want := range []string{field.name, fmt.Sprintf("%d자", field.limit), fmt.Sprintf("%d자", size)} {
+							if !strings.Contains(err.Error(), want) {
+								t.Errorf("the error does not say %q: %v", want, err)
+							}
+						}
+						if strings.Contains(err.Error(), value) {
+							t.Error("the error repeats the oversized value")
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+// What the limits accept is what every tracked page then carries, so the size of
+// the largest markup they allow is measured here rather than reasoned about from
+// the format strings. A pasted snippet is held to MaxSnippetBytes, and the point
+// of the provider limits is that the markup the provider branches generate is
+// held to the same discipline — which is an assertion about bytes, so it is made
+// in each of the scripts an id and an address can be written in and with the
+// letters html.EscapeString expands, since those are what turn runes into the
+// bytes a page carries.
+func TestTheLargestProviderSnippetTheLimitsAllowIsMeasured(t *testing.T) {
+	for _, script := range []struct{ name, letter string }{
+		{"ASCII", "a"},
+		{"Korean", "가"},
+		{"four-byte letters", "😀"},
+		{"letters html escaping expands", "&"},
+	} {
+		for _, provider := range []string{ProviderMomento, ProviderGA4, ProviderGTM, ProviderMatomo} {
+			t.Run(script.name+"/"+provider, func(t *testing.T) {
+				id := strings.Repeat(script.letter, MaxProviderIDRunes)
+				address := providerAddress(MaxProviderURLRunes, script.letter)
+				settings := Settings{Enabled: true, Provider: provider,
+					// The collector is addressed directly, since the proxy renders
+					// ProxyPath instead of the address and is therefore not the
+					// largest shape. The environment keeps its own 32-byte limit.
+					MomentoURL: address, MomentoSiteID: id, MomentoProxy: false,
+					MomentoEnvironment: strings.Repeat("e", 32),
+					MeasurementID:      id,
+					MatomoURL:          address, MatomoSiteID: id}
+				if err := settings.Validate(); err != nil {
+					t.Fatalf("the largest configuration the limits describe is refused: %v", err)
+				}
+				rendered := settings.Snippet("")
+				t.Logf("%s/%s: the largest accepted configuration renders %d bytes / %d runes of markup",
+					script.name, provider, len(rendered), utf8.RuneCountInString(rendered))
+				if len(rendered) > MaxSnippetBytes {
+					t.Errorf("the largest accepted %s configuration in %s renders %d bytes into every page, past the %d a pasted snippet is held to",
+						provider, script.name, len(rendered), MaxSnippetBytes)
+				}
+			})
 		}
 	}
 }

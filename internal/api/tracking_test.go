@@ -523,9 +523,16 @@ func TestTrackingSettingIsValidatedOnTheWayIn(t *testing.T) {
 	}
 	for name, value := range map[string]map[string]any{
 		"oversized snippet": {"enabled": true, "provider": "custom", "customSnippet": strings.Repeat("x", tracking.MaxSnippetBytes+1)},
-		"unknown provider":  {"enabled": true, "provider": "piwik"},
-		"unknown field":     {"enabled": false, "unsafeInline": true},
-		"wrong type":        {"enabled": "yes"},
+		// The provider branches render these into every tracked page, so the
+		// settings route has to refuse them for the same reason it refuses an
+		// oversized paste. This calls the API validation function, not an HTTP
+		// write or a database save.
+		"oversized measurement id": {"enabled": true, "provider": "ga4", "measurementId": "G-" + strings.Repeat("1", tracking.MaxProviderIDRunes)},
+		"oversized matomo url": {"enabled": true, "provider": "matomo", "matomoSiteId": "1",
+			"matomoUrl": "https://m.corp.example/" + strings.Repeat("p", tracking.MaxProviderURLRunes)},
+		"unknown provider": {"enabled": true, "provider": "piwik"},
+		"unknown field":    {"enabled": false, "unsafeInline": true},
+		"wrong type":       {"enabled": "yes"},
 	} {
 		if err := server.validateSetting(request, tracking.SettingKey, value, nil); err == nil {
 			t.Errorf("%s was accepted", name)
