@@ -4,6 +4,7 @@ import { subject } from '../korean'
 import { api } from '../api'
 import { ErrorBanner, Loading, PageHeader, SuccessBanner } from '../components/UI'
 import { runtimeDescriptors, runtimeLogoClass, setRuntimeAvailability } from '../runtime'
+import { TRACKING_LIMITS, allowedHostsUsage } from './trackingLimits'
 
 type SettingsMap=Record<string,Record<string,unknown>>
 const tabs=[{id:'general',label:'General',icon:Settings},{id:'authentication',label:'Authentication',icon:KeyRound},{id:'mcp.oauth',label:'MCP SSO',icon:Link2},{id:'kubernetes',label:'Kubernetes',icon:Boxes},{id:'runtimeAgents',label:'Runtime Agents',icon:Bot},{id:'runtimeEnvironment',label:'Runtime Environment',icon:FileCog},{id:'sessionGateway',label:'Session Gateway',icon:ExternalLink},{id:'governance',label:'Governance',icon:ShieldCheck},{id:'logging',label:'Logging',icon:Network},{id:'observability',label:'Observability',icon:Activity},{id:'tracking',label:'Tracking',icon:BarChart3},{id:'mail',label:'Mail',icon:Mail},{id:'release',label:'Offline & Release',icon:Save}]
@@ -130,7 +131,15 @@ function RuntimeEnvironmentForm({value,update}:{value:Record<string,unknown>;upd
   </>
 }
 const TRACKING_PROVIDERS=[{id:'none',label:'선택 안 함'},{id:'momento',label:'Momento (사내 수집기)'},{id:'ga4',label:'Google Analytics 4'},{id:'gtm',label:'Google Tag Manager'},{id:'matomo',label:'Matomo'},{id:'custom',label:'직접 붙여 넣기'}]
-const TRACKING_SNIPPET_LIMIT=8*1024
+// 서버가 거절하는 상한은 관리자가 저장을 누르기 전에 보여야 한다. 입력 하나로 끝나는 값
+// (사이트 id·수집기 주소)은 maxLength 로 아예 넘겨 쓸 수 없게 하고, 목록처럼 여러 값이
+// 하나의 예산을 나눠 쓰는 칸은 지금 쓴 양을 세어 보여 준다 — 그쪽은 maxLength 로 묶을 수
+// 없다. maxLength 는 UTF-16 단위를 세므로 네 바이트 문자에서는 서버의 룬 계산보다 엄하다.
+// 주소와 id 에 그런 문자가 들어가는 경우는 없고, 엄한 쪽으로 어긋나는 것은 서버가 거절할
+// 값을 미리 막는 방향이라 안전하다. 반대로 느슨하면 안내가 거짓이 된다.
+const TRACKING_SNIPPET_LIMIT=TRACKING_LIMITS.snippetBytes
+const TRACKING_ID_HINT=`${TRACKING_LIMITS.providerIdRunes}자까지 입력할 수 있습니다.`
+const TRACKING_URL_HINT=`주소 전체는 ${TRACKING_LIMITS.providerUrlRunes}자까지, 정책 헤더에 들어가는 scheme://호스트 부분은 ${TRACKING_LIMITS.providerOriginRunes}자까지.`
 
 // 방문 추적 스니펫. 어려운 쪽은 <script> 삽입이 아니라 콘텐츠 보안 정책이다 — 콘솔은
 // 자기 출처의 스크립트만 허용하므로, 서버가 요청마다 nonce 를 만들어 스니펫의 모든
@@ -144,6 +153,10 @@ function TrackingForm({value,update}:{value:Record<string,unknown>;update:(key:s
   const proxy=value.momentoProxy!==false
   const snippet=String(value.customSnippet??'')
   const snippetBytes=new TextEncoder().encode(snippet).length
+  // 목록 칸은 maxLength 로 묶을 수 없다 — 상한이 입력 전체 길이가 아니라 항목 수와 항목
+  // 길이의 합계이고, 구분자는 세지 않는다. 그래서 서버가 세는 것과 같은 방식으로 세어
+  // 지금 쓴 양을 보여 준다.
+  const hosts=allowedHostsUsage(String(value.allowedHosts??''))
   return <>
     <Section title="방문 추적" description="관리자가 붙인 추적 스크립트를 콘솔의 모든 화면에 싣습니다. 기본은 꺼짐이며, 켜기 전까지 어떤 페이지도 달라지지 않습니다.">
       <Toggle label="방문 추적 사용" checked={Boolean(value.enabled)} change={v=>update('enabled',v)}/>
@@ -155,8 +168,8 @@ function TrackingForm({value,update}:{value:Record<string,unknown>;update:(key:s
       </div>
       {provider==='momento'&&<>
         <div className="form-grid">
-          <Field label="Momento 수집기 주소"><input type="url" value={String(value.momentoUrl??'')} onChange={e=>update('momentoUrl',e.target.value)} placeholder="https://momento.company.local"/></Field>
-          <Field label="사이트 id"><input value={String(value.momentoSiteId??'')} onChange={e=>update('momentoSiteId',e.target.value)} placeholder="agenthub"/></Field>
+          <Field label="Momento 수집기 주소" hint={TRACKING_URL_HINT}><input type="url" maxLength={TRACKING_LIMITS.providerUrlRunes} value={String(value.momentoUrl??'')} onChange={e=>update('momentoUrl',e.target.value)} placeholder="https://momento.company.local"/></Field>
+          <Field label="사이트 id" hint={TRACKING_ID_HINT}><input maxLength={TRACKING_LIMITS.providerIdRunes} value={String(value.momentoSiteId??'')} onChange={e=>update('momentoSiteId',e.target.value)} placeholder="agenthub"/></Field>
         </div>
         <div className="form-grid">
           <Field label="환경 이름" hint="수집기가 방문을 분류하는 이름입니다. 기본 prd."><input value={String(value.momentoEnvironment??'prd')} onChange={e=>update('momentoEnvironment',e.target.value)} placeholder="prd"/></Field>
@@ -164,15 +177,15 @@ function TrackingForm({value,update}:{value:Record<string,unknown>;update:(key:s
         <Toggle label="같은 오리진 프록시 사용 (권장)" checked={proxy} change={v=>update('momentoProxy',v)}/>
         <div className="info-box"><ShieldCheck size={17}/><div><strong>{proxy?'외부 출처가 정책에 등장하지 않습니다':'수집기 주소가 정책에 추가됩니다'}</strong><p>{proxy?<>콘솔이 <code>/momento/*</code> 를 수집기로 넘기고 스니펫은 <code>data-endpoint="/momento"</code> 로 이 오리진에 보고합니다. 브라우저는 콘솔 외의 어떤 주소에도 연결하지 않으므로 콘텐츠 보안 정책을 바꿀 필요가 없습니다. 콘솔의 세션 쿠키는 수집기로 전달되지 않습니다.</>:<>브라우저가 수집기에 직접 연결합니다. 수집기 주소가 <code>script-src</code> · <code>connect-src</code> · <code>img-src</code> 에 더해지며, 추적을 끄면 정책은 원래대로 좁아집니다.</>}</p></div></div>
       </>}
-      {(provider==='ga4'||provider==='gtm')&&<Field label="Measurement / Container ID"><input value={String(value.measurementId??'')} onChange={e=>update('measurementId',e.target.value)} placeholder={provider==='ga4'?'G-XXXXXXXXXX':'GTM-XXXXXXX'}/></Field>}
+      {(provider==='ga4'||provider==='gtm')&&<Field label="Measurement / Container ID" hint={TRACKING_ID_HINT}><input maxLength={TRACKING_LIMITS.providerIdRunes} value={String(value.measurementId??'')} onChange={e=>update('measurementId',e.target.value)} placeholder={provider==='ga4'?'G-XXXXXXXXXX':'GTM-XXXXXXX'}/></Field>}
       {provider==='matomo'&&<div className="form-grid">
-        <Field label="Matomo 주소"><input type="url" value={String(value.matomoUrl??'')} onChange={e=>update('matomoUrl',e.target.value)} placeholder="https://matomo.company.local"/></Field>
-        <Field label="사이트 id"><input value={String(value.matomoSiteId??'')} onChange={e=>update('matomoSiteId',e.target.value)} placeholder="1"/></Field>
+        <Field label="Matomo 주소" hint={TRACKING_URL_HINT}><input type="url" maxLength={TRACKING_LIMITS.providerUrlRunes} value={String(value.matomoUrl??'')} onChange={e=>update('matomoUrl',e.target.value)} placeholder="https://matomo.company.local"/></Field>
+        <Field label="사이트 id" hint={TRACKING_ID_HINT}><input maxLength={TRACKING_LIMITS.providerIdRunes} value={String(value.matomoSiteId??'')} onChange={e=>update('matomoSiteId',e.target.value)} placeholder="1"/></Field>
       </div>}
-      {provider==='custom'&&<Field label="추적 코드" hint={`추적 도구가 준 <script> 블록을 그대로 붙여 넣으세요. ${snippetBytes.toLocaleString('ko-KR')} / ${TRACKING_SNIPPET_LIMIT.toLocaleString('ko-KR')} 바이트. 코드 안의 http(s) 주소는 자동으로 정책에 더해집니다.`}>
+      {provider==='custom'&&<Field label="추적 코드" hint={`추적 도구가 준 <script> 블록을 그대로 붙여 넣으세요. ${snippetBytes.toLocaleString('ko-KR')} / ${TRACKING_SNIPPET_LIMIT.toLocaleString('ko-KR')} 바이트. 코드 안의 http(s) 주소는 자동으로 정책에 더해지며, 그 주소는 ${TRACKING_LIMITS.snippetOriginEntries}개·합계 ${TRACKING_LIMITS.snippetOriginsTotalRunes.toLocaleString('ko-KR')}자까지입니다.`}>
         <textarea rows={8} value={snippet} onChange={e=>update('customSnippet',e.target.value)} placeholder={'<script async src="https://tracker.company.local/t.js" data-site="…"></script>'} spellCheck={false}/>
       </Field>}
-      <Field label="추가 허용 출처" hint="스니펫에서 자동으로 읽지 못한 출처를 한 줄에 하나씩 https://호스트 형태로 적습니다. 아래 '차단된 출처' 에서 한 번에 넣을 수도 있습니다.">
+      <Field label="추가 허용 출처" hint={`스니펫에서 자동으로 읽지 못한 출처를 한 줄에 하나씩 https://호스트 형태로 적습니다. 아래 '차단된 출처' 에서 한 번에 넣을 수도 있습니다. ${hosts.entries} / ${TRACKING_LIMITS.allowedHostEntries}개 · ${hosts.runes.toLocaleString('ko-KR')} / ${TRACKING_LIMITS.allowedHostsTotalRunes.toLocaleString('ko-KR')}자, 한 줄은 ${TRACKING_LIMITS.allowedHostRunes}자까지.`}>
         <textarea rows={3} value={String(value.allowedHosts??'')} onChange={e=>update('allowedHosts',e.target.value)} placeholder="https://pixel.company.local" spellCheck={false}/>
       </Field>
       <Toggle label="관리 화면에서도 추적" checked={Boolean(value.includeAdmin)} change={v=>update('includeAdmin',v)}/>
