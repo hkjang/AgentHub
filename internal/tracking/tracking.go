@@ -280,9 +280,11 @@ func (s Settings) Validate() error {
 		return errors.New("Momento 환경 이름을 확인해 주세요 (32자 이하, 따옴표·꺾쇠 없이)")
 	}
 	// Each entry here becomes a source in the policy header of every page as it
-	// was typed — the provider addresses go through originOf, these do not — so
-	// the two characters a source must not contain are checked where the entry
-	// is written rather than where the header is built: a semicolon would close
+	// was typed, where the provider addresses contribute only the origin originOf
+	// reads out of them — which does not make those safe, and the provider loop
+	// below refuses the same separators for the same reason. So the characters a
+	// source must not contain are checked where the entry is written rather than
+	// where the header is built: a semicolon would close
 	// the directive the entry sits in and open one of the writer's choosing for
 	// the whole console, and there is nothing to stop a pasted line from being
 	// as long as the paste was. Entries already stored are refused rather than
@@ -321,8 +323,48 @@ func (s Settings) Validate() error {
 	for _, provider := range []struct{ name, address string }{
 		{"Momento", s.MomentoURL}, {"Matomo", s.MatomoURL},
 	} {
-		if count := utf8.RuneCountInString(originOf(provider.address)); count > MaxProviderOriginRunes {
+		origin := originOf(provider.address)
+		if count := utf8.RuneCountInString(origin); count > MaxProviderOriginRunes {
 			return fmt.Errorf("%s 주소의 출처는 %d자를 넘을 수 없습니다 (%d자)", provider.name, MaxProviderOriginRunes, count)
+		}
+		// How large the origin is, is not the only thing that matters about it. A
+		// policy header separates its directives with a semicolon and its policies
+		// with a comma, so neither character can appear in a source — and originOf
+		// hands back whatever url.Parse tolerated as a host, which includes both.
+		// The allow-list loop above has refused a semicolon in an entry all along
+		// and reads these two addresses as safe because they pass through originOf
+		// first; they are not. An origin of "collector.corp.example;script-src"
+		// reaches img-src, connect-src and script-src alike, closes the first of
+		// them and opens an empty script-src that precedes the real one, and a
+		// browser keeps the first occurrence of a directive and ignores every later
+		// one: the page is then served under a policy that refuses every script on
+		// it, the console's own bundle included — the console taken down rather
+		// than the tracking, which is the harm the limits here exist to prevent. A
+		// comma splits the one header into two policies, both enforced, and only
+		// one of them carries the nonce the injected snippet needs.
+		//
+		// Only the origin is measured, as the limit above measures only the origin:
+		// a semicolon or a comma further along an address is a path or a query,
+		// which Snippet writes into the page and which never reaches the header, so
+		// refusing those would refuse collector addresses that work. Neither
+		// character appears in a DNS name or a port, so nothing anybody would
+		// configure is refused. A space, a tab and a newline would do the same
+		// damage and need no check here: url.Parse refuses a host containing any of
+		// them, so originOf has already answered. The allow list needs no comma
+		// check either, because splitHosts separates its entries on one.
+		//
+		// Refused rather than rewritten, like every other check here: an address an
+		// administrator reads back has to be the one they entered.
+		for _, separator := range []struct {
+			letter        rune
+			name, because string
+		}{
+			{';', "세미콜론을", "정책 지시문이 거기서 끝납니다"},
+			{',', "쉼표를", "정책 하나가 거기서 끝나고 다음 정책이 시작됩니다"},
+		} {
+			if strings.ContainsRune(origin, separator.letter) {
+				return fmt.Errorf("%s 주소의 출처에는 %s 쓸 수 없습니다 — %s", provider.name, separator.name, separator.because)
+			}
 		}
 		// The origin is what reaches the header; the whole address, path and query
 		// included, is what Snippet writes into the page. So it is bounded too, and

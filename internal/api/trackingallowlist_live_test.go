@@ -378,6 +378,95 @@ func TestAnAllowedOriginCannotReachThePolicyHeaderUnchecked(t *testing.T) {
 		}
 	})
 
+	// The limits above bound how large a provider address may be. Whether what it
+	// contributes is a policy source at all was never asked: a header separates
+	// its directives with a semicolon and its policies with a comma, and the
+	// allow-list loop refuses a semicolon in an entry for exactly that reason,
+	// while reading the provider addresses as safe because they pass through
+	// originOf. They are not — url.Parse keeps both characters inside a host — so
+	// an address of "https://collector.corp.example;script-src" was stored and
+	// then served, and the empty script-src it opens inside img-src precedes the
+	// real one, which a browser then ignores: every script on the page refused,
+	// the console's own bundle included.
+	//
+	// Exercised through the real route with a real session, because a unit call to
+	// validateSetting is not proof that a write is refused, and the header is read
+	// back off a real response because the header is where the harm was.
+	t.Run("a provider address cannot restructure the policy header a page is served under", func(t *testing.T) {
+		providerDocument := func(address string) map[string]any {
+			return map[string]any{"enabled": true, "placement": "head",
+				"provider": tracking.ProviderMatomo, "matomoUrl": address, "matomoSiteId": "7"}
+		}
+		storedURL := func() string {
+			t.Helper()
+			settings := tracking.Defaults()
+			if err := db.Setting(ctx, tracking.SettingKey, &settings); err != nil {
+				t.Fatal(err)
+			}
+			return settings.MatomoURL
+		}
+
+		const settledURL = "https://matomo.corp.example"
+		if err := db.PutSetting(ctx, tracking.SettingKey, providerDocument(settledURL), nil, admin.ID); err != nil {
+			t.Fatal(err)
+		}
+		// The control, so the refusals below are the check talking and not the
+		// route: a stored provider address really does reach the header, and the
+		// header it reaches is the one policy the console meant to send.
+		settledHeader := policyHeader()
+		if !strings.Contains(settledHeader, settledURL) {
+			t.Fatalf("the stored provider address does not reach the header: %s", settledHeader)
+		}
+		if problems := policyMalformations(settledHeader); len(problems) != 0 {
+			t.Fatalf("the header served from an ordinary configuration already holds %v: %s", problems, settledHeader)
+		}
+
+		for name, refused := range map[string]struct{ address, says string }{
+			"a semicolon names a directive of its own":  {settledURL + ";script-src", "세미콜론"},
+			"a comma opens a second policy":             {settledURL + ",evil.corp.example", "쉼표"},
+			"a semicolon stored with tracking off":      {settledURL + ";style-src", "세미콜론"},
+			"a comma in the host of a bare scheme host": {"https://a.corp.example,b.corp.example:8443", "쉼표"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				value := providerDocument(refused.address)
+				if strings.Contains(name, "tracking off") {
+					value["enabled"], value["provider"] = false, tracking.ProviderNone
+				}
+				response := request(http.MethodPut, "/api/v1/admin/settings/"+tracking.SettingKey, map[string]any{"value": value})
+				if response.Code != http.StatusBadRequest {
+					t.Errorf("the settings form answered %d: %s", response.Code, response.Body.String())
+				}
+				if text := message(response); !strings.Contains(text, refused.says) {
+					t.Errorf("the refusal does not name the character that breaks the header: %q", text)
+				}
+				if got := storedURL(); got != settledURL {
+					t.Errorf("the settings form wrote over the stored address: %q", got)
+				}
+				header := policyHeader()
+				if problems := policyMalformations(header); len(problems) != 0 {
+					t.Errorf("the header the console serves holds %v: %s", problems, header)
+				}
+				if strings.Contains(header, refused.address) {
+					t.Errorf("the refused address is in the header: %s", header)
+				}
+			})
+		}
+
+		// And from the other side: the two separators past the host are a path and
+		// a query, which reach the page and never the header, so an address
+		// carrying them is stored and served as written.
+		withPath := settledURL + "/collect;v=2?ids=1,2"
+		if response := request(http.MethodPut, "/api/v1/admin/settings/"+tracking.SettingKey, map[string]any{"value": providerDocument(withPath)}); response.Code != http.StatusOK {
+			t.Fatalf("an address with a path and a query on it was refused: %d %s", response.Code, response.Body.String())
+		}
+		if got := storedURL(); got != withPath {
+			t.Errorf("the stored address is not the one written: %q", got)
+		}
+		if problems := policyMalformations(policyHeader()); len(problems) != 0 {
+			t.Errorf("an address with a path and a query builds a header holding %v: %s", problems, policyHeader())
+		}
+	})
+
 	// The one-click route answers for one origin — the one a report named — and
 	// its trail row has to say what the list now holds. Neither was true. The
 	// handler checked for an "http" prefix and appended the string as it arrived,

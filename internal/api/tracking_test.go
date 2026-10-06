@@ -513,6 +513,103 @@ func TestProviderOriginsCannotAmplifyThePagePolicyWithoutBound(t *testing.T) {
 	}
 }
 
+// policyMalformations reads a Content-Security-Policy header the way a browser's
+// parser does and reports every way this one is not the single policy the console
+// meant to send: a comma starts another policy, a directive with no source list
+// allows nothing, and a directive named twice is obeyed only in its first
+// occurrence. A source carrying a separator produces one or another of these
+// depending on which separator it is, which is why all three are reported rather
+// than any single string being searched for. Shared with the live test, which
+// asserts the same shape on the header the console really serves.
+func policyMalformations(header string) []string {
+	var problems []string
+	if count := strings.Count(header, ","); count != 0 {
+		problems = append(problems, fmt.Sprintf("%d commas, so a browser enforces %d policies", count, count+1))
+	}
+	seen := map[string]int{}
+	for _, directive := range strings.Split(header, ";") {
+		fields := strings.Fields(directive)
+		if len(fields) == 0 {
+			problems = append(problems, "a directive with no name at all")
+			continue
+		}
+		seen[fields[0]]++
+		if len(fields) == 1 {
+			problems = append(problems, fmt.Sprintf("directive %q carries no source, so it allows nothing", fields[0]))
+		}
+	}
+	for name, count := range seen {
+		if count > 1 {
+			problems = append(problems, fmt.Sprintf("directive %q appears %d times, and a browser obeys the first", name, count))
+		}
+	}
+	return problems
+}
+
+// The limits above bound how much a provider origin adds to the header. They say
+// nothing about whether what it adds is a source at all: a header separates its
+// directives with a semicolon and its policies with a comma, and url.Parse keeps
+// both characters inside a host, so originOf hands either one to img-src,
+// connect-src and script-src alike. An origin of "m.corp.example;script-src"
+// closes img-src and opens an empty script-src that precedes the real one — and a
+// browser keeps the first occurrence of a directive and ignores every later
+// one — so the page is served under a policy that refuses every script on it,
+// the console's own bundle included. A comma splits the one header into two
+// policies, both enforced, and only one of them carries the nonce.
+//
+// Measured on the header the console really builds and refused at the validation
+// the settings route calls, with the shape of the header asserted rather than the
+// presence of a string: the harm is structural. This calls the API validation
+// function, not an HTTP write or a database save — the live test alongside does
+// that.
+func TestAProviderOriginCannotRestructureThePagePolicy(t *testing.T) {
+	const nonce = "MDEyMzQ1Njc4OWFiY2RlZg=="
+	server := &Server{}
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings/"+tracking.SettingKey, nil)
+	for _, provider := range []string{tracking.ProviderMomento, tracking.ProviderMatomo} {
+		for _, fixture := range []struct {
+			name, address string
+			refused       bool
+		}{
+			{"a semicolon naming the directive it opens", "https://m.corp.example;script-src", true},
+			{"a comma opening a second policy", "https://m.corp.example,evil.corp.example", true},
+			// The controls: an ordinary address, and the two separators where they
+			// belong — past the host, in a path or a query, which reaches the page
+			// and never the header.
+			{"an ordinary address", "https://m.corp.example:8443", false},
+			{"a path and a query carrying both", "https://m.corp.example/collect;v=2?ids=1,2", false},
+		} {
+			t.Run(provider+"/"+fixture.name, func(t *testing.T) {
+				value := map[string]any{"enabled": true, "provider": provider, "placement": "head",
+					provider + "Url": fixture.address, provider + "SiteId": "1", "momentoProxy": false}
+				settings, err := decodeTrackingSettings(value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				header := pagePolicy(settings, nonce)
+				problems := policyMalformations(header)
+				if fixture.refused {
+					// Why this value has to be refused rather than bounded: stored,
+					// it is a header no browser reads as the console meant it.
+					if len(problems) == 0 {
+						t.Errorf("the header this value builds is well formed, so there is nothing here to refuse: %s", header)
+					} else {
+						t.Logf("the refused value would have built %v: %s", problems, header)
+					}
+				} else if len(problems) != 0 {
+					t.Errorf("an accepted address builds a header with %v: %s", problems, header)
+				}
+				if err := settings.Validate(); (err != nil) != fixture.refused {
+					t.Errorf("Validate refused=%t, want %t: %v", err != nil, fixture.refused, err)
+				}
+				if err := server.validateSetting(request, tracking.SettingKey, value, nil); (err != nil) != fixture.refused {
+					t.Errorf("API validation refused=%t, want %t: %v", err != nil, fixture.refused, err)
+				}
+			})
+		}
+	}
+}
+
 // The setting is validated on the way in like every other one.
 func TestTrackingSettingIsValidatedOnTheWayIn(t *testing.T) {
 	server := &Server{}

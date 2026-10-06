@@ -233,6 +233,92 @@ func TestProviderOriginLimitsLeaveIncompleteURLsToProviderValidation(t *testing.
 	}
 }
 
+// A policy header separates its directives with a semicolon and its policies
+// with a comma, so neither character can appear in a source. The allow list has
+// refused a semicolon in an entry all along, because an entry is written into
+// the header as it was typed. The two provider addresses were read as safe
+// because they pass through originOf first — and they are not: url.Parse keeps a
+// semicolon and a comma alike inside a host, so originOf hands either one
+// straight to img-src, connect-src and script-src. Both are refused here on the
+// origin and not on the whole address, because a semicolon or a comma further
+// along is a path or a query that reaches the page and never the header, and in
+// every mode, because an address stored while the provider points elsewhere is
+// one a later write only has to flip the provider to serve.
+func TestProviderOriginsCannotCloseThePolicyDirectiveTheySitIn(t *testing.T) {
+	for _, provider := range []struct{ name, value string }{
+		{"Momento", ProviderMomento}, {"Matomo", ProviderMatomo},
+	} {
+		for _, mode := range []string{"selected", "disabled", "none", "other provider", "proxy"} {
+			for _, fixture := range []struct {
+				name    string
+				url     string
+				refused string
+			}{
+				{"a semicolon names a directive of its own", "https://collector.corp.example;script-src", "세미콜론"},
+				{"a semicolon closing the directive", "https://collector.corp.example;", "세미콜론"},
+				{"a comma opens a second policy", "https://collector.corp.example,evil.corp.example", "쉼표"},
+				{"a semicolon is answered before a comma", "https://a.corp.example;script-src,b.corp.example", "세미콜론"},
+				// Past the host they are a path or a query. Those reach the page
+				// through Snippet and never the header, so refusing them would
+				// refuse collector addresses that work.
+				{"a semicolon in the path", "https://collector.corp.example/collect;v=2", ""},
+				{"a comma in the query", "https://collector.corp.example/collect?ids=1,2", ""},
+				{"an ordinary address with a port", "https://collector.corp.example:8443", ""},
+			} {
+				t.Run(provider.name+"/"+mode+"/"+fixture.name, func(t *testing.T) {
+					settings := Settings{Enabled: true, Provider: provider.value,
+						MomentoURL: "https://m.corp.example", MomentoSiteID: "x",
+						MatomoURL: "https://m.corp.example", MatomoSiteID: "1"}
+					if provider.value == ProviderMomento {
+						settings.MomentoURL = fixture.url
+					} else {
+						settings.MatomoURL = fixture.url
+					}
+					switch mode {
+					case "disabled":
+						settings.Enabled = false
+					case "none":
+						settings.Provider = ProviderNone
+					case "other provider":
+						settings.Provider = ProviderMomento
+						if provider.value == ProviderMomento {
+							settings.Provider = ProviderMatomo
+						}
+					case "proxy":
+						settings.Provider, settings.MomentoProxy = ProviderMomento, true
+					}
+					before := settings
+					err := settings.Validate()
+					if settings != before {
+						t.Error("validation rewrote the settings")
+					}
+					if fixture.refused == "" {
+						if err != nil {
+							t.Fatalf("an ordinary provider address was refused: %v", err)
+						}
+						// And the origin it does contribute carries neither
+						// separator, which is what the check above relies on.
+						for _, origin := range settings.PolicySources().all() {
+							if strings.ContainsAny(origin, ";,") {
+								t.Errorf("origin %q reaches the header with a separator in it", origin)
+							}
+						}
+						return
+					}
+					if err == nil {
+						t.Fatalf("%s origin %q was accepted in %s mode", provider.name, fixture.url, mode)
+					}
+					for _, want := range []string{provider.name, fixture.refused} {
+						if !strings.Contains(err.Error(), want) {
+							t.Errorf("the error does not name %q: %v", want, err)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
 // providerAddress writes an address of exactly size runes whose origin is well
 // inside MaxProviderOriginRunes, so a test can sit on either side of the limit
 // on the whole address without the origin limit answering first. The filler is
