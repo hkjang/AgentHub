@@ -63,6 +63,61 @@ test('허용 출처는 쉼표·공백·탭·줄바꿈 어느 것으로 나눠도
   }
 })
 
+// 위 네 입력은 Go 와 JS 가 **일치하는** 구분자만 쓰므로, 통과해도 두 구현이 같다는 증거가
+// 못 된다. 둘이 갈라지는 자리는 유니코드 공백이다: Go 의 FieldsFunc 술어는 다섯 글자만
+// 보는데 JS 의 `\s` 는 NBSP·전각 공백·U+2028·\v·\f 까지 나눈다. 그래서 아래 두 묶음이
+// (ㄱ) Go 가 실제로 쓰는 구분자 집합을 소스에서 읽어 다섯 글자임을 못박고,
+// (ㄴ) 그 밖의 유니코드 공백에서는 콘솔도 나누지 않음을 본다.
+const splitHostsBody = (() => {
+  const match = source.match(/func splitHosts\(list string\) \[\]string \{[\s\S]*?\n\}/)
+  assert.ok(match, 'internal/tracking/tracking.go 에 splitHosts 선언이 없습니다')
+  return match[0]
+})()
+
+test('Go 가 구분자로 쓰는 글자는 쉼표·공백·\\n·\\r·\\t 다섯 뿐이다', () => {
+  const found = [...splitHostsBody.matchAll(/letter == '((?:\\.|[^'])+)'/g)].map(([, literal]) =>
+    ({ "\\n": '\n', "\\r": '\r', "\\t": '\t' })[literal] ?? literal,
+  )
+  assert.deepEqual(found.sort(), [',', ' ', '\n', '\r', '\t'].sort())
+  // 읽어 낸 집합 각각에서 콘솔도 나눠야 한다.
+  for (const separator of found) {
+    assert.deepEqual(
+      allowedHostsUsage(`https://a.local${separator}https://b.local`),
+      { entries: 2, runes: 30 },
+      `Go 가 나누는 ${JSON.stringify(separator)} 에서 콘솔이 나누지 못했습니다`,
+    )
+  }
+})
+
+test('Go 가 나누지 않는 유니코드 공백에서는 콘솔도 나누지 않는다', () => {
+  // U+00A0·U+3000·U+2028 은 JS 의 `\s` 에 들어 있지만 Go 의 FieldsFunc 술어에는 없다.
+  // 실측: 이 글자로 출처 20개를 이으면 splitHosts 는 항목 1개 499룬으로 읽고
+  // MaxAllowedHostRunes(300) 로 거절한다. 콘솔이 20개 480자로 세면 '상한 안' 이라고
+  // 안내하면서 저장이 거절된다 — 이번 안내의 유일한 산출물인 정확성이 깨지는 자리다.
+  for (const separator of [' ', '　', ' ', ' ', '\v', '\f', ' ', ' ', ' ']) {
+    const list = Array(20).fill('https://a0.example.local').join(separator)
+    assert.deepEqual(
+      allowedHostsUsage(list),
+      { entries: 1, runes: 499 },
+      `서버가 한 항목으로 읽는 ${JSON.stringify(separator)} 에서 콘솔이 나눴습니다`,
+    )
+    assert.ok(
+      allowedHostsUsage(list).runes > TRACKING_LIMITS.allowedHostRunes,
+      '한 항목이 항목 상한을 넘는다고 안내해야 서버의 거절과 맞는다',
+    )
+  }
+})
+
+test('양끝 공백은 서버의 TrimSpace 와 같은 집합으로만 뗀다', () => {
+  // Go 의 TrimSpace 는 unicode.IsSpace 를 쓴다 — U+0085 는 떼고 U+FEFF 는 남긴다.
+  // JS 의 trim() 은 정반대이므로 그대로 쓰면 U+FEFF 를 뗀 만큼 콘솔이 적게 센다.
+  assert.deepEqual(allowedHostsUsage('\u0085https://a.local'), { entries: 1, runes: 15 })
+  assert.deepEqual(allowedHostsUsage('https://a.local\u0085'), { entries: 1, runes: 15 })
+  assert.deepEqual(allowedHostsUsage('﻿https://a.local'), { entries: 1, runes: 16 })
+  // NBSP 가 항목 앞뒤에만 있으면 서버도 떼므로 콘솔도 떼야 한다.
+  assert.deepEqual(allowedHostsUsage(' https://a.local '), { entries: 1, runes: 15 })
+})
+
 test('빈 줄과 구분자만 있는 입력은 항목이 아니다', () => {
   assert.deepEqual(allowedHostsUsage(''), { entries: 0, runes: 0 })
   assert.deepEqual(allowedHostsUsage('\n\n , ,\t'), { entries: 0, runes: 0 })
