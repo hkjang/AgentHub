@@ -131,7 +131,7 @@ try {
     skipSeed: process.env.GUIDE_SKIP_SEED === '1',
     seed: () => seed({ get, post, put, ok }),
     capture: () => capture(page),
-    captureTracking: () => captureTracking(page, { put, del, ok }),
+    captureTracking: () => captureTracking(page, { put, del, ok, requestTimeoutMs }),
     note,
   })
 
@@ -425,17 +425,23 @@ async function capture(page) {
  * page carries the snippet, and the tracker it points at does not exist here.
  * The generic restore then puts back whatever the deployment held before.
  */
-async function captureTracking(page, { put, del, ok }) {
+async function captureTracking(page, { put, del, ok, requestTimeoutMs }) {
   const settings = { enabled: true, provider: 'momento', momentoUrl: 'https://momento.example.internal', momentoSiteId: 'agenthub', momentoProxy: true, momentoEnvironment: 'prd', placement: 'head', includeAdmin: false, allowedHosts: '', customSnippet: '' }
   const saved = await put('/api/v1/admin/settings/tracking', { value: settings })
   note('방문 추적 설정', ok(saved), `HTTP ${saved.status}`)
   // What a browser posts when the policy refuses a request — here a pixel the
   // snippet did not name, which is the case the list exists for.
-  const report = await page.evaluate(async () => {
-    const response = await fetch('/api/v1/tracking/csp-report', { method: 'POST', headers: { 'Content-Type': 'application/csp-report' },
-      body: JSON.stringify({ 'csp-report': { 'document-uri': `${location.origin}/runs`, 'blocked-uri': 'https://pixel.example.internal/p.gif', 'effective-directive': 'img-src', 'violated-directive': "img-src 'self' data:" } }) })
-    return response.status
-  })
+  const report = await page.evaluate(async (timeoutMs) => {
+    try {
+      const response = await fetch('/api/v1/tracking/csp-report', { method: 'POST', headers: { 'Content-Type': 'application/csp-report' },
+        body: JSON.stringify({ 'csp-report': { 'document-uri': `${location.origin}/runs`, 'blocked-uri': 'https://pixel.example.internal/p.gif', 'effective-directive': 'img-src', 'violated-directive': "img-src 'self' data:" } }), signal: AbortSignal.timeout(timeoutMs) })
+      return response.status
+    } catch (error) {
+      if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return { timedOut: true }
+      throw error
+    }
+  }, requestTimeoutMs)
+  if (report.timedOut) throw new Error(`POST /api/v1/tracking/csp-report 가 ${requestTimeoutMs}ms 안에 응답하지 않음`)
   note('정책 위반 신고', report === 204, `HTTP ${report}`)
   try {
     await visit(page, '/admin/settings', 'admin-settings-tracking', '관리자 · 전역 설정 · 방문 추적', async (page) => {
