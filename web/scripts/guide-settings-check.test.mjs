@@ -7,6 +7,7 @@ const source = await readFile(new URL('./guide-shots.mjs', import.meta.url), 'ut
 // The real script is cut out and run, so anything call depends on — the request
 // deadline included — has to sit inside these two anchors.
 const boundary = source.slice(source.indexOf('  const requestTimeoutMs ='), source.indexOf('  if (problems.length)'))
+const trackingSource = source.slice(source.indexOf('async function captureTracking('))
 const imports = source.match(/import \{ withGuideSettings \} from '(.*?)'/)
 const helper = imports ? await import(new URL(imports[1], import.meta.url)) : {}
 const paths = ['/api/v1/admin/policy', '/api/v1/admin/dlp', '/api/v1/admin/settings', '/api/v1/admin/settings']
@@ -28,23 +29,35 @@ function stalls(options) {
       reject(new Error('the request was sent without a deadline and would never return'))
       return
     }
-    // A deadline's own timer does not hold the Node event loop open, and here
-    // nothing else is running, so the wait needs something that does.
-    const alive = setInterval(() => {}, 5)
-    options.signal.addEventListener('abort', () => { clearInterval(alive); reject(options.signal.reason) })
+    // The independent watchdog both holds Node open and bounds a broken signal.
+    const abort = () => { clearTimeout(watchdog); reject(options.signal.reason) }
+    const watchdog = setTimeout(() => {
+      options.signal.removeEventListener('abort', abort)
+      reject(new Error('test watchdog: the request deadline did not abort'))
+    }, 1000)
+    if (options.signal.aborted) abort()
+    else options.signal.addEventListener('abort', abort, { once: true })
   })
 }
 async function run({ bodies = originals(), failPath, failAt, failure, failWrite, failWriteAt, writeFailure,
-  hangPath, hangAt, hangWrite, hangInSeed, skip, callbackError } = {}) {
-  const requests = [], callbacks = [], notes = [], deadlines = []
+  hangPath, hangAt, hangWrite, hangInSeed, skip, callbackError,
+  realTracking = false, hangReport = false, reportStatus = 204, timeout = '50' } = {}) {
+  const requests = [], callbacks = [], notes = [], deadlines = [], reports = [], events = [], timeouts = []
+  const signalTimeouts = new WeakMap()
   const context = {
     ...helper, structuredClone, AbortSignal,
-    process: { env: { GUIDE_SKIP_SEED: skip, AGENTHUB_GUIDE_REQUEST_TIMEOUT_MS: '50' } },
+    process: { env: { GUIDE_SKIP_SEED: skip, AGENTHUB_GUIDE_REQUEST_TIMEOUT_MS: timeout } },
     document: { cookie: '' },
     page: { evaluate: (fn, args) => fn(args) },
     fetch: async (path, options) => {
       requests.push({ path, method: options.method, body: options.body && JSON.parse(options.body) })
+      events.push(`${options.method} ${path}`)
       deadlines.push(Boolean(options.signal))
+      if (path === '/api/v1/tracking/csp-report') {
+        reports.push({ ...requests.at(-1), headers: { ...options.headers }, timeout: signalTimeouts.get(options.signal) })
+        if (hangReport) return await stalls(options)
+        return { status: reportStatus }
+      }
       if (options.method !== 'GET') {
         if (path === hangWrite) return await stalls(options)
         const writes = requests.filter(r => r.method !== 'GET').length
@@ -68,9 +81,39 @@ async function run({ bodies = originals(), failPath, failAt, failure, failWrite,
     capture: async () => { callbacks.push('capture'); if (callbackError === 'capture') throw new Error('capture failed') },
     captureTracking: async () => { callbacks.push('tracking'); if (callbackError === 'tracking') throw new Error('tracking failed') },
   }
+  if (timeout === null) delete context.process.env.AGENTHUB_GUIDE_REQUEST_TIMEOUT_MS
+  if (realTracking) {
+    // Re-evaluate the browser callback in a separate realm with only its
+    // serialised argument. A Node closure cannot accidentally supply a timeout.
+    const browser = vm.createContext({
+      fetch: context.fetch, document: context.document, location: { origin: 'https://guide.example.internal' },
+      AbortSignal: { timeout: ms => {
+        const signal = AbortSignal.timeout(ms)
+        signalTimeouts.set(signal, ms)
+        timeouts.push(ms)
+        return signal
+      } },
+    })
+    context.page = {
+      evaluate: (fn, args) => {
+        browser.args = structuredClone(args)
+        return vm.runInContext(`(${fn.toString()})(args)`, browser)
+      },
+      getByRole: () => ({ click: async () => events.push('tracking tab') }),
+      locator: selector => ({
+        first: () => ({ waitFor: async () => events.push('violation row') }),
+        scrollIntoViewIfNeeded: async () => events.push(`scroll ${selector}`),
+      }),
+    }
+    context.visit = async (page, path, name, label, prepare) => {
+      events.push(`visit ${path}`)
+      await prepare(page)
+    }
+    context.shoot = async (page, name) => { events.push(`shoot ${name}`) }
+  }
   let error
-  try { await vm.runInNewContext(`(async () => {${boundary}})()`, context) } catch (caught) { error = caught }
-  return { requests, callbacks, notes, deadlines, error }
+  try { await vm.runInNewContext(`(async () => {${realTracking ? trackingSource : ''}\n${boundary}})()`, context) } catch (caught) { error = caught }
+  return { requests, callbacks, notes, deadlines, reports, events, timeouts, error }
 }
 function blocked(result, reason) {
   assert.ok(result.error, 'must reject before work')
@@ -131,6 +174,63 @@ function restorations(bodies) {
   ]
 }
 const failedNotes = result => result.notes.filter(([, ok]) => !ok).map(([label]) => label)
+for (const timeout of ['75', null]) {
+  test(`real tracking report uses the shared deadline (${timeout || 'default'})`, async () => {
+    const bodies = originals()
+    const result = await run({ bodies, realTracking: true, timeout })
+    assert.ifError(result.error)
+    assert.deepEqual(result.reports, [{
+      method: 'POST', path: '/api/v1/tracking/csp-report',
+      headers: { 'Content-Type': 'application/csp-report' },
+      timeout: timeout ? Number(timeout) : 30000,
+      body: { 'csp-report': {
+        'document-uri': 'https://guide.example.internal/runs',
+        'blocked-uri': 'https://pixel.example.internal/p.gif',
+        'effective-directive': 'img-src', 'violated-directive': "img-src 'self' data:",
+      } },
+    }])
+    assert.deepEqual(result.timeouts, result.requests.map(() => timeout ? Number(timeout) : 30000))
+    assert.deepEqual(result.requests.slice(-4), restorations(bodies))
+    assert.deepEqual(result.events.slice(4), [
+      'PUT /api/v1/admin/settings/tracking', 'POST /api/v1/tracking/csp-report',
+      'visit /admin/settings', 'tracking tab', 'violation row', 'scroll .violation-list',
+      'shoot admin-settings-tracking-blocked', 'PUT /api/v1/admin/settings/tracking',
+      'DELETE /api/v1/admin/tracking/violations',
+      ...restorations(bodies).map(r => `${r.method} ${r.path}`),
+    ])
+    const trackingWrites = result.requests.filter(r => r.path.endsWith('/tracking'))
+    assert.equal(trackingWrites[0].body.value.enabled, true)
+    assert.deepEqual(trackingWrites[1].body.value, { ...trackingWrites[0].body.value, enabled: false })
+    assert.deepEqual(result.notes.find(([label]) => label === '정책 위반 신고'), ['정책 위반 신고', true, 'HTTP 204'])
+  })
+}
+test('real tracking report still treats only HTTP 204 as success', async () => {
+  const result = await run({ realTracking: true, reportStatus: 200 })
+  assert.ifError(result.error)
+  assert.deepEqual(result.notes.find(([label]) => label === '정책 위반 신고'), ['정책 위반 신고', false, 'HTTP 200'])
+  assert.deepEqual(result.requests.slice(-4), restorations(originals()))
+})
+for (const writeFailure of [undefined, 'network', 'http']) {
+  test(`a stalled real tracking report restores all settings despite ${writeFailure || 'no'} restoration failure`, async () => {
+    const bodies = originals()
+    const result = await run({ bodies, realTracking: true, hangReport: true, failWrite: paths[0], writeFailure })
+    assert.match(result.error?.message ?? '', /POST \/api\/v1\/tracking\/csp-report 가 50ms 안에 응답하지 않음/)
+    assert.equal(result.reports.length, 1)
+    assert.deepEqual(result.requests.slice(-4), restorations(bodies))
+    assert.deepEqual(failedNotes(result), writeFailure ? [`복원 ${paths[0]}`] : [])
+    assert.deepEqual(result.events.slice(4), [
+      'PUT /api/v1/admin/settings/tracking', 'POST /api/v1/tracking/csp-report',
+      ...restorations(bodies).map(r => `${r.method} ${r.path}`),
+    ])
+  })
+}
+test('skip bypasses real tracking and performs capture only', async () => {
+  const result = await run({ realTracking: true, hangReport: true, skip: '1' })
+  assert.ifError(result.error)
+  assert.deepEqual(result.callbacks, ['capture'])
+  assert.deepEqual(result.requests, [])
+  assert.deepEqual(result.events, [])
+})
 for (const writeFailure of ['network', 'http']) {
   test(`a ${writeFailure} failure on the first restoration still restores the other three`, async () => {
     const bodies = originals()
