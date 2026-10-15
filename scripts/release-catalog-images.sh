@@ -74,6 +74,7 @@ validate_catalog() {
       (.dockerfile | type == "string" and length > 0) and
       (.sourcePaths | type == "array" and length > 0 and length == (unique | length)) and
       (.controlBuildArg | test("^[A-Z][A-Z0-9_]*$")) and
+      (.buildInfoSymbol | test("^[A-Z][A-Za-z0-9]*$")) and
       (.buildArgs | type == "object") and
       (.buildDependencies | type == "array" and length == (unique | length)) and
       (.bundleDependencies | type == "array" and length == (unique | length)) and
@@ -612,6 +613,49 @@ release_notes() {
   echo '각 자산의 실제 원본 릴리즈와 분할 파일/체크섬은 `offline-bundle.json`에 기록됩니다.'
 }
 
+# A bumped version file is only a third of a bump. The number also has to reach
+# the Compose build arg that stamps a local build and the buildinfo default a
+# control plane falls back to without -ldflags, or the control plane spends the
+# release asking the cluster for a tag nobody published. Those two mirrors were
+# guarded only by the Go suite, which runs before the bump and not after it: a
+# release bumped BASE_VERSION alone, re-read this step's "already has a new
+# version", and failed twice on tests the author had already seen pass. The
+# demand for the bump and the list of places it has to land belong together.
+#
+# A mirror that does not mention the build arg or the symbol at all is left to
+# the Go suite, which knows whether the omission is drift or a commit from
+# before the image existed. This grades the number, which is the part a bump
+# gets wrong.
+check_version_mirrors() {
+  local current="$1" compose defaults
+  compose="$(git show "${current}:compose.yaml" 2>/dev/null || cat compose.yaml)"
+  defaults="$(git show "${current}:internal/buildinfo/buildinfo.go" 2>/dev/null ||
+    cat internal/buildinfo/buildinfo.go)"
+  local id entry version_file build_arg symbol version pinned defaulted drifted=false
+  for id in "${image_order[@]}"; do
+    entry="$(catalog_entry "$id")"
+    version_file="$(jq -r '.versionFile' <<<"$entry")"
+    build_arg="$(jq -r '.controlBuildArg' <<<"$entry")"
+    symbol="$(jq -r '.buildInfoSymbol' <<<"$entry")"
+    version="$(git show "${current}:${version_file}" 2>/dev/null | tr -d '\r\n' ||
+      tr -d '\r\n' < "$version_file")"
+    while IFS= read -r pinned; do
+      [ -n "$pinned" ] || continue
+      [ "$pinned" = "$version" ] ||
+        { echo "::error::${id}: ${version_file} is ${version} but compose.yaml pins ${build_arg} to ${pinned}" >&2
+          drifted=true; }
+    done < <(sed -n "s/^[[:space:]]*${build_arg}:[[:space:]]*\([^[:space:]#]*\).*/\1/p" <<<"$compose" | sort -u)
+    while IFS= read -r defaulted; do
+      [ -n "$defaulted" ] || continue
+      [ "${defaulted%-dev}" = "$version" ] ||
+        { echo "::error::${id}: ${version_file} is ${version} but buildinfo defaults ${symbol} to ${defaulted}" >&2
+          drifted=true; }
+    done < <(sed -n "s/^[[:space:]]*${symbol}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*/\1/p" <<<"$defaults" | sort -u)
+  done
+  [ "$drifted" = false ] ||
+    die "carry the versions named above everywhere they are spent, so a build is tagged with the version the control plane asks for"
+}
+
 # check_versions is the release's source guard, run before there is a release.
 #
 # The guard that refuses a stale image tag lives in the plan step, which only
@@ -622,6 +666,11 @@ check_versions() {
   require_file "$catalog"
   resolve_image_order
   local current="${GITHUB_SHA:-HEAD}" previous
+  # Before the comparison against the last release, because drift between the
+  # version file and its mirrors is wrong whether or not a bump was due — and
+  # because the early return below leaves the first release of a history
+  # ungraded otherwise.
+  check_version_mirrors "$current"
   previous="$(git tag --merged "$current" --list 'v*.*.*' |
     grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' | sort -V | tail -1)"
   if [ -z "$previous" ]; then

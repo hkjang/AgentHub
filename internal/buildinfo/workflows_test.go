@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -207,5 +208,131 @@ func TestTheImageVersionCheckCatchesTheReleaseItWasWrittenFor(t *testing.T) {
 	}
 	if out, err := run("b742060"); err != nil {
 		t.Errorf("the check refuses the commit that repaired it: %v\n%s", err, out)
+	}
+}
+
+// A version bump is not one file, and until now this check only knew about one.
+//
+// 6059496 added a log line to cmd/runtime-proxy, which the runtime base image is
+// built from, and bumped BASE_VERSION for it — precisely what the check above
+// asks for. It said nothing about compose.yaml still pinning BASE_VERSION to the
+// old number, or about this package still defaulting BaseVersion to it, so the
+// author re-read "every image whose inputs changed already has a new version"
+// and the release failed twice afterwards on the Go suite instead. The number
+// has to reach every place that spends it, and the gate that demands the bump is
+// the one place the author is already looking.
+//
+// The commits are built here rather than named: the one that broke the release
+// was never pushed, and a guard that skips whenever the history it needs is
+// missing is a guard that stops guarding. commit-tree writes an unreferenced
+// commit from a throwaway index, so no branch, ref or file in the checkout moves.
+func TestTheImageVersionCheckRefusesABumpThatOnlyReachedTheVersionFile(t *testing.T) {
+	root := filepath.Join("..", "..")
+	git := func(env []string, args ...string) string {
+		t.Helper()
+		command := exec.Command("git", append([]string{"-C", root}, args...)...)
+		command.Env = append(os.Environ(), env...)
+		out, err := command.Output()
+		if err != nil {
+			t.Fatalf("git %s: %v", strings.Join(args, " "), err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	blob := func(content string) string {
+		t.Helper()
+		command := exec.Command("git", "-C", root, "hash-object", "-w", "--stdin")
+		command.Stdin = strings.NewReader(content)
+		out, err := command.Output()
+		if err != nil {
+			t.Fatalf("write a blob: %v", err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	commitWith := func(files map[string]string) string {
+		t.Helper()
+		env := []string{
+			"GIT_INDEX_FILE=" + filepath.Join(t.TempDir(), "index"),
+			"GIT_AUTHOR_NAME=version check", "GIT_AUTHOR_EMAIL=version@check",
+			"GIT_COMMITTER_NAME=version check", "GIT_COMMITTER_EMAIL=version@check",
+		}
+		git(env, "read-tree", "HEAD")
+		for path, content := range files {
+			git(env, "update-index", "--add", "--cacheinfo", "100644,"+blob(content)+","+path)
+		}
+		return git(env, "commit-tree", git(env, "write-tree"), "-p", "HEAD", "-m", "a synthetic bump")
+	}
+	read := func(path string) string {
+		t.Helper()
+		body, err := os.ReadFile(filepath.Join(root, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+
+	current := strings.TrimSpace(read("BASE_VERSION"))
+	parts := strings.Split(current, ".")
+	patch, err := strconv.Atoi(parts[len(parts)-1])
+	if err != nil {
+		t.Fatalf("BASE_VERSION %q does not end in a number", current)
+	}
+	parts[len(parts)-1] = strconv.Itoa(patch + 1)
+	next := strings.Join(parts, ".")
+
+	compose := strings.Replace(read("compose.yaml"), "BASE_VERSION: "+current, "BASE_VERSION: "+next, 1)
+	if strings.Contains(compose, "BASE_VERSION: "+current) || !strings.Contains(compose, "BASE_VERSION: "+next) {
+		t.Fatalf("compose.yaml does not pin BASE_VERSION to %s the way this test expects", current)
+	}
+	defaults := strings.Replace(read(filepath.Join("internal", "buildinfo", "buildinfo.go")),
+		`BaseVersion = "`+current+`-dev"`, `BaseVersion = "`+next+`-dev"`, 1)
+	if !strings.Contains(defaults, `BaseVersion = "`+next+`-dev"`) {
+		t.Fatalf("buildinfo does not default BaseVersion to %s-dev the way this test expects", current)
+	}
+
+	run := func(files map[string]string) (string, error) {
+		command := exec.Command("bash", "scripts/release-catalog-images.sh", "check-versions")
+		command.Dir = root
+		command.Env = append(os.Environ(), "GITHUB_SHA="+commitWith(files))
+		out, err := command.CombinedOutput()
+		return string(out), err
+	}
+
+	out, err := run(map[string]string{"BASE_VERSION": next + "\n"})
+	if err == nil {
+		t.Errorf("a bump that reached only BASE_VERSION was accepted: %s", out)
+	}
+	for _, named := range []string{"BASE_VERSION", "compose.yaml", "buildinfo"} {
+		if !strings.Contains(out, named) {
+			t.Errorf("the refusal does not name %s, which still carries the old version: %s", named, out)
+		}
+	}
+
+	// Each mirror on its own, so that checking one and reporting both cannot pass
+	// for checking the two of them.
+	out, err = run(map[string]string{"BASE_VERSION": next + "\n", "compose.yaml": compose})
+	if err == nil {
+		t.Errorf("a bump that skipped the buildinfo default was accepted: %s", out)
+	}
+	if strings.Contains(out, "compose.yaml") || !strings.Contains(out, "buildinfo") {
+		t.Errorf("the refusal does not name the buildinfo default alone: %s", out)
+	}
+	out, err = run(map[string]string{
+		"BASE_VERSION":                    next + "\n",
+		"internal/buildinfo/buildinfo.go": defaults,
+	})
+	if err == nil {
+		t.Errorf("a bump that skipped the compose build arg was accepted: %s", out)
+	}
+	if !strings.Contains(out, "compose.yaml") || strings.Contains(out, "buildinfo") {
+		t.Errorf("the refusal does not name the compose build arg alone: %s", out)
+	}
+
+	out, err = run(map[string]string{
+		"BASE_VERSION":                    next + "\n",
+		"compose.yaml":                    compose,
+		"internal/buildinfo/buildinfo.go": defaults,
+	})
+	if err != nil {
+		t.Errorf("a bump that reached all three files was refused: %v\n%s", err, out)
 	}
 }
