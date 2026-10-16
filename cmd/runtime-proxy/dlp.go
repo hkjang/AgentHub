@@ -158,4 +158,16 @@ func (r *reporter) send(ctx context.Context, entry map[string]any) {
 		return
 	}
 	_ = response.Body.Close()
+	// A report the control plane threw away is worse than one that never left: the
+	// Pod believes it reported, and the dlp.tool audit row that should hold the
+	// finding is simply missing. This is the only place that knows the difference,
+	// so a runtime token the control plane no longer accepts — or a control plane
+	// answering 500 — leaves one line here naming the status and nothing else.
+	//
+	// The status line alone. The answer body can quote back the event just
+	// reported, and r.token was never log material; the finding itself is already
+	// in the entry above, masked.
+	if response.StatusCode < 200 || response.StatusCode > 299 {
+		log.Printf("agenthub-dlp report rejected: %s", response.Status)
+	}
 }
